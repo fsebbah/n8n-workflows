@@ -456,9 +456,11 @@ def render_workflow_details(workflow: dict, category: str):
         st.markdown("---")
         render_ai_analysis(json_data, filename)
 
-        # Section de chat interactif
-        st.markdown("---")
-        render_chat_section(json_data, filename, category)
+        # Section de chat interactif (visible uniquement après analyse)
+        analysis_key = f"analysis_{filename}"
+        if analysis_key in st.session_state and st.session_state[analysis_key].get("success"):
+            st.markdown("---")
+            render_chat_section(json_data, filename, category)
 
     else:
         st.warning("Impossible de charger le fichier JSON original.")
