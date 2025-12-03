@@ -13,6 +13,7 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from workflow_analyzer import WorkflowAnalyzer, generate_simple_mermaid
+from chat_manager import WorkflowChat, conversation_db
 
 # Déterminer le répertoire racine du projet
 APP_DIR = Path(__file__).parent.resolve()
@@ -21,8 +22,9 @@ PROJECT_ROOT = APP_DIR.parent
 # Charger les variables d'environnement depuis .env.local
 load_dotenv(APP_DIR / ".env.local")
 
-# Initialiser l'analyseur
+# Initialiser l'analyseur et le chat
 analyzer = WorkflowAnalyzer()
+workflow_chat = WorkflowChat()
 
 # Configuration de la page
 st.set_page_config(
@@ -454,6 +456,10 @@ def render_workflow_details(workflow: dict, category: str):
         st.markdown("---")
         render_ai_analysis(json_data, filename)
 
+        # Section de chat interactif
+        st.markdown("---")
+        render_chat_section(json_data, filename, category)
+
     else:
         st.warning("Impossible de charger le fichier JSON original.")
 
@@ -561,6 +567,140 @@ def render_ai_analysis(workflow_json: dict, filename: str):
         with st.expander("📊 Aperçu du flux (simplifié)", expanded=False):
             simple_mermaid = generate_simple_mermaid(workflow_json)
             st.code(simple_mermaid, language="mermaid")
+
+
+def render_chat_section(workflow_json: dict, filename: str, category: str):
+    """Affiche la section de chat interactif."""
+    st.markdown("### 💬 Chat avec le Workflow")
+
+    if not workflow_chat.is_configured():
+        st.warning("⚠️ Clé API OpenAI non configurée. Le chat nécessite une clé API.")
+        return
+
+    # Initialiser le state du chat si nécessaire
+    chat_key = f"chat_{filename}"
+    if chat_key not in st.session_state:
+        st.session_state[chat_key] = {
+            "conversation_id": None,
+            "messages": []
+        }
+
+    chat_state = st.session_state[chat_key]
+
+    # Boutons pour démarrer/charger une conversation
+    col1, col2, col3 = st.columns([1, 1, 2])
+
+    with col1:
+        if st.button("🆕 Nouvelle conversation", use_container_width=True):
+            # Démarrer une nouvelle conversation
+            conv_id = workflow_chat.start_conversation(workflow_json, filename, category)
+            chat_state["conversation_id"] = conv_id
+            chat_state["messages"] = []
+            st.rerun()
+
+    with col2:
+        # Charger conversations existantes
+        existing_convs = conversation_db.get_workflow_conversations(filename, category)
+        if existing_convs:
+            if st.button(f"📂 Historique ({len(existing_convs)})", use_container_width=True):
+                st.session_state[f"show_history_{filename}"] = True
+                st.rerun()
+
+    # Afficher le sélecteur d'historique
+    if st.session_state.get(f"show_history_{filename}", False):
+        with st.expander("📂 Conversations précédentes", expanded=True):
+            for conv in existing_convs[:10]:
+                conv_date = conv["updated_at"][:16] if conv["updated_at"] else "N/A"
+                if st.button(f"📝 {conv_date} - Conversation #{conv['id']}", key=f"load_conv_{conv['id']}"):
+                    workflow_chat.load_conversation(conv["id"], workflow_json)
+                    chat_state["conversation_id"] = conv["id"]
+                    # Charger les messages
+                    messages = conversation_db.get_conversation_messages(conv["id"])
+                    chat_state["messages"] = [
+                        {"role": m["role"], "content": m["content"]}
+                        for m in messages if m["role"] != "system"
+                    ]
+                    st.session_state[f"show_history_{filename}"] = False
+                    st.rerun()
+
+            if st.button("❌ Fermer"):
+                st.session_state[f"show_history_{filename}"] = False
+                st.rerun()
+
+    # Afficher le chat si une conversation est active
+    if chat_state["conversation_id"]:
+        st.markdown("---")
+
+        # Afficher les messages
+        chat_container = st.container()
+        with chat_container:
+            for msg in chat_state["messages"]:
+                if msg["role"] == "user":
+                    st.chat_message("user").write(msg["content"])
+                elif msg["role"] == "assistant":
+                    st.chat_message("assistant").write(msg["content"])
+
+        # Suggestions de questions
+        if not chat_state["messages"]:
+            st.markdown("**💡 Suggestions de questions :**")
+            suggestions = workflow_chat.get_suggestions()
+            cols = st.columns(2)
+            for idx, suggestion in enumerate(suggestions[:6]):
+                col_idx = idx % 2
+                with cols[col_idx]:
+                    if st.button(suggestion, key=f"suggest_{idx}", use_container_width=True):
+                        # Envoyer la suggestion comme message
+                        send_chat_message(chat_state, suggestion, workflow_json, filename, category)
+                        st.rerun()
+
+        # Zone de saisie
+        user_input = st.chat_input("Posez une question sur ce workflow...")
+
+        if user_input:
+            send_chat_message(chat_state, user_input, workflow_json, filename, category)
+            st.rerun()
+
+        # Bouton pour sauvegarder l'analyse
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("💾 Sauvegarder cette analyse"):
+                # Récupérer le dernier message assistant
+                assistant_messages = [m for m in chat_state["messages"] if m["role"] == "assistant"]
+                if assistant_messages:
+                    last_analysis = assistant_messages[-1]["content"]
+                    conversation_db.save_analysis(
+                        filename, category, last_analysis, "", "gpt-4o-mini", 0
+                    )
+                    st.success("✅ Analyse sauvegardée !")
+
+        with col2:
+            if st.button("🗑️ Terminer conversation"):
+                chat_state["conversation_id"] = None
+                chat_state["messages"] = []
+                st.rerun()
+
+    else:
+        st.info("💬 Cliquez sur 'Nouvelle conversation' pour discuter avec l'IA à propos de ce workflow.")
+
+
+def send_chat_message(chat_state: dict, message: str, workflow_json: dict,
+                     filename: str, category: str):
+    """Envoie un message et récupère la réponse."""
+    # Ajouter le message utilisateur
+    chat_state["messages"].append({"role": "user", "content": message})
+
+    # Si pas de conversation active, en créer une
+    if not workflow_chat.current_conversation_id:
+        workflow_chat.start_conversation(workflow_json, filename, category)
+        chat_state["conversation_id"] = workflow_chat.current_conversation_id
+
+    # Obtenir la réponse
+    with st.spinner("🤔 Réflexion en cours..."):
+        response = workflow_chat.chat(message)
+
+    # Ajouter la réponse
+    chat_state["messages"].append({"role": "assistant", "content": response})
 
 
 def generate_mermaid_live_url(mermaid_code: str) -> str:

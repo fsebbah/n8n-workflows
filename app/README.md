@@ -28,6 +28,12 @@ Interface Streamlit pour explorer les 2061 workflows n8n organisés en 188 caté
   - Diagramme Mermaid généré automatiquement
   - Lien vers Mermaid Live Editor
 
+- **Chat interactif** :
+  - Posez des questions sur le workflow sélectionné
+  - Demandez des adaptations ou des exemples
+  - Historique des conversations sauvegardé en base SQLite
+  - Suggestions de questions prédéfinies
+
 ## Installation
 
 ```bash
@@ -71,9 +77,12 @@ L'application sera accessible sur http://localhost:8501
 app/
 ├── streamlit_app.py        # Application principale Streamlit
 ├── workflow_analyzer.py    # Module d'analyse IA avec OpenAI
+├── chat_manager.py         # Gestion du chat et des conversations
 ├── requirements.txt        # Dépendances Python
 ├── .env.local.example      # Exemple de configuration
 ├── .env.local              # Configuration locale (non versionné)
+├── conversations.db        # Base SQLite des conversations (généré)
+├── PROMPTS.md              # Documentation des prompts IA
 └── README.md               # Ce fichier
 ```
 
@@ -106,13 +115,31 @@ app/
   - Les cas d'usage
   - Un diagramme Mermaid du flux
 
+### 5. Chatter avec l'IA
+
+- Dans la section "Chat", cliquez sur "Nouvelle conversation"
+- Posez vos questions sur le workflow
+- Utilisez les suggestions prédéfinies ou tapez vos propres questions
+- Exemples de questions :
+  - "Peux-tu m'expliquer chaque étape de ce workflow ?"
+  - "Comment adapter ce workflow pour un autre cas d'usage ?"
+  - "Peux-tu me donner un exemple concret de données ?"
+  - "Quelles améliorations suggères-tu ?"
+
+### 6. Gérer l'historique des conversations
+
+- L'historique est automatiquement sauvegardé dans une base SQLite
+- Reprenez une conversation précédente via le menu déroulant
+- Chaque workflow conserve son propre historique de conversations
+
 ## Coûts API OpenAI
 
-| Modèle | Coût approximatif par analyse |
-|--------|-------------------------------|
-| gpt-4o-mini | ~$0.001-0.003 |
-| gpt-4o | ~$0.01-0.03 |
-| gpt-4-turbo | ~$0.02-0.05 |
+| Action | Modèle | Coût approximatif |
+|--------|--------|-------------------|
+| Analyse workflow | gpt-4o-mini | ~$0.001-0.003 |
+| Analyse workflow | gpt-4o | ~$0.01-0.03 |
+| Message chat | gpt-4o-mini | ~$0.0008 |
+| Conversation (5 messages) | gpt-4o-mini | ~$0.004 |
 
 ## Prérequis
 
@@ -126,3 +153,14 @@ app/
 - **Streamlit** : Interface utilisateur
 - **OpenAI GPT-4** : Analyse intelligente des workflows
 - **Mermaid** : Génération de diagrammes
+- **SQLite** : Stockage des conversations
+
+## Base de données des conversations
+
+Les conversations sont stockées dans `conversations.db` avec le schéma suivant :
+
+- **conversations** : Métadonnées des conversations (workflow, dates)
+- **messages** : Historique des messages (rôle, contenu, timestamps)
+- **analyses** : Analyses sauvegardées avec diagrammes Mermaid
+
+Voir [PROMPTS.md](./PROMPTS.md) pour la documentation complète des prompts utilisés.
