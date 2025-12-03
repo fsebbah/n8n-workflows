@@ -14,7 +14,14 @@ import os
 import re
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
-from openai import OpenAI
+
+# Import optionnel d'OpenAI
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    OpenAI = None
 
 
 class WorkflowSearchEngine:
@@ -258,7 +265,7 @@ Si aucun workflow ne correspond, suggère des alternatives ou des catégories à
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.client = None
 
-        if self.api_key:
+        if self.api_key and OPENAI_AVAILABLE:
             self.client = OpenAI(api_key=self.api_key)
 
     def is_ai_enabled(self) -> bool:
