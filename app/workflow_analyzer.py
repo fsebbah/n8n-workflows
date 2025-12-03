@@ -17,19 +17,38 @@ from openai import OpenAI
 SYSTEM_PROMPT = """Tu es un expert en automatisation n8n. Tu analyses des workflows n8n au format JSON.
 
 Pour chaque workflow, tu dois fournir:
+
+## Analyse principale
 1. **Résumé** : Une phrase décrivant le but du workflow
 2. **Description détaillée** : Explication complète de ce que fait le workflow
-3. **Étapes du flux** : Liste numérotée des étapes principales
-4. **Cas d'usage** : Dans quel contexte utiliser ce workflow
-5. **Services utilisés** : Liste des intégrations externes
-6. **Diagramme Mermaid** : Un diagramme flowchart représentant le workflow
+3. **Niveau de complexité** : Débutant / Intermédiaire / Avancé (avec justification)
+4. **Étapes du flux** : Liste numérotée des étapes principales
+5. **Cas d'usage** : Dans quel contexte utiliser ce workflow
+
+## Aspects techniques
+6. **Services et intégrations** : Liste des services externes avec leur rôle
+7. **Prérequis techniques** :
+   - Credentials nécessaires (API keys, OAuth, etc.)
+   - Accès requis (permissions, scopes)
+   - Variables d'environnement à configurer
+8. **Points de défaillance potentiels** :
+   - Où le workflow peut échouer
+   - Erreurs courantes à anticiper
+   - Rate limits ou quotas à surveiller
+9. **Recommandations de sécurité** :
+   - Données sensibles manipulées
+   - Bonnes pratiques à appliquer
+
+## Visualisation
+10. **Diagramme Mermaid** : Un diagramme flowchart représentant le workflow
 
 Pour le diagramme Mermaid:
 - Utilise la syntaxe `flowchart TD` (top-down)
 - Chaque node doit avoir un ID court et un label descriptif
-- Utilise des formes appropriées: [] pour les actions, {} pour les conditions, () pour les triggers
+- Utilise des formes appropriées: [] pour les actions, {} pour les conditions, (()) pour les triggers
 - Relie les nodes avec des flèches -->
 - Pour les branches conditionnelles, utilise -->|Oui| et -->|Non|
+- Ajoute des couleurs pour les points critiques: style NodeID fill:#f96 pour les erreurs potentielles
 
 Exemple de diagramme Mermaid:
 ```mermaid
@@ -40,24 +59,36 @@ flowchart TD
     C -->|Non| E[Action 2]
     D --> F[Fin]
     E --> F
+    style C fill:#ffd700
 ```
 
-Analyse le workflow de manière professionnelle et concise."""
+Analyse le workflow de manière professionnelle, complète et structurée."""
 
-USER_PROMPT_TEMPLATE = """Analyse ce workflow n8n et fournis:
-1. Un résumé en une phrase
-2. Une description détaillée
-3. Les étapes du flux (liste numérotée)
-4. Les cas d'usage
-5. Les services/intégrations utilisés
-6. Un diagramme Mermaid représentant le flux
+USER_PROMPT_TEMPLATE = """Analyse ce workflow n8n et fournis une analyse complète:
+
+## Analyse principale
+1. Résumé en une phrase
+2. Description détaillée
+3. Niveau de complexité (Débutant/Intermédiaire/Avancé) avec justification
+4. Étapes du flux (liste numérotée)
+5. Cas d'usage
+
+## Aspects techniques
+6. Services et intégrations (avec leur rôle)
+7. Prérequis techniques (credentials, accès, variables d'environnement)
+8. Points de défaillance potentiels (erreurs, rate limits, quotas)
+9. Recommandations de sécurité
+
+## Visualisation
+10. Diagramme Mermaid représentant le flux
 
 Workflow JSON:
 ```json
 {json_content}
 ```
 
-Réponds en français. Pour le diagramme Mermaid, assure-toi qu'il soit valide et lisible."""
+Réponds en français. Structure ta réponse avec les titres markdown.
+Pour le diagramme Mermaid, assure-toi qu'il soit valide et lisible."""
 
 
 class WorkflowAnalyzer:
@@ -109,7 +140,7 @@ class WorkflowAnalyzer:
                     {"role": "user", "content": USER_PROMPT_TEMPLATE.format(json_content=json_content)}
                 ],
                 temperature=0.3,
-                max_tokens=2000
+                max_tokens=3000
             )
 
             raw_response = response.choices[0].message.content
