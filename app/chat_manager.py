@@ -29,10 +29,11 @@ class ConversationDB:
         self._init_db()
 
     def _init_db(self):
-        """Initialise la base de données si elle n'existe pas."""
+        """Initialise la base de données et applique les migrations si nécessaire."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
+        # Créer les tables de base si elles n'existent pas
         cursor.executescript('''
             -- Table des conversations
             CREATE TABLE IF NOT EXISTS conversations (
@@ -40,8 +41,6 @@ class ConversationDB:
                 workflow_filename TEXT NOT NULL,
                 workflow_category TEXT NOT NULL,
                 workflow_name TEXT,
-                is_favorite BOOLEAN DEFAULT 0,
-                total_tokens INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -50,9 +49,8 @@ class ConversationDB:
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id INTEGER NOT NULL,
-                role TEXT NOT NULL,  -- 'user', 'assistant', 'system'
+                role TEXT NOT NULL,
                 content TEXT NOT NULL,
-                tokens_used INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
             );
@@ -66,7 +64,6 @@ class ConversationDB:
                 mermaid_diagram TEXT,
                 model_used TEXT,
                 tokens_used INTEGER,
-                is_favorite BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -83,14 +80,10 @@ class ConversationDB:
             -- Index pour recherche rapide
             CREATE INDEX IF NOT EXISTS idx_conversations_workflow
                 ON conversations(workflow_filename, workflow_category);
-            CREATE INDEX IF NOT EXISTS idx_conversations_favorite
-                ON conversations(is_favorite);
             CREATE INDEX IF NOT EXISTS idx_messages_conversation
                 ON messages(conversation_id);
             CREATE INDEX IF NOT EXISTS idx_analyses_workflow
                 ON analyses(workflow_filename, workflow_category);
-            CREATE INDEX IF NOT EXISTS idx_analyses_favorite
-                ON analyses(is_favorite);
             CREATE INDEX IF NOT EXISTS idx_tags_conversation
                 ON conversation_tags(conversation_id);
             CREATE INDEX IF NOT EXISTS idx_tags_tag
@@ -98,7 +91,47 @@ class ConversationDB:
         ''')
 
         conn.commit()
+
+        # Appliquer les migrations pour les nouvelles colonnes
+        self._migrate_db(conn)
+
         conn.close()
+
+    def _migrate_db(self, conn):
+        """Applique les migrations pour ajouter les nouvelles colonnes."""
+        cursor = conn.cursor()
+
+        # Liste des migrations à appliquer
+        migrations = [
+            # Conversations: is_favorite
+            ("conversations", "is_favorite", "BOOLEAN DEFAULT 0"),
+            # Conversations: total_tokens
+            ("conversations", "total_tokens", "INTEGER DEFAULT 0"),
+            # Messages: tokens_used
+            ("messages", "tokens_used", "INTEGER DEFAULT 0"),
+            # Analyses: is_favorite
+            ("analyses", "is_favorite", "BOOLEAN DEFAULT 0"),
+        ]
+
+        for table, column, col_type in migrations:
+            # Vérifier si la colonne existe
+            cursor.execute(f"PRAGMA table_info({table})")
+            columns = [info[1] for info in cursor.fetchall()]
+
+            if column not in columns:
+                try:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    pass  # Colonne existe déjà
+
+        # Créer les index pour les nouvelles colonnes
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_conversations_favorite ON conversations(is_favorite)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_analyses_favorite ON analyses(is_favorite)")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     def create_conversation(self, workflow_filename: str, workflow_category: str,
                           workflow_name: str = "") -> int:
