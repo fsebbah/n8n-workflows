@@ -431,22 +431,48 @@ def render_workflow_details(workflow: dict, category: str):
     json_data = get_workflow_json(category, filename)
 
     if json_data:
+        import base64
+        json_str = json.dumps(json_data, indent=2, ensure_ascii=False)
+        # Encoder en base64 pour éviter les problèmes de caractères spéciaux
+        json_b64 = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+
         col1, col2 = st.columns([1, 1])
 
         with col1:
             # Bouton de téléchargement
-            json_str = json.dumps(json_data, indent=2, ensure_ascii=False)
             st.download_button(
-                label="⬇️ Télécharger le JSON",
+                label="⬇️ Télécharger JSON",
                 data=json_str,
                 file_name=filename,
-                mime="application/json"
+                mime="application/json",
+                use_container_width=True
             )
 
         with col2:
-            # Copier le chemin
-            workflow_path = f"workflows/{category}/{filename}"
-            st.code(workflow_path, language=None)
+            # Bouton copier avec JavaScript (base64 décodé)
+            copy_button_html = f'''
+            <button onclick="
+                const json = atob('{json_b64}');
+                navigator.clipboard.writeText(json).then(() => {{
+                    this.innerHTML = '✅ Copié !';
+                    setTimeout(() => this.innerHTML = '📋 Copier le JSON', 2000);
+                }});
+            " style="
+                background-color: #ff4b4b;
+                color: white;
+                border: none;
+                padding: 0.6rem 1rem;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 1rem;
+                width: 100%;
+            ">📋 Copier le JSON</button>
+            '''
+            st.markdown(copy_button_html, unsafe_allow_html=True)
+
+        # Chemin du fichier
+        workflow_path = f"workflows/{category}/{filename}"
+        st.caption(f"📁 `{workflow_path}`")
 
         # Afficher le JSON dans un expander
         with st.expander("👁️ Voir le contenu JSON", expanded=False):
