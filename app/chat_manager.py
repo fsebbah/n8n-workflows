@@ -29,10 +29,11 @@ class ConversationDB:
         self._init_db()
 
     def _init_db(self):
-        """Initialise la base de données si elle n'existe pas."""
+        """Initialise la base de données et applique les migrations si nécessaire."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
+        # Créer les tables de base si elles n'existent pas
         cursor.executescript('''
             -- Table des conversations
             CREATE TABLE IF NOT EXISTS conversations (
@@ -48,7 +49,7 @@ class ConversationDB:
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id INTEGER NOT NULL,
-                role TEXT NOT NULL,  -- 'user', 'assistant', 'system'
+                role TEXT NOT NULL,
                 content TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
@@ -66,6 +67,16 @@ class ConversationDB:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- Table des tags pour catégoriser les conversations
+            CREATE TABLE IF NOT EXISTS conversation_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                tag TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id),
+                UNIQUE(conversation_id, tag)
+            );
+
             -- Index pour recherche rapide
             CREATE INDEX IF NOT EXISTS idx_conversations_workflow
                 ON conversations(workflow_filename, workflow_category);
@@ -73,10 +84,54 @@ class ConversationDB:
                 ON messages(conversation_id);
             CREATE INDEX IF NOT EXISTS idx_analyses_workflow
                 ON analyses(workflow_filename, workflow_category);
+            CREATE INDEX IF NOT EXISTS idx_tags_conversation
+                ON conversation_tags(conversation_id);
+            CREATE INDEX IF NOT EXISTS idx_tags_tag
+                ON conversation_tags(tag);
         ''')
 
         conn.commit()
+
+        # Appliquer les migrations pour les nouvelles colonnes
+        self._migrate_db(conn)
+
         conn.close()
+
+    def _migrate_db(self, conn):
+        """Applique les migrations pour ajouter les nouvelles colonnes."""
+        cursor = conn.cursor()
+
+        # Liste des migrations à appliquer
+        migrations = [
+            # Conversations: is_favorite
+            ("conversations", "is_favorite", "BOOLEAN DEFAULT 0"),
+            # Conversations: total_tokens
+            ("conversations", "total_tokens", "INTEGER DEFAULT 0"),
+            # Messages: tokens_used
+            ("messages", "tokens_used", "INTEGER DEFAULT 0"),
+            # Analyses: is_favorite
+            ("analyses", "is_favorite", "BOOLEAN DEFAULT 0"),
+        ]
+
+        for table, column, col_type in migrations:
+            # Vérifier si la colonne existe
+            cursor.execute(f"PRAGMA table_info({table})")
+            columns = [info[1] for info in cursor.fetchall()]
+
+            if column not in columns:
+                try:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    pass  # Colonne existe déjà
+
+        # Créer les index pour les nouvelles colonnes
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_conversations_favorite ON conversations(is_favorite)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_analyses_favorite ON analyses(is_favorite)")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     def create_conversation(self, workflow_filename: str, workflow_category: str,
                           workflow_name: str = "") -> int:
@@ -95,21 +150,23 @@ class ConversationDB:
 
         return conversation_id
 
-    def add_message(self, conversation_id: int, role: str, content: str):
+    def add_message(self, conversation_id: int, role: str, content: str, tokens_used: int = 0):
         """Ajoute un message à une conversation."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
         cursor.execute('''
-            INSERT INTO messages (conversation_id, role, content)
-            VALUES (?, ?, ?)
-        ''', (conversation_id, role, content))
+            INSERT INTO messages (conversation_id, role, content, tokens_used)
+            VALUES (?, ?, ?, ?)
+        ''', (conversation_id, role, content, tokens_used))
 
-        # Mettre à jour la date de modification de la conversation
+        # Mettre à jour la date de modification et les tokens totaux
         cursor.execute('''
-            UPDATE conversations SET updated_at = CURRENT_TIMESTAMP
+            UPDATE conversations
+            SET updated_at = CURRENT_TIMESTAMP,
+                total_tokens = total_tokens + ?
             WHERE id = ?
-        ''', (conversation_id,))
+        ''', (tokens_used, conversation_id))
 
         conn.commit()
         conn.close()
@@ -241,32 +298,332 @@ class ConversationDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
+        cursor.execute('DELETE FROM conversation_tags WHERE conversation_id = ?', (conversation_id,))
         cursor.execute('DELETE FROM messages WHERE conversation_id = ?', (conversation_id,))
         cursor.execute('DELETE FROM conversations WHERE id = ?', (conversation_id,))
 
         conn.commit()
         conn.close()
 
+    def toggle_conversation_favorite(self, conversation_id: int) -> bool:
+        """Bascule le statut favori d'une conversation. Retourne le nouveau statut."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            UPDATE conversations
+            SET is_favorite = NOT is_favorite
+            WHERE id = ?
+        ''', (conversation_id,))
+
+        cursor.execute('SELECT is_favorite FROM conversations WHERE id = ?', (conversation_id,))
+        result = cursor.fetchone()
+
+        conn.commit()
+        conn.close()
+
+        return bool(result[0]) if result else False
+
+    def toggle_analysis_favorite(self, analysis_id: int) -> bool:
+        """Bascule le statut favori d'une analyse. Retourne le nouveau statut."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            UPDATE analyses
+            SET is_favorite = NOT is_favorite
+            WHERE id = ?
+        ''', (analysis_id,))
+
+        cursor.execute('SELECT is_favorite FROM analyses WHERE id = ?', (analysis_id,))
+        result = cursor.fetchone()
+
+        conn.commit()
+        conn.close()
+
+        return bool(result[0]) if result else False
+
+    def add_conversation_tag(self, conversation_id: int, tag: str):
+        """Ajoute un tag à une conversation."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                INSERT INTO conversation_tags (conversation_id, tag)
+                VALUES (?, ?)
+            ''', (conversation_id, tag.strip().lower()))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            pass  # Tag déjà existant
+
+        conn.close()
+
+    def remove_conversation_tag(self, conversation_id: int, tag: str):
+        """Supprime un tag d'une conversation."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            DELETE FROM conversation_tags
+            WHERE conversation_id = ? AND tag = ?
+        ''', (conversation_id, tag.strip().lower()))
+
+        conn.commit()
+        conn.close()
+
+    def get_conversation_tags(self, conversation_id: int) -> List[str]:
+        """Récupère les tags d'une conversation."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT tag FROM conversation_tags
+            WHERE conversation_id = ?
+            ORDER BY tag
+        ''', (conversation_id,))
+
+        tags = [row[0] for row in cursor.fetchall()]
+
+        conn.close()
+        return tags
+
+    def get_all_tags(self) -> List[Dict]:
+        """Récupère tous les tags avec leur nombre d'utilisations."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT tag, COUNT(*) as count
+            FROM conversation_tags
+            GROUP BY tag
+            ORDER BY count DESC, tag
+        ''')
+
+        tags = [{"tag": row[0], "count": row[1]} for row in cursor.fetchall()]
+
+        conn.close()
+        return tags
+
+    def search_conversations_by_tag(self, tag: str) -> List[Dict]:
+        """Recherche les conversations par tag."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT c.id, c.workflow_filename, c.workflow_category, c.workflow_name,
+                   c.is_favorite, c.total_tokens, c.created_at, c.updated_at
+            FROM conversations c
+            INNER JOIN conversation_tags t ON c.id = t.conversation_id
+            WHERE t.tag = ?
+            ORDER BY c.updated_at DESC
+        ''', (tag.strip().lower(),))
+
+        conversations = [
+            {
+                "id": row[0],
+                "workflow_filename": row[1],
+                "workflow_category": row[2],
+                "workflow_name": row[3],
+                "is_favorite": bool(row[4]),
+                "total_tokens": row[5],
+                "created_at": row[6],
+                "updated_at": row[7]
+            }
+            for row in cursor.fetchall()
+        ]
+
+        conn.close()
+        return conversations
+
+    def get_favorite_conversations(self) -> List[Dict]:
+        """Récupère les conversations favorites."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT c.id, c.workflow_filename, c.workflow_category, c.workflow_name,
+                   c.total_tokens, c.created_at, c.updated_at, COUNT(m.id) as message_count
+            FROM conversations c
+            LEFT JOIN messages m ON c.id = m.conversation_id
+            WHERE c.is_favorite = 1
+            GROUP BY c.id
+            ORDER BY c.updated_at DESC
+        ''')
+
+        conversations = [
+            {
+                "id": row[0],
+                "workflow_filename": row[1],
+                "workflow_category": row[2],
+                "workflow_name": row[3],
+                "total_tokens": row[4],
+                "created_at": row[5],
+                "updated_at": row[6],
+                "message_count": row[7]
+            }
+            for row in cursor.fetchall()
+        ]
+
+        conn.close()
+        return conversations
+
+    def get_token_stats(self) -> Dict:
+        """Récupère les statistiques d'utilisation des tokens."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT
+                COUNT(*) as total_conversations,
+                SUM(total_tokens) as total_tokens,
+                AVG(total_tokens) as avg_tokens_per_conversation
+            FROM conversations
+        ''')
+        conv_stats = cursor.fetchone()
+
+        cursor.execute('''
+            SELECT COUNT(*) as total_messages
+            FROM messages
+            WHERE role != 'system'
+        ''')
+        msg_stats = cursor.fetchone()
+
+        conn.close()
+
+        return {
+            "total_conversations": conv_stats[0] or 0,
+            "total_tokens": conv_stats[1] or 0,
+            "avg_tokens_per_conversation": round(conv_stats[2] or 0, 2),
+            "total_messages": msg_stats[0] or 0
+        }
+
+    def export_conversation_markdown(self, conversation_id: int) -> str:
+        """Exporte une conversation au format Markdown."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Récupérer les infos de la conversation
+        cursor.execute('''
+            SELECT workflow_filename, workflow_category, workflow_name, created_at, total_tokens
+            FROM conversations
+            WHERE id = ?
+        ''', (conversation_id,))
+        conv = cursor.fetchone()
+
+        if not conv:
+            conn.close()
+            return ""
+
+        # Récupérer les messages
+        cursor.execute('''
+            SELECT role, content, created_at
+            FROM messages
+            WHERE conversation_id = ?
+            ORDER BY created_at ASC
+        ''', (conversation_id,))
+        messages = cursor.fetchall()
+
+        # Récupérer les tags
+        cursor.execute('''
+            SELECT tag FROM conversation_tags
+            WHERE conversation_id = ?
+        ''', (conversation_id,))
+        tags = [row[0] for row in cursor.fetchall()]
+
+        conn.close()
+
+        # Générer le Markdown
+        md_lines = [
+            f"# Conversation - {conv[2] or conv[0]}",
+            "",
+            f"**Workflow:** {conv[0]}",
+            f"**Catégorie:** {conv[1]}",
+            f"**Date:** {conv[3]}",
+            f"**Tokens utilisés:** {conv[4]}",
+        ]
+
+        if tags:
+            md_lines.append(f"**Tags:** {', '.join(tags)}")
+
+        md_lines.extend(["", "---", ""])
+
+        for role, content, created_at in messages:
+            if role == "system":
+                continue
+            elif role == "user":
+                md_lines.append(f"## 👤 Utilisateur")
+                md_lines.append(f"*{created_at}*")
+                md_lines.append("")
+                md_lines.append(content)
+                md_lines.append("")
+            elif role == "assistant":
+                md_lines.append(f"## 🤖 Assistant")
+                md_lines.append(f"*{created_at}*")
+                md_lines.append("")
+                md_lines.append(content)
+                md_lines.append("")
+
+            md_lines.append("---")
+            md_lines.append("")
+
+        md_lines.extend([
+            "",
+            "---",
+            f"*Exporté depuis n8n Workflows Explorer*"
+        ])
+
+        return "\n".join(md_lines)
+
 
 class WorkflowChat:
     """Chat interactif pour discuter d'un workflow avec GPT-4."""
 
-    SYSTEM_PROMPT = """Tu es un expert en automatisation n8n. Tu aides l'utilisateur à comprendre
-et adapter un workflow n8n spécifique.
+    SYSTEM_PROMPT = """Tu es un expert en automatisation n8n avec une expérience approfondie en intégration de systèmes, debugging et optimisation de workflows.
 
-Tu as accès au JSON complet du workflow. Tu peux:
-- Expliquer chaque étape en détail
-- Proposer des adaptations (autres cas d'usage, autres données)
-- Suggérer des améliorations
-- Générer des exemples de données
-- Créer des variantes du workflow
+Tu aides l'utilisateur à comprendre, adapter et améliorer un workflow n8n spécifique.
 
-Contexte du workflow:
+## Tes capacités
+
+### Explication et compréhension
+- Expliquer chaque étape en détail avec le contexte métier
+- Clarifier le rôle de chaque node et ses paramètres
+- Décrire le flux de données entre les nodes
+
+### Adaptation et modification
+- Proposer des adaptations pour d'autres cas d'usage
+- Générer des variantes du workflow
+- Fournir le JSON modifié quand demandé
+
+### Debugging et résolution de problèmes
+- Identifier pourquoi un workflow échoue
+- Diagnostiquer les erreurs courantes (authentification, format de données, timeouts)
+- Proposer des solutions concrètes avec les modifications à apporter
+
+### Performance et optimisation
+- Analyser les goulots d'étranglement potentiels
+- Suggérer des optimisations pour de gros volumes de données
+- Recommander le batch processing quand approprié
+
+### Sécurité et bonnes pratiques
+- Identifier les risques de sécurité (données sensibles, injections)
+- Recommander les bonnes pratiques n8n
+- Conseiller sur la gestion des credentials et secrets
+
+### Test et mise en production
+- Proposer des stratégies de test
+- Suggérer des données de test réalistes
+- Recommander des étapes de validation avant production
+
+## Contexte du workflow
 {workflow_context}
 
-Réponds toujours en français de manière claire et structurée.
-Si on te demande de modifier le workflow, fournis le JSON modifié.
-Si on te demande un exemple, génère des données concrètes."""
+## Instructions
+- Réponds toujours en français de manière claire et structurée
+- Si on te demande de modifier le workflow, fournis le JSON modifié complet ou partiel
+- Si on te demande un exemple, génère des données concrètes et réalistes
+- Pour le debugging, demande des précisions sur l'erreur si nécessaire
+- Utilise des blocs de code pour le JSON et les exemples"""
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialise le chat."""
@@ -385,14 +742,61 @@ JSON complet disponible pour référence.
     def get_suggestions(self) -> List[str]:
         """Retourne des suggestions de questions pour l'utilisateur."""
         return [
+            # Compréhension
             "Peux-tu m'expliquer chaque étape de ce workflow ?",
+            "Quels sont les prérequis pour utiliser ce workflow ?",
+            # Adaptation
             "Comment adapter ce workflow pour un autre cas d'usage ?",
             "Peux-tu me donner un exemple concret de données ?",
+            # Amélioration
             "Quelles améliorations suggères-tu ?",
             "Comment ajouter une gestion d'erreurs plus robuste ?",
-            "Peux-tu générer une variante de ce workflow ?",
-            "Quels sont les prérequis pour utiliser ce workflow ?",
+            # Debugging
+            "Quels sont les points de défaillance possibles ?",
+            "Comment débugger si le workflow échoue ?",
+            # Performance
+            "Comment optimiser ce workflow pour de gros volumes ?",
+            # Sécurité
+            "Y a-t-il des risques de sécurité à surveiller ?",
+            # Test et production
+            "Comment tester ce workflow avant mise en production ?",
+            "Peux-tu générer des données de test réalistes ?",
         ]
+
+    def get_suggestions_by_category(self) -> Dict[str, List[str]]:
+        """Retourne des suggestions organisées par catégorie."""
+        return {
+            "🔍 Compréhension": [
+                "Peux-tu m'expliquer chaque étape de ce workflow ?",
+                "Quels sont les prérequis pour utiliser ce workflow ?",
+                "Quel est le flux de données entre les nodes ?",
+            ],
+            "🔧 Adaptation": [
+                "Comment adapter ce workflow pour un autre cas d'usage ?",
+                "Peux-tu me donner un exemple concret de données ?",
+                "Peux-tu générer une variante de ce workflow ?",
+            ],
+            "⚡ Amélioration": [
+                "Quelles améliorations suggères-tu ?",
+                "Comment ajouter une gestion d'erreurs plus robuste ?",
+                "Comment optimiser ce workflow pour de gros volumes ?",
+            ],
+            "🐛 Debugging": [
+                "Quels sont les points de défaillance possibles ?",
+                "Comment débugger si le workflow échoue ?",
+                "Quelles erreurs courantes dois-je anticiper ?",
+            ],
+            "🔒 Sécurité": [
+                "Y a-t-il des risques de sécurité à surveiller ?",
+                "Comment gérer les credentials de manière sécurisée ?",
+                "Quelles données sensibles sont manipulées ?",
+            ],
+            "🚀 Production": [
+                "Comment tester ce workflow avant mise en production ?",
+                "Peux-tu générer des données de test réalistes ?",
+                "Quelles métriques surveiller en production ?",
+            ],
+        }
 
 
 # Instance globale de la base de données

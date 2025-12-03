@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from workflow_analyzer import WorkflowAnalyzer, generate_simple_mermaid
 from chat_manager import WorkflowChat, conversation_db
+from search_chat import WorkflowSearchEngine, SearchChatBot
 
 # Déterminer le répertoire racine du projet
 APP_DIR = Path(__file__).parent.resolve()
@@ -431,22 +432,48 @@ def render_workflow_details(workflow: dict, category: str):
     json_data = get_workflow_json(category, filename)
 
     if json_data:
+        import base64
+        json_str = json.dumps(json_data, indent=2, ensure_ascii=False)
+        # Encoder en base64 pour éviter les problèmes de caractères spéciaux
+        json_b64 = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+
         col1, col2 = st.columns([1, 1])
 
         with col1:
             # Bouton de téléchargement
-            json_str = json.dumps(json_data, indent=2, ensure_ascii=False)
             st.download_button(
-                label="⬇️ Télécharger le JSON",
+                label="⬇️ Télécharger JSON",
                 data=json_str,
                 file_name=filename,
-                mime="application/json"
+                mime="application/json",
+                use_container_width=True
             )
 
         with col2:
-            # Copier le chemin
-            workflow_path = f"workflows/{category}/{filename}"
-            st.code(workflow_path, language=None)
+            # Bouton copier avec JavaScript (base64 décodé)
+            copy_button_html = f'''
+            <button onclick="
+                const json = atob('{json_b64}');
+                navigator.clipboard.writeText(json).then(() => {{
+                    this.innerHTML = '✅ Copié !';
+                    setTimeout(() => this.innerHTML = '📋 Copier le JSON', 2000);
+                }});
+            " style="
+                background-color: #ff4b4b;
+                color: white;
+                border: none;
+                padding: 0.6rem 1rem;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 1rem;
+                width: 100%;
+            ">📋 Copier le JSON</button>
+            '''
+            st.markdown(copy_button_html, unsafe_allow_html=True)
+
+        # Chemin du fichier
+        workflow_path = f"workflows/{category}/{filename}"
+        st.caption(f"📁 `{workflow_path}`")
 
         # Afficher le JSON dans un expander
         with st.expander("👁️ Voir le contenu JSON", expanded=False):
@@ -456,9 +483,11 @@ def render_workflow_details(workflow: dict, category: str):
         st.markdown("---")
         render_ai_analysis(json_data, filename)
 
-        # Section de chat interactif
-        st.markdown("---")
-        render_chat_section(json_data, filename, category)
+        # Section de chat interactif (visible uniquement après analyse)
+        analysis_key = f"analysis_{filename}"
+        if analysis_key in st.session_state and st.session_state[analysis_key].get("success"):
+            st.markdown("---")
+            render_chat_section(json_data, filename, category)
 
     else:
         st.warning("Impossible de charger le fichier JSON original.")
@@ -718,6 +747,88 @@ def generate_mermaid_live_url(mermaid_code: str) -> str:
         return ""
 
 
+def render_search_chat(catalog: dict, search_engine: WorkflowSearchEngine, search_bot: SearchChatBot):
+    """Affiche le chat de recherche intelligent."""
+    st.subheader("💬 Recherche intelligente")
+    st.caption("Décrivez ce que vous cherchez en langage naturel")
+
+    # Initialiser l'historique du chat de recherche
+    if "search_chat_history" not in st.session_state:
+        st.session_state.search_chat_history = []
+
+    # Suggestions
+    if not st.session_state.search_chat_history:
+        st.markdown("**💡 Exemples de recherches :**")
+        suggestions = search_bot.get_suggestions()
+        cols = st.columns(2)
+        for idx, suggestion in enumerate(suggestions[:6]):
+            col_idx = idx % 2
+            with cols[col_idx]:
+                if st.button(suggestion, key=f"search_suggest_{idx}", use_container_width=True):
+                    st.session_state.search_pending_query = suggestion
+                    st.rerun()
+
+    # Afficher l'historique du chat
+    for msg in st.session_state.search_chat_history:
+        if msg["role"] == "user":
+            st.chat_message("user").write(msg["content"])
+        else:
+            st.chat_message("assistant").write(msg["content"])
+            # Afficher les résultats cliquables
+            if msg.get("results"):
+                with st.expander(f"📋 {len(msg['results'])} workflow(s) trouvé(s) - Cliquez pour voir", expanded=False):
+                    for wf in msg["results"][:10]:
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            st.markdown(f"**{wf['name']}** (`{wf['category']}`)")
+                            st.caption(wf['description'][:100] + "..." if len(wf['description']) > 100 else wf['description'])
+                        with col2:
+                            if st.button("👁️ Voir", key=f"view_search_{wf['category']}_{wf['filename']}", use_container_width=True):
+                                st.session_state.selected_category = wf['category']
+                                st.session_state.selected_workflow = wf
+                                st.session_state.selected_workflow_category = wf['category']
+                                st.rerun()
+
+    # Traiter une requête en attente (depuis suggestion)
+    if st.session_state.get("search_pending_query"):
+        query = st.session_state.search_pending_query
+        st.session_state.search_pending_query = None
+        process_search_query(query, search_bot)
+        st.rerun()
+
+    # Zone de saisie
+    user_input = st.chat_input("Que recherchez-vous ? (ex: workflows Gmail, automatisation Slack...)")
+
+    if user_input:
+        process_search_query(user_input, search_bot)
+        st.rerun()
+
+    # Bouton pour effacer l'historique
+    if st.session_state.search_chat_history:
+        if st.button("🗑️ Nouvelle recherche", use_container_width=True):
+            st.session_state.search_chat_history = []
+            st.rerun()
+
+
+def process_search_query(query: str, search_bot: SearchChatBot):
+    """Traite une requête de recherche."""
+    # Ajouter la question à l'historique
+    st.session_state.search_chat_history.append({
+        "role": "user",
+        "content": query
+    })
+
+    # Effectuer la recherche
+    result = search_bot.chat(query, use_ai=search_bot.is_ai_enabled())
+
+    # Ajouter la réponse à l'historique
+    st.session_state.search_chat_history.append({
+        "role": "assistant",
+        "content": result["response"],
+        "results": result["results"]
+    })
+
+
 def main():
     """Point d'entrée principal de l'application."""
     # Initialiser le state
@@ -727,6 +838,8 @@ def main():
         st.session_state.selected_workflow = None
     if "show_all_categories" not in st.session_state:
         st.session_state.show_all_categories = False
+    if "navigation_mode" not in st.session_state:
+        st.session_state.navigation_mode = "search"  # "search" ou "browse"
 
     # Charger le catalogue
     catalog = load_catalog()
@@ -735,22 +848,41 @@ def main():
         st.error("Impossible de charger le catalogue des workflows.")
         return
 
+    # Initialiser le moteur de recherche
+    search_engine = WorkflowSearchEngine(catalog)
+    search_bot = SearchChatBot(search_engine)
+
     # Afficher l'en-tête
     render_header(catalog)
 
-    # Sélecteur de catégories
-    selected_category = render_category_selector(catalog)
+    # Si un workflow est sélectionné depuis la recherche, l'afficher directement
+    if st.session_state.get("selected_workflow") and st.session_state.get("selected_workflow_category"):
+        render_workflow_details(
+            st.session_state.selected_workflow,
+            st.session_state.selected_workflow_category
+        )
+        return
 
-    # Afficher les workflows si une catégorie est sélectionnée
-    if selected_category:
-        selected_workflow = render_workflow_list(catalog, selected_category)
+    # Onglets de navigation
+    tab_search, tab_browse = st.tabs(["💬 Recherche intelligente", "📁 Parcourir par catégorie"])
 
-        # Afficher les détails si un workflow est sélectionné
-        if st.session_state.get("selected_workflow"):
-            render_workflow_details(
-                st.session_state.selected_workflow,
-                st.session_state.get("selected_workflow_category", selected_category)
-            )
+    with tab_search:
+        render_search_chat(catalog, search_engine, search_bot)
+
+    with tab_browse:
+        # Sélecteur de catégories
+        selected_category = render_category_selector(catalog)
+
+        # Afficher les workflows si une catégorie est sélectionnée
+        if selected_category:
+            selected_workflow = render_workflow_list(catalog, selected_category)
+
+            # Afficher les détails si un workflow est sélectionné
+            if st.session_state.get("selected_workflow"):
+                render_workflow_details(
+                    st.session_state.selected_workflow,
+                    st.session_state.get("selected_workflow_category", selected_category)
+                )
 
 
 if __name__ == "__main__":

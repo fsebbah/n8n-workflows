@@ -7,12 +7,14 @@ Ce document décrit les différents prompts utilisés pour l'analyse IA et le ch
 ## 1. Prompt d'Analyse (workflow_analyzer.py)
 
 ### Objectif
-Analyser un workflow n8n pour produire :
-- Un résumé concis
-- Une description détaillée
-- Les étapes du flux
-- Les cas d'usage
-- Un diagramme Mermaid
+Analyser un workflow n8n pour produire une analyse complète incluant :
+- Résumé et description détaillée
+- Niveau de complexité (Débutant/Intermédiaire/Avancé)
+- Étapes du flux et cas d'usage
+- Prérequis techniques (credentials, accès, variables)
+- Points de défaillance potentiels
+- Recommandations de sécurité
+- Diagramme Mermaid
 
 ### Prompt Système
 
@@ -20,19 +22,38 @@ Analyser un workflow n8n pour produire :
 Tu es un expert en automatisation n8n. Tu analyses des workflows n8n au format JSON.
 
 Pour chaque workflow, tu dois fournir:
+
+## Analyse principale
 1. **Résumé** : Une phrase décrivant le but du workflow
 2. **Description détaillée** : Explication complète de ce que fait le workflow
-3. **Étapes du flux** : Liste numérotée des étapes principales
-4. **Cas d'usage** : Dans quel contexte utiliser ce workflow
-5. **Services utilisés** : Liste des intégrations externes
-6. **Diagramme Mermaid** : Un diagramme flowchart représentant le workflow
+3. **Niveau de complexité** : Débutant / Intermédiaire / Avancé (avec justification)
+4. **Étapes du flux** : Liste numérotée des étapes principales
+5. **Cas d'usage** : Dans quel contexte utiliser ce workflow
+
+## Aspects techniques
+6. **Services et intégrations** : Liste des services externes avec leur rôle
+7. **Prérequis techniques** :
+   - Credentials nécessaires (API keys, OAuth, etc.)
+   - Accès requis (permissions, scopes)
+   - Variables d'environnement à configurer
+8. **Points de défaillance potentiels** :
+   - Où le workflow peut échouer
+   - Erreurs courantes à anticiper
+   - Rate limits ou quotas à surveiller
+9. **Recommandations de sécurité** :
+   - Données sensibles manipulées
+   - Bonnes pratiques à appliquer
+
+## Visualisation
+10. **Diagramme Mermaid** : Un diagramme flowchart représentant le workflow
 
 Pour le diagramme Mermaid:
 - Utilise la syntaxe `flowchart TD` (top-down)
 - Chaque node doit avoir un ID court et un label descriptif
-- Utilise des formes appropriées: [] pour les actions, {} pour les conditions, () pour les triggers
+- Utilise des formes appropriées: [] pour les actions, {} pour les conditions, (()) pour les triggers
 - Relie les nodes avec des flèches -->
 - Pour les branches conditionnelles, utilise -->|Oui| et -->|Non|
+- Ajoute des couleurs pour les points critiques: style NodeID fill:#f96 pour les erreurs potentielles
 
 Exemple de diagramme Mermaid:
 ```mermaid
@@ -43,28 +64,40 @@ flowchart TD
     C -->|Non| E[Action 2]
     D --> F[Fin]
     E --> F
+    style C fill:#ffd700
 ```
 
-Analyse le workflow de manière professionnelle et concise.
+Analyse le workflow de manière professionnelle, complète et structurée.
 ```
 
 ### Prompt Utilisateur (template)
 
 ```
-Analyse ce workflow n8n et fournis:
-1. Un résumé en une phrase
-2. Une description détaillée
-3. Les étapes du flux (liste numérotée)
-4. Les cas d'usage
-5. Les services/intégrations utilisés
-6. Un diagramme Mermaid représentant le flux
+Analyse ce workflow n8n et fournis une analyse complète:
+
+## Analyse principale
+1. Résumé en une phrase
+2. Description détaillée
+3. Niveau de complexité (Débutant/Intermédiaire/Avancé) avec justification
+4. Étapes du flux (liste numérotée)
+5. Cas d'usage
+
+## Aspects techniques
+6. Services et intégrations (avec leur rôle)
+7. Prérequis techniques (credentials, accès, variables d'environnement)
+8. Points de défaillance potentiels (erreurs, rate limits, quotas)
+9. Recommandations de sécurité
+
+## Visualisation
+10. Diagramme Mermaid représentant le flux
 
 Workflow JSON:
 ```json
 {json_content}
 ```
 
-Réponds en français. Pour le diagramme Mermaid, assure-toi qu'il soit valide et lisible.
+Réponds en français. Structure ta réponse avec les titres markdown.
+Pour le diagramme Mermaid, assure-toi qu'il soit valide et lisible.
 ```
 
 ### Paramètres API
@@ -73,7 +106,7 @@ Réponds en français. Pour le diagramme Mermaid, assure-toi qu'il soit valide e
 |-----------|--------|-------------|
 | `model` | gpt-4o-mini | Modèle par défaut (rapide et économique) |
 | `temperature` | 0.3 | Basse température pour des réponses cohérentes |
-| `max_tokens` | 2000 | Limite de tokens pour la réponse |
+| `max_tokens` | 3000 | Limite augmentée pour l'analyse complète |
 
 ### Données envoyées
 
@@ -87,31 +120,61 @@ Le JSON du workflow est **simplifié** avant envoi pour réduire les tokens :
 ## 2. Prompt de Chat (chat_manager.py)
 
 ### Objectif
-Permettre une conversation interactive pour :
-- Poser des questions sur le workflow
-- Demander des adaptations
-- Obtenir des exemples concrets
-- Suggérer des améliorations
+Permettre une conversation interactive avancée pour :
+- Comprendre le workflow en profondeur
+- Debugging et résolution de problèmes
+- Optimisation et performance
+- Sécurité et bonnes pratiques
+- Test et mise en production
 
 ### Prompt Système
 
 ```
-Tu es un expert en automatisation n8n. Tu aides l'utilisateur à comprendre
-et adapter un workflow n8n spécifique.
+Tu es un expert en automatisation n8n avec une expérience approfondie en intégration de systèmes, debugging et optimisation de workflows.
 
-Tu as accès au JSON complet du workflow. Tu peux:
-- Expliquer chaque étape en détail
-- Proposer des adaptations (autres cas d'usage, autres données)
-- Suggérer des améliorations
-- Générer des exemples de données
-- Créer des variantes du workflow
+Tu aides l'utilisateur à comprendre, adapter et améliorer un workflow n8n spécifique.
 
-Contexte du workflow:
+## Tes capacités
+
+### Explication et compréhension
+- Expliquer chaque étape en détail avec le contexte métier
+- Clarifier le rôle de chaque node et ses paramètres
+- Décrire le flux de données entre les nodes
+
+### Adaptation et modification
+- Proposer des adaptations pour d'autres cas d'usage
+- Générer des variantes du workflow
+- Fournir le JSON modifié quand demandé
+
+### Debugging et résolution de problèmes
+- Identifier pourquoi un workflow échoue
+- Diagnostiquer les erreurs courantes (authentification, format de données, timeouts)
+- Proposer des solutions concrètes avec les modifications à apporter
+
+### Performance et optimisation
+- Analyser les goulots d'étranglement potentiels
+- Suggérer des optimisations pour de gros volumes de données
+- Recommander le batch processing quand approprié
+
+### Sécurité et bonnes pratiques
+- Identifier les risques de sécurité (données sensibles, injections)
+- Recommander les bonnes pratiques n8n
+- Conseiller sur la gestion des credentials et secrets
+
+### Test et mise en production
+- Proposer des stratégies de test
+- Suggérer des données de test réalistes
+- Recommander des étapes de validation avant production
+
+## Contexte du workflow
 {workflow_context}
 
-Réponds toujours en français de manière claire et structurée.
-Si on te demande de modifier le workflow, fournis le JSON modifié.
-Si on te demande un exemple, génère des données concrètes.
+## Instructions
+- Réponds toujours en français de manière claire et structurée
+- Si on te demande de modifier le workflow, fournis le JSON modifié complet ou partiel
+- Si on te demande un exemple, génère des données concrètes et réalistes
+- Pour le debugging, demande des précisions sur l'erreur si nécessaire
+- Utilise des blocs de code pour le JSON et les exemples
 ```
 
 ### Contexte du Workflow (généré dynamiquement)
@@ -140,21 +203,44 @@ JSON complet disponible pour référence.
 
 - Les messages sont stockés en mémoire ET en base SQLite
 - L'historique complet est envoyé à chaque requête
+- Les tokens sont comptabilisés par message
 - Format : `[{"role": "system/user/assistant", "content": "..."}]`
 
 ---
 
 ## 3. Suggestions de Questions
 
-Questions prédéfinies pour aider l'utilisateur :
+### Questions organisées par catégorie
 
-1. "Peux-tu m'expliquer chaque étape de ce workflow ?"
-2. "Comment adapter ce workflow pour un autre cas d'usage ?"
-3. "Peux-tu me donner un exemple concret de données ?"
-4. "Quelles améliorations suggères-tu ?"
-5. "Comment ajouter une gestion d'erreurs plus robuste ?"
-6. "Peux-tu générer une variante de ce workflow ?"
-7. "Quels sont les prérequis pour utiliser ce workflow ?"
+#### 🔍 Compréhension
+- "Peux-tu m'expliquer chaque étape de ce workflow ?"
+- "Quels sont les prérequis pour utiliser ce workflow ?"
+- "Quel est le flux de données entre les nodes ?"
+
+#### 🔧 Adaptation
+- "Comment adapter ce workflow pour un autre cas d'usage ?"
+- "Peux-tu me donner un exemple concret de données ?"
+- "Peux-tu générer une variante de ce workflow ?"
+
+#### ⚡ Amélioration
+- "Quelles améliorations suggères-tu ?"
+- "Comment ajouter une gestion d'erreurs plus robuste ?"
+- "Comment optimiser ce workflow pour de gros volumes ?"
+
+#### 🐛 Debugging
+- "Quels sont les points de défaillance possibles ?"
+- "Comment débugger si le workflow échoue ?"
+- "Quelles erreurs courantes dois-je anticiper ?"
+
+#### 🔒 Sécurité
+- "Y a-t-il des risques de sécurité à surveiller ?"
+- "Comment gérer les credentials de manière sécurisée ?"
+- "Quelles données sensibles sont manipulées ?"
+
+#### 🚀 Production
+- "Comment tester ce workflow avant mise en production ?"
+- "Peux-tu générer des données de test réalistes ?"
+- "Quelles métriques surveiller en production ?"
 
 ---
 
@@ -169,6 +255,9 @@ Questions prédéfinies pour aider l'utilisateur :
 ## Résumé
 Ce workflow synchronise des contacts depuis Microsoft Excel vers Salesforce.
 
+## Niveau de complexité
+**Intermédiaire** - Nécessite la configuration de deux services externes et la compréhension des mappings de données.
+
 ## Description détaillée
 Le workflow se déclenche manuellement et lit une plage de données Excel...
 
@@ -178,41 +267,58 @@ Le workflow se déclenche manuellement et lit une plage de données Excel...
 3. Recherche des comptes Salesforce existants
 ...
 
+## Prérequis techniques
+- **Credentials** : OAuth Salesforce, Compte Microsoft 365
+- **Accès** : Lecture Excel, Écriture Salesforce
+- **Variables** : Aucune
+
+## Points de défaillance
+- Rate limiting Salesforce (10,000 appels/jour)
+- Timeout si fichier Excel volumineux
+- Erreur si colonnes manquantes
+
 ## Diagramme Mermaid
 ```mermaid
 flowchart TD
     A((Manual Trigger)) --> B[Read Excel]
     B --> C[Search Salesforce]
-    ...
+    C --> D{Contact existe?}
+    D -->|Oui| E[Update Contact]
+    D -->|Non| F[Create Contact]
+    style D fill:#ffd700
 ```
 ```
 
-### Chat interactif
+### Chat interactif - Debugging
 
-**Question** : "Peut-on adapter ce workflow pour générer des produits au lieu d'utilisateurs ?"
+**Question** : "Mon workflow échoue à l'étape Salesforce, que faire ?"
 
 **Réponse attendue** :
 ```
-Oui, voici comment adapter le workflow pour des produits :
+Pour diagnostiquer l'erreur Salesforce, vérifions plusieurs points :
 
-1. **Modifier le node de génération** : Changer les champs de "id, name" vers "product_id, product_name, price, category"
+## 1. Vérifier le message d'erreur
+Quel est le message exact ? Les erreurs courantes sont :
+- `INVALID_SESSION_ID` : Token expiré, re-authentifiez
+- `INSUFFICIENT_ACCESS` : Permissions manquantes
+- `FIELD_INTEGRITY_EXCEPTION` : Données invalides
 
-2. **Exemple de données générées** :
-```json
-[
-  {"product_id": "P001", "product_name": "Laptop Pro", "price": 1299, "category": "Electronics"},
-  {"product_id": "P002", "product_name": "Wireless Mouse", "price": 49, "category": "Accessories"}
-]
-```
+## 2. Points à vérifier
+- Les credentials sont-ils à jour ?
+- Les champs requis sont-ils tous renseignés ?
+- Le format des données correspond-il au schéma Salesforce ?
 
-3. **Workflow modifié** :
+## 3. Solution recommandée
+Ajoutez un node "Error Trigger" pour capturer les erreurs :
 ```json
 {
-  "nodes": [
-    ...
-  ]
+  "name": "Error Handler",
+  "type": "n8n-nodes-base.errorTrigger",
+  "position": [800, 300]
 }
 ```
+
+Pouvez-vous me donner le message d'erreur exact ?
 ```
 
 ---
@@ -221,48 +327,81 @@ Oui, voici comment adapter le workflow pour des produits :
 
 | Action | Modèle | Tokens (approx.) | Coût |
 |--------|--------|------------------|------|
-| Analyse simple | gpt-4o-mini | 500-1000 | ~$0.001 |
-| Analyse complète | gpt-4o | 1000-2000 | ~$0.02 |
+| Analyse complète | gpt-4o-mini | 1000-1500 | ~$0.002 |
+| Analyse complète | gpt-4o | 1500-2500 | ~$0.04 |
 | Question chat | gpt-4o-mini | 300-800 | ~$0.0008 |
 | Conversation (5 messages) | gpt-4o-mini | 2000-4000 | ~$0.004 |
+| Conversation (10 messages) | gpt-4o-mini | 4000-8000 | ~$0.008 |
+
+### Estimation mensuelle
+
+| Usage | Coût estimé |
+|-------|-------------|
+| 50 analyses + 200 messages | ~$0.30 |
+| 100 analyses + 500 messages | ~$0.60 |
+| 200 analyses + 1000 messages | ~$1.20 |
 
 ---
 
 ## 6. Base de Données des Conversations
 
-### Tables
+### Schéma complet
 
 ```sql
--- Conversations
+-- Table des conversations
 CREATE TABLE conversations (
-    id INTEGER PRIMARY KEY,
-    workflow_filename TEXT,
-    workflow_category TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workflow_filename TEXT NOT NULL,
+    workflow_category TEXT NOT NULL,
     workflow_name TEXT,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP
+    is_favorite BOOLEAN DEFAULT 0,
+    total_tokens INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Messages
+-- Table des messages
 CREATE TABLE messages (
-    id INTEGER PRIMARY KEY,
-    conversation_id INTEGER,
-    role TEXT,  -- 'user', 'assistant', 'system'
-    content TEXT,
-    created_at TIMESTAMP
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL,
+    role TEXT NOT NULL,  -- 'user', 'assistant', 'system'
+    content TEXT NOT NULL,
+    tokens_used INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
 
--- Analyses sauvegardées
+-- Table des analyses sauvegardées
 CREATE TABLE analyses (
-    id INTEGER PRIMARY KEY,
-    workflow_filename TEXT,
-    workflow_category TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workflow_filename TEXT NOT NULL,
+    workflow_category TEXT NOT NULL,
     analysis_text TEXT,
     mermaid_diagram TEXT,
     model_used TEXT,
     tokens_used INTEGER,
-    created_at TIMESTAMP
+    is_favorite BOOLEAN DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Table des tags pour catégoriser les conversations
+CREATE TABLE conversation_tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL,
+    tag TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id),
+    UNIQUE(conversation_id, tag)
+);
+
+-- Index pour recherche rapide
+CREATE INDEX idx_conversations_workflow ON conversations(workflow_filename, workflow_category);
+CREATE INDEX idx_conversations_favorite ON conversations(is_favorite);
+CREATE INDEX idx_messages_conversation ON messages(conversation_id);
+CREATE INDEX idx_analyses_workflow ON analyses(workflow_filename, workflow_category);
+CREATE INDEX idx_analyses_favorite ON analyses(is_favorite);
+CREATE INDEX idx_tags_conversation ON conversation_tags(conversation_id);
+CREATE INDEX idx_tags_tag ON conversation_tags(tag);
 ```
 
 ### Fonctionnalités
@@ -270,4 +409,42 @@ CREATE TABLE analyses (
 - **Historique par workflow** : Retrouver toutes les conversations sur un workflow
 - **Reprise de conversation** : Charger une conversation précédente
 - **Sauvegarde d'analyses** : Garder les analyses importantes
-- **Statistiques** : Nombre de messages, tokens utilisés
+- **Favoris** : Marquer conversations et analyses comme favorites
+- **Tags** : Catégoriser les conversations avec des tags personnalisés
+- **Statistiques tokens** : Suivi de la consommation de tokens
+- **Export Markdown** : Exporter une conversation complète
+
+### Méthodes disponibles
+
+```python
+# Gestion des favoris
+toggle_conversation_favorite(conversation_id) -> bool
+toggle_analysis_favorite(analysis_id) -> bool
+get_favorite_conversations() -> List[Dict]
+
+# Gestion des tags
+add_conversation_tag(conversation_id, tag)
+remove_conversation_tag(conversation_id, tag)
+get_conversation_tags(conversation_id) -> List[str]
+get_all_tags() -> List[Dict]
+search_conversations_by_tag(tag) -> List[Dict]
+
+# Statistiques
+get_token_stats() -> Dict
+
+# Export
+export_conversation_markdown(conversation_id) -> str
+```
+
+---
+
+## 7. Évolutions futures
+
+### Fonctionnalités planifiées
+
+- [ ] Recherche full-text dans les conversations
+- [ ] Comparaison de workflows côte à côte
+- [ ] Génération automatique de documentation
+- [ ] Historique des versions de workflow
+- [ ] Intégration avec n8n API pour import direct
+- [ ] Support multi-langue (EN, ES, DE)
