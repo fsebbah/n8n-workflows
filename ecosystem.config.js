@@ -7,6 +7,9 @@ module.exports = {
 
       // Environnement
       env: {
+        // Logging
+        N8N_LOG_LEVEL: 'debug',
+
         // Accès réseau
         N8N_HOST: '0.0.0.0',
         N8N_PORT: 5678,
