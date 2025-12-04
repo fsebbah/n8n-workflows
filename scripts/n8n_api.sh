@@ -42,8 +42,14 @@ n8n_api() {
 # Actions
 case "$1" in
     list)
-        # List all workflows
-        n8n_api GET "/workflows" | python3 -c "
+        # List workflows (optional name filter)
+        if [ -n "$2" ]; then
+            # Filter by name
+            ENCODED_NAME=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$2'))")
+            n8n_api GET "/workflows?name=${ENCODED_NAME}&limit=100"
+        else
+            n8n_api GET "/workflows?limit=500"
+        fi | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 for w in data.get('data', []):
@@ -141,7 +147,7 @@ else:
             echo "Usage: $0 search <name_pattern>"
             exit 1
         fi
-        n8n_api GET "/workflows" | python3 -c "
+        n8n_api GET "/workflows?limit=250" | python3 -c "
 import sys, json, re
 pattern = '${2}'.lower()
 data = json.load(sys.stdin)
