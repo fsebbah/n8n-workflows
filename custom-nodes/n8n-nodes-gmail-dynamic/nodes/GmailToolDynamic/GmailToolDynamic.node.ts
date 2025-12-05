@@ -103,13 +103,13 @@ export class GmailToolDynamic implements INodeType {
           show: { resource: ['label'] },
         },
         options: [
-          { name: 'List', value: 'list', description: 'List all labels' },
+          { name: 'Get All', value: 'getAll', description: 'List all labels' },
           { name: 'Get', value: 'get', description: 'Get a label by ID' },
           { name: 'Create', value: 'create', description: 'Create a label' },
           { name: 'Delete', value: 'delete', description: 'Delete a label' },
           { name: 'Update', value: 'update', description: 'Update a label' },
         ],
-        default: 'list',
+        default: 'getAll',
       },
       // === OPERATIONS: THREAD ===
       {
@@ -184,36 +184,36 @@ export class GmailToolDynamic implements INodeType {
         displayName: 'To',
         name: 'to',
         type: 'string',
-        required: true,
+        required: false,
         displayOptions: {
           show: { resource: ['message', 'draft'], operation: ['send', 'reply', 'create'] },
         },
         default: '',
         placeholder: 'recipient@example.com',
-        description: 'Recipient email address',
+        description: 'Recipient email address (can also be passed via webhook body as "to")',
       },
       {
         displayName: 'Subject',
         name: 'subject',
         type: 'string',
-        required: true,
+        required: false,
         displayOptions: {
           show: { resource: ['message', 'draft'], operation: ['send', 'create'] },
         },
         default: '',
-        description: 'Email subject line',
+        description: 'Email subject line (can also be passed via webhook body as "subject")',
       },
       {
         displayName: 'Body',
         name: 'body',
         type: 'string',
         typeOptions: { rows: 5 },
-        required: true,
+        required: false,
         displayOptions: {
           show: { resource: ['message', 'draft'], operation: ['send', 'reply', 'create'] },
         },
         default: '',
-        description: 'Email body content',
+        description: 'Email body content (can also be passed via webhook body as "body" or "message")',
       },
       {
         displayName: 'CC',
@@ -258,35 +258,35 @@ export class GmailToolDynamic implements INodeType {
         displayName: 'Label Name',
         name: 'labelName',
         type: 'string',
-        required: true,
+        required: false,
         displayOptions: {
           show: { resource: ['label'], operation: ['create', 'update'] },
         },
         default: '',
-        description: 'Name of the label',
+        description: 'Name of the label (can also be passed via webhook body as "label_name")',
       },
       {
         displayName: 'Label ID',
         name: 'labelId',
         type: 'string',
-        required: true,
+        required: false,
         displayOptions: {
           show: { resource: ['label'], operation: ['get', 'delete', 'update'] },
         },
         default: '',
-        description: 'The ID of the label',
+        description: 'The ID of the label (can also be passed via webhook body as "label_id")',
       },
       // === PARAMETERS: DRAFT ===
       {
         displayName: 'Draft ID',
         name: 'draftId',
         type: 'string',
-        required: true,
+        required: false,
         displayOptions: {
           show: { resource: ['draft'], operation: ['get', 'delete', 'send'] },
         },
         default: '',
-        description: 'The ID of the draft',
+        description: 'The ID of the draft (can also be passed via webhook body as "draft_id")',
       },
       // === PARAMETERS: THREAD ===
       {
@@ -581,6 +581,7 @@ async function executeDraftOperation(
       return gmailRequest.call(this, accessToken, 'GET', `/drafts/${draftId}`);
     }
 
+    case 'getAll':
     case 'getMany': {
       const maxResults = this.getNodeParameter('maxResults', itemIndex, 10) as number;
       return gmailRequest.call(this, accessToken, 'GET', '/drafts', undefined, { maxResults });
@@ -610,6 +611,7 @@ async function executeLabelOperation(
   itemIndex: number,
 ): Promise<unknown> {
   switch (operation) {
+    case 'getAll':
     case 'list': {
       return gmailRequest.call(this, accessToken, 'GET', '/labels');
     }
@@ -661,6 +663,7 @@ async function executeThreadOperation(
       return gmailRequest.call(this, accessToken, 'GET', `/threads/${threadId}`);
     }
 
+    case 'getAll':
     case 'getMany': {
       const maxResults = this.getNodeParameter('maxResults', itemIndex, 10) as number;
       return gmailRequest.call(this, accessToken, 'GET', '/threads', undefined, { maxResults });
