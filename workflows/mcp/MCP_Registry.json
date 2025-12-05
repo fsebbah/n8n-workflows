@@ -1,0 +1,119 @@
+{
+  "name": "MCP - Registry",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "mcp-registry",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-registry",
+      "name": "Webhook Registry",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        304,
+        304
+      ],
+      "webhookId": "mcp-registry",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "url": "http://pi6.local:5678/api/v1/workflows?active=true&limit=250",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-get-workflows",
+      "name": "Get Active Workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        512,
+        304
+      ],
+      "typeVersion": 4.2,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "aHxvULwe4es6Gnmh",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build registry from active workflows\nconst workflows = $input.first().json.data || [];\n\n// Filter active workflows starting with 'MCP -' (excluding this registry)\nconst mcpWorkflows = workflows.filter(w => \n  w.active && \n  w.name.startsWith('MCP -') && \n  w.name !== 'MCP - Registry'\n);\n\n// Extract webhook info from each workflow\nconst services = {};\n\nfor (const workflow of mcpWorkflows) {\n  // Find webhook node\n  const webhookNode = workflow.nodes?.find(n => \n    n.type === 'n8n-nodes-base.webhook'\n  );\n  \n  if (webhookNode) {\n    const webhookPath = webhookNode.parameters?.path || webhookNode.webhookId;\n    const serviceName = workflow.name.replace('MCP - ', '').toLowerCase().replace(/[^a-z0-9]/g, '-');\n    \n    // Extract operations from node names or parameters\n    const operationNodes = workflow.nodes?.filter(n => \n      n.type !== 'n8n-nodes-base.webhook' && \n      n.type !== 'n8n-nodes-base.respondToWebhook' &&\n      n.type !== 'n8n-nodes-base.switch' &&\n      n.type !== 'n8n-nodes-base.stickyNote'\n    ) || [];\n    \n    // Group operations by resource\n    const operations = {};\n    for (const node of operationNodes) {\n      const resource = node.parameters?.resource || 'default';\n      const operation = node.parameters?.operation || node.name;\n      if (!operations[resource]) {\n        operations[resource] = [];\n      }\n      if (!operations[resource].includes(operation)) {\n        operations[resource].push(operation);\n      }\n    }\n    \n    services[serviceName] = {\n      name: workflow.name,\n      workflow_id: workflow.id,\n      webhook_url: `http://pi6.local:5678/webhook/${webhookPath}`,\n      active: workflow.active,\n      operations: operations\n    };\n  }\n}\n\nconst registry = {\n  version: \"1.0\",\n  updated_at: new Date().toISOString(),\n  n8n: {\n    host: \"pi6.local\",\n    port: 5678,\n    protocol: \"http\"\n  },\n  total_services: Object.keys(services).length,\n  services: services\n};\n\nreturn { json: registry };"
+      },
+      "id": "code-registry",
+      "name": "Build Registry",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        704,
+        304
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-registry",
+      "name": "Respond Registry",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        912,
+        304
+      ],
+      "typeVersion": 1.1
+    }
+  ],
+  "connections": {
+    "Webhook Registry": {
+      "main": [
+        [
+          {
+            "node": "Get Active Workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Workflows": {
+      "main": [
+        [
+          {
+            "node": "Build Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Registry": {
+      "main": [
+        [
+          {
+            "node": "Respond Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
