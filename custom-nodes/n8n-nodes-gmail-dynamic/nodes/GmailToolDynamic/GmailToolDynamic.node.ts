@@ -581,6 +581,7 @@ async function executeDraftOperation(
       return gmailRequest.call(this, accessToken, 'GET', `/drafts/${draftId}`);
     }
 
+    case 'getAll':
     case 'getMany': {
       const maxResults = this.getNodeParameter('maxResults', itemIndex, 10) as number;
       return gmailRequest.call(this, accessToken, 'GET', '/drafts', undefined, { maxResults });
@@ -662,6 +663,7 @@ async function executeThreadOperation(
       return gmailRequest.call(this, accessToken, 'GET', `/threads/${threadId}`);
     }
 
+    case 'getAll':
     case 'getMany': {
       const maxResults = this.getNodeParameter('maxResults', itemIndex, 10) as number;
       return gmailRequest.call(this, accessToken, 'GET', '/threads', undefined, { maxResults });
