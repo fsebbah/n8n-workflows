@@ -237,6 +237,16 @@ export class GmailToolDynamic implements INodeType {
         placeholder: 'bcc@example.com',
         description: 'BCC recipients (comma separated)',
       },
+      {
+        displayName: 'Attachments',
+        name: 'attachments',
+        type: 'json',
+        displayOptions: {
+          show: { resource: ['message', 'draft'], operation: ['send', 'create'] },
+        },
+        default: '[]',
+        description: 'Array of attachments: [{"filename": "file.pdf", "content": "base64...", "mimeType": "application/pdf"}]',
+      },
       // === PARAMETERS: LABEL OPERATIONS ===
       {
         displayName: 'Label IDs',
@@ -441,24 +451,90 @@ async function executeMessageOperation(
       const body = this.getNodeParameter('body', itemIndex) as string;
       const cc = this.getNodeParameter('cc', itemIndex, '') as string;
       const bcc = this.getNodeParameter('bcc', itemIndex, '') as string;
+      const attachmentsParam = this.getNodeParameter('attachments', itemIndex, '[]');
 
-      const emailLines = [
-        `To: ${to}`,
-      ];
-      if (cc) emailLines.push(`Cc: ${cc}`);
-      if (bcc) emailLines.push(`Bcc: ${bcc}`);
-      emailLines.push(
-        `Subject: ${subject}`,
-        'Content-Type: text/plain; charset=utf-8',
-        '',
-        body,
-      );
+      // Parse attachments - can be string JSON or already parsed array
+      let attachments: Array<{filename: string; content: string; mimeType: string}> = [];
+      if (typeof attachmentsParam === 'string') {
+        try {
+          attachments = JSON.parse(attachmentsParam);
+        } catch (e) {
+          attachments = [];
+        }
+      } else if (Array.isArray(attachmentsParam)) {
+        attachments = attachmentsParam as Array<{filename: string; content: string; mimeType: string}>;
+      }
 
-      const encodedEmail = Buffer.from(emailLines.join('\r\n'))
-        .toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
+      let encodedEmail: string;
+
+      if (!attachments || attachments.length === 0) {
+        // Simple email without attachments
+        const emailLines = [`To: ${to}`];
+        if (cc) emailLines.push(`Cc: ${cc}`);
+        if (bcc) emailLines.push(`Bcc: ${bcc}`);
+        emailLines.push(
+          `Subject: ${subject}`,
+          'Content-Type: text/plain; charset=utf-8',
+          '',
+          body,
+        );
+        encodedEmail = Buffer.from(emailLines.join('\r\n'))
+          .toString('base64')
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+      } else {
+        // MIME multipart email with attachments
+        const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        const headers = [`To: ${to}`];
+        if (cc) headers.push(`Cc: ${cc}`);
+        if (bcc) headers.push(`Bcc: ${bcc}`);
+        headers.push(
+          `Subject: ${subject}`,
+          'MIME-Version: 1.0',
+          `Content-Type: multipart/mixed; boundary="${boundary}"`,
+          '',
+        );
+
+        // Body part
+        const bodyPart = [
+          `--${boundary}`,
+          'Content-Type: text/plain; charset=utf-8',
+          'Content-Transfer-Encoding: 7bit',
+          '',
+          body,
+        ];
+
+        // Attachment parts
+        const attachmentParts: string[] = [];
+        for (const attachment of attachments) {
+          attachmentParts.push(
+            `--${boundary}`,
+            `Content-Type: ${attachment.mimeType}; name="${attachment.filename}"`,
+            'Content-Transfer-Encoding: base64',
+            `Content-Disposition: attachment; filename="${attachment.filename}"`,
+            '',
+            attachment.content,
+          );
+        }
+
+        // Closing boundary
+        const closing = `--${boundary}--`;
+
+        const fullEmail = [
+          ...headers,
+          ...bodyPart,
+          ...attachmentParts,
+          closing,
+        ].join('\r\n');
+
+        encodedEmail = Buffer.from(fullEmail)
+          .toString('base64')
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+      }
 
       return gmailRequest.call(this, accessToken, 'POST', '/messages/send', { raw: encodedEmail });
     }
@@ -554,22 +630,90 @@ async function executeDraftOperation(
       const body = this.getNodeParameter('body', itemIndex) as string;
       const cc = this.getNodeParameter('cc', itemIndex, '') as string;
       const bcc = this.getNodeParameter('bcc', itemIndex, '') as string;
+      const attachmentsParam = this.getNodeParameter('attachments', itemIndex, '[]');
 
-      const emailLines = [`To: ${to}`];
-      if (cc) emailLines.push(`Cc: ${cc}`);
-      if (bcc) emailLines.push(`Bcc: ${bcc}`);
-      emailLines.push(
-        `Subject: ${subject}`,
-        'Content-Type: text/plain; charset=utf-8',
-        '',
-        body,
-      );
+      // Parse attachments - can be string JSON or already parsed array
+      let attachments: Array<{filename: string; content: string; mimeType: string}> = [];
+      if (typeof attachmentsParam === 'string') {
+        try {
+          attachments = JSON.parse(attachmentsParam);
+        } catch (e) {
+          attachments = [];
+        }
+      } else if (Array.isArray(attachmentsParam)) {
+        attachments = attachmentsParam as Array<{filename: string; content: string; mimeType: string}>;
+      }
 
-      const encodedEmail = Buffer.from(emailLines.join('\r\n'))
-        .toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
+      let encodedEmail: string;
+
+      if (!attachments || attachments.length === 0) {
+        // Simple email without attachments
+        const emailLines = [`To: ${to}`];
+        if (cc) emailLines.push(`Cc: ${cc}`);
+        if (bcc) emailLines.push(`Bcc: ${bcc}`);
+        emailLines.push(
+          `Subject: ${subject}`,
+          'Content-Type: text/plain; charset=utf-8',
+          '',
+          body,
+        );
+        encodedEmail = Buffer.from(emailLines.join('\r\n'))
+          .toString('base64')
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+      } else {
+        // MIME multipart email with attachments
+        const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        const headers = [`To: ${to}`];
+        if (cc) headers.push(`Cc: ${cc}`);
+        if (bcc) headers.push(`Bcc: ${bcc}`);
+        headers.push(
+          `Subject: ${subject}`,
+          'MIME-Version: 1.0',
+          `Content-Type: multipart/mixed; boundary="${boundary}"`,
+          '',
+        );
+
+        // Body part
+        const bodyPart = [
+          `--${boundary}`,
+          'Content-Type: text/plain; charset=utf-8',
+          'Content-Transfer-Encoding: 7bit',
+          '',
+          body,
+        ];
+
+        // Attachment parts
+        const attachmentParts: string[] = [];
+        for (const attachment of attachments) {
+          attachmentParts.push(
+            `--${boundary}`,
+            `Content-Type: ${attachment.mimeType}; name="${attachment.filename}"`,
+            'Content-Transfer-Encoding: base64',
+            `Content-Disposition: attachment; filename="${attachment.filename}"`,
+            '',
+            attachment.content,
+          );
+        }
+
+        // Closing boundary
+        const closing = `--${boundary}--`;
+
+        const fullEmail = [
+          ...headers,
+          ...bodyPart,
+          ...attachmentParts,
+          closing,
+        ].join('\r\n');
+
+        encodedEmail = Buffer.from(fullEmail)
+          .toString('base64')
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+      }
 
       return gmailRequest.call(this, accessToken, 'POST', '/drafts', {
         message: { raw: encodedEmail },
