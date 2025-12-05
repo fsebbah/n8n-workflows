@@ -162,17 +162,67 @@ if found == 0:
 "
         ;;
 
+    update)
+        # Update existing workflow from JSON file
+        # Usage: update <workflow_id> <json_file>
+        if [ -z "$2" ] || [ -z "$3" ]; then
+            echo "Usage: $0 update <workflow_id> <json_file>"
+            exit 1
+        fi
+        WORKFLOW_ID="$2"
+        JSON_FILE="$3"
+
+        if [ ! -f "$JSON_FILE" ]; then
+            echo "Error: File not found: $JSON_FILE"
+            exit 1
+        fi
+
+        echo "📋 Updating workflow $WORKFLOW_ID..."
+
+        # Step 1: Deactivate if active
+        echo "1️⃣ Deactivating workflow..."
+        n8n_api POST "/workflows/$WORKFLOW_ID/deactivate" > /dev/null 2>&1
+
+        # Step 2: Update with PUT
+        echo "2️⃣ Updating workflow content..."
+        result=$(curl -s -X PUT "${N8N_API_URL}/workflows/$WORKFLOW_ID" \
+            -H "X-N8N-API-KEY: $N8N_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d @"$JSON_FILE")
+
+        # Check if update succeeded
+        updated_id=$(echo "$result" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+
+        if [ "$updated_id" = "$WORKFLOW_ID" ]; then
+            echo "3️⃣ Reactivating workflow..."
+            n8n_api POST "/workflows/$WORKFLOW_ID/activate" > /dev/null 2>&1
+
+            # Verify final state
+            n8n_api GET "/workflows/$WORKFLOW_ID" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+status = '✅' if d.get('active') else '❌'
+print(f\"{status} Updated workflow: {d.get('name')} (ID: {d.get('id')})\")
+print(f\"   Nodes: {len(d.get('nodes', []))}\")
+"
+        else
+            echo "❌ Update failed: $result"
+            exit 1
+        fi
+        ;;
+
     *)
         echo "n8n API Helper Script"
         echo ""
         echo "Usage: $0 <action> [params]"
         echo ""
         echo "Actions:"
-        echo "  list                    List all workflows"
+        echo "  list [name]             List all workflows (optional name filter)"
         echo "  get <id>                Get workflow details"
         echo "  activate <id>           Activate a workflow"
         echo "  deactivate <id>         Deactivate a workflow"
-        echo "  import <file>           Import workflow from JSON file"
+        echo "  import <file>           Import workflow from JSON file (creates new)"
+        echo "  update <id> <file>      Update existing workflow from JSON file"
         echo "  search <pattern>        Search workflows by name"
         echo "  test-webhook <path>     Test a webhook endpoint"
         echo ""
