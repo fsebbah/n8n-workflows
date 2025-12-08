@@ -200,6 +200,17 @@ export class CalendarToolDynamic implements INodeType {
         placeholder: 'Europe/Paris',
         description: 'Timezone for the event (e.g., Europe/Paris, America/New_York)',
       },
+      {
+        displayName: 'Add Google Meet',
+        name: 'addGoogleMeet',
+        type: 'boolean',
+        required: false,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['create'] },
+        },
+        default: false,
+        description: 'Whether to create a Google Meet conference for this event',
+      },
       // === PARAMETERS: GET ALL EVENTS ===
       {
         displayName: 'Time Min',
@@ -370,6 +381,7 @@ async function executeEventOperation(
       const attendees = this.getNodeParameter('attendees', itemIndex, '') as string;
       const allDay = this.getNodeParameter('allDay', itemIndex, false) as boolean;
       const timezone = this.getNodeParameter('timezone', itemIndex, '') as string;
+      const addGoogleMeet = this.getNodeParameter('addGoogleMeet', itemIndex, false) as boolean;
 
       const eventBody: IDataObject = {};
 
@@ -404,12 +416,28 @@ async function executeEventOperation(
         eventBody.attendees = attendeesList;
       }
 
+      // Handle Google Meet
+      if (addGoogleMeet) {
+        eventBody.conferenceData = {
+          createRequest: {
+            requestId: `meet-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+            conferenceSolutionKey: {
+              type: 'hangoutsMeet',
+            },
+          },
+        };
+      }
+
+      // Use conferenceDataVersion=1 if Google Meet is requested
+      const qs: IDataObject = addGoogleMeet ? { conferenceDataVersion: 1 } : {};
+
       return calendarRequest.call(
         this,
         accessToken,
         'POST',
         `/calendars/${encodeURIComponent(calendarId)}/events`,
-        eventBody
+        eventBody,
+        qs
       );
     }
 
