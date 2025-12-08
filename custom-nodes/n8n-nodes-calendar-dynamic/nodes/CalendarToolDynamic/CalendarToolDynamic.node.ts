@@ -63,8 +63,11 @@ export class CalendarToolDynamic implements INodeType {
           { name: 'Add Attendee', value: 'addAttendee', description: 'Add an attendee to an event' },
           { name: 'Create', value: 'create', description: 'Create a new event' },
           { name: 'Delete', value: 'delete', description: 'Delete an event' },
+          { name: 'Free/Busy Query', value: 'freeBusy', description: 'Check availability of calendars' },
           { name: 'Get', value: 'get', description: 'Get an event by ID' },
           { name: 'Get Many', value: 'getAll', description: 'Get multiple events' },
+          { name: 'Move', value: 'move', description: 'Move an event to another calendar' },
+          { name: 'Quick Add', value: 'quickAdd', description: 'Create an event from a text string' },
           { name: 'Remove Attendee', value: 'removeAttendee', description: 'Remove an attendee from an event' },
           { name: 'Update', value: 'update', description: 'Update an event' },
         ],
@@ -103,7 +106,7 @@ export class CalendarToolDynamic implements INodeType {
         type: 'string',
         required: true,
         displayOptions: {
-          show: { resource: ['event'], operation: ['get', 'delete', 'update', 'addAttendee', 'removeAttendee'] },
+          show: { resource: ['event'], operation: ['get', 'delete', 'update', 'addAttendee', 'removeAttendee', 'move'] },
         },
         default: '',
         description: 'The ID of the event',
@@ -225,6 +228,207 @@ export class CalendarToolDynamic implements INodeType {
         },
         default: false,
         description: 'Whether to create a Google Meet conference for this event',
+      },
+      // === PARAMETERS: RECURRENCE ===
+      {
+        displayName: 'Recurrence',
+        name: 'recurrence',
+        type: 'options',
+        required: false,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['create'] },
+        },
+        options: [
+          { name: 'None', value: '' },
+          { name: 'Daily', value: 'RRULE:FREQ=DAILY' },
+          { name: 'Weekly', value: 'RRULE:FREQ=WEEKLY' },
+          { name: 'Monthly', value: 'RRULE:FREQ=MONTHLY' },
+          { name: 'Yearly', value: 'RRULE:FREQ=YEARLY' },
+          { name: 'Custom', value: 'custom' },
+        ],
+        default: '',
+        description: 'Recurrence rule for the event',
+      },
+      {
+        displayName: 'Custom Recurrence Rule',
+        name: 'customRecurrence',
+        type: 'string',
+        required: false,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['create'], recurrence: ['custom'] },
+        },
+        default: '',
+        placeholder: 'RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10',
+        description: 'Custom RRULE recurrence rule (RFC 5545 format)',
+      },
+      {
+        displayName: 'Recurrence Count',
+        name: 'recurrenceCount',
+        type: 'number',
+        required: false,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['create'] },
+          hide: { recurrence: ['', 'custom'] },
+        },
+        default: 0,
+        description: 'Number of occurrences (0 = unlimited)',
+      },
+      // === PARAMETERS: REMINDERS ===
+      {
+        displayName: 'Use Default Reminders',
+        name: 'useDefaultReminders',
+        type: 'boolean',
+        required: false,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['create', 'update'] },
+        },
+        default: true,
+        description: 'Whether to use the default reminders of the calendar',
+      },
+      {
+        displayName: 'Email Reminder (minutes before)',
+        name: 'reminderEmail',
+        type: 'number',
+        required: false,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['create', 'update'], useDefaultReminders: [false] },
+        },
+        default: 0,
+        description: 'Send email reminder X minutes before (0 = no email reminder)',
+      },
+      {
+        displayName: 'Popup Reminder (minutes before)',
+        name: 'reminderPopup',
+        type: 'number',
+        required: false,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['create', 'update'], useDefaultReminders: [false] },
+        },
+        default: 10,
+        description: 'Show popup reminder X minutes before (0 = no popup reminder)',
+      },
+      // === PARAMETERS: COLOR ===
+      {
+        displayName: 'Color',
+        name: 'colorId',
+        type: 'options',
+        required: false,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['create', 'update'] },
+        },
+        options: [
+          { name: 'Default', value: '' },
+          { name: 'Lavender', value: '1' },
+          { name: 'Sage', value: '2' },
+          { name: 'Grape', value: '3' },
+          { name: 'Flamingo', value: '4' },
+          { name: 'Banana', value: '5' },
+          { name: 'Tangerine', value: '6' },
+          { name: 'Peacock', value: '7' },
+          { name: 'Graphite', value: '8' },
+          { name: 'Blueberry', value: '9' },
+          { name: 'Basil', value: '10' },
+          { name: 'Tomato', value: '11' },
+        ],
+        default: '',
+        description: 'Color of the event',
+      },
+      // === PARAMETERS: VISIBILITY ===
+      {
+        displayName: 'Visibility',
+        name: 'visibility',
+        type: 'options',
+        required: false,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['create', 'update'] },
+        },
+        options: [
+          { name: 'Default', value: 'default' },
+          { name: 'Public', value: 'public' },
+          { name: 'Private', value: 'private' },
+          { name: 'Confidential', value: 'confidential' },
+        ],
+        default: 'default',
+        description: 'Visibility of the event',
+      },
+      // === PARAMETERS: STATUS ===
+      {
+        displayName: 'Status',
+        name: 'status',
+        type: 'options',
+        required: false,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['update'] },
+        },
+        options: [
+          { name: 'Confirmed', value: 'confirmed' },
+          { name: 'Tentative', value: 'tentative' },
+          { name: 'Cancelled', value: 'cancelled' },
+        ],
+        default: 'confirmed',
+        description: 'Status of the event',
+      },
+      // === PARAMETERS: QUICK ADD ===
+      {
+        displayName: 'Quick Add Text',
+        name: 'quickAddText',
+        type: 'string',
+        required: true,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['quickAdd'] },
+        },
+        default: '',
+        placeholder: 'Meeting with John tomorrow at 3pm',
+        description: 'Text describing the event to create (Google parses this automatically)',
+      },
+      // === PARAMETERS: MOVE EVENT ===
+      {
+        displayName: 'Destination Calendar ID',
+        name: 'destinationCalendarId',
+        type: 'string',
+        required: true,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['move'] },
+        },
+        default: '',
+        description: 'ID of the destination calendar to move the event to',
+      },
+      // === PARAMETERS: FREE/BUSY ===
+      {
+        displayName: 'Calendars to Check',
+        name: 'freeBusyCalendars',
+        type: 'string',
+        required: false,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['freeBusy'] },
+        },
+        default: 'primary',
+        placeholder: 'primary,calendar2@group.calendar.google.com',
+        description: 'Comma-separated list of calendar IDs to check availability',
+      },
+      {
+        displayName: 'Free/Busy Time Min',
+        name: 'freeBusyTimeMin',
+        type: 'string',
+        required: true,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['freeBusy'] },
+        },
+        default: '',
+        placeholder: '2025-12-10T00:00:00Z',
+        description: 'Start of the interval to check (ISO 8601 format)',
+      },
+      {
+        displayName: 'Free/Busy Time Max',
+        name: 'freeBusyTimeMax',
+        type: 'string',
+        required: true,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['freeBusy'] },
+        },
+        default: '',
+        placeholder: '2025-12-10T23:59:59Z',
+        description: 'End of the interval to check (ISO 8601 format)',
       },
       // === PARAMETERS: GET ALL EVENTS ===
       {
@@ -397,6 +601,14 @@ async function executeEventOperation(
       const allDay = this.getNodeParameter('allDay', itemIndex, false) as boolean;
       const timezone = this.getNodeParameter('timezone', itemIndex, '') as string;
       const addGoogleMeet = this.getNodeParameter('addGoogleMeet', itemIndex, false) as boolean;
+      const recurrence = this.getNodeParameter('recurrence', itemIndex, '') as string;
+      const customRecurrence = this.getNodeParameter('customRecurrence', itemIndex, '') as string;
+      const recurrenceCount = this.getNodeParameter('recurrenceCount', itemIndex, 0) as number;
+      const useDefaultReminders = this.getNodeParameter('useDefaultReminders', itemIndex, true) as boolean;
+      const reminderEmail = this.getNodeParameter('reminderEmail', itemIndex, 0) as number;
+      const reminderPopup = this.getNodeParameter('reminderPopup', itemIndex, 10) as number;
+      const colorId = this.getNodeParameter('colorId', itemIndex, '') as string;
+      const visibility = this.getNodeParameter('visibility', itemIndex, 'default') as string;
 
       const eventBody: IDataObject = {};
 
@@ -441,6 +653,44 @@ async function executeEventOperation(
             },
           },
         };
+      }
+
+      // Handle recurrence
+      if (recurrence) {
+        let rrule = recurrence;
+        if (recurrence === 'custom' && customRecurrence) {
+          rrule = customRecurrence;
+        } else if (recurrenceCount > 0) {
+          rrule = `${recurrence};COUNT=${recurrenceCount}`;
+        }
+        if (rrule && rrule !== 'custom') {
+          eventBody.recurrence = [rrule];
+        }
+      }
+
+      // Handle reminders
+      if (!useDefaultReminders) {
+        const overrides: Array<{ method: string; minutes: number }> = [];
+        if (reminderEmail > 0) {
+          overrides.push({ method: 'email', minutes: reminderEmail });
+        }
+        if (reminderPopup > 0) {
+          overrides.push({ method: 'popup', minutes: reminderPopup });
+        }
+        eventBody.reminders = {
+          useDefault: false,
+          overrides: overrides.length > 0 ? overrides : undefined,
+        };
+      }
+
+      // Handle color
+      if (colorId) {
+        eventBody.colorId = colorId;
+      }
+
+      // Handle visibility
+      if (visibility && visibility !== 'default') {
+        eventBody.visibility = visibility;
       }
 
       // Use conferenceDataVersion=1 if Google Meet is requested
@@ -507,6 +757,12 @@ async function executeEventOperation(
       const attendees = this.getNodeParameter('attendees', itemIndex, '') as string;
       const allDay = this.getNodeParameter('allDay', itemIndex, false) as boolean;
       const timezone = this.getNodeParameter('timezone', itemIndex, '') as string;
+      const useDefaultReminders = this.getNodeParameter('useDefaultReminders', itemIndex, true) as boolean;
+      const reminderEmail = this.getNodeParameter('reminderEmail', itemIndex, 0) as number;
+      const reminderPopup = this.getNodeParameter('reminderPopup', itemIndex, 10) as number;
+      const colorId = this.getNodeParameter('colorId', itemIndex, '') as string;
+      const visibility = this.getNodeParameter('visibility', itemIndex, 'default') as string;
+      const status = this.getNodeParameter('status', itemIndex, 'confirmed') as string;
 
       const eventBody: IDataObject = {};
 
@@ -537,6 +793,36 @@ async function executeEventOperation(
       if (attendees) {
         const attendeesList = attendees.split(',').map(email => ({ email: email.trim() }));
         eventBody.attendees = attendeesList;
+      }
+
+      // Handle reminders
+      if (!useDefaultReminders) {
+        const overrides: Array<{ method: string; minutes: number }> = [];
+        if (reminderEmail > 0) {
+          overrides.push({ method: 'email', minutes: reminderEmail });
+        }
+        if (reminderPopup > 0) {
+          overrides.push({ method: 'popup', minutes: reminderPopup });
+        }
+        eventBody.reminders = {
+          useDefault: false,
+          overrides: overrides.length > 0 ? overrides : undefined,
+        };
+      }
+
+      // Handle color
+      if (colorId) {
+        eventBody.colorId = colorId;
+      }
+
+      // Handle visibility
+      if (visibility && visibility !== 'default') {
+        eventBody.visibility = visibility;
+      }
+
+      // Handle status
+      if (status) {
+        eventBody.status = status;
       }
 
       return calendarRequest.call(
@@ -643,6 +929,62 @@ async function executeEventOperation(
       );
 
       return result;
+    }
+
+    case 'quickAdd': {
+      const quickAddText = this.getNodeParameter('quickAddText', itemIndex) as string;
+
+      return calendarRequest.call(
+        this,
+        accessToken,
+        'POST',
+        `/calendars/${encodeURIComponent(calendarId)}/events/quickAdd`,
+        undefined,
+        { text: quickAddText }
+      );
+    }
+
+    case 'move': {
+      const eventId = this.getNodeParameter('eventId', itemIndex) as string;
+      const destinationCalendarId = this.getNodeParameter('destinationCalendarId', itemIndex) as string;
+
+      return calendarRequest.call(
+        this,
+        accessToken,
+        'POST',
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}/move`,
+        undefined,
+        { destination: destinationCalendarId }
+      );
+    }
+
+    case 'freeBusy': {
+      const freeBusyCalendars = this.getNodeParameter('freeBusyCalendars', itemIndex, 'primary') as string;
+      const freeBusyTimeMin = this.getNodeParameter('freeBusyTimeMin', itemIndex) as string;
+      const freeBusyTimeMax = this.getNodeParameter('freeBusyTimeMax', itemIndex) as string;
+
+      // Parse calendar IDs
+      const calendarIds = freeBusyCalendars.split(',').map(id => ({ id: id.trim() }));
+
+      const body: IDataObject = {
+        timeMin: freeBusyTimeMin,
+        timeMax: freeBusyTimeMax,
+        items: calendarIds,
+      };
+
+      // Free/Busy uses a different endpoint
+      const options: IHttpRequestOptions = {
+        method: 'POST',
+        url: 'https://www.googleapis.com/calendar/v3/freeBusy',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body,
+        json: true,
+      };
+
+      return this.helpers.httpRequest(options);
     }
 
     default:
