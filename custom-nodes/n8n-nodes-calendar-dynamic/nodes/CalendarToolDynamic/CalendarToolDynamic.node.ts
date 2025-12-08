@@ -60,10 +60,12 @@ export class CalendarToolDynamic implements INodeType {
           show: { resource: ['event'] },
         },
         options: [
+          { name: 'Add Attendee', value: 'addAttendee', description: 'Add an attendee to an event' },
           { name: 'Create', value: 'create', description: 'Create a new event' },
           { name: 'Delete', value: 'delete', description: 'Delete an event' },
           { name: 'Get', value: 'get', description: 'Get an event by ID' },
           { name: 'Get Many', value: 'getAll', description: 'Get multiple events' },
+          { name: 'Remove Attendee', value: 'removeAttendee', description: 'Remove an attendee from an event' },
           { name: 'Update', value: 'update', description: 'Update an event' },
         ],
         default: 'getAll',
@@ -101,10 +103,23 @@ export class CalendarToolDynamic implements INodeType {
         type: 'string',
         required: true,
         displayOptions: {
-          show: { resource: ['event'], operation: ['get', 'delete', 'update'] },
+          show: { resource: ['event'], operation: ['get', 'delete', 'update', 'addAttendee', 'removeAttendee'] },
         },
         default: '',
         description: 'The ID of the event',
+      },
+      // === PARAMETERS: ATTENDEE EMAIL (for add/remove) ===
+      {
+        displayName: 'Attendee Email',
+        name: 'attendeeEmail',
+        type: 'string',
+        required: true,
+        displayOptions: {
+          show: { resource: ['event'], operation: ['addAttendee', 'removeAttendee'] },
+        },
+        default: '',
+        placeholder: 'user@example.com',
+        description: 'Email address of the attendee to add or remove',
       },
       // === PARAMETERS: EVENT CREATE/UPDATE ===
       {
@@ -542,6 +557,92 @@ async function executeEventOperation(
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
       );
       return { success: true, eventId, calendarId, action: 'deleted' };
+    }
+
+    case 'addAttendee': {
+      const eventId = this.getNodeParameter('eventId', itemIndex) as string;
+      const attendeeEmail = this.getNodeParameter('attendeeEmail', itemIndex) as string;
+
+      // First, get the current event to preserve existing attendees
+      const currentEvent = await calendarRequest.call(
+        this,
+        accessToken,
+        'GET',
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
+      ) as { attendees?: Array<{ email: string }> };
+
+      // Get existing attendees or empty array
+      const existingAttendees = currentEvent.attendees || [];
+
+      // Check if attendee already exists
+      const alreadyExists = existingAttendees.some(
+        (a) => a.email.toLowerCase() === attendeeEmail.toLowerCase()
+      );
+
+      if (alreadyExists) {
+        return {
+          success: false,
+          message: `Attendee ${attendeeEmail} is already in the event`,
+          eventId,
+          attendees: existingAttendees
+        };
+      }
+
+      // Add new attendee
+      const updatedAttendees = [...existingAttendees, { email: attendeeEmail.trim() }];
+
+      // Update the event with new attendee list
+      const result = await calendarRequest.call(
+        this,
+        accessToken,
+        'PATCH',
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+        { attendees: updatedAttendees }
+      );
+
+      return result;
+    }
+
+    case 'removeAttendee': {
+      const eventId = this.getNodeParameter('eventId', itemIndex) as string;
+      const attendeeEmail = this.getNodeParameter('attendeeEmail', itemIndex) as string;
+
+      // First, get the current event
+      const currentEvent = await calendarRequest.call(
+        this,
+        accessToken,
+        'GET',
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
+      ) as { attendees?: Array<{ email: string }> };
+
+      // Get existing attendees
+      const existingAttendees = currentEvent.attendees || [];
+
+      // Filter out the attendee to remove
+      const updatedAttendees = existingAttendees.filter(
+        (a) => a.email.toLowerCase() !== attendeeEmail.toLowerCase()
+      );
+
+      // Check if attendee was found and removed
+      if (updatedAttendees.length === existingAttendees.length) {
+        return {
+          success: false,
+          message: `Attendee ${attendeeEmail} was not found in the event`,
+          eventId,
+          attendees: existingAttendees
+        };
+      }
+
+      // Update the event with filtered attendee list
+      const result = await calendarRequest.call(
+        this,
+        accessToken,
+        'PATCH',
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+        { attendees: updatedAttendees }
+      );
+
+      return result;
     }
 
     default:
