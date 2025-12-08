@@ -673,7 +673,243 @@ Génère une traduction consensuelle à partir de plusieurs versions.
 
 ---
 
-## Cas d'Usage
+## Modes de Traduction
+
+Le paramètre `mode` ajuste automatiquement le comportement de la traduction selon le contexte.
+
+### Modes disponibles
+
+| Mode | Description | Paramètres auto-ajustés |
+|------|-------------|------------------------|
+| `document` | Documents longs (PDF, Word, articles) | Cohérence terminologique, glossaire persistant, contexte étendu |
+| `ui` | Interface utilisateur (boutons, labels) | Contraintes de longueur, cohérence absolue, format clé/valeur |
+| `email` | Emails et communication | Ton adapté, formatage préservé, signatures ignorées |
+| `technical` | Documentation technique, API | Code non traduit, Markdown préservé, terminologie technique |
+| `marketing` | Contenu commercial | Adaptation culturelle, ton persuasif, longueur flexible |
+
+### Exemple avec mode
+
+```json
+{
+  "resource": "translation",
+  "operation": "translate",
+  "text": "Click here to subscribe",
+  "target_lang": "fr",
+  "mode": "ui",
+  "models": ["openai", "anthropic"]
+}
+```
+
+### Détail des modes
+
+#### Mode `document`
+- **Contexte** : Traduction de documents longs nécessitant cohérence
+- **Caractéristiques** :
+  - Glossaire persistant sur tout le document
+  - Traduction par sections avec mémoire du contexte
+  - Même terme source = même traduction cible
+  - Support des chapitres et références croisées
+- **Prompt système** : Focus sur fidélité et cohérence terminologique
+- **Température** : 0.2 (très conservateur)
+- **Post-traitement** : Vérification de cohérence terminologique
+
+```json
+{
+  "mode": "document",
+  "options": {
+    "glossary": {
+      "software": "logiciel",
+      "user": "utilisateur"
+    },
+    "preserve_structure": true,
+    "chapter_context": true
+  }
+}
+```
+
+#### Mode `ui`
+- **Contexte** : Traduction d'interfaces utilisateur
+- **Caractéristiques** :
+  - Textes courts (max 50 caractères recommandé)
+  - Contraintes de longueur strictes
+  - Format JSON clé/valeur supporté
+  - Cohérence absolue entre écrans
+- **Prompt système** : Concision, clarté, action
+- **Température** : 0.1 (très déterministe)
+- **Post-traitement** : Vérification longueur, suppression ponctuation superflue
+
+```json
+{
+  "mode": "ui",
+  "options": {
+    "max_length": 30,
+    "format": "json_kv",
+    "context": "mobile_app"
+  }
+}
+```
+
+**Exemple batch UI :**
+```json
+{
+  "resource": "translation",
+  "operation": "batch",
+  "mode": "ui",
+  "items": [
+    { "key": "btn.submit", "text": "Submit" },
+    { "key": "btn.cancel", "text": "Cancel" },
+    { "key": "label.email", "text": "Email address" },
+    { "key": "error.required", "text": "This field is required" }
+  ],
+  "target_lang": "fr"
+}
+```
+
+**Réponse :**
+```json
+{
+  "results": [
+    { "key": "btn.submit", "source": "Submit", "translation": "Envoyer" },
+    { "key": "btn.cancel", "source": "Cancel", "translation": "Annuler" },
+    { "key": "label.email", "source": "Email address", "translation": "Adresse e-mail" },
+    { "key": "error.required", "source": "This field is required", "translation": "Ce champ est requis" }
+  ]
+}
+```
+
+#### Mode `email`
+- **Contexte** : Traduction de correspondance
+- **Caractéristiques** :
+  - Détection automatique du ton (formel/informel)
+  - Préservation du formatage (listes, paragraphes)
+  - Gestion des signatures et formules de politesse
+  - Adaptation des conventions culturelles
+- **Prompt système** : Naturel, approprié au contexte
+- **Température** : 0.3
+- **Post-traitement** : Vérification salutations/signatures
+
+```json
+{
+  "mode": "email",
+  "options": {
+    "tone": "formal",
+    "preserve_signature": true,
+    "adapt_greeting": true
+  }
+}
+```
+
+**Exemple :**
+```json
+{
+  "text": "Hi John,\n\nPlease find attached the report.\n\nBest regards,\nMary",
+  "mode": "email",
+  "target_lang": "fr",
+  "options": { "tone": "formal" }
+}
+```
+
+**Réponse :**
+```json
+{
+  "translation": "Bonjour Jean,\n\nVeuillez trouver ci-joint le rapport.\n\nCordialement,\nMary",
+  "adaptations": [
+    { "type": "greeting", "source": "Hi John", "target": "Bonjour Jean" },
+    { "type": "closing", "source": "Best regards", "target": "Cordialement" }
+  ]
+}
+```
+
+#### Mode `technical`
+- **Contexte** : Documentation technique, API, code
+- **Caractéristiques** :
+  - Code et exemples non traduits
+  - Markdown/HTML préservé
+  - Terminologie technique respectée
+  - Liens et références maintenus
+- **Prompt système** : Précision technique, clarté
+- **Température** : 0.2
+- **Post-traitement** : Vérification code intact, liens valides
+
+```json
+{
+  "mode": "technical",
+  "options": {
+    "preserve_code_blocks": true,
+    "preserve_urls": true,
+    "domain": "software"
+  }
+}
+```
+
+**Exemple :**
+```json
+{
+  "text": "Use the `translate()` function to convert text:\n\n```python\nresult = translate(text, target='fr')\n```\n\nSee [documentation](https://docs.example.com) for details.",
+  "mode": "technical",
+  "target_lang": "fr"
+}
+```
+
+**Réponse :**
+```json
+{
+  "translation": "Utilisez la fonction `translate()` pour convertir du texte :\n\n```python\nresult = translate(text, target='fr')\n```\n\nConsultez la [documentation](https://docs.example.com) pour plus de détails.",
+  "preserved": {
+    "code_blocks": 1,
+    "inline_code": 1,
+    "urls": 1
+  }
+}
+```
+
+#### Mode `marketing`
+- **Contexte** : Contenu commercial, publicité
+- **Caractéristiques** :
+  - Adaptation culturelle (pas juste traduction)
+  - Ton persuasif et engageant
+  - Longueur flexible (peut être plus court ou plus long)
+  - Jeux de mots et expressions adaptés
+- **Prompt système** : Impact, persuasion, culture cible
+- **Température** : 0.5 (plus créatif)
+- **Post-traitement** : Score d'impact, alternatives créatives
+
+```json
+{
+  "mode": "marketing",
+  "options": {
+    "brand_voice": "friendly",
+    "target_audience": "young_professionals",
+    "allow_adaptation": true
+  }
+}
+```
+
+**Exemple :**
+```json
+{
+  "text": "Get more done. Stress less.",
+  "mode": "marketing",
+  "target_lang": "fr"
+}
+```
+
+**Réponse :**
+```json
+{
+  "translation": "Faites plus. Stressez moins.",
+  "alternatives": [
+    "Accomplissez davantage. Respirez.",
+    "Plus productif. Plus serein.",
+    "Travaillez mieux. Vivez mieux."
+  ],
+  "adaptation_notes": "Maintien du parallélisme et du rythme court"
+}
+```
+
+---
+
+## Cas d'Usage Concrets
 
 ### 1. Traduction Simple
 
@@ -846,16 +1082,65 @@ Webhook ──► Router ──► [Translation Nodes] ──► Response
 
 ---
 
+## Prérequis et Configuration
+
+### Clés API Requises
+
+| Provider | Variable d'environnement | Obligatoire | Obtenir |
+|----------|-------------------------|-------------|---------|
+| OpenAI | `OPENAI_API_KEY` | Oui (défaut) | [platform.openai.com](https://platform.openai.com/api-keys) |
+| Anthropic | `ANTHROPIC_API_KEY` | Recommandé | [console.anthropic.com](https://console.anthropic.com/) |
+| Mistral | `MISTRAL_API_KEY` | Optionnel | [console.mistral.ai](https://console.mistral.ai/) |
+
+### Configuration n8n
+
+Ajouter les clés dans les variables d'environnement n8n :
+
+```bash
+# ~/.bashrc ou fichier de config n8n
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+export MISTRAL_API_KEY="..."
+```
+
+Ou via le fichier `.env` de n8n :
+
+```env
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+MISTRAL_API_KEY=...
+```
+
+### Alternative : Clés passées dynamiquement
+
+Les clés peuvent aussi être passées dans le body de la requête :
+
+```json
+{
+  "resource": "translation",
+  "operation": "translate",
+  "text": "Hello",
+  "target_lang": "fr",
+  "api_keys": {
+    "openai": "sk-...",
+    "anthropic": "sk-ant-..."
+  }
+}
+```
+
+---
+
 ## Prochaines Étapes
 
 1. [ ] Créer le custom node `n8n-nodes-translate-dynamic`
 2. [ ] Implémenter les opérations de base (translate, detect)
-3. [ ] Ajouter la validation et le scoring
-4. [ ] Implémenter la révision et le merge
-5. [ ] Créer le workflow MCP
-6. [ ] Écrire la documentation API
-7. [ ] Tests avec plusieurs langues
-8. [ ] Optimisation des prompts par modèle
+3. [ ] Ajouter le support des modes (document, ui, email, technical, marketing)
+4. [ ] Ajouter la validation et le scoring
+5. [ ] Implémenter la révision et le merge
+6. [ ] Créer le workflow MCP
+7. [ ] Écrire la documentation API finale
+8. [ ] Tests avec plusieurs langues
+9. [ ] Optimisation des prompts par modèle et par mode
 
 ---
 
