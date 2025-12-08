@@ -49,6 +49,7 @@ export class GmailToolDynamic implements INodeType {
           { name: 'Draft', value: 'draft' },
           { name: 'Label', value: 'label' },
           { name: 'Thread', value: 'thread' },
+          { name: 'Settings', value: 'settings' },
         ],
         default: 'message',
       },
@@ -62,16 +63,22 @@ export class GmailToolDynamic implements INodeType {
           show: { resource: ['message'] },
         },
         options: [
-          { name: 'Search', value: 'search', description: 'Search messages using Gmail query syntax' },
-          { name: 'Get', value: 'get', description: 'Get a message by ID' },
-          { name: 'Get Many', value: 'getMany', description: 'Get multiple messages' },
-          { name: 'Send', value: 'send', description: 'Send an email' },
-          { name: 'Reply', value: 'reply', description: 'Reply to an email' },
+          { name: 'Add Labels', value: 'addLabels', description: 'Add labels to a message' },
+          { name: 'Archive', value: 'archive', description: 'Archive a message (remove from INBOX)' },
+          { name: 'Batch Modify', value: 'batchModify', description: 'Modify multiple messages at once' },
           { name: 'Delete', value: 'delete', description: 'Delete a message (trash)' },
+          { name: 'Get', value: 'get', description: 'Get a message by ID' },
+          { name: 'Get Attachment', value: 'getAttachment', description: 'Download an attachment from a message' },
+          { name: 'Get Many', value: 'getMany', description: 'Get multiple messages' },
           { name: 'Mark Read', value: 'markRead', description: 'Mark message as read' },
           { name: 'Mark Unread', value: 'markUnread', description: 'Mark message as unread' },
-          { name: 'Add Labels', value: 'addLabels', description: 'Add labels to a message' },
           { name: 'Remove Labels', value: 'removeLabels', description: 'Remove labels from a message' },
+          { name: 'Reply', value: 'reply', description: 'Reply to an email' },
+          { name: 'Search', value: 'search', description: 'Search messages using Gmail query syntax' },
+          { name: 'Send', value: 'send', description: 'Send an email' },
+          { name: 'Star', value: 'star', description: 'Star a message' },
+          { name: 'Unstar', value: 'unstar', description: 'Remove star from a message' },
+          { name: 'Untrash', value: 'untrash', description: 'Restore a message from trash' },
         ],
         default: 'search',
       },
@@ -86,10 +93,11 @@ export class GmailToolDynamic implements INodeType {
         },
         options: [
           { name: 'Create', value: 'create', description: 'Create a draft' },
+          { name: 'Delete', value: 'delete', description: 'Delete a draft' },
           { name: 'Get', value: 'get', description: 'Get a draft by ID' },
           { name: 'Get Many', value: 'getMany', description: 'Get multiple drafts' },
-          { name: 'Delete', value: 'delete', description: 'Delete a draft' },
           { name: 'Send', value: 'send', description: 'Send a draft' },
+          { name: 'Update', value: 'update', description: 'Update an existing draft' },
         ],
         default: 'create',
       },
@@ -121,12 +129,30 @@ export class GmailToolDynamic implements INodeType {
           show: { resource: ['thread'] },
         },
         options: [
+          { name: 'Delete', value: 'delete', description: 'Delete a thread (trash)' },
           { name: 'Get', value: 'get', description: 'Get a thread by ID' },
           { name: 'Get Many', value: 'getMany', description: 'Get multiple threads' },
-          { name: 'Delete', value: 'delete', description: 'Delete a thread (trash)' },
           { name: 'Modify', value: 'modify', description: 'Modify thread labels' },
+          { name: 'Search', value: 'search', description: 'Search threads using Gmail query syntax' },
+          { name: 'Untrash', value: 'untrash', description: 'Restore a thread from trash' },
         ],
         default: 'get',
+      },
+      // === OPERATIONS: SETTINGS ===
+      {
+        displayName: 'Operation',
+        name: 'operation',
+        type: 'options',
+        noDataExpression: true,
+        displayOptions: {
+          show: { resource: ['settings'] },
+        },
+        options: [
+          { name: 'Get Vacation', value: 'getVacation', description: 'Get vacation auto-reply settings' },
+          { name: 'Set Vacation', value: 'setVacation', description: 'Set vacation auto-reply settings' },
+          { name: 'Disable Vacation', value: 'disableVacation', description: 'Disable vacation auto-reply' },
+        ],
+        default: 'getVacation',
       },
       // === PARAMETERS: SEARCH ===
       {
@@ -135,7 +161,7 @@ export class GmailToolDynamic implements INodeType {
         type: 'string',
         required: true,
         displayOptions: {
-          show: { resource: ['message'], operation: ['search'] },
+          show: { resource: ['message', 'thread'], operation: ['search'] },
         },
         default: '',
         placeholder: 'from:sender@example.com is:unread',
@@ -173,11 +199,60 @@ export class GmailToolDynamic implements INodeType {
         displayOptions: {
           show: {
             resource: ['message'],
-            operation: ['get', 'delete', 'markRead', 'markUnread', 'reply', 'addLabels', 'removeLabels']
+            operation: ['get', 'delete', 'markRead', 'markUnread', 'reply', 'addLabels', 'removeLabels', 'star', 'unstar', 'untrash', 'archive', 'getAttachment']
           },
         },
         default: '',
         description: 'The ID of the message',
+      },
+      // === PARAMETERS: ATTACHMENT ===
+      {
+        displayName: 'Attachment ID',
+        name: 'attachmentId',
+        type: 'string',
+        required: true,
+        displayOptions: {
+          show: { resource: ['message'], operation: ['getAttachment'] },
+        },
+        default: '',
+        description: 'The ID of the attachment (found in message.payload.parts[].body.attachmentId)',
+      },
+      // === PARAMETERS: BATCH MODIFY ===
+      {
+        displayName: 'Message IDs',
+        name: 'messageIds',
+        type: 'string',
+        required: true,
+        displayOptions: {
+          show: { resource: ['message'], operation: ['batchModify'] },
+        },
+        default: '',
+        placeholder: 'msg1,msg2,msg3',
+        description: 'Comma-separated list of message IDs to modify',
+      },
+      {
+        displayName: 'Add Label IDs',
+        name: 'addLabelIds',
+        type: 'string',
+        required: false,
+        displayOptions: {
+          show: { resource: ['message'], operation: ['batchModify'] },
+        },
+        default: '',
+        placeholder: 'STARRED,Label_1',
+        description: 'Comma-separated list of label IDs to add',
+      },
+      {
+        displayName: 'Remove Label IDs',
+        name: 'removeLabelIds',
+        type: 'string',
+        required: false,
+        displayOptions: {
+          show: { resource: ['message'], operation: ['batchModify'] },
+        },
+        default: '',
+        placeholder: 'UNREAD,INBOX',
+        description: 'Comma-separated list of label IDs to remove',
       },
       // === PARAMETERS: SEND ===
       {
@@ -293,7 +368,7 @@ export class GmailToolDynamic implements INodeType {
         type: 'string',
         required: false,
         displayOptions: {
-          show: { resource: ['draft'], operation: ['get', 'delete', 'send'] },
+          show: { resource: ['draft'], operation: ['get', 'delete', 'send', 'update'] },
         },
         default: '',
         description: 'The ID of the draft (can also be passed via webhook body as "draft_id")',
@@ -305,10 +380,106 @@ export class GmailToolDynamic implements INodeType {
         type: 'string',
         required: true,
         displayOptions: {
-          show: { resource: ['thread'], operation: ['get', 'delete', 'modify'] },
+          show: { resource: ['thread'], operation: ['get', 'delete', 'modify', 'untrash'] },
         },
         default: '',
         description: 'The ID of the thread',
+      },
+      // === PARAMETERS: VACATION SETTINGS ===
+      {
+        displayName: 'Enable Vacation Reply',
+        name: 'enableAutoReply',
+        type: 'boolean',
+        required: false,
+        displayOptions: {
+          show: { resource: ['settings'], operation: ['setVacation'] },
+        },
+        default: true,
+        description: 'Whether to enable the vacation auto-reply',
+      },
+      {
+        displayName: 'Response Subject',
+        name: 'responseSubject',
+        type: 'string',
+        required: false,
+        displayOptions: {
+          show: { resource: ['settings'], operation: ['setVacation'] },
+        },
+        default: '',
+        placeholder: 'Out of Office',
+        description: 'Subject line of the auto-reply',
+      },
+      {
+        displayName: 'Response Body (HTML)',
+        name: 'responseBodyHtml',
+        type: 'string',
+        typeOptions: { rows: 5 },
+        required: false,
+        displayOptions: {
+          show: { resource: ['settings'], operation: ['setVacation'] },
+        },
+        default: '',
+        placeholder: '<p>Thank you for your email. I am currently out of office...</p>',
+        description: 'HTML body of the auto-reply message',
+      },
+      {
+        displayName: 'Response Body (Plain Text)',
+        name: 'responseBodyPlainText',
+        type: 'string',
+        typeOptions: { rows: 5 },
+        required: false,
+        displayOptions: {
+          show: { resource: ['settings'], operation: ['setVacation'] },
+        },
+        default: '',
+        placeholder: 'Thank you for your email. I am currently out of office...',
+        description: 'Plain text body of the auto-reply message',
+      },
+      {
+        displayName: 'Restrict to Contacts',
+        name: 'restrictToContacts',
+        type: 'boolean',
+        required: false,
+        displayOptions: {
+          show: { resource: ['settings'], operation: ['setVacation'] },
+        },
+        default: false,
+        description: 'Whether to only send auto-reply to people in your contacts',
+      },
+      {
+        displayName: 'Restrict to Domain',
+        name: 'restrictToDomain',
+        type: 'boolean',
+        required: false,
+        displayOptions: {
+          show: { resource: ['settings'], operation: ['setVacation'] },
+        },
+        default: false,
+        description: 'Whether to only send auto-reply to people in your domain',
+      },
+      {
+        displayName: 'Start Time',
+        name: 'startTime',
+        type: 'string',
+        required: false,
+        displayOptions: {
+          show: { resource: ['settings'], operation: ['setVacation'] },
+        },
+        default: '',
+        placeholder: '2025-12-20T00:00:00Z',
+        description: 'Start time for vacation auto-reply (ISO 8601 format, optional)',
+      },
+      {
+        displayName: 'End Time',
+        name: 'endTime',
+        type: 'string',
+        required: false,
+        displayOptions: {
+          show: { resource: ['settings'], operation: ['setVacation'] },
+        },
+        default: '',
+        placeholder: '2025-01-05T00:00:00Z',
+        description: 'End time for vacation auto-reply (ISO 8601 format, optional)',
       },
     ],
   };
@@ -345,6 +516,10 @@ export class GmailToolDynamic implements INodeType {
         // === THREAD OPERATIONS ===
         else if (resource === 'thread') {
           result = await executeThreadOperation.call(this, accessToken, operation, itemIndex);
+        }
+        // === SETTINGS OPERATIONS ===
+        else if (resource === 'settings') {
+          result = await executeSettingsOperation.call(this, accessToken, operation, itemIndex);
         }
 
         returnData.push({
@@ -611,6 +786,56 @@ async function executeMessageOperation(
       });
     }
 
+    case 'star': {
+      const messageId = this.getNodeParameter('messageId', itemIndex) as string;
+      return gmailRequest.call(this, accessToken, 'POST', `/messages/${messageId}/modify`, {
+        addLabelIds: ['STARRED'],
+      });
+    }
+
+    case 'unstar': {
+      const messageId = this.getNodeParameter('messageId', itemIndex) as string;
+      return gmailRequest.call(this, accessToken, 'POST', `/messages/${messageId}/modify`, {
+        removeLabelIds: ['STARRED'],
+      });
+    }
+
+    case 'untrash': {
+      const messageId = this.getNodeParameter('messageId', itemIndex) as string;
+      await gmailRequest.call(this, accessToken, 'POST', `/messages/${messageId}/untrash`);
+      return { success: true, messageId, action: 'untrashed' };
+    }
+
+    case 'archive': {
+      const messageId = this.getNodeParameter('messageId', itemIndex) as string;
+      return gmailRequest.call(this, accessToken, 'POST', `/messages/${messageId}/modify`, {
+        removeLabelIds: ['INBOX'],
+      });
+    }
+
+    case 'getAttachment': {
+      const messageId = this.getNodeParameter('messageId', itemIndex) as string;
+      const attachmentId = this.getNodeParameter('attachmentId', itemIndex) as string;
+      return gmailRequest.call(this, accessToken, 'GET', `/messages/${messageId}/attachments/${attachmentId}`);
+    }
+
+    case 'batchModify': {
+      const messageIdsStr = this.getNodeParameter('messageIds', itemIndex) as string;
+      const addLabelIdsStr = this.getNodeParameter('addLabelIds', itemIndex, '') as string;
+      const removeLabelIdsStr = this.getNodeParameter('removeLabelIds', itemIndex, '') as string;
+
+      const messageIds = messageIdsStr.split(',').map(s => s.trim()).filter(s => s);
+      const addLabelIds = addLabelIdsStr ? addLabelIdsStr.split(',').map(s => s.trim()).filter(s => s) : [];
+      const removeLabelIds = removeLabelIdsStr ? removeLabelIdsStr.split(',').map(s => s.trim()).filter(s => s) : [];
+
+      const body: IDataObject = { ids: messageIds };
+      if (addLabelIds.length > 0) body.addLabelIds = addLabelIds;
+      if (removeLabelIds.length > 0) body.removeLabelIds = removeLabelIds;
+
+      await gmailRequest.call(this, accessToken, 'POST', '/messages/batchModify', body);
+      return { success: true, modifiedCount: messageIds.length, addLabelIds, removeLabelIds };
+    }
+
     default:
       throw new Error(`Unknown message operation: ${operation}`);
   }
@@ -742,6 +967,36 @@ async function executeDraftOperation(
       return gmailRequest.call(this, accessToken, 'POST', '/drafts/send', { id: draftId });
     }
 
+    case 'update': {
+      const draftId = this.getNodeParameter('draftId', itemIndex) as string;
+      const to = this.getNodeParameter('to', itemIndex) as string;
+      const subject = this.getNodeParameter('subject', itemIndex) as string;
+      const body = this.getNodeParameter('body', itemIndex) as string;
+      const cc = this.getNodeParameter('cc', itemIndex, '') as string;
+      const bcc = this.getNodeParameter('bcc', itemIndex, '') as string;
+
+      const emailLines = [`To: ${to}`];
+      if (cc) emailLines.push(`Cc: ${cc}`);
+      if (bcc) emailLines.push(`Bcc: ${bcc}`);
+      emailLines.push(
+        `Subject: ${subject}`,
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        body,
+      );
+
+      const encodedEmail = Buffer.from(emailLines.join('\r\n'))
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+
+      return gmailRequest.call(this, accessToken, 'PUT', `/drafts/${draftId}`, {
+        id: draftId,
+        message: { raw: encodedEmail },
+      });
+    }
+
     default:
       throw new Error(`Unknown draft operation: ${operation}`);
   }
@@ -827,7 +1082,70 @@ async function executeThreadOperation(
       });
     }
 
+    case 'untrash': {
+      const threadId = this.getNodeParameter('threadId', itemIndex) as string;
+      await gmailRequest.call(this, accessToken, 'POST', `/threads/${threadId}/untrash`);
+      return { success: true, threadId, action: 'untrashed' };
+    }
+
+    case 'search': {
+      const query = this.getNodeParameter('query', itemIndex) as string;
+      const maxResults = this.getNodeParameter('maxResults', itemIndex, 10) as number;
+      return gmailRequest.call(this, accessToken, 'GET', '/threads', undefined, {
+        q: query,
+        maxResults,
+      });
+    }
+
     default:
       throw new Error(`Unknown thread operation: ${operation}`);
+  }
+}
+
+// === SETTINGS OPERATIONS ===
+async function executeSettingsOperation(
+  this: IExecuteFunctions,
+  accessToken: string,
+  operation: string,
+  itemIndex: number,
+): Promise<unknown> {
+  switch (operation) {
+    case 'getVacation': {
+      return gmailRequest.call(this, accessToken, 'GET', '/settings/vacation');
+    }
+
+    case 'setVacation': {
+      const enableAutoReply = this.getNodeParameter('enableAutoReply', itemIndex, true) as boolean;
+      const responseSubject = this.getNodeParameter('responseSubject', itemIndex, '') as string;
+      const responseBodyHtml = this.getNodeParameter('responseBodyHtml', itemIndex, '') as string;
+      const responseBodyPlainText = this.getNodeParameter('responseBodyPlainText', itemIndex, '') as string;
+      const restrictToContacts = this.getNodeParameter('restrictToContacts', itemIndex, false) as boolean;
+      const restrictToDomain = this.getNodeParameter('restrictToDomain', itemIndex, false) as boolean;
+      const startTime = this.getNodeParameter('startTime', itemIndex, '') as string;
+      const endTime = this.getNodeParameter('endTime', itemIndex, '') as string;
+
+      const vacationSettings: IDataObject = {
+        enableAutoReply,
+        restrictToContacts,
+        restrictToDomain,
+      };
+
+      if (responseSubject) vacationSettings.responseSubject = responseSubject;
+      if (responseBodyHtml) vacationSettings.responseBodyHtml = responseBodyHtml;
+      if (responseBodyPlainText) vacationSettings.responseBodyPlainText = responseBodyPlainText;
+      if (startTime) vacationSettings.startTime = new Date(startTime).getTime();
+      if (endTime) vacationSettings.endTime = new Date(endTime).getTime();
+
+      return gmailRequest.call(this, accessToken, 'PUT', '/settings/vacation', vacationSettings);
+    }
+
+    case 'disableVacation': {
+      return gmailRequest.call(this, accessToken, 'PUT', '/settings/vacation', {
+        enableAutoReply: false,
+      });
+    }
+
+    default:
+      throw new Error(`Unknown settings operation: ${operation}`);
   }
 }
