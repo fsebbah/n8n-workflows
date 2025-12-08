@@ -13,6 +13,59 @@ Créer un ensemble d'outils MCP pour la traduction de textes utilisant plusieurs
 
 ---
 
+## Phases d'Implémentation
+
+Le projet est découpé en 5 phases progressives :
+
+| Phase | Issue | Description | Estimation |
+|-------|-------|-------------|------------|
+| **Phase 1** | [ISSUE_022](./ISSUE_022_TRANSLATE_PHASE1_CORE.md) | Core Node (translate, detect) | ~3h30 |
+| **Phase 2** | [ISSUE_023](./ISSUE_023_TRANSLATE_PHASE2_MULTI_LLM.md) | Multi-LLM & Consensus | ~8h30 |
+| **Phase 3** | [ISSUE_024](./ISSUE_024_TRANSLATE_PHASE3_VALIDATION.md) | Validation & Scoring | ~8h |
+| **Phase 4** | [ISSUE_025](./ISSUE_025_TRANSLATE_PHASE4_REVISION.md) | Revision & Improvement | ~10h |
+| **Phase 5** | [ISSUE_026](./ISSUE_026_TRANSLATE_PHASE5_MODES.md) | Specialized Modes | ~14h |
+| | | **Total estimé** | **~44h** |
+
+### Dépendances entre phases
+
+```
+Phase 1 (Core)
+    ↓
+Phase 2 (Multi-LLM)
+    ↓
+Phase 3 (Validation)
+    ↓
+Phase 4 (Revision)
+    ↓
+Phase 5 (Modes)
+```
+
+### Résumé par phase
+
+**Phase 1 - Core Node**
+- Opérations : `translate`, `detect`
+- Provider : OpenAI uniquement
+- Workflow MCP basique
+
+**Phase 2 - Multi-LLM**
+- Providers : OpenAI, Anthropic, Mistral
+- Opérations : `translateMulti`, `compare`
+- Algorithmes de consensus
+
+**Phase 3 - Validation**
+- Opérations : `validate`, `backTranslate`, `check`, `score`
+- Vérification qualité et éléments spécifiques
+
+**Phase 4 - Revision**
+- Opérations : `revise`, `improve`, `merge`, `applyGlossary`
+- Amélioration itérative
+
+**Phase 5 - Modes**
+- Modes : document, ui, email, technical, marketing
+- Prompts et post-processing spécialisés
+
+---
+
 ## Architecture Proposée
 
 ```
