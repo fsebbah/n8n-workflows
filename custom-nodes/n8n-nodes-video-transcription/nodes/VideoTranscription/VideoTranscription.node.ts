@@ -271,8 +271,9 @@ export class VideoTranscription implements INodeType {
           ? {
               type: 'vertexai',
               projectId: credentials.projectId as string,
-              location: credentials.region as string || 'us-central1',
-              accessToken: credentials.accessToken as string,
+              location: credentials.location as string || 'us-central1',
+              serviceAccountKey: credentials.serviceAccountKey as string | undefined,
+              authMethod: credentials.authMethod as string || 'adc',
             }
           : {
               type: 'aistudio',

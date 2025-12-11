@@ -24,6 +24,7 @@ import json
 import os
 import sys
 from datetime import datetime
+import time
 from urllib.parse import urlparse, parse_qs
 import requests
 
@@ -284,7 +285,8 @@ def main():
         sys.exit(1)
 
     try:
-        # Call the API
+        # Call the API with timing
+        start_time = time.time()
         result = call_transcription_api(
             video_url=args.youtube_url,
             operation=args.operation,
@@ -296,6 +298,14 @@ def main():
             model=args.model,
             custom_instructions=args.instructions
         )
+        elapsed_time = time.time() - start_time
+
+        # Add execution time to result
+        result['_execution'] = {
+            'elapsed_seconds': round(elapsed_time, 2),
+            'elapsed_formatted': f"{int(elapsed_time // 60)}m {int(elapsed_time % 60)}s",
+            'timestamp': datetime.now().isoformat()
+        }
 
         # Generate output filename if not provided
         if not args.output_file:
@@ -312,7 +322,8 @@ def main():
         else:
             print(json.dumps(result, indent=2, ensure_ascii=False))
 
-        print(f"\nSuccess! Result saved to: {args.output_file}")
+        print(f"\n⏱️  Execution time: {result['_execution']['elapsed_formatted']} ({elapsed_time:.2f}s)")
+        print(f"Success! Result saved to: {args.output_file}")
 
     except requests.exceptions.ConnectionError:
         print("Error: Cannot connect to n8n webhook. Is the server running?", file=sys.stderr)

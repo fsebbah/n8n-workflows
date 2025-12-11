@@ -30,7 +30,8 @@ export interface GeminiCredentials {
   projectId?: string;
   location?: string;
   apiKey?: string;
-  accessToken?: string;
+  serviceAccountKey?: string;
+  authMethod?: string;
 }
 
 /**
@@ -432,6 +433,42 @@ export function prepareVideoContent(videoInfo: VideoInfo): {
 }
 
 /**
+ * Get access token using Google Auth Library
+ */
+async function getAccessToken(credentials: GeminiCredentials): Promise<string> {
+  const { GoogleAuth } = await import('google-auth-library');
+
+  let auth: InstanceType<typeof GoogleAuth>;
+
+  if (credentials.serviceAccountKey) {
+    // Mode Service Account Key (JSON explicite)
+    const creds = typeof credentials.serviceAccountKey === 'string'
+      ? JSON.parse(credentials.serviceAccountKey)
+      : credentials.serviceAccountKey;
+
+    auth = new GoogleAuth({
+      credentials: creds,
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+  } else {
+    // Mode ADC (Application Default Credentials)
+    auth = new GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      projectId: credentials.projectId,
+    });
+  }
+
+  const client = await auth.getClient();
+  const tokenResponse = await client.getAccessToken();
+
+  if (!tokenResponse.token) {
+    throw new Error('Failed to get access token. Ensure ADC is configured or provide a Service Account Key.');
+  }
+
+  return tokenResponse.token;
+}
+
+/**
  * Call Gemini API with video content
  */
 export async function callGeminiWithVideo(
@@ -467,9 +504,12 @@ export async function callGeminiWithVideo(
   let headers: Record<string, string>;
 
   if (credentials.type === 'vertexai') {
+    // Get access token using Google Auth Library
+    const accessToken = await getAccessToken(credentials);
+
     endpoint = `https://${credentials.location}-aiplatform.googleapis.com/v1/projects/${credentials.projectId}/locations/${credentials.location}/publishers/google/models/${model}:generateContent`;
     headers = {
-      'Authorization': `Bearer ${credentials.accessToken}`,
+      'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json'
     };
   } else {
