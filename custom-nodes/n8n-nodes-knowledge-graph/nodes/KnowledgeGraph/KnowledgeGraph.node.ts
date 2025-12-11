@@ -17,6 +17,8 @@ import {
 	ENTITY_EXTRACTION_PROMPT,
 	RELATIONSHIP_EXTRACTION_PROMPT,
 	FULL_GRAPH_EXTRACTION_PROMPT,
+	SIMPLIFY_GRAPH_PROMPT,
+	ANALYZE_GRAPH_PROMPT,
 	buildPromptWithConfig,
 	buildRelationshipPromptWithEntities,
 	buildExtractionConfig,
@@ -64,6 +66,42 @@ interface GraphResult {
 	};
 }
 
+interface SimplifiedGraphResult {
+	graph: {
+		nodes: Entity[];
+		edges: Array<{ source: number; target: number; type: string }>;
+	};
+	metadata: {
+		original_node_count: number;
+		original_edge_count: number;
+		simplified_node_count: number;
+		simplified_edge_count: number;
+		simplification_method: string;
+	};
+	key_entities: Array<{ id: number; name: string; type: string; importance: string }>;
+}
+
+interface GraphAnalysisResult {
+	summary: string;
+	key_findings: string[];
+	entity_statistics: {
+		total_entities: number;
+		by_type: Record<string, number>;
+		most_connected: Array<{ name: string; connections: number }>;
+	};
+	relationship_statistics: {
+		total_relationships: number;
+		by_type: Record<string, number>;
+	};
+	clusters: Array<{
+		name: string;
+		description: string;
+		entities: string[];
+	}>;
+	insights: string[];
+	recommendations: string[];
+}
+
 export class KnowledgeGraph implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Knowledge Graph',
@@ -108,6 +146,18 @@ export class KnowledgeGraph implements INodeType {
 						value: 'extractRelationships',
 						description: 'Extract relationships between entities',
 						action: 'Extract relationships between entities',
+					},
+					{
+						name: 'Simplify Graph',
+						value: 'simplifyGraph',
+						description: 'Reduce a graph to its most important entities and relationships',
+						action: 'Simplify a knowledge graph',
+					},
+					{
+						name: 'Analyze Graph',
+						value: 'analyzeGraph',
+						description: 'Generate insights and analysis from a knowledge graph',
+						action: 'Analyze a knowledge graph',
 					},
 				],
 				default: 'buildGraph',
@@ -333,6 +383,103 @@ export class KnowledgeGraph implements INodeType {
 				},
 			},
 			{
+				displayName: 'Graph JSON',
+				name: 'graphJson',
+				type: 'json',
+				default: '',
+				description: 'The knowledge graph JSON to process (from a previous Build Graph operation)',
+				displayOptions: {
+					show: {
+						operation: ['simplifyGraph', 'analyzeGraph'],
+					},
+				},
+			},
+			{
+				displayName: 'Max Nodes',
+				name: 'maxNodes',
+				type: 'number',
+				default: 30,
+				description: 'Maximum number of nodes to keep in the simplified graph',
+				displayOptions: {
+					show: {
+						operation: ['simplifyGraph'],
+					},
+				},
+			},
+			{
+				displayName: 'Keep Entity Types',
+				name: 'keepEntityTypes',
+				type: 'string',
+				default: '',
+				placeholder: 'e.g., person, organization',
+				description: 'Comma-separated list of entity types to always keep (leave empty for automatic selection)',
+				displayOptions: {
+					show: {
+						operation: ['simplifyGraph'],
+					},
+				},
+			},
+			{
+				displayName: 'Simplification Method',
+				name: 'simplificationMethod',
+				type: 'options',
+				options: [
+					{
+						name: 'By Importance (Connections)',
+						value: 'importance',
+						description: 'Keep nodes with the most connections',
+					},
+					{
+						name: 'By Centrality',
+						value: 'centrality',
+						description: 'Keep nodes that are central to the graph',
+					},
+					{
+						name: 'By Type Priority',
+						value: 'typePriority',
+						description: 'Prioritize certain entity types',
+					},
+				],
+				default: 'importance',
+				description: 'Method to use for selecting which nodes to keep',
+				displayOptions: {
+					show: {
+						operation: ['simplifyGraph'],
+					},
+				},
+			},
+			{
+				displayName: 'Analysis Language',
+				name: 'analysisLanguage',
+				type: 'options',
+				options: [
+					{ name: 'English', value: 'en' },
+					{ name: 'French', value: 'fr' },
+					{ name: 'Spanish', value: 'es' },
+					{ name: 'German', value: 'de' },
+				],
+				default: 'en',
+				description: 'Language for the analysis output',
+				displayOptions: {
+					show: {
+						operation: ['analyzeGraph'],
+					},
+				},
+			},
+			{
+				displayName: 'Analysis Focus',
+				name: 'analysisFocus',
+				type: 'string',
+				default: '',
+				placeholder: 'e.g., Focus on financial risks and investment strategies',
+				description: 'Optional focus area for the analysis',
+				displayOptions: {
+					show: {
+						operation: ['analyzeGraph'],
+					},
+				},
+			},
+			{
 				displayName: 'Options',
 				name: 'options',
 				type: 'collection',
@@ -474,7 +621,7 @@ export class KnowledgeGraph implements INodeType {
 					maxOutputTokens: options.maxOutputTokens ?? 8192,
 				};
 
-				let result: EntityExtractionResult | RelationshipExtractionResult | GraphResult;
+				let result: EntityExtractionResult | RelationshipExtractionResult | GraphResult | SimplifiedGraphResult | GraphAnalysisResult;
 
 				// Helper function to call the appropriate API method
 				const callGemini = async <T>(prompt: string): Promise<T> => {
@@ -532,6 +679,53 @@ export class KnowledgeGraph implements INodeType {
 					case 'buildGraph': {
 						const prompt = buildPromptWithConfig(FULL_GRAPH_EXTRACTION_PROMPT, textContent, extractionConfig, presetName);
 						result = await callGemini<GraphResult>(prompt);
+						break;
+					}
+
+					case 'simplifyGraph': {
+						const graphJson = this.getNodeParameter('graphJson', i, '') as string;
+						if (!graphJson) {
+							throw new NodeOperationError(this.getNode(), 'Graph JSON is required for simplifyGraph operation', { itemIndex: i });
+						}
+
+						const maxNodes = this.getNodeParameter('maxNodes', i, 30) as number;
+						const keepEntityTypes = this.getNodeParameter('keepEntityTypes', i, '') as string;
+						const simplificationMethod = this.getNodeParameter('simplificationMethod', i, 'importance') as string;
+
+						const graphData = typeof graphJson === 'string' ? JSON.parse(graphJson) : graphJson;
+						const prompt = SIMPLIFY_GRAPH_PROMPT
+							.replace('{{GRAPH_JSON}}', JSON.stringify(graphData, null, 2))
+							.replace('{{MAX_NODES}}', maxNodes.toString())
+							.replace('{{KEEP_TYPES}}', keepEntityTypes || 'auto-detect based on importance')
+							.replace('{{METHOD}}', simplificationMethod);
+
+						result = await client.generateJson<SimplifiedGraphResult>(prompt, genOptions);
+						break;
+					}
+
+					case 'analyzeGraph': {
+						const graphJson = this.getNodeParameter('graphJson', i, '') as string;
+						if (!graphJson) {
+							throw new NodeOperationError(this.getNode(), 'Graph JSON is required for analyzeGraph operation', { itemIndex: i });
+						}
+
+						const analysisLanguage = this.getNodeParameter('analysisLanguage', i, 'en') as string;
+						const analysisFocus = this.getNodeParameter('analysisFocus', i, '') as string;
+
+						const graphData = typeof graphJson === 'string' ? JSON.parse(graphJson) : graphJson;
+						const languageMap: Record<string, string> = {
+							'en': 'English',
+							'fr': 'French',
+							'es': 'Spanish',
+							'de': 'German',
+						};
+
+						const prompt = ANALYZE_GRAPH_PROMPT
+							.replace('{{GRAPH_JSON}}', JSON.stringify(graphData, null, 2))
+							.replace('{{LANGUAGE}}', languageMap[analysisLanguage] || 'English')
+							.replace('{{FOCUS}}', analysisFocus || 'general analysis of all aspects');
+
+						result = await client.generateJson<GraphAnalysisResult>(prompt, genOptions);
 						break;
 					}
 

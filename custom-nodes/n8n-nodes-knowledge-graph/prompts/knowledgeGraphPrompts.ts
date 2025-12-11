@@ -159,6 +159,129 @@ Output a JSON object with the following structure:
 `;
 
 // ============================================================================
+// SIMPLIFY GRAPH PROMPT
+// ============================================================================
+
+export const SIMPLIFY_GRAPH_PROMPT = `
+You are given a knowledge graph in JSON format. Your task is to simplify it by keeping only the most important entities and relationships.
+
+**Input Graph:**
+{{GRAPH_JSON}}
+
+**Simplification Parameters:**
+- Maximum nodes to keep: {{MAX_NODES}}
+- Entity types to prioritize: {{KEEP_TYPES}}
+- Simplification method: {{METHOD}}
+
+**Task:**
+1. Analyze the graph to identify the most important nodes based on:
+   - Number of connections (degree centrality)
+   - Position in the network (betweenness centrality)
+   - Type priority if specified
+2. Keep the top {{MAX_NODES}} most important nodes
+3. Keep only edges that connect the retained nodes
+4. For each kept node, explain why it's important
+
+Output a JSON object with the following structure:
+{
+  "graph": {
+    "nodes": [
+      {"id": 0, "name": "Entity Name", "type": "entity_type"},
+      ...
+    ],
+    "edges": [
+      {"source": 0, "target": 1, "type": "relationship_type"},
+      ...
+    ]
+  },
+  "metadata": {
+    "original_node_count": <original number of nodes>,
+    "original_edge_count": <original number of edges>,
+    "simplified_node_count": <number of nodes after simplification>,
+    "simplified_edge_count": <number of edges after simplification>,
+    "simplification_method": "{{METHOD}}"
+  },
+  "key_entities": [
+    {"id": 0, "name": "Entity Name", "type": "entity_type", "importance": "Explanation of why this entity is key"},
+    ...
+  ]
+}
+`;
+
+// ============================================================================
+// ANALYZE GRAPH PROMPT
+// ============================================================================
+
+export const ANALYZE_GRAPH_PROMPT = `
+You are an expert analyst. Analyze the following knowledge graph and provide comprehensive insights.
+
+**Input Graph:**
+{{GRAPH_JSON}}
+
+**Analysis Parameters:**
+- Output language: {{LANGUAGE}}
+- Focus area: {{FOCUS}}
+
+**Task:**
+Provide a detailed analysis including:
+1. **Summary**: A brief overview of what the graph represents
+2. **Key Findings**: Main insights from the graph structure
+3. **Entity Statistics**: Breakdown of entities by type and most connected nodes
+4. **Relationship Statistics**: Breakdown of relationships by type
+5. **Clusters**: Identify groups of related entities and describe them
+6. **Insights**: Deep insights about patterns, anomalies, or important connections
+7. **Recommendations**: Actionable recommendations based on the analysis
+
+Output a JSON object with the following structure (all text in {{LANGUAGE}}):
+{
+  "summary": "A comprehensive summary of the knowledge graph...",
+  "key_findings": [
+    "Finding 1...",
+    "Finding 2...",
+    ...
+  ],
+  "entity_statistics": {
+    "total_entities": <number>,
+    "by_type": {
+      "type1": <count>,
+      "type2": <count>,
+      ...
+    },
+    "most_connected": [
+      {"name": "Entity Name", "connections": <number>},
+      ...
+    ]
+  },
+  "relationship_statistics": {
+    "total_relationships": <number>,
+    "by_type": {
+      "type1": <count>,
+      "type2": <count>,
+      ...
+    }
+  },
+  "clusters": [
+    {
+      "name": "Cluster Name",
+      "description": "Description of what this cluster represents",
+      "entities": ["Entity1", "Entity2", ...]
+    },
+    ...
+  ],
+  "insights": [
+    "Deep insight 1...",
+    "Deep insight 2...",
+    ...
+  ],
+  "recommendations": [
+    "Recommendation 1...",
+    "Recommendation 2...",
+    ...
+  ]
+}
+`;
+
+// ============================================================================
 // CONFIGURATION INTERFACE
 // ============================================================================
 
