@@ -173,6 +173,29 @@ export const CHUNKING_INSTRUCTIONS = (chunkIndex: number, totalChunks: number, s
 `;
 
 /**
+ * Time range instructions - appended when processing a specific time range
+ */
+export const TIME_RANGE_INSTRUCTIONS = (startTime?: string, endTime?: string) => {
+  if (!startTime && !endTime) return '';
+
+  let instructions = '\n**TIME RANGE CONSTRAINT:**\n';
+
+  if (startTime && endTime) {
+    instructions += `- ONLY transcribe/analyze content between ${startTime} and ${endTime}.\n`;
+    instructions += `- Ignore any content before ${startTime} or after ${endTime}.\n`;
+    instructions += `- Timestamps in the output should be relative to the video start (not the segment).\n`;
+  } else if (startTime) {
+    instructions += `- Start transcription/analysis from ${startTime}.\n`;
+    instructions += `- Ignore any content before ${startTime}.\n`;
+  } else if (endTime) {
+    instructions += `- Stop transcription/analysis at ${endTime}.\n`;
+    instructions += `- Ignore any content after ${endTime}.\n`;
+  }
+
+  return instructions;
+};
+
+/**
  * Language-specific prompts
  */
 export const LANGUAGE_INSTRUCTIONS: Record<string, string> = {
@@ -194,8 +217,10 @@ export function getPromptForOperation(
     language?: string;
     chunkIndex?: number;
     totalChunks?: number;
-    startTime?: string;
+    chunkStartTime?: string;
     customInstructions?: string;
+    startTime?: string;
+    endTime?: string;
   } = {}
 ): string {
   let basePrompt: string;
@@ -222,9 +247,14 @@ export function getPromptForOperation(
   const langInstructions = LANGUAGE_INSTRUCTIONS[langKey] || LANGUAGE_INSTRUCTIONS.auto;
   basePrompt = `${langInstructions}\n\n${basePrompt}`;
 
+  // Add time range instructions if specified
+  if (options.startTime || options.endTime) {
+    basePrompt = `${basePrompt}\n${TIME_RANGE_INSTRUCTIONS(options.startTime, options.endTime)}`;
+  }
+
   // Add chunking instructions if processing a chunk
-  if (options.chunkIndex !== undefined && options.totalChunks !== undefined && options.startTime) {
-    basePrompt = `${basePrompt}\n${CHUNKING_INSTRUCTIONS(options.chunkIndex, options.totalChunks, options.startTime)}`;
+  if (options.chunkIndex !== undefined && options.totalChunks !== undefined && options.chunkStartTime) {
+    basePrompt = `${basePrompt}\n${CHUNKING_INSTRUCTIONS(options.chunkIndex, options.totalChunks, options.chunkStartTime)}`;
   }
 
   // Add custom instructions if provided

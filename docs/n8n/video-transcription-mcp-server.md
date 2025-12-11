@@ -35,6 +35,13 @@ Ce workflow transcrit et analyse des vidéos (YouTube, URL directes) en utilisan
 | `chunkDuration` | number | `10` | Durée de chaque segment en minutes |
 | `videoDuration` | number | `0` | Durée totale de la vidéo en minutes (requis si chunking activé) |
 
+### Plage temporelle (optionnel)
+
+| Paramètre | Type | Défaut | Description |
+|-----------|------|--------|-------------|
+| `startTime` | string | `""` | Temps de début (format `MM:SS` ou `HH:MM:SS`, ex: `"1:30"` ou `"0:01:30"`) |
+| `endTime` | string | `""` | Temps de fin (format `MM:SS` ou `HH:MM:SS`, ex: `"5:00"` ou `"0:05:00"`) |
+
 ### Options avancées
 
 | Paramètre | Type | Défaut | Description |
@@ -231,6 +238,44 @@ curl -X POST http://localhost:5678/webhook/video-transcription \
   }'
 ```
 
+### Transcrire une plage temporelle spécifique
+
+```bash
+curl -X POST http://localhost:5678/webhook/video-transcription \
+  -H "Content-Type: application/json" \
+  -d '{
+    "videoUrl": "https://www.youtube.com/watch?v=VIDEO_ID",
+    "operation": "transcribe",
+    "startTime": "1:30",
+    "endTime": "5:00"
+  }'
+```
+
+### Transcrire à partir d'un temps donné
+
+```bash
+curl -X POST http://localhost:5678/webhook/video-transcription \
+  -H "Content-Type: application/json" \
+  -d '{
+    "videoUrl": "https://youtu.be/VIDEO_ID",
+    "operation": "identifySpeakers",
+    "startTime": "10:00",
+    "language": "fr"
+  }'
+```
+
+### Transcrire jusqu'à un temps donné
+
+```bash
+curl -X POST http://localhost:5678/webhook/video-transcription \
+  -H "Content-Type: application/json" \
+  -d '{
+    "videoUrl": "https://youtu.be/VIDEO_ID",
+    "operation": "transcribe",
+    "endTime": "3:00"
+  }'
+```
+
 ## Sources vidéo supportées
 
 ### YouTube
@@ -293,6 +338,66 @@ Le chunking divise les vidéos longues en segments pour un traitement plus fiabl
 - Le timeout est de 10 minutes pour le traitement vidéo
 - La valeur `NOT_FOUND` est utilisée quand une information ne peut être extraite
 
+## Plage temporelle
+
+Les paramètres `startTime` et `endTime` permettent de limiter la transcription à une portion spécifique de la vidéo.
+
+**Formats acceptés:**
+- `MM:SS` : ex. `"1:30"` pour 1 minute 30 secondes
+- `HH:MM:SS` : ex. `"1:30:00"` pour 1 heure 30 minutes
+
+**Comportement:**
+- `startTime` seul : transcrit depuis ce temps jusqu'à la fin
+- `endTime` seul : transcrit depuis le début jusqu'à ce temps
+- Les deux : transcrit uniquement la plage spécifiée
+- Les timestamps dans la sortie restent relatifs au début de la vidéo originale
+
+**Cas d'usage:**
+- Extraire un segment spécifique d'une longue vidéo
+- Ignorer les introductions/conclusions
+- Transcrire uniquement une intervention particulière
+
+## Intégration avec MCP Server
+
+Exemple d'outil MCP pour appeler ce workflow:
+
+```typescript
+{
+  name: "transcribe_video",
+  description: "Transcribe and analyze videos using Gemini multimodal AI",
+  inputSchema: {
+    type: "object",
+    properties: {
+      videoUrl: { type: "string", description: "YouTube URL or direct video URL" },
+      operation: {
+        type: "string",
+        enum: ["transcribe", "identifySpeakers", "extractOcr", "analyzeScene"],
+        default: "transcribe"
+      },
+      language: {
+        type: "string",
+        enum: ["auto", "en", "fr", "es", "de", "it", "pt"],
+        default: "auto"
+      },
+      startTime: {
+        type: "string",
+        description: "Start time (MM:SS or HH:MM:SS format)"
+      },
+      endTime: {
+        type: "string",
+        description: "End time (MM:SS or HH:MM:SS format)"
+      },
+      enableChunking: { type: "boolean", default: false },
+      chunkDuration: { type: "number", default: 10 },
+      videoDuration: { type: "number", description: "Required if chunking enabled" },
+      model: { type: "string", default: "gemini-2.5-flash" },
+      customInstructions: { type: "string" }
+    },
+    required: ["videoUrl"]
+  }
+}
+```
+
 ## Limitations
 
 - Les vidéos protégées par DRM ne sont pas supportées
@@ -300,3 +405,8 @@ Le chunking divise les vidéos longues en segments pour un traitement plus fiabl
 - La qualité de la transcription dépend de la qualité audio
 - L'identification des locuteurs fonctionne mieux avec des voix distinctes
 - L'OCR nécessite un texte suffisamment lisible à l'écran
+
+## Voir aussi
+
+- [Knowledge Graph MCP Server API](./knowledge-graph-mcp-server.md)
+- [Guide de Test](./TESTING_GUIDE.md)

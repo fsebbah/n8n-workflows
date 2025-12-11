@@ -12,7 +12,7 @@ from pathlib import Path
 
 # Load configuration from .env.local
 def load_env():
-    env_file = Path(__file__).parent.parent / ".env.local"
+    env_file = Path(__file__).parent.parent.parent / ".env.local"
     config = {}
     if env_file.exists():
         with open(env_file) as f:
