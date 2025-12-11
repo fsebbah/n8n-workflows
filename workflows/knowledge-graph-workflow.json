@@ -135,18 +135,6 @@
     },
     {
       "parameters": {
-        "operation": "toJson",
-        "sourceProperty": "data",
-        "options": {}
-      },
-      "id": "convert-base64",
-      "name": "Convert Base64 to Binary",
-      "type": "n8n-nodes-base.moveBinaryData",
-      "typeVersion": 1.1,
-      "position": [1120, 420]
-    },
-    {
-      "parameters": {
         "errorMessage": "={{ \"No document provided. Please send documentPath, documentUrl, or document.data (base64)\" }}"
       },
       "id": "error-no-document",
@@ -157,7 +145,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Prepare data for Knowledge Graph node\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\n// Get config from request\nconst configMode = body.configMode || 'preset';\nconst preset = body.preset || 'business';\nconst configJson = body.configJson ? JSON.stringify(body.configJson) : '{}';\n\n// Pass through binary data and add config\nconst items = $input.all();\n\nreturn items.map(item => ({\n  json: {\n    configMode,\n    preset,\n    configJson,\n    originalRequest: body\n  },\n  binary: item.binary\n}));"
+        "jsCode": "// Prepare data for Knowledge Graph node\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\n// Get config from request\nconst configMode = body.configMode || 'preset';\nconst preset = body.preset || 'business';\nconst configJson = body.configJson ? JSON.stringify(body.configJson) : '{}';\n\n// Get optional processing flags\nconst simplify = body.simplify === true || body.simplify === 'true';\nconst analyze = body.analyze === true || body.analyze === 'true';\nconst maxNodes = body.maxNodes || 30;\nconst analysisLanguage = body.analysisLanguage || 'en';\n\n// Pass through binary data and add config\nconst items = $input.all();\n\nreturn items.map(item => ({\n  json: {\n    configMode,\n    preset,\n    configJson,\n    simplify,\n    analyze,\n    maxNodes,\n    analysisLanguage,\n    originalRequest: body\n  },\n  binary: item.binary\n}));"
       },
       "id": "prepare-config",
       "name": "Prepare Config",
@@ -192,6 +180,161 @@
     },
     {
       "parameters": {
+        "jsCode": "// Convert base64 to binary\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\nconst base64Data = body.document?.data;\nconst mimeType = body.document?.mimeType || 'application/pdf';\n\nif (!base64Data) {\n  throw new Error('No base64 data found in document.data');\n}\n\n// Create binary data from base64\nconst binaryData = Buffer.from(base64Data, 'base64');\n\nreturn [{\n  json: body,\n  binary: {\n    data: {\n      data: base64Data,\n      mimeType: mimeType,\n      fileName: 'document.pdf'\n    }\n  }\n}];"
+      },
+      "id": "base64-to-binary",
+      "name": "Base64 to Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store the graph result and pass through config\nconst configData = $('Prepare Config').first().json;\nconst graphResult = $input.first().json;\n\nreturn [{\n  json: {\n    ...configData,\n    graphResult\n  }\n}];"
+      },
+      "id": "store-graph-result",
+      "name": "Store Graph Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-simplify",
+              "leftValue": "={{ $json.simplify }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-simplify",
+      "name": "Simplify?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "operation": "simplifyGraph",
+        "graphJson": "={{ $json.graphResult }}",
+        "maxNodes": "={{ $json.maxNodes }}",
+        "keepEntityTypes": "",
+        "simplificationMethod": "importance",
+        "options": {
+          "model": "gemini-2.5-flash",
+          "maxOutputTokens": 16384
+        }
+      },
+      "id": "simplify-graph",
+      "name": "Simplify Graph",
+      "type": "n8n-nodes-knowledge-graph.knowledgeGraph",
+      "typeVersion": 1,
+      "position": [2440, 180],
+      "credentials": {
+        "googleVertexAiApi": {
+          "id": "google-vertex-ai",
+          "name": "Google Vertex AI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge simplified graph into result\nconst prevData = $('Store Graph Result').first().json;\nconst simplifiedResult = $input.first().json;\n\nreturn [{\n  json: {\n    ...prevData,\n    simplifiedGraph: simplifiedResult\n  }\n}];"
+      },
+      "id": "merge-simplified",
+      "name": "Merge Simplified",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-analyze",
+              "leftValue": "={{ $json.analyze }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-analyze",
+      "name": "Analyze?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2880, 300]
+    },
+    {
+      "parameters": {
+        "operation": "analyzeGraph",
+        "graphJson": "={{ $json.graphResult }}",
+        "analysisLanguage": "={{ $json.analysisLanguage }}",
+        "analysisFocus": "",
+        "options": {
+          "model": "gemini-2.5-flash",
+          "maxOutputTokens": 16384
+        }
+      },
+      "id": "analyze-graph",
+      "name": "Analyze Graph",
+      "type": "n8n-nodes-knowledge-graph.knowledgeGraph",
+      "typeVersion": 1,
+      "position": [3100, 180],
+      "credentials": {
+        "googleVertexAiApi": {
+          "id": "google-vertex-ai",
+          "name": "Google Vertex AI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge analysis into result\nconst prevData = $('Check Analyze?').first().json;\nconst analysisResult = $input.first().json;\n\nreturn [{\n  json: {\n    ...prevData,\n    analysis: analysisResult\n  }\n}];"
+      },
+      "id": "merge-analysis",
+      "name": "Merge Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3320, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build final response\nconst data = $input.first().json;\n\n// Start with the main graph\nconst response = {\n  graph: data.graphResult?.graph || data.graphResult,\n  metadata: data.graphResult?.metadata || {}\n};\n\n// Add simplified graph if available\nif (data.simplifiedGraph) {\n  response.simplified = {\n    graph: data.simplifiedGraph.graph,\n    metadata: data.simplifiedGraph.metadata,\n    key_entities: data.simplifiedGraph.key_entities\n  };\n}\n\n// Add analysis if available\nif (data.analysis) {\n  response.analysis = data.analysis;\n}\n\nreturn [{ json: response }];"
+      },
+      "id": "build-response",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3540, 300]
+    },
+    {
+      "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json }}",
         "options": {}
@@ -200,17 +343,7 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [2000, 300]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Convert base64 to binary\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\nconst base64Data = body.document?.data;\nconst mimeType = body.document?.mimeType || 'application/pdf';\n\nif (!base64Data) {\n  throw new Error('No base64 data found in document.data');\n}\n\n// Create binary data from base64\nconst binaryData = Buffer.from(base64Data, 'base64');\n\nreturn [{\n  json: body,\n  binary: {\n    data: {\n      data: base64Data,\n      mimeType: mimeType,\n      fileName: 'document.pdf'\n    }\n  }\n}];"
-      },
-      "id": "base64-to-binary",
-      "name": "Base64 to Binary",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1120, 420]
+      "position": [3760, 300]
     }
   ],
   "connections": {
@@ -324,6 +457,108 @@
       ]
     },
     "Knowledge Graph": {
+      "main": [
+        [
+          {
+            "node": "Store Graph Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Graph Result": {
+      "main": [
+        [
+          {
+            "node": "Simplify?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simplify?": {
+      "main": [
+        [
+          {
+            "node": "Simplify Graph",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Analyze?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simplify Graph": {
+      "main": [
+        [
+          {
+            "node": "Merge Simplified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Simplified": {
+      "main": [
+        [
+          {
+            "node": "Analyze?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze?": {
+      "main": [
+        [
+          {
+            "node": "Analyze Graph",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Graph": {
+      "main": [
+        [
+          {
+            "node": "Merge Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Analysis": {
+      "main": [
+        [
+          {
+            "node": "Build Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Response": {
       "main": [
         [
           {
