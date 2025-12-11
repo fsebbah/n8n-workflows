@@ -42,6 +42,7 @@ export {
 	GenAiClient,
 	createAiStudioClient,
 	createVertexAiClient,
+	createVertexAiClientWithAdc,
 } from './shared/GenAiClient';
 
 // Credentials (exported for n8n to discover)

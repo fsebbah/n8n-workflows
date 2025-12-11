@@ -37,6 +37,23 @@ export class GoogleVertexAiApi implements ICredentialType {
 			description: 'Region for Vertex AI API calls',
 		},
 		{
+			displayName: 'Authentication Method',
+			name: 'authMethod',
+			type: 'options',
+			default: 'adc',
+			options: [
+				{
+					name: 'Application Default Credentials (ADC)',
+					value: 'adc',
+				},
+				{
+					name: 'Service Account Key (JSON)',
+					value: 'serviceAccountKey',
+				},
+			],
+			description: 'ADC uses gcloud auth automatically. Service Account Key requires pasting the JSON.',
+		},
+		{
 			displayName: 'Service Account Key (JSON)',
 			name: 'serviceAccountKey',
 			type: 'string',
@@ -45,7 +62,12 @@ export class GoogleVertexAiApi implements ICredentialType {
 				rows: 10,
 			},
 			default: '',
-			required: true,
+			required: false,
+			displayOptions: {
+				show: {
+					authMethod: ['serviceAccountKey'],
+				},
+			},
 			description: 'Paste the entire JSON content of your Service Account key file',
 		},
 		{
