@@ -201,6 +201,23 @@ export class VideoTranscription implements INodeType {
           },
         },
       },
+      // Time range options
+      {
+        displayName: 'Start Time',
+        name: 'startTime',
+        type: 'string',
+        default: '',
+        placeholder: '1:30 or 0:01:30',
+        description: 'Start transcription from this time (MM:SS or HH:MM:SS format)',
+      },
+      {
+        displayName: 'End Time',
+        name: 'endTime',
+        type: 'string',
+        default: '',
+        placeholder: '5:00 or 0:05:00',
+        description: 'Stop transcription at this time (MM:SS or HH:MM:SS format)',
+      },
       // Advanced options
       {
         displayName: 'Options',
@@ -256,6 +273,8 @@ export class VideoTranscription implements INodeType {
         const videoSource = this.getNodeParameter('videoSource', i) as string;
         const outputLanguage = this.getNodeParameter('outputLanguage', i) as string;
         const enableChunking = this.getNodeParameter('enableChunking', i) as boolean;
+        const startTime = this.getNodeParameter('startTime', i, '') as string;
+        const endTime = this.getNodeParameter('endTime', i, '') as string;
         const options = this.getNodeParameter('options', i, {}) as {
           model?: string;
           maxOutputTokens?: number;
@@ -348,8 +367,10 @@ export class VideoTranscription implements INodeType {
                 language: outputLanguage,
                 chunkIndex,
                 totalChunks: chunks.length,
-                startTime: chunk.startTime,
+                chunkStartTime: chunk.startTime,
                 customInstructions: options.customInstructions,
+                startTime,
+                endTime,
               }
             );
 
@@ -382,6 +403,8 @@ export class VideoTranscription implements INodeType {
             {
               language: outputLanguage,
               customInstructions: options.customInstructions,
+              startTime,
+              endTime,
             }
           );
 
@@ -406,6 +429,10 @@ export class VideoTranscription implements INodeType {
             title: videoInfo.title,
             model: options.model || 'gemini-2.5-flash',
             processedAt: new Date().toISOString(),
+            timeRange: (startTime || endTime) ? {
+              start: startTime || null,
+              end: endTime || null,
+            } : null,
           },
         };
 

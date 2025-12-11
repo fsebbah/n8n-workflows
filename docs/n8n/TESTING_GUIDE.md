@@ -37,6 +37,8 @@ Script : `scripts/test/test_video_transcription.py`
 | `-m, --model` | Modèle Gemini | `gemini-2.5-flash` |
 | `-w, --webhook` | URL du webhook | `http://localhost:5678/webhook/video-transcription` |
 | `-i, --instructions` | Instructions personnalisées | - |
+| `--start` | Temps de début (MM:SS ou HH:MM:SS) | - |
+| `--end` | Temps de fin (MM:SS ou HH:MM:SS) | - |
 | `--chunking` | Activer le découpage | `false` |
 | `--chunk-duration` | Durée des chunks (min) | `10` |
 | `--video-duration` | Durée totale vidéo (min) | requis si chunking |
@@ -71,6 +73,12 @@ python scripts/test/test_video_transcription.py "https://youtu.be/VIDEO_ID" -f d
 
 # Vidéo longue avec chunking (45 minutes)
 python scripts/test/test_video_transcription.py "https://youtu.be/VIDEO_ID" --chunking --video-duration 45
+
+# Transcrire uniquement de 1:30 à 5:00
+python scripts/test/test_video_transcription.py "https://youtu.be/VIDEO_ID" --start 1:30 --end 5:00
+
+# Transcrire à partir de 2 minutes
+python scripts/test/test_video_transcription.py "https://youtu.be/VIDEO_ID" --start 2:00
 
 # Avec instructions personnalisées
 python scripts/test/test_video_transcription.py "https://youtu.be/VIDEO_ID" -i "Focus on technical terms"

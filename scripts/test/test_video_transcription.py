@@ -3,20 +3,26 @@
 Test script for Video Transcription n8n workflow.
 
 Usage:
-    python scripts/test_video_transcription.py <youtube_url> [options]
+    python scripts/test/test_video_transcription.py <youtube_url> [options]
 
 Examples:
     # Basic transcription
-    python scripts/test_video_transcription.py "https://www.youtube.com/watch?v=VIDEO_ID"
+    python scripts/test/test_video_transcription.py "https://www.youtube.com/watch?v=VIDEO_ID"
 
     # With speaker identification
-    python scripts/test_video_transcription.py "https://youtu.be/VIDEO_ID" -o identifySpeakers
+    python scripts/test/test_video_transcription.py "https://youtu.be/VIDEO_ID" -o identifySpeakers
 
     # Full analysis in French
-    python scripts/test_video_transcription.py "https://www.youtube.com/watch?v=VIDEO_ID" -o analyzeScene -l fr
+    python scripts/test/test_video_transcription.py "https://www.youtube.com/watch?v=VIDEO_ID" -o analyzeScene -l fr
 
     # With output file
-    python scripts/test_video_transcription.py "https://youtu.be/VIDEO_ID" -f output.json
+    python scripts/test/test_video_transcription.py "https://youtu.be/VIDEO_ID" -f output.json
+
+    # Transcribe only from 1:30 to 5:00
+    python scripts/test/test_video_transcription.py "https://youtu.be/VIDEO_ID" --start 1:30 --end 5:00
+
+    # Start at 2 minutes
+    python scripts/test/test_video_transcription.py "https://youtu.be/VIDEO_ID" --start 2:00
 """
 
 import argparse
@@ -52,6 +58,58 @@ def extract_video_id(url: str) -> str | None:
     return None
 
 
+def is_valid_video_url(url: str) -> bool:
+    """Check if URL is a valid video URL (YouTube or direct)."""
+    parsed = urlparse(url)
+
+    # Must have a valid scheme and netloc
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        return False
+
+    return True
+
+
+def get_video_identifier(url: str) -> str:
+    """Get a short identifier for the video (YouTube ID or domain+path)."""
+    # Try YouTube first
+    video_id = extract_video_id(url)
+    if video_id:
+        return video_id
+
+    # For direct URLs, use domain + sanitized path
+    parsed = urlparse(url)
+    domain = parsed.netloc.replace('www.', '').split('.')[0]
+    path = parsed.path.strip('/').replace('/', '_')[:30]
+    return f"{domain}_{path}" if path else domain
+
+
+def parse_time(time_str: str) -> int:
+    """Parse time string (MM:SS or HH:MM:SS) to seconds."""
+    if not time_str:
+        return 0
+
+    parts = time_str.split(':')
+    if len(parts) == 2:
+        return int(parts[0]) * 60 + int(parts[1])
+    elif len(parts) == 3:
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    else:
+        return int(time_str)
+
+
+def format_time(seconds: int) -> str:
+    """Format seconds to MM:SS or HH:MM:SS."""
+    if seconds >= 3600:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        return f"{h}:{m:02d}:{s:02d}"
+    else:
+        m = seconds // 60
+        s = seconds % 60
+        return f"{m}:{s:02d}"
+
+
 def call_transcription_api(
     video_url: str,
     operation: str = 'transcribe',
@@ -61,7 +119,9 @@ def call_transcription_api(
     chunk_duration: int = 10,
     video_duration: int = 0,
     model: str = 'gemini-2.5-flash',
-    custom_instructions: str = ''
+    custom_instructions: str = '',
+    start_time: str = '',
+    end_time: str = ''
 ) -> dict:
     """Call the video transcription n8n webhook."""
 
@@ -76,6 +136,12 @@ def call_transcription_api(
         payload['enableChunking'] = True
         payload['chunkDuration'] = chunk_duration
         payload['videoDuration'] = video_duration
+
+    if start_time:
+        payload['startTime'] = start_time
+
+    if end_time:
+        payload['endTime'] = end_time
 
     if custom_instructions:
         payload['customInstructions'] = custom_instructions
@@ -260,6 +326,20 @@ def main():
     )
 
     parser.add_argument(
+        '--start',
+        dest='start_time',
+        default='',
+        help='Start time (MM:SS or HH:MM:SS format, e.g., 1:30 or 0:01:30)'
+    )
+
+    parser.add_argument(
+        '--end',
+        dest='end_time',
+        default='',
+        help='End time (MM:SS or HH:MM:SS format, e.g., 5:00 or 0:05:00)'
+    )
+
+    parser.add_argument(
         '-q', '--quiet',
         action='store_true',
         help='Only output JSON, no formatting'
@@ -267,16 +347,29 @@ def main():
 
     args = parser.parse_args()
 
-    # Validate YouTube URL
-    video_id = extract_video_id(args.youtube_url)
-    if not video_id:
-        print(f"Error: Invalid YouTube URL: {args.youtube_url}", file=sys.stderr)
+    # Validate video URL (YouTube or direct)
+    if not is_valid_video_url(args.youtube_url):
+        print(f"Error: Invalid video URL: {args.youtube_url}", file=sys.stderr)
         sys.exit(1)
+
+    # Get video identifier for output filename
+    video_id = get_video_identifier(args.youtube_url)
+
+    # Validate time range
+    if args.start_time and args.end_time:
+        start_sec = parse_time(args.start_time)
+        end_sec = parse_time(args.end_time)
+        if start_sec >= end_sec:
+            print(f"Error: Start time ({args.start_time}) must be before end time ({args.end_time})", file=sys.stderr)
+            sys.exit(1)
 
     print(f"Video ID: {video_id}")
     print(f"Operation: {args.operation}")
     print(f"Language: {args.language}")
     print(f"Model: {args.model}")
+    if args.start_time or args.end_time:
+        time_range = f"{args.start_time or '0:00'} -> {args.end_time or 'end'}"
+        print(f"Time range: {time_range}")
     print()
 
     # Validate chunking options
@@ -286,7 +379,7 @@ def main():
 
     try:
         # Call the API with timing
-        start_time = time.time()
+        api_start_time = time.time()
         result = call_transcription_api(
             video_url=args.youtube_url,
             operation=args.operation,
@@ -296,15 +389,21 @@ def main():
             chunk_duration=args.chunk_duration,
             video_duration=args.video_duration,
             model=args.model,
-            custom_instructions=args.instructions
+            custom_instructions=args.instructions,
+            start_time=args.start_time,
+            end_time=args.end_time
         )
-        elapsed_time = time.time() - start_time
+        elapsed_time = time.time() - api_start_time
 
         # Add execution time to result
         result['_execution'] = {
             'elapsed_seconds': round(elapsed_time, 2),
             'elapsed_formatted': f"{int(elapsed_time // 60)}m {int(elapsed_time % 60)}s",
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'time_range': {
+                'start': args.start_time or None,
+                'end': args.end_time or None
+            } if (args.start_time or args.end_time) else None
         }
 
         # Generate output filename if not provided
