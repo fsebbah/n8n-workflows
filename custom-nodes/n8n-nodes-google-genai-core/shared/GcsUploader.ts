@@ -37,15 +37,18 @@ export class GcsUploader {
   private storage: Storage;
   private bucket: Bucket;
   private config: Required<GcsConfig>;
+  private impersonateServiceAccount?: string;
 
   constructor(
     config: GcsConfig,
-    serviceAccountKey?: string
+    serviceAccountKey?: string,
+    impersonateServiceAccount?: string
   ) {
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
     } as Required<GcsConfig>;
+    this.impersonateServiceAccount = impersonateServiceAccount;
 
     // Initialiser le client Storage
     if (serviceAccountKey) {
@@ -244,17 +247,85 @@ export class GcsUploader {
 
   /**
    * Génère une URL signée pour un fichier
+   * Si impersonateServiceAccount est défini, utilise l'impersonation via IAM Credentials API
    */
   private async generateSignedUrl(file: File): Promise<string> {
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + this.config.signedUrlExpirationHours);
 
+    // Si on a un service account à impersonner, utiliser l'impersonation
+    if (this.impersonateServiceAccount) {
+      return this.generateSignedUrlWithImpersonation(file, expiresAt);
+    }
+
+    // Sans impersonation, utiliser la méthode standard
     const [signedUrl] = await file.getSignedUrl({
       action: 'read',
       expires: expiresAt,
     });
-
     return signedUrl;
+  }
+
+  /**
+   * Génère une URL signée en utilisant l'impersonation de service account
+   */
+  private async generateSignedUrlWithImpersonation(file: File, expiresAt: Date): Promise<string> {
+    const { IAMCredentialsClient } = await import('@google-cloud/iam-credentials');
+    const iamClient = new IAMCredentialsClient();
+
+    // Construire les composants de l'URL signée V4
+    const expiration = Math.floor((expiresAt.getTime() - Date.now()) / 1000);
+    const signedHeaders = 'host';
+    const bucketName = this.config.bucketName;
+    const objectName = file.name;
+    const host = `${bucketName}.storage.googleapis.com`;
+
+    const now = new Date();
+    const datestamp = now.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+    const dateOnly = datestamp.substring(0, 8);
+
+    const credentialScope = `${dateOnly}/auto/storage/goog4_request`;
+    const credential = `${this.impersonateServiceAccount}/${credentialScope}`;
+
+    // Paramètres de requête canoniques
+    const queryParams = new URLSearchParams({
+      'X-Goog-Algorithm': 'GOOG4-RSA-SHA256',
+      'X-Goog-Credential': credential,
+      'X-Goog-Date': datestamp,
+      'X-Goog-Expires': expiration.toString(),
+      'X-Goog-SignedHeaders': signedHeaders,
+    });
+
+    // Requête canonique
+    const canonicalRequest = [
+      'GET',
+      `/${objectName}`,
+      queryParams.toString(),
+      `host:${host}`,
+      '',
+      signedHeaders,
+      'UNSIGNED-PAYLOAD',
+    ].join('\n');
+
+    // String à signer
+    const stringToSign = [
+      'GOOG4-RSA-SHA256',
+      datestamp,
+      credentialScope,
+      require('crypto').createHash('sha256').update(canonicalRequest).digest('hex'),
+    ].join('\n');
+
+    // Signer via IAM Credentials API (impersonation)
+    const [signResponse] = await iamClient.signBlob({
+      name: `projects/-/serviceAccounts/${this.impersonateServiceAccount}`,
+      payload: Buffer.from(stringToSign).toString('base64'),
+    });
+
+    const signature = Buffer.from(signResponse.signedBlob as string, 'base64').toString('hex');
+
+    // Construire l'URL finale
+    queryParams.append('X-Goog-Signature', signature);
+    return `https://${host}/${objectName}?${queryParams.toString()}`;
   }
 }
 
@@ -264,7 +335,8 @@ export class GcsUploader {
 export function createGcsUploader(
   bucketName: string,
   serviceAccountKey?: string,
-  pathPrefix: string = 'generated'
+  pathPrefix: string = 'generated',
+  impersonateServiceAccount?: string
 ): GcsUploader {
   return new GcsUploader(
     {
@@ -272,6 +344,7 @@ export function createGcsUploader(
       pathPrefix,
       signedUrlExpirationHours: 24,
     },
-    serviceAccountKey
+    serviceAccountKey,
+    impersonateServiceAccount
   );
 }

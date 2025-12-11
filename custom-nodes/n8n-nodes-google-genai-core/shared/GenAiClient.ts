@@ -97,8 +97,8 @@ export class GenAiClient {
         'Content-Type': 'application/json',
         'x-goog-api-key': config.apiKey,
       };
-    } else if (config.projectId && config.serviceAccountKey) {
-      // Mode Vertex AI (Service Account)
+    } else if (config.projectId) {
+      // Mode Vertex AI (Service Account ou ADC)
       const location = config.location || 'us-central1';
       this.baseUrl = `https://${location}-aiplatform.googleapis.com/v1/projects/${config.projectId}/locations/${location}`;
       this.headers = {
@@ -106,7 +106,7 @@ export class GenAiClient {
       };
     } else {
       throw new GenAiNodeError(parseGoogleApiError(
-        new Error('Configuration invalide: fournir apiKey (AI Studio) ou projectId + serviceAccountKey (Vertex AI)')
+        new Error('Configuration invalide: fournir apiKey (AI Studio) ou projectId (Vertex AI)')
       ));
     }
   }
@@ -380,8 +380,8 @@ export class GenAiClient {
 
     const headers = { ...this.headers };
 
-    // Pour Vertex AI, ajouter le token d'accès
-    if (!this.config.apiKey && this.config.serviceAccountKey) {
+    // Pour Vertex AI, ajouter le token d'accès (Service Account ou ADC)
+    if (!this.config.apiKey) {
       const accessToken = await this.getAccessToken();
       headers['Authorization'] = `Bearer ${accessToken}`;
     }
@@ -406,43 +406,40 @@ export class GenAiClient {
   }
 
   /**
-   * Obtient un token d'accès depuis le Service Account
+   * Obtient un token d'accès (Service Account ou ADC)
    */
   private async getAccessToken(): Promise<string> {
-    if (!this.config.serviceAccountKey) {
-      throw new Error('Service Account Key required for Vertex AI');
+    const { GoogleAuth } = await import('google-auth-library');
+
+    let auth: InstanceType<typeof GoogleAuth>;
+
+    if (this.config.serviceAccountKey) {
+      // Mode Service Account Key (JSON explicite)
+      const credentials = typeof this.config.serviceAccountKey === 'string'
+        ? JSON.parse(this.config.serviceAccountKey)
+        : this.config.serviceAccountKey;
+
+      auth = new GoogleAuth({
+        credentials,
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      });
+    } else {
+      // Mode ADC (Application Default Credentials)
+      // Utilise automatiquement :
+      // - GOOGLE_APPLICATION_CREDENTIALS env var
+      // - gcloud auth application-default login
+      // - Metadata server (sur GCP)
+      auth = new GoogleAuth({
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+        projectId: this.config.projectId,
+      });
     }
 
-    const credentials = typeof this.config.serviceAccountKey === 'string'
-      ? JSON.parse(this.config.serviceAccountKey)
-      : this.config.serviceAccountKey;
-
-    // Créer un JWT pour obtenir un access token
-    const now = Math.floor(Date.now() / 1000);
-    const jwtHeader = {
-      alg: 'RS256',
-      typ: 'JWT',
-    };
-    const jwtPayload = {
-      iss: credentials.client_email,
-      scope: 'https://www.googleapis.com/auth/cloud-platform',
-      aud: 'https://oauth2.googleapis.com/token',
-      iat: now,
-      exp: now + 3600,
-    };
-
-    // Note: En production, utiliser une bibliothèque JWT appropriée
-    // Pour l'instant, on utilise l'approche simplifiée via le SDK
-    const { GoogleAuth } = await import('google-auth-library');
-    const auth = new GoogleAuth({
-      credentials,
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-    });
     const client = await auth.getClient();
     const tokenResponse = await client.getAccessToken();
 
     if (!tokenResponse.token) {
-      throw new Error('Failed to get access token');
+      throw new Error('Failed to get access token. Ensure ADC is configured (gcloud auth application-default login) or provide a Service Account Key.');
     }
 
     return tokenResponse.token;
@@ -472,12 +469,26 @@ export function createAiStudioClient(apiKey: string): GenAiClient {
  */
 export function createVertexAiClient(
   projectId: string,
-  serviceAccountKey: string,
+  serviceAccountKey: string | null | undefined,
   location: string = 'us-central1'
 ): GenAiClient {
   return new GenAiClient({
     projectId,
     location,
-    serviceAccountKey,
+    serviceAccountKey: serviceAccountKey || undefined,
+  });
+}
+
+/**
+ * Factory pour créer un GenAiClient avec ADC (Vertex AI)
+ * Utilise Application Default Credentials (gcloud auth application-default login)
+ */
+export function createVertexAiClientWithAdc(
+  projectId: string,
+  location: string = 'us-central1'
+): GenAiClient {
+  return new GenAiClient({
+    projectId,
+    location,
   });
 }
