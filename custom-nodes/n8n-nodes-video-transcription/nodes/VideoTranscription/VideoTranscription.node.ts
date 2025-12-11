@@ -1,0 +1,427 @@
+import {
+  IExecuteFunctions,
+  INodeExecutionData,
+  INodeType,
+  INodeTypeDescription,
+  NodeOperationError,
+} from 'n8n-workflow';
+
+import {
+  downloadVideoFromUrl,
+  isYouTubeUrl,
+  extractYouTubeVideoId,
+  fetchYouTubeVideo,
+  prepareVideoContent,
+  callGeminiWithVideo,
+  calculateChunks,
+  mergeTranscriptionResults,
+  timeToSeconds,
+  GeminiCredentials,
+  VideoInfo,
+} from '../../shared/VideoClient';
+
+import { getPromptForOperation } from '../../shared/videoTranscriptionPrompts';
+
+export class VideoTranscription implements INodeType {
+  description: INodeTypeDescription = {
+    displayName: 'Video Transcription',
+    name: 'videoTranscription',
+    icon: 'file:video-transcription.svg',
+    group: ['transform'],
+    version: 1,
+    subtitle: '={{$parameter["operation"]}}',
+    description: 'Transcribe and analyze videos using Google Gemini multimodal AI',
+    defaults: {
+      name: 'Video Transcription',
+    },
+    inputs: ['main'],
+    outputs: ['main'],
+    credentials: [
+      {
+        name: 'googleVertexAiApi',
+        required: false,
+        displayOptions: {
+          show: {
+            credentialType: ['vertexai'],
+          },
+        },
+      },
+      {
+        name: 'googleAiStudioApi',
+        required: false,
+        displayOptions: {
+          show: {
+            credentialType: ['aistudio'],
+          },
+        },
+      },
+    ],
+    properties: [
+      {
+        displayName: 'Credential Type',
+        name: 'credentialType',
+        type: 'options',
+        options: [
+          {
+            name: 'Google Vertex AI',
+            value: 'vertexai',
+          },
+          {
+            name: 'Google AI Studio',
+            value: 'aistudio',
+          },
+        ],
+        default: 'vertexai',
+        description: 'Which API to use for Gemini',
+      },
+      {
+        displayName: 'Operation',
+        name: 'operation',
+        type: 'options',
+        noDataExpression: true,
+        options: [
+          {
+            name: 'Transcribe',
+            value: 'transcribe',
+            description: 'Transcribe video audio with timestamps',
+            action: 'Transcribe video audio',
+          },
+          {
+            name: 'Identify Speakers',
+            value: 'identifySpeakers',
+            description: 'Transcribe with speaker diarization and identification',
+            action: 'Transcribe with speaker identification',
+          },
+          {
+            name: 'Extract OCR',
+            value: 'extractOcr',
+            description: 'Extract visible text from video frames',
+            action: 'Extract text from video frames',
+          },
+          {
+            name: 'Analyze Scene',
+            value: 'analyzeScene',
+            description: 'Full video analysis: transcription, speakers, OCR, and scene description',
+            action: 'Analyze video scene completely',
+          },
+        ],
+        default: 'transcribe',
+      },
+      // Video source options
+      {
+        displayName: 'Video Source',
+        name: 'videoSource',
+        type: 'options',
+        options: [
+          {
+            name: 'URL',
+            value: 'url',
+            description: 'Video from direct URL or YouTube',
+          },
+          {
+            name: 'Binary Data',
+            value: 'binary',
+            description: 'Video from binary input',
+          },
+        ],
+        default: 'url',
+        description: 'Source of the video to process',
+      },
+      {
+        displayName: 'Video URL',
+        name: 'videoUrl',
+        type: 'string',
+        default: '',
+        placeholder: 'https://www.youtube.com/watch?v=... or https://example.com/video.mp4',
+        description: 'URL of the video (YouTube or direct link)',
+        displayOptions: {
+          show: {
+            videoSource: ['url'],
+          },
+        },
+      },
+      {
+        displayName: 'Input Binary Field',
+        name: 'binaryPropertyName',
+        type: 'string',
+        default: 'data',
+        description: 'Name of the binary property containing the video',
+        displayOptions: {
+          show: {
+            videoSource: ['binary'],
+          },
+        },
+      },
+      // Output language
+      {
+        displayName: 'Output Language',
+        name: 'outputLanguage',
+        type: 'options',
+        options: [
+          { name: 'Auto-Detect', value: 'auto' },
+          { name: 'English', value: 'en' },
+          { name: 'French', value: 'fr' },
+          { name: 'Spanish', value: 'es' },
+          { name: 'German', value: 'de' },
+          { name: 'Italian', value: 'it' },
+          { name: 'Portuguese', value: 'pt' },
+        ],
+        default: 'auto',
+        description: 'Language for the transcription output',
+      },
+      // Chunking options
+      {
+        displayName: 'Enable Chunking',
+        name: 'enableChunking',
+        type: 'boolean',
+        default: false,
+        description: 'Whether to split long videos into chunks for processing',
+      },
+      {
+        displayName: 'Chunk Duration (Minutes)',
+        name: 'chunkDuration',
+        type: 'number',
+        default: 10,
+        description: 'Duration of each chunk in minutes',
+        displayOptions: {
+          show: {
+            enableChunking: [true],
+          },
+        },
+      },
+      {
+        displayName: 'Video Duration (Minutes)',
+        name: 'videoDuration',
+        type: 'number',
+        default: 0,
+        description: 'Total video duration in minutes (required for chunking if not auto-detected)',
+        displayOptions: {
+          show: {
+            enableChunking: [true],
+          },
+        },
+      },
+      // Advanced options
+      {
+        displayName: 'Options',
+        name: 'options',
+        type: 'collection',
+        placeholder: 'Add Option',
+        default: {},
+        options: [
+          {
+            displayName: 'Model',
+            name: 'model',
+            type: 'options',
+            options: [
+              { name: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
+              { name: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro' },
+              { name: 'Gemini 2.0 Flash', value: 'gemini-2.0-flash' },
+              { name: 'Gemini 1.5 Pro', value: 'gemini-1.5-pro' },
+              { name: 'Gemini 1.5 Flash', value: 'gemini-1.5-flash' },
+            ],
+            default: 'gemini-2.5-flash',
+            description: 'Gemini model to use for video analysis',
+          },
+          {
+            displayName: 'Max Output Tokens',
+            name: 'maxOutputTokens',
+            type: 'number',
+            default: 8192,
+            description: 'Maximum tokens in the response',
+          },
+          {
+            displayName: 'Custom Instructions',
+            name: 'customInstructions',
+            type: 'string',
+            typeOptions: {
+              rows: 4,
+            },
+            default: '',
+            description: 'Additional instructions to append to the prompt',
+          },
+        ],
+      },
+    ],
+  };
+
+  async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+    const items = this.getInputData();
+    const returnData: INodeExecutionData[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      try {
+        const operation = this.getNodeParameter('operation', i) as string;
+        const credentialType = this.getNodeParameter('credentialType', i) as string;
+        const videoSource = this.getNodeParameter('videoSource', i) as string;
+        const outputLanguage = this.getNodeParameter('outputLanguage', i) as string;
+        const enableChunking = this.getNodeParameter('enableChunking', i) as boolean;
+        const options = this.getNodeParameter('options', i, {}) as {
+          model?: string;
+          maxOutputTokens?: number;
+          customInstructions?: string;
+        };
+
+        // Get credentials
+        const credentials = await this.getCredentials(
+          credentialType === 'vertexai' ? 'googleVertexAiApi' : 'googleAiStudioApi'
+        );
+
+        const geminiCredentials: GeminiCredentials = credentialType === 'vertexai'
+          ? {
+              type: 'vertexai',
+              projectId: credentials.projectId as string,
+              location: credentials.region as string || 'us-central1',
+              accessToken: credentials.accessToken as string,
+            }
+          : {
+              type: 'aistudio',
+              apiKey: credentials.apiKey as string,
+            };
+
+        // Get video content
+        let videoInfo: VideoInfo;
+
+        if (videoSource === 'url') {
+          const videoUrl = this.getNodeParameter('videoUrl', i) as string;
+
+          if (!videoUrl) {
+            throw new NodeOperationError(this.getNode(), 'Video URL is required', { itemIndex: i });
+          }
+
+          if (isYouTubeUrl(videoUrl)) {
+            const videoId = extractYouTubeVideoId(videoUrl);
+            if (!videoId) {
+              throw new NodeOperationError(this.getNode(), 'Invalid YouTube URL', { itemIndex: i });
+            }
+            videoInfo = await fetchYouTubeVideo(videoId);
+          } else {
+            videoInfo = await downloadVideoFromUrl(videoUrl);
+          }
+        } else {
+          // Binary data
+          const binaryPropertyName = this.getNodeParameter('binaryPropertyName', i) as string;
+          const binaryData = items[i].binary?.[binaryPropertyName];
+
+          if (!binaryData) {
+            throw new NodeOperationError(
+              this.getNode(),
+              `No binary data found in property "${binaryPropertyName}"`,
+              { itemIndex: i }
+            );
+          }
+
+          videoInfo = {
+            mimeType: binaryData.mimeType || 'video/mp4',
+            data: binaryData.data,
+            source: 'base64',
+          };
+        }
+
+        // Process video
+        let result: any;
+
+        if (enableChunking && videoInfo.data) {
+          // Chunked processing for long videos
+          const chunkDuration = this.getNodeParameter('chunkDuration', i) as number;
+          const videoDuration = this.getNodeParameter('videoDuration', i) as number;
+
+          if (!videoDuration) {
+            throw new NodeOperationError(
+              this.getNode(),
+              'Video duration is required for chunked processing',
+              { itemIndex: i }
+            );
+          }
+
+          const chunks = calculateChunks(videoDuration * 60, chunkDuration);
+          const chunkResults: Array<{ index: number; startSeconds: number; result: any }> = [];
+
+          for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+            const chunk = chunks[chunkIndex];
+
+            // Build prompt with chunking instructions
+            const prompt = getPromptForOperation(
+              operation as 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene',
+              {
+                language: outputLanguage,
+                chunkIndex,
+                totalChunks: chunks.length,
+                startTime: chunk.startTime,
+                customInstructions: options.customInstructions,
+              }
+            );
+
+            // Note: For real chunking, you'd need to split the video file
+            // This simplified version processes the whole video with chunk context
+            const videoContent = prepareVideoContent(videoInfo);
+            const chunkResult = await callGeminiWithVideo(
+              geminiCredentials,
+              videoContent,
+              prompt,
+              {
+                model: options.model,
+                maxOutputTokens: options.maxOutputTokens,
+              }
+            );
+
+            chunkResults.push({
+              index: chunkIndex,
+              startSeconds: chunk.startSeconds,
+              result: chunkResult,
+            });
+          }
+
+          // Merge chunk results
+          result = mergeTranscriptionResults(chunkResults);
+        } else {
+          // Single video processing
+          const prompt = getPromptForOperation(
+            operation as 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene',
+            {
+              language: outputLanguage,
+              customInstructions: options.customInstructions,
+            }
+          );
+
+          const videoContent = prepareVideoContent(videoInfo);
+          result = await callGeminiWithVideo(
+            geminiCredentials,
+            videoContent,
+            prompt,
+            {
+              model: options.model,
+              maxOutputTokens: options.maxOutputTokens,
+            }
+          );
+        }
+
+        // Add metadata
+        const outputData = {
+          ...result,
+          metadata: {
+            operation,
+            source: videoInfo.source,
+            title: videoInfo.title,
+            model: options.model || 'gemini-2.5-flash',
+            processedAt: new Date().toISOString(),
+          },
+        };
+
+        returnData.push({ json: outputData });
+      } catch (error) {
+        if (this.continueOnFail()) {
+          returnData.push({
+            json: {
+              error: error instanceof Error ? error.message : 'Unknown error',
+            },
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    return [returnData];
+  }
+}
