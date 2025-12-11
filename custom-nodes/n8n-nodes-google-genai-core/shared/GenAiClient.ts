@@ -220,10 +220,71 @@ export class GenAiClient {
 
     const result = await this.generateText(prompt, opts);
 
-    // Parser le JSON depuis la réponse
+    return this.parseJsonResponse<T>(result.text);
+  }
+
+  /**
+   * Génère du texte au format JSON à partir d'un document (multimodal)
+   */
+  async generateJsonFromDocument<T>(
+    prompt: string,
+    document: { mimeType: string; data: string },
+    options?: TextGenerationOptions
+  ): Promise<T> {
+    const opts = {
+      ...DEFAULT_TEXT_OPTIONS,
+      ...options,
+      temperature: 0, // Déterministe pour JSON
+    };
+
+    return withErrorHandling(async () => {
+      const endpoint = this.getTextEndpoint(opts.model!);
+
+      const body = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType: document.mimeType,
+                  data: document.data,
+                },
+              },
+              { text: prompt },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: opts.temperature,
+          topP: opts.topP,
+          topK: opts.topK,
+          maxOutputTokens: opts.maxOutputTokens,
+          ...(opts.seed !== undefined && { seed: opts.seed }),
+        },
+        ...(opts.systemInstruction && {
+          systemInstruction: {
+            parts: [{ text: opts.systemInstruction }],
+          },
+        }),
+      };
+
+      const response = await this.request<GeminiTextResponse>(endpoint, body);
+
+      const candidate = response.candidates?.[0];
+      const text = candidate?.content?.parts?.[0]?.text || '';
+
+      return this.parseJsonResponse<T>(text);
+    });
+  }
+
+  /**
+   * Parse une réponse JSON depuis du texte
+   */
+  private parseJsonResponse<T>(text: string): T {
     try {
       // Nettoyer les markdown code blocks si présents
-      let jsonText = result.text.trim();
+      let jsonText = text.trim();
       if (jsonText.startsWith('```json')) {
         jsonText = jsonText.slice(7);
       }
@@ -237,7 +298,7 @@ export class GenAiClient {
       return JSON.parse(jsonText.trim()) as T;
     } catch (error) {
       throw new GenAiNodeError(parseGoogleApiError(
-        new Error(`Failed to parse JSON response: ${result.text}`)
+        new Error(`Failed to parse JSON response: ${text}`)
       ));
     }
   }
