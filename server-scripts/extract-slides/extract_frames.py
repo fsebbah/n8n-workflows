@@ -36,6 +36,7 @@ def download_youtube_video(url: str, output_path: str, cookies_from_browser: str
     """Download YouTube video using yt-dlp."""
     cmd = [
         'yt-dlp',
+        '--js-runtimes', 'node',  # Use node for YouTube JS extraction
         '-f', 'best[height<=720]/best',
         '-o', output_path,
         '--no-playlist',
@@ -89,6 +90,19 @@ def download_direct_video(url: str, output_path: str) -> str:
 
     print()  # newline
     return output_path
+
+
+def get_video_duration_ms(video_path: str) -> int:
+    """Get video duration in milliseconds."""
+    cap = cv2.VideoCapture(video_path)
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        if fps > 0 and frame_count > 0:
+            return int((frame_count / fps) * 1000)
+        return 0
+    finally:
+        cap.release()
 
 
 def extract_frame(video_path: str, timestamp_ms: int, bounding_box: list = None) -> bytes:
@@ -238,6 +252,12 @@ def main():
         # Create output directory
         os.makedirs(args.output, exist_ok=True)
 
+        # Get video duration for validation
+        video_duration_ms = get_video_duration_ms(video_path)
+        if not args.quiet and video_duration_ms > 0:
+            duration_sec = video_duration_ms / 1000
+            print(f"Video duration: {int(duration_sec // 60)}:{int(duration_sec % 60):02d} ({video_duration_ms}ms)")
+
         results = []
 
         for slide in slides:
@@ -245,6 +265,19 @@ def main():
             timestamp_ms = slide.get('timestamp_ms', 0)
             title = slide.get('title', f'slide_{slide_id}')
             bounding_box = slide.get('bounding_box')
+
+            # Skip timestamps beyond video duration
+            if video_duration_ms > 0 and timestamp_ms > video_duration_ms:
+                if not args.quiet:
+                    print(f"Skipping slide {slide_id} @ {timestamp_ms}ms: timestamp exceeds video duration ({video_duration_ms}ms)")
+                results.append({
+                    'slide_id': slide_id,
+                    'title': title,
+                    'timestamp_ms': timestamp_ms,
+                    'status': 'skipped',
+                    'reason': f'timestamp {timestamp_ms}ms exceeds video duration {video_duration_ms}ms'
+                })
+                continue
 
             if not args.quiet:
                 print(f"Extracting slide {slide_id} @ {timestamp_ms}ms: {title}")
@@ -292,6 +325,7 @@ def main():
         # Summary
         success_count = sum(1 for r in results if r['status'] == 'success')
         failed_count = sum(1 for r in results if r['status'] == 'error')
+        skipped_count = sum(1 for r in results if r['status'] == 'skipped')
 
         if args.base64:
             output = {
@@ -299,12 +333,15 @@ def main():
                 'total_slides': len(slides),
                 'extracted': success_count,
                 'failed': failed_count,
+                'skipped': skipped_count,
                 'images': results
             }
             print(json.dumps(output, indent=2))
         else:
             if not args.quiet:
                 print(f"\nExtracted: {success_count}/{len(slides)}")
+                if skipped_count:
+                    print(f"Skipped: {skipped_count} (timestamps beyond video duration)")
                 if failed_count:
                     print(f"Failed: {failed_count}")
                 print(f"Output: {args.output}/")
