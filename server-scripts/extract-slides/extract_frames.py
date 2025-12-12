@@ -59,7 +59,8 @@ def download_youtube_video(url: str, output_path: str, cookies_from_browser: str
     cmd = [
         'yt-dlp',
         '--js-runtimes', f'node:{node_path}',  # Use node with full path
-        '-f', 'best[height<=720]/best',
+        '--remote-components', 'ejs:github',   # Download JS challenge solver from GitHub
+        '-f', 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',  # Prefer video+audio
         '-o', output_path,
         '--no-playlist',
         '--progress',
