@@ -192,6 +192,9 @@ TRANSCRIPT_FILE="${OUTPUT_DIR}/transcript_${VIDEO_ID}_${TIMESTAMP}.json"
 SLIDES_FILE="${OUTPUT_DIR}/slides_${VIDEO_ID}_${TIMESTAMP}.json"
 IMAGES_DIR="${OUTPUT_DIR}/images"
 
+# Start total timer
+TOTAL_START_TIME=$(date +%s)
+
 echo ""
 echo "=============================================="
 echo "  PRESENTATION EXTRACTION PIPELINE"
@@ -255,6 +258,14 @@ if [ "$SAVE_VIDEO" = "true" ] && [ -d "${OUTPUT_DIR}/video" ]; then
     echo "Video:  ${OUTPUT_DIR}/video/"
     ls -la "${OUTPUT_DIR}/video/" 2>/dev/null | grep -v "^total"
 fi
+# Calculate total time
+TOTAL_END_TIME=$(date +%s)
+TOTAL_DURATION=$((TOTAL_END_TIME - TOTAL_START_TIME))
+TOTAL_MINUTES=$((TOTAL_DURATION / 60))
+TOTAL_SECONDS=$((TOTAL_DURATION % 60))
+
 echo ""
 echo "Remote mirror: ${EXTRACT_SERVER}:${REMOTE_DIR}/projects/$(basename $OUTPUT_DIR)/"
+echo ""
+echo "Total execution time: ${TOTAL_MINUTES}m ${TOTAL_SECONDS}s (${TOTAL_DURATION}s)"
 echo "=============================================="
