@@ -61,6 +61,7 @@ def download_youtube_video(url: str, output_path: str, cookies_from_browser: str
         '--js-runtimes', f'node:{node_path}',  # Use node with full path
         '--remote-components', 'ejs:github',   # Download JS challenge solver from GitHub
         '-f', 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',  # Prefer video+audio
+        '--merge-output-format', 'mp4',        # Force mp4 output after merge
         '-o', output_path,
         '--no-playlist',
         '--progress',
@@ -80,7 +81,7 @@ def download_youtube_video(url: str, output_path: str, cookies_from_browser: str
 
     # Find the actual downloaded file (extension may vary)
     base = output_path.rsplit('.', 1)[0] if '.' in output_path else output_path
-    for ext in ['.mp4', '.webm', '.mkv', '.m4v']:
+    for ext in ['.mp4', '.webm', '.mkv', '.m4v', '.avi']:
         candidate = base + ext
         if os.path.exists(candidate):
             return candidate
@@ -88,6 +89,18 @@ def download_youtube_video(url: str, output_path: str, cookies_from_browser: str
     # Check if file exists as-is
     if os.path.exists(output_path):
         return output_path
+
+    # Try glob to find any matching file
+    import glob
+    pattern = base + '.*'
+    matches = glob.glob(pattern)
+    if matches:
+        return matches[0]
+
+    # List /tmp to help debug
+    import glob
+    tmp_files = glob.glob('/tmp/tmp*')
+    print(f"DEBUG: Looking for {base}.*, found in /tmp: {tmp_files[-5:] if tmp_files else 'none'}")
 
     raise RuntimeError(f"Downloaded file not found at {output_path}")
 
