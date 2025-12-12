@@ -30,6 +30,7 @@ import json
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 import time
 from urllib.parse import urlparse, parse_qs
 import requests
@@ -58,26 +59,38 @@ def extract_video_id(url: str) -> str | None:
     return None
 
 
-def is_valid_video_url(url: str) -> bool:
-    """Check if URL is a valid video URL (YouTube or direct)."""
-    parsed = urlparse(url)
-
-    # Must have a valid scheme and netloc
-    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
-        return False
-
-    return True
+def is_local_file(path: str) -> bool:
+    """Check if path is a local file."""
+    return os.path.isfile(path)
 
 
-def get_video_identifier(url: str) -> str:
-    """Get a short identifier for the video (YouTube ID or domain+path)."""
+def is_valid_video_source(source: str) -> bool:
+    """Check if source is a valid video URL or local file."""
+    # Check if it's a local file
+    if is_local_file(source):
+        return True
+
+    # Check if it's a valid URL
+    parsed = urlparse(source)
+    if parsed.scheme in ('http', 'https') and parsed.netloc:
+        return True
+
+    return False
+
+
+def get_video_identifier(source: str) -> str:
+    """Get a short identifier for the video (YouTube ID, domain+path, or filename)."""
+    # Check if it's a local file
+    if is_local_file(source):
+        return Path(source).stem[:40]
+
     # Try YouTube first
-    video_id = extract_video_id(url)
+    video_id = extract_video_id(source)
     if video_id:
         return video_id
 
     # For direct URLs, use domain + sanitized path
-    parsed = urlparse(url)
+    parsed = urlparse(source)
     domain = parsed.netloc.replace('www.', '').split('.')[0]
     path = parsed.path.strip('/').replace('/', '_')[:30]
     return f"{domain}_{path}" if path else domain
@@ -110,8 +123,34 @@ def format_time(seconds: int) -> str:
         return f"{m}:{s:02d}"
 
 
+def load_video_as_base64(file_path: str) -> tuple[str, str]:
+    """Load a local video file and return base64 data with mime type."""
+    path = Path(file_path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    # Determine mime type from extension
+    mime_types = {
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.avi': 'video/avi',
+        '.mov': 'video/quicktime',
+        '.mkv': 'video/x-matroska',
+        '.m4v': 'video/x-m4v',
+    }
+
+    mime_type = mime_types.get(path.suffix.lower(), 'video/mp4')
+
+    with open(path, 'rb') as f:
+        import base64
+        data = base64.b64encode(f.read()).decode('utf-8')
+
+    return data, mime_type
+
+
 def call_transcription_api(
-    video_url: str,
+    video_source: str,
     operation: str = 'transcribe',
     language: str = 'auto',
     webhook_url: str = 'http://localhost:5678/webhook/video-transcription',
@@ -126,11 +165,21 @@ def call_transcription_api(
     """Call the video transcription n8n webhook."""
 
     payload = {
-        'videoUrl': video_url,
         'operation': operation,
         'language': language,
         'model': model
     }
+
+    # Handle local file vs URL
+    if is_local_file(video_source):
+        print(f"Loading local file: {video_source}")
+        video_data, mime_type = load_video_as_base64(video_source)
+        file_size_mb = len(video_data) * 3 / 4 / 1024 / 1024  # Approximate original size
+        print(f"File size: {file_size_mb:.1f} MB, MIME type: {mime_type}")
+        payload['videoBase64'] = video_data
+        payload['videoMimeType'] = mime_type
+    else:
+        payload['videoUrl'] = video_source
 
     if enable_chunking:
         payload['enableChunking'] = True
@@ -147,7 +196,11 @@ def call_transcription_api(
         payload['customInstructions'] = custom_instructions
 
     print(f"Calling {webhook_url}...")
-    print(f"Payload: {json.dumps(payload, indent=2)}")
+    # Don't print base64 data
+    payload_display = {k: v for k, v in payload.items() if k != 'videoBase64'}
+    if 'videoBase64' in payload:
+        payload_display['videoBase64'] = f"<{len(payload['videoBase64'])} chars>"
+    print(f"Payload: {json.dumps(payload_display, indent=2)}")
 
     response = requests.post(
         webhook_url,
@@ -347,13 +400,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Validate video URL (YouTube or direct)
-    if not is_valid_video_url(args.youtube_url):
-        print(f"Error: Invalid video URL: {args.youtube_url}", file=sys.stderr)
+    # Validate video source (YouTube, direct URL, or local file)
+    if not is_valid_video_source(args.youtube_url):
+        print(f"Error: Invalid video source: {args.youtube_url}", file=sys.stderr)
+        print("Accepted formats: YouTube URL, direct video URL, or local file path", file=sys.stderr)
         sys.exit(1)
 
     # Get video identifier for output filename
     video_id = get_video_identifier(args.youtube_url)
+    is_local = is_local_file(args.youtube_url)
 
     # Validate time range
     if args.start_time and args.end_time:
@@ -363,7 +418,7 @@ def main():
             print(f"Error: Start time ({args.start_time}) must be before end time ({args.end_time})", file=sys.stderr)
             sys.exit(1)
 
-    print(f"Video ID: {video_id}")
+    print(f"Video: {video_id}" + (" (local file)" if is_local else ""))
     print(f"Operation: {args.operation}")
     print(f"Language: {args.language}")
     print(f"Model: {args.model}")
@@ -381,7 +436,7 @@ def main():
         # Call the API with timing
         api_start_time = time.time()
         result = call_transcription_api(
-            video_url=args.youtube_url,
+            video_source=args.youtube_url,
             operation=args.operation,
             language=args.language,
             webhook_url=args.webhook,

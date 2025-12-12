@@ -123,6 +123,11 @@ export class VideoTranscription implements INodeType {
             value: 'binary',
             description: 'Video from binary input',
           },
+          {
+            name: 'Base64',
+            value: 'base64',
+            description: 'Video from base64 encoded data',
+          },
         ],
         default: 'url',
         description: 'Source of the video to process',
@@ -137,6 +142,30 @@ export class VideoTranscription implements INodeType {
         displayOptions: {
           show: {
             videoSource: ['url'],
+          },
+        },
+      },
+      {
+        displayName: 'Video Base64',
+        name: 'videoBase64',
+        type: 'string',
+        default: '',
+        description: 'Base64 encoded video data',
+        displayOptions: {
+          show: {
+            videoSource: ['base64'],
+          },
+        },
+      },
+      {
+        displayName: 'Video MIME Type',
+        name: 'videoMimeType',
+        type: 'string',
+        default: 'video/mp4',
+        description: 'MIME type of the video (e.g., video/mp4, video/webm)',
+        displayOptions: {
+          show: {
+            videoSource: ['base64'],
           },
         },
       },
@@ -318,6 +347,24 @@ export class VideoTranscription implements INodeType {
           } else {
             videoInfo = await downloadVideoFromUrl(videoUrl);
           }
+        } else if (videoSource === 'base64') {
+          // Base64 encoded data
+          const videoBase64 = this.getNodeParameter('videoBase64', i) as string;
+          const videoMimeType = this.getNodeParameter('videoMimeType', i, 'video/mp4') as string;
+
+          if (!videoBase64) {
+            throw new NodeOperationError(
+              this.getNode(),
+              'Video Base64 data is required',
+              { itemIndex: i }
+            );
+          }
+
+          videoInfo = {
+            mimeType: videoMimeType,
+            data: videoBase64,
+            source: 'base64',
+          };
         } else {
           // Binary data
           const binaryPropertyName = this.getNodeParameter('binaryPropertyName', i) as string;
