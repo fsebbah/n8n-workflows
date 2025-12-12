@@ -24,7 +24,7 @@ Ce workflow transcrit et analyse des vidéos (YouTube, URL directes) en utilisan
 
 | Paramètre | Type | Défaut | Description |
 |-----------|------|--------|-------------|
-| `operation` | string | `"transcribe"` | Opération à effectuer (voir ci-dessous) |
+| `operation` | string | `"transcribe"` | Opération à effectuer (voir ci-dessous): `transcribe`, `identifySpeakers`, `extractOcr`, `analyzeScene`, `createCache`, `queryCache`, `deleteCache`, `listCaches` |
 | `language` | string | `"auto"` | Langue de sortie: `"auto"`, `"en"`, `"fr"`, `"es"`, `"de"`, `"it"`, `"pt"` |
 
 ### Options de chunking (pour vidéos longues)
@@ -41,6 +41,17 @@ Ce workflow transcrit et analyse des vidéos (YouTube, URL directes) en utilisan
 |-----------|------|--------|-------------|
 | `startTime` | string | `""` | Temps de début (format `MM:SS` ou `HH:MM:SS`, ex: `"1:30"` ou `"0:01:30"`) |
 | `endTime` | string | `""` | Temps de fin (format `MM:SS` ou `HH:MM:SS`, ex: `"5:00"` ou `"0:05:00"`) |
+
+### Options de cache (pour requêtes multiples)
+
+Le caching permet de réduire les coûts de ~70% pour plusieurs requêtes sur la même vidéo.
+
+| Paramètre | Type | Défaut | Description |
+|-----------|------|--------|-------------|
+| `cacheId` | string | `""` | ID du cache (retourné par `createCache`, requis pour `queryCache`/`deleteCache`) |
+| `cacheName` | string | `""` | Nom convivial pour le cache (pour `createCache`) |
+| `cacheTtl` | number | `60` | Durée de vie du cache en minutes (pour `createCache`) |
+| `cachePrompt` | string | `""` | Prompt pour interroger le cache (pour `queryCache`) |
 
 ### Options avancées
 
@@ -174,6 +185,102 @@ Analyse complète : transcription, locuteurs, OCR et description des scènes.
 }
 ```
 
+## Opérations de cache
+
+Les opérations de cache permettent de stocker une vidéo côté serveur et de l'interroger plusieurs fois sans la renvoyer. Cela réduit les coûts de ~70%.
+
+### `createCache`
+Crée un cache pour une vidéo. La vidéo est uploadée et stockée pour des requêtes ultérieures.
+
+**Paramètres requis:** `videoUrl` ou `videoBase64`
+**Paramètres optionnels:** `cacheName`, `cacheTtl`, `model`
+
+**Sortie:**
+```json
+{
+  "cacheId": "projects/xxx/locations/us-central1/cachedContents/xxx",
+  "displayName": "my-video-cache",
+  "expireTime": "2025-12-12T10:00:00Z",
+  "model": "projects/xxx/locations/us-central1/publishers/google/models/gemini-2.5-flash",
+  "tokenCount": 150000,
+  "metadata": {
+    "operation": "createCache",
+    "source": "url",
+    "title": "Video Title",
+    "model": "gemini-2.5-flash",
+    "processedAt": "2025-12-12T09:00:00Z"
+  }
+}
+```
+
+### `queryCache`
+Interroge une vidéo en cache avec un prompt personnalisé.
+
+**Paramètres requis:** `cacheId`, `cachePrompt`
+**Paramètres optionnels:** `model`, `maxOutputTokens`
+
+**Sortie:** Dépend du prompt. Exemple avec prompt de résumé:
+```json
+{
+  "summary": "This video discusses...",
+  "key_points": ["point 1", "point 2"],
+  "metadata": {
+    "operation": "queryCache",
+    "cacheId": "projects/xxx/locations/us-central1/cachedContents/xxx",
+    "prompt": "Summarize this video in 3 bullet points",
+    "model": "gemini-2.5-flash",
+    "processedAt": "2025-12-12T09:05:00Z"
+  }
+}
+```
+
+### `deleteCache`
+Supprime un cache pour arrêter la facturation.
+
+**Paramètres requis:** `cacheId`
+
+**Sortie:**
+```json
+{
+  "success": true,
+  "message": "Cache deleted successfully",
+  "cacheId": "projects/xxx/locations/us-central1/cachedContents/xxx",
+  "metadata": {
+    "operation": "deleteCache",
+    "processedAt": "2025-12-12T10:00:00Z"
+  }
+}
+```
+
+### `listCaches`
+Liste tous les caches actifs.
+
+**Paramètres:** Aucun requis
+
+**Sortie:**
+```json
+{
+  "caches": [
+    {
+      "name": "projects/xxx/locations/us-central1/cachedContents/xxx",
+      "displayName": "my-video-cache",
+      "model": "projects/xxx/locations/us-central1/publishers/google/models/gemini-2.5-flash",
+      "createTime": "2025-12-12T09:00:00Z",
+      "updateTime": "2025-12-12T09:00:00Z",
+      "expireTime": "2025-12-12T10:00:00Z",
+      "usageMetadata": {
+        "totalTokenCount": 150000
+      }
+    }
+  ],
+  "count": 1,
+  "metadata": {
+    "operation": "listCaches",
+    "processedAt": "2025-12-12T09:10:00Z"
+  }
+}
+```
+
 ## Exemples de requêtes
 
 ### Transcription basique YouTube
@@ -276,6 +383,52 @@ curl -X POST http://localhost:5678/webhook/video-transcription \
   }'
 ```
 
+### Créer un cache pour une vidéo
+
+```bash
+curl -X POST http://localhost:5678/webhook/video-cache \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "createCache",
+    "videoUrl": "https://example.com/long-video.mp4",
+    "cacheName": "presentation-cache",
+    "cacheTtl": 120
+  }'
+```
+
+### Interroger un cache
+
+```bash
+curl -X POST http://localhost:5678/webhook/video-cache \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "queryCache",
+    "cacheId": "projects/xxx/locations/us-central1/cachedContents/xxx",
+    "prompt": "What are the 3 main topics discussed in this video?"
+  }'
+```
+
+### Lister les caches actifs
+
+```bash
+curl -X POST http://localhost:5678/webhook/video-cache \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "listCaches"
+  }'
+```
+
+### Supprimer un cache
+
+```bash
+curl -X POST http://localhost:5678/webhook/video-cache \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "deleteCache",
+    "cacheId": "projects/xxx/locations/us-central1/cachedContents/xxx"
+  }'
+```
+
 ## Sources vidéo supportées
 
 ### YouTube
@@ -298,6 +451,32 @@ curl -X POST http://localhost:5678/webhook/video-transcription \
 | `gemini-2.0-flash` | Dernière génération rapide | Vidéos courtes |
 | `gemini-1.5-pro` | Contexte long (jusqu'à 1M tokens) | Vidéos très longues |
 | `gemini-1.5-flash` | Rapide, bon contexte | Équilibre performance/coût |
+
+## Context Caching (économie de coûts)
+
+Le Context Caching permet de stocker une vidéo sur les serveurs Gemini et de l'interroger plusieurs fois sans la renvoyer. Cela offre des économies significatives :
+
+**Avantages:**
+- **~70% d'économie** sur les coûts par requête après la première
+- **Latence réduite** : pas besoin de re-transférer la vidéo
+- **Requêtes multiples** : poser plusieurs questions sur la même vidéo
+
+**Quand utiliser:**
+- Analyse détaillée nécessitant plusieurs passes
+- Questions interactives sur une vidéo
+- Extraction de différentes informations (transcription + OCR + résumé)
+- Vidéos longues avec plusieurs requêtes prévues
+
+**Workflow recommandé:**
+1. `createCache` : upload de la vidéo (coût initial)
+2. `queryCache` : requêtes multiples (coût réduit de ~70%)
+3. `deleteCache` : suppression pour arrêter la facturation
+
+**Important:**
+- Le cache est facturé tant qu'il existe (TTL)
+- Minimum TTL : 1 minute
+- Les caches expirent automatiquement après le TTL
+- Toujours supprimer les caches inutilisés
 
 ## Chunking pour vidéos longues
 
@@ -359,7 +538,7 @@ Les paramètres `startTime` et `endTime` permettent de limiter la transcription 
 
 ## Intégration avec MCP Server
 
-Exemple d'outil MCP pour appeler ce workflow:
+### Outil de transcription vidéo
 
 ```typescript
 {
@@ -394,6 +573,51 @@ Exemple d'outil MCP pour appeler ce workflow:
       customInstructions: { type: "string" }
     },
     required: ["videoUrl"]
+  }
+}
+```
+
+### Outil de gestion du cache vidéo
+
+```typescript
+{
+  name: "manage_video_cache",
+  description: "Create, query, list, and delete video caches for cost-effective repeated queries",
+  inputSchema: {
+    type: "object",
+    properties: {
+      operation: {
+        type: "string",
+        enum: ["createCache", "queryCache", "listCaches", "deleteCache"],
+        description: "Cache operation to perform"
+      },
+      videoUrl: {
+        type: "string",
+        description: "Video URL (required for createCache)"
+      },
+      cacheId: {
+        type: "string",
+        description: "Cache ID (required for queryCache and deleteCache)"
+      },
+      cacheName: {
+        type: "string",
+        description: "Friendly name for the cache (optional for createCache)"
+      },
+      cacheTtl: {
+        type: "number",
+        default: 60,
+        description: "Cache TTL in minutes (for createCache)"
+      },
+      prompt: {
+        type: "string",
+        description: "Prompt to query the cached video (required for queryCache)"
+      },
+      model: {
+        type: "string",
+        default: "gemini-2.5-flash"
+      }
+    },
+    required: ["operation"]
   }
 }
 ```

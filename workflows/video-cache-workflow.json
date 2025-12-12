@@ -1,10 +1,10 @@
 {
-  "name": "Video Transcription",
+  "name": "Video Cache Management",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "video-transcription",
+        "path": "video-cache",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -13,7 +13,7 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [240, 300],
-      "webhookId": "video-transcription-webhook"
+      "webhookId": "video-cache-webhook"
     },
     {
       "parameters": {
@@ -25,8 +25,8 @@
           },
           "conditions": [
             {
-              "id": "condition-url",
-              "leftValue": "={{ $json.body.videoUrl || $json.body.videoBase64 }}",
+              "id": "condition-operation",
+              "leftValue": "={{ $json.body.operation }}",
               "rightValue": "",
               "operator": {
                 "type": "string",
@@ -38,25 +38,25 @@
         },
         "options": {}
       },
-      "id": "check-video-url",
-      "name": "Has video?",
+      "id": "check-operation",
+      "name": "Has operation?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [460, 300]
     },
     {
       "parameters": {
-        "errorMessage": "={{ \"No video provided. Please send videoUrl or videoBase64 in the request body\" }}"
+        "errorMessage": "={{ \"No operation specified. Use: createCache, queryCache, deleteCache, or listCaches\" }}"
       },
-      "id": "error-no-video",
-      "name": "Error: No Video",
+      "id": "error-no-operation",
+      "name": "Error: No Operation",
       "type": "n8n-nodes-base.stopAndError",
       "typeVersion": 1,
       "position": [680, 420]
     },
     {
       "parameters": {
-        "jsCode": "// Prepare data for Video Transcription node\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\n// Get operation from request (default: transcribe)\nconst operation = body.operation || 'transcribe';\n\n// Determine video source type\nconst hasBase64 = !!body.videoBase64;\nconst videoSource = hasBase64 ? 'base64' : 'url';\n\n// Get optional parameters\nconst outputLanguage = body.language || 'auto';\nconst enableChunking = body.enableChunking === true || body.enableChunking === 'true';\nconst chunkDuration = body.chunkDuration || 10;\nconst videoDuration = body.videoDuration || 0;\nconst model = body.model || 'gemini-2.5-flash';\nconst customInstructions = body.customInstructions || '';\nconst startTime = body.startTime || '';\nconst endTime = body.endTime || '';\n\n// Cache parameters\nconst useCache = body.useCache === true || body.useCache === 'true';\nconst useCacheTtl = body.cacheTtl || body.useCacheTtl || 60;\nconst keepCache = body.keepCache === true || body.keepCache === 'true';\n\nconst result = {\n  videoSource,\n  operation,\n  outputLanguage,\n  enableChunking,\n  chunkDuration,\n  videoDuration,\n  model,\n  customInstructions,\n  startTime,\n  endTime,\n  useCache,\n  useCacheTtl,\n  keepCache,\n  originalRequest: { ...body, videoBase64: body.videoBase64 ? '<base64_data>' : undefined }\n};\n\nif (hasBase64) {\n  result.videoBase64 = body.videoBase64;\n  result.videoMimeType = body.videoMimeType || 'video/mp4';\n} else {\n  result.videoUrl = body.videoUrl;\n}\n\nreturn [{ json: result }];"
+        "jsCode": "// Prepare data for Video Cache operations\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\n// Get operation from request\nconst operation = body.operation;\n\n// Prepare result based on operation\nconst result = {\n  operation,\n  originalRequest: { ...body }\n};\n\n// Operation-specific parameters\nswitch (operation) {\n  case 'createCache':\n    result.videoSource = body.videoBase64 ? 'base64' : 'url';\n    result.videoUrl = body.videoUrl || '';\n    result.videoBase64 = body.videoBase64 || '';\n    result.videoMimeType = body.videoMimeType || 'video/mp4';\n    result.cacheName = body.cacheName || '';\n    result.cacheTtl = body.cacheTtl || 60;\n    result.model = body.model || 'gemini-2.5-flash';\n    break;\n  case 'queryCache':\n    result.cacheId = body.cacheId;\n    result.cachePrompt = body.prompt || body.cachePrompt;\n    result.model = body.model || 'gemini-2.5-flash';\n    break;\n  case 'deleteCache':\n    result.cacheId = body.cacheId;\n    break;\n  case 'listCaches':\n    // No additional parameters needed\n    break;\n  default:\n    throw new Error(`Unknown operation: ${operation}`);\n}\n\nreturn [{ json: result }];"
       },
       "id": "prepare-config",
       "name": "Prepare Config",
@@ -72,23 +72,17 @@
         "videoUrl": "={{ $json.videoUrl }}",
         "videoBase64": "={{ $json.videoBase64 }}",
         "videoMimeType": "={{ $json.videoMimeType }}",
-        "outputLanguage": "={{ $json.outputLanguage }}",
-        "useCache": "={{ $json.useCache }}",
-        "useCacheTtl": "={{ $json.useCacheTtl }}",
-        "keepCache": "={{ $json.keepCache }}",
-        "enableChunking": "={{ $json.enableChunking }}",
-        "chunkDuration": "={{ $json.chunkDuration }}",
-        "videoDuration": "={{ $json.videoDuration }}",
-        "startTime": "={{ $json.startTime }}",
-        "endTime": "={{ $json.endTime }}",
+        "cacheId": "={{ $json.cacheId }}",
+        "cacheName": "={{ $json.cacheName }}",
+        "cacheTtl": "={{ $json.cacheTtl }}",
+        "cachePrompt": "={{ $json.cachePrompt }}",
         "options": {
           "model": "={{ $json.model }}",
-          "maxOutputTokens": 16384,
-          "customInstructions": "={{ $json.customInstructions }}"
+          "maxOutputTokens": 16384
         }
       },
-      "id": "video-transcription",
-      "name": "Video Transcription",
+      "id": "video-cache",
+      "name": "Video Cache",
       "type": "n8n-nodes-video-transcription.videoTranscription",
       "typeVersion": 1,
       "position": [900, 180],
@@ -117,14 +111,14 @@
       "main": [
         [
           {
-            "node": "Has video?",
+            "node": "Has operation?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Has video?": {
+    "Has operation?": {
       "main": [
         [
           {
@@ -135,7 +129,7 @@
         ],
         [
           {
-            "node": "Error: No Video",
+            "node": "Error: No Operation",
             "type": "main",
             "index": 0
           }
@@ -146,14 +140,14 @@
       "main": [
         [
           {
-            "node": "Video Transcription",
+            "node": "Video Cache",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Video Transcription": {
+    "Video Cache": {
       "main": [
         [
           {
