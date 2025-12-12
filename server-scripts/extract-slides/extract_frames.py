@@ -32,11 +32,33 @@ def is_youtube_url(url: str) -> bool:
     return parsed.netloc in youtube_domains
 
 
+def find_node_path() -> str:
+    """Find node.js path (nvm doesn't load in non-interactive SSH)."""
+    # Check nvm locations first
+    nvm_base = os.path.expanduser('~/.nvm/versions/node')
+    if os.path.exists(nvm_base):
+        # Get latest version
+        versions = sorted(os.listdir(nvm_base), reverse=True)
+        for v in versions:
+            node_path = os.path.join(nvm_base, v, 'bin', 'node')
+            if os.path.exists(node_path):
+                return node_path
+
+    # Fallback to common locations
+    for path in ['/usr/bin/node', '/usr/local/bin/node']:
+        if os.path.exists(path):
+            return path
+
+    return 'node'  # Hope it's in PATH
+
+
 def download_youtube_video(url: str, output_path: str, cookies_from_browser: str = None) -> str:
     """Download YouTube video using yt-dlp."""
+    node_path = find_node_path()
+
     cmd = [
         'yt-dlp',
-        '--js-runtimes', 'node',  # Use node for YouTube JS extraction
+        '--js-runtimes', f'node:{node_path}',  # Use node with full path
         '-f', 'best[height<=720]/best',
         '-o', output_path,
         '--no-playlist',
