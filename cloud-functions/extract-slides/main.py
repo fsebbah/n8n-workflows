@@ -4,10 +4,14 @@ GCP Cloud Function for extracting slide images from videos.
 This function takes timestamps from the extractSlides operation and
 extracts the corresponding frames from the video using OpenCV.
 
+Supports:
+- Direct video URLs (.mp4, .webm, etc.)
+- YouTube URLs (via yt-dlp)
+
 Usage:
     POST /extract-slides
     {
-        "video_url": "https://example.com/video.mp4",
+        "video_url": "https://www.youtube.com/watch?v=VIDEO_ID",
         "slides": [
             {"id": 1, "timestamp_ms": 15000, "title": "Introduction"},
             {"id": 2, "timestamp_ms": 145000, "title": "Results"}
@@ -27,8 +31,17 @@ import requests
 import base64
 import os
 import re
+import subprocess
+from urllib.parse import urlparse
 from flask import jsonify
 from google.cloud import storage
+
+
+def is_youtube_url(url: str) -> bool:
+    """Check if URL is a YouTube video."""
+    parsed = urlparse(url)
+    youtube_domains = ['youtube.com', 'www.youtube.com', 'youtu.be', 'm.youtube.com']
+    return parsed.netloc in youtube_domains
 
 
 def sanitize_filename(title: str, max_length: int = 50) -> str:
@@ -43,14 +56,57 @@ def sanitize_filename(title: str, max_length: int = 50) -> str:
     return safe[:max_length]
 
 
-def download_video(url: str, tmp_path: str) -> None:
-    """Download video from URL to temporary file."""
+def download_youtube_video(url: str, tmp_path: str) -> None:
+    """Download YouTube video using yt-dlp."""
+    try:
+        # Use yt-dlp to download video
+        # -f: format selector (best quality up to 720p to save bandwidth)
+        # -o: output path
+        # --no-playlist: don't download playlists
+        # --quiet: minimal output
+        result = subprocess.run(
+            [
+                'yt-dlp',
+                '-f', 'best[height<=720]/best',
+                '-o', tmp_path,
+                '--no-playlist',
+                '--quiet',
+                '--no-warnings',
+                url
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minutes timeout
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(f"yt-dlp failed: {result.stderr}")
+
+        if not os.path.exists(tmp_path):
+            raise RuntimeError("yt-dlp did not create output file")
+
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("YouTube download timed out")
+    except FileNotFoundError:
+        raise RuntimeError("yt-dlp not installed in Cloud Function")
+
+
+def download_direct_video(url: str, tmp_path: str) -> None:
+    """Download video from direct URL."""
     response = requests.get(url, stream=True, timeout=300)
     response.raise_for_status()
 
     with open(tmp_path, 'wb') as f:
         for chunk in response.iter_content(chunk_size=8192):
             f.write(chunk)
+
+
+def download_video(url: str, tmp_path: str) -> None:
+    """Download video from URL (supports YouTube and direct URLs)."""
+    if is_youtube_url(url):
+        download_youtube_video(url, tmp_path)
+    else:
+        download_direct_video(url, tmp_path)
 
 
 def extract_frame(video_path: str, timestamp_ms: int, bounding_box: list = None) -> bytes:
@@ -141,12 +197,31 @@ def extract_slides(request):
         if output_type == 'gcs' and not bucket_name:
             return jsonify({'error': 'bucket is required for GCS output'}), 400, headers
 
+        # Determine file extension based on source
+        suffix = '.mp4'
+        if is_youtube_url(video_url):
+            # yt-dlp may download as different format
+            suffix = '.%(ext)s'
+
         # Download video to temp file
         with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
             tmp_path = tmp.name
 
         try:
-            download_video(video_url, tmp_path)
+            # For YouTube, yt-dlp handles the extension
+            if is_youtube_url(video_url):
+                # Remove the .mp4 suffix and let yt-dlp add correct extension
+                tmp_base = tmp_path.rsplit('.', 1)[0]
+                download_video(video_url, tmp_base + '.%(ext)s')
+                # Find the actual downloaded file
+                import glob
+                downloaded_files = glob.glob(tmp_base + '.*')
+                if downloaded_files:
+                    tmp_path = downloaded_files[0]
+                else:
+                    raise RuntimeError("YouTube video download failed - no file created")
+            else:
+                download_video(video_url, tmp_path)
 
             results = []
             for slide in slides:
@@ -198,8 +273,14 @@ def extract_slides(request):
             }), 200, headers
 
         finally:
-            # Clean up temp file
-            if os.path.exists(tmp_path):
+            # Clean up temp file(s)
+            if is_youtube_url(video_url):
+                import glob
+                tmp_base = tmp_path.rsplit('.', 1)[0]
+                for f in glob.glob(tmp_base + '.*'):
+                    if os.path.exists(f):
+                        os.unlink(f)
+            elif os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
     except requests.exceptions.RequestException as e:

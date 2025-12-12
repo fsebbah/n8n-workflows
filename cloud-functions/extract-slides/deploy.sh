@@ -7,8 +7,8 @@ set -e
 PROJECT_ID="${GCP_PROJECT_ID:-your-project-id}"
 REGION="${GCP_REGION:-europe-west1}"
 FUNCTION_NAME="extract-slides"
-MEMORY="512MB"
-TIMEOUT="300s"
+MEMORY="1GB"
+TIMEOUT="540s"
 MIN_INSTANCES="0"
 MAX_INSTANCES="10"
 
