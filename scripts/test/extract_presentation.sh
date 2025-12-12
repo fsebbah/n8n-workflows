@@ -78,51 +78,77 @@ call_n8n_webhook() {
 }
 
 extract_slides_remote() {
-    local metadata_file="$1"
-    local video_url="$2"
-    local output_dir="$3"
-    local save_video_dir="$4"
+    local local_dir="$1"
+    local metadata_file="$2"
+    local video_url="$3"
+    local save_video="$4"
 
+    local dir_name=$(basename "$local_dir")
     local metadata_filename=$(basename "$metadata_file")
-    local remote_metadata="${REMOTE_DIR}/${metadata_filename}"
-    local remote_output="${REMOTE_DIR}/output"
+    local remote_project_dir="${REMOTE_DIR}/projects/${dir_name}"
 
-    # Step 1: Copy metadata to server
-    echo "  Copying metadata to server..."
-    scp ${SCP_OPTS} "$metadata_file" "${EXTRACT_SERVER}:${remote_metadata}"
+    # Step 1: Create remote directory structure and copy local folder
+    echo "  Creating remote directory: ${remote_project_dir}"
+    ssh ${SSH_OPTS} "$EXTRACT_SERVER" "mkdir -p '${remote_project_dir}'"
 
-    # Step 2: Run extraction on server
+    # Step 2: Copy all JSON files to server (same structure)
+    echo "  Syncing local folder to server..."
+    scp ${SCP_OPTS} "${local_dir}"/*.json "${EXTRACT_SERVER}:${remote_project_dir}/" 2>/dev/null || true
+
+    # Step 3: Run extraction on server
     echo "  Running extraction on server..."
     local save_video_opt=""
-    if [ -n "$save_video_dir" ]; then
-        save_video_opt="--save-video video/"
+    if [ "$save_video" = "true" ]; then
+        save_video_opt="--save-video '${remote_project_dir}/video'"
     fi
-    ssh ${SSH_OPTS} "$EXTRACT_SERVER" "cd ${REMOTE_DIR} && source .venv/bin/activate && python extract_frames.py --metadata '${metadata_filename}' --video '${video_url}' -o output/ ${save_video_opt}"
+    ssh ${SSH_OPTS} "$EXTRACT_SERVER" "cd ${REMOTE_DIR} && source .venv/bin/activate && python extract_frames.py --metadata '${remote_project_dir}/${metadata_filename}' --video '${video_url}' -o '${remote_project_dir}/images' ${save_video_opt}"
 
-    # Step 3: Copy images back
-    echo "  Copying images back..."
-    mkdir -p "$output_dir"
-    scp ${SCP_OPTS} -r "${EXTRACT_SERVER}:${remote_output}/*.jpg" "$output_dir/" 2>/dev/null || echo "  No images found"
+    # Step 4: Copy images back to local
+    echo "  Copying images to local..."
+    mkdir -p "${local_dir}/images"
+    scp ${SCP_OPTS} -r "${EXTRACT_SERVER}:${remote_project_dir}/images/*.jpg" "${local_dir}/images/" 2>/dev/null || echo "  No images found"
 
-    # Step 4: Copy video if requested
-    if [ -n "$save_video_dir" ]; then
-        echo "  Copying video back..."
-        mkdir -p "$save_video_dir"
-        scp ${SCP_OPTS} -r "${EXTRACT_SERVER}:${REMOTE_DIR}/video/*" "$save_video_dir/" 2>/dev/null || echo "  No video found"
+    # Step 5: Copy video back if requested
+    if [ "$save_video" = "true" ]; then
+        echo "  Copying video to local..."
+        mkdir -p "${local_dir}/video"
+        scp ${SCP_OPTS} -r "${EXTRACT_SERVER}:${remote_project_dir}/video/*" "${local_dir}/video/" 2>/dev/null || echo "  No video found"
     fi
 
-    # Cleanup remote
-    ssh ${SSH_OPTS} "$EXTRACT_SERVER" "rm -rf ${remote_output}/* ${remote_metadata} ${REMOTE_DIR}/video/* 2>/dev/null || true"
+    # Show remote structure (no cleanup - keep on server)
+    echo "  Remote folder kept at: ${remote_project_dir}"
 }
 
 # === MAIN ===
 
-VIDEO_URL="$1"
-OUTPUT_DIR="${2:-}"
-SAVE_VIDEO_DIR="${3:-}"
+VIDEO_URL=""
+OUTPUT_DIR=""
+SAVE_VIDEO="false"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --save-video)
+            SAVE_VIDEO="true"
+            shift
+            ;;
+        -h|--help)
+            VIDEO_URL=""
+            break
+            ;;
+        *)
+            if [ -z "$VIDEO_URL" ]; then
+                VIDEO_URL="$1"
+            elif [ -z "$OUTPUT_DIR" ]; then
+                OUTPUT_DIR="$1"
+            fi
+            shift
+            ;;
+    esac
+done
 
 if [ -z "$VIDEO_URL" ]; then
-    echo "Usage: $0 <video_url> [output_dir] [save_video_dir]"
+    echo "Usage: $0 <video_url> [output_dir] [--save-video]"
     echo ""
     echo "This script performs a complete presentation extraction:"
     echo "  1. Transcribes the video"
@@ -132,12 +158,22 @@ if [ -z "$VIDEO_URL" ]; then
     echo "Arguments:"
     echo "  video_url       - YouTube or direct video URL"
     echo "  output_dir      - Output directory (default: docs/test/<video_id>)"
-    echo "  save_video_dir  - Directory to save video (optional)"
+    echo "  --save-video    - Also download and save the video"
     echo ""
     echo "Examples:"
     echo "  $0 'https://youtube.com/watch?v=abc123'"
     echo "  $0 'https://youtube.com/watch?v=abc123' docs/test/my_presentation"
-    echo "  $0 'https://youtube.com/watch?v=abc123' docs/test/my_presentation docs/test/videos"
+    echo "  $0 'https://youtube.com/watch?v=abc123' docs/test/my_presentation --save-video"
+    echo ""
+    echo "Output structure (local and remote mirror):"
+    echo "  <output_dir>/"
+    echo "    ├── transcript_<id>_<timestamp>.json"
+    echo "    ├── slides_<id>_<timestamp>.json"
+    echo "    ├── images/"
+    echo "    │   ├── slide_001_Title.jpg"
+    echo "    │   └── ..."
+    echo "    └── video/  (if --save-video)"
+    echo "        └── video_<id>.mp4"
     exit 1
 fi
 
@@ -163,9 +199,8 @@ echo "=============================================="
 echo "Video URL:    $VIDEO_URL"
 echo "Video ID:     $VIDEO_ID"
 echo "Output:       $OUTPUT_DIR"
-if [ -n "$SAVE_VIDEO_DIR" ]; then
-    echo "Save video:   $SAVE_VIDEO_DIR"
-fi
+echo "Save video:   $SAVE_VIDEO"
+echo "Remote:       ${EXTRACT_SERVER}:${REMOTE_DIR}/projects/$(basename $OUTPUT_DIR)"
 echo "=============================================="
 echo ""
 
@@ -190,11 +225,11 @@ echo "  -> Found $SLIDES_COUNT slides"
 echo ""
 
 # === STEP 3: SLIDE IMAGES ===
+IMAGES_COUNT=0
 if [ "$SLIDES_COUNT" -gt 0 ]; then
     echo "[3/3] Extracting slide images via remote server..."
     START_TIME=$(date +%s)
-    mkdir -p "$IMAGES_DIR"
-    extract_slides_remote "$SLIDES_FILE" "$VIDEO_URL" "$IMAGES_DIR" "$SAVE_VIDEO_DIR"
+    extract_slides_remote "$OUTPUT_DIR" "$SLIDES_FILE" "$VIDEO_URL" "$SAVE_VIDEO"
     END_TIME=$(date +%s)
     echo "  -> Completed in $((END_TIME - START_TIME))s"
 
@@ -209,13 +244,17 @@ echo ""
 echo "=============================================="
 echo "  EXTRACTION COMPLETE"
 echo "=============================================="
-echo "Transcript:   $TRANSCRIPT_FILE"
-echo "Slides meta:  $SLIDES_FILE"
-echo "Images:       $IMAGES_DIR/ ($IMAGES_COUNT files)"
-if [ -n "$SAVE_VIDEO_DIR" ]; then
-    echo "Video:        $SAVE_VIDEO_DIR/"
+echo ""
+echo "Local: $OUTPUT_DIR/"
+ls -la "$OUTPUT_DIR"/ 2>/dev/null | grep -v "^total" | grep -v "^d"
+echo ""
+if [ -d "$IMAGES_DIR" ]; then
+    echo "Images: $IMAGES_DIR/ ($IMAGES_COUNT files)"
+fi
+if [ "$SAVE_VIDEO" = "true" ] && [ -d "${OUTPUT_DIR}/video" ]; then
+    echo "Video:  ${OUTPUT_DIR}/video/"
+    ls -la "${OUTPUT_DIR}/video/" 2>/dev/null | grep -v "^total"
 fi
 echo ""
-echo "Total files:"
-ls -la "$OUTPUT_DIR"/ 2>/dev/null | tail -n +2
+echo "Remote mirror: ${EXTRACT_SERVER}:${REMOTE_DIR}/projects/$(basename $OUTPUT_DIR)/"
 echo "=============================================="
