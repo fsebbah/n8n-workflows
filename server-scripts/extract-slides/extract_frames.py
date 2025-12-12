@@ -234,6 +234,12 @@ def main():
     )
 
     parser.add_argument(
+        '--no-crop',
+        action='store_true',
+        help='Ignore bounding_box and extract full frame (no cropping)'
+    )
+
+    parser.add_argument(
         '--quiet', '-q',
         action='store_true',
         help='Minimal output'
@@ -300,7 +306,7 @@ def main():
             slide_id = slide.get('id', len(results) + 1)
             timestamp_ms = slide.get('timestamp_ms', 0)
             title = slide.get('title', f'slide_{slide_id}')
-            bounding_box = slide.get('bounding_box')
+            bounding_box = None if args.no_crop else slide.get('bounding_box')
 
             # Skip timestamps beyond video duration
             if video_duration_ms > 0 and timestamp_ms > video_duration_ms:
