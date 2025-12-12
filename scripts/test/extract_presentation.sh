@@ -13,8 +13,7 @@
 #
 # Examples:
 #   ./scripts/test/extract_presentation.sh "https://youtube.com/watch?v=abc123"
-#   ./scripts/test/extract_presentation.sh "https://youtube.com/watch?v=abc123" docs/test/my_presentation
-#   ./scripts/test/extract_presentation.sh "https://youtube.com/watch?v=abc123" docs/test/my_presentation docs/test/videos
+#   ./scripts/test/extract_presentation.sh "https://youtube.com/watch?v=abc123" --save-video
 #
 # =============================================================================
 
@@ -34,7 +33,7 @@ N8N_WEBHOOK_URL="${N8N_WEBHOOK_URL:-http://localhost:5678/webhook/video-transcri
 EXTRACT_SERVER="${EXTRACT_SERVER:-user@your-server.com}"
 SSH_PORT="${SSH_PORT:-2222}"
 REMOTE_DIR="${REMOTE_DIR:-~/extract-slides}"
-DEFAULT_OUTPUT_DIR="docs/test"
+DEFAULT_OUTPUT_DIR="docs/projects"
 
 # SSH/SCP options
 SSH_OPTS="-p ${SSH_PORT}"
@@ -157,13 +156,12 @@ if [ -z "$VIDEO_URL" ]; then
     echo ""
     echo "Arguments:"
     echo "  video_url       - YouTube or direct video URL"
-    echo "  output_dir      - Output directory (default: docs/test/<video_id>)"
+    echo "  output_dir      - Output directory (default: docs/projects/<video_id>)"
     echo "  --save-video    - Also download and save the video"
     echo ""
     echo "Examples:"
     echo "  $0 'https://youtube.com/watch?v=abc123'"
-    echo "  $0 'https://youtube.com/watch?v=abc123' docs/test/my_presentation"
-    echo "  $0 'https://youtube.com/watch?v=abc123' docs/test/my_presentation --save-video"
+    echo "  $0 'https://youtube.com/watch?v=abc123' --save-video"
     echo ""
     echo "Output structure (local and remote mirror):"
     echo "  <output_dir>/"
