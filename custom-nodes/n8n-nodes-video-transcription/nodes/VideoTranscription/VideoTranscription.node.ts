@@ -16,8 +16,14 @@ import {
   calculateChunks,
   mergeTranscriptionResults,
   timeToSeconds,
+  createVideoCache,
+  queryVideoCache,
+  deleteVideoCache,
+  listVideoCaches,
   GeminiCredentials,
   VideoInfo,
+  CacheInfo,
+  CreateCacheResult,
 } from '../../shared/VideoClient';
 
 import { getPromptForOperation } from '../../shared/videoTranscriptionPrompts';
@@ -104,8 +110,90 @@ export class VideoTranscription implements INodeType {
             description: 'Full video analysis: transcription, speakers, OCR, and scene description',
             action: 'Analyze video scene completely',
           },
+          {
+            name: 'Create Cache',
+            value: 'createCache',
+            description: 'Upload video and create cache for multiple queries (saves ~70% on costs)',
+            action: 'Create video cache',
+          },
+          {
+            name: 'Query Cache',
+            value: 'queryCache',
+            description: 'Query an existing cached video with a custom prompt',
+            action: 'Query cached video',
+          },
+          {
+            name: 'Delete Cache',
+            value: 'deleteCache',
+            description: 'Delete a video cache to stop billing',
+            action: 'Delete video cache',
+          },
+          {
+            name: 'List Caches',
+            value: 'listCaches',
+            description: 'List all active video caches',
+            action: 'List video caches',
+          },
         ],
         default: 'transcribe',
+      },
+      // Cache ID for cache operations
+      {
+        displayName: 'Cache ID',
+        name: 'cacheId',
+        type: 'string',
+        default: '',
+        placeholder: 'projects/.../locations/.../cachedContents/...',
+        description: 'The cache ID returned from Create Cache operation',
+        displayOptions: {
+          show: {
+            operation: ['queryCache', 'deleteCache'],
+          },
+        },
+      },
+      // Cache display name
+      {
+        displayName: 'Cache Name',
+        name: 'cacheName',
+        type: 'string',
+        default: '',
+        placeholder: 'my-video-cache',
+        description: 'A friendly name for the cache (for identification)',
+        displayOptions: {
+          show: {
+            operation: ['createCache'],
+          },
+        },
+      },
+      // Cache TTL
+      {
+        displayName: 'Cache TTL (minutes)',
+        name: 'cacheTtl',
+        type: 'number',
+        default: 60,
+        description: 'How long to keep the cache (billing applies). Minimum 1 minute.',
+        displayOptions: {
+          show: {
+            operation: ['createCache'],
+          },
+        },
+      },
+      // Custom prompt for queryCache
+      {
+        displayName: 'Prompt',
+        name: 'cachePrompt',
+        type: 'string',
+        typeOptions: {
+          rows: 4,
+        },
+        default: '',
+        placeholder: 'Summarize this video in 3 bullet points...',
+        description: 'The prompt to send to the cached video',
+        displayOptions: {
+          show: {
+            operation: ['queryCache'],
+          },
+        },
       },
       // Video source options
       {
@@ -131,6 +219,11 @@ export class VideoTranscription implements INodeType {
         ],
         default: 'url',
         description: 'Source of the video to process',
+        displayOptions: {
+          show: {
+            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene', 'createCache'],
+          },
+        },
       },
       {
         displayName: 'Video URL',
@@ -299,11 +392,6 @@ export class VideoTranscription implements INodeType {
       try {
         const operation = this.getNodeParameter('operation', i) as string;
         const credentialType = this.getNodeParameter('credentialType', i) as string;
-        const videoSource = this.getNodeParameter('videoSource', i) as string;
-        const outputLanguage = this.getNodeParameter('outputLanguage', i) as string;
-        const enableChunking = this.getNodeParameter('enableChunking', i) as boolean;
-        const startTime = this.getNodeParameter('startTime', i, '') as string;
-        const endTime = this.getNodeParameter('endTime', i, '') as string;
         const options = this.getNodeParameter('options', i, {}) as {
           model?: string;
           maxOutputTokens?: number;
@@ -328,7 +416,84 @@ export class VideoTranscription implements INodeType {
               apiKey: credentials.apiKey as string,
             };
 
-        // Get video content
+        // Handle cache operations that don't require video input
+        if (operation === 'listCaches') {
+          const caches = await listVideoCaches(geminiCredentials);
+          returnData.push({
+            json: {
+              caches,
+              count: caches.length,
+              metadata: {
+                operation,
+                processedAt: new Date().toISOString(),
+              },
+            },
+          });
+          continue;
+        }
+
+        if (operation === 'deleteCache') {
+          const cacheId = this.getNodeParameter('cacheId', i) as string;
+          if (!cacheId) {
+            throw new NodeOperationError(this.getNode(), 'Cache ID is required', { itemIndex: i });
+          }
+          const deleteResult = await deleteVideoCache(geminiCredentials, cacheId);
+          returnData.push({
+            json: {
+              ...deleteResult,
+              cacheId,
+              metadata: {
+                operation,
+                processedAt: new Date().toISOString(),
+              },
+            },
+          });
+          continue;
+        }
+
+        if (operation === 'queryCache') {
+          const cacheId = this.getNodeParameter('cacheId', i) as string;
+          const cachePrompt = this.getNodeParameter('cachePrompt', i) as string;
+
+          if (!cacheId) {
+            throw new NodeOperationError(this.getNode(), 'Cache ID is required', { itemIndex: i });
+          }
+          if (!cachePrompt) {
+            throw new NodeOperationError(this.getNode(), 'Prompt is required for cache query', { itemIndex: i });
+          }
+
+          const queryResult = await queryVideoCache(
+            geminiCredentials,
+            cacheId,
+            cachePrompt,
+            {
+              model: options.model,
+              maxOutputTokens: options.maxOutputTokens,
+            }
+          );
+
+          returnData.push({
+            json: {
+              ...queryResult,
+              metadata: {
+                operation,
+                cacheId,
+                prompt: cachePrompt,
+                model: options.model || 'gemini-2.5-flash',
+                processedAt: new Date().toISOString(),
+              },
+            },
+          });
+          continue;
+        }
+
+        // For video-based operations, get video content
+        const videoSource = this.getNodeParameter('videoSource', i) as string;
+        const outputLanguage = this.getNodeParameter('outputLanguage', i) as string;
+        const enableChunking = this.getNodeParameter('enableChunking', i) as boolean;
+        const startTime = this.getNodeParameter('startTime', i, '') as string;
+        const endTime = this.getNodeParameter('endTime', i, '') as string;
+
         let videoInfo: VideoInfo;
 
         if (videoSource === 'url') {
@@ -385,7 +550,38 @@ export class VideoTranscription implements INodeType {
           };
         }
 
-        // Process video
+        // Handle createCache operation
+        if (operation === 'createCache') {
+          const cacheName = this.getNodeParameter('cacheName', i, '') as string;
+          const cacheTtl = this.getNodeParameter('cacheTtl', i, 60) as number;
+
+          const videoContent = prepareVideoContent(videoInfo);
+          const cacheResult = await createVideoCache(
+            geminiCredentials,
+            videoContent,
+            {
+              displayName: cacheName || `video-cache-${Date.now()}`,
+              ttlMinutes: cacheTtl,
+              model: options.model,
+            }
+          );
+
+          returnData.push({
+            json: {
+              ...cacheResult,
+              metadata: {
+                operation,
+                source: videoInfo.source,
+                title: videoInfo.title,
+                model: options.model || 'gemini-2.5-flash',
+                processedAt: new Date().toISOString(),
+              },
+            },
+          });
+          continue;
+        }
+
+        // Standard video processing operations
         let result: any;
 
         if (enableChunking && videoInfo.data) {

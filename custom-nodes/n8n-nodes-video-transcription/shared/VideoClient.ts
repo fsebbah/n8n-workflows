@@ -34,6 +34,26 @@ export interface GeminiCredentials {
   authMethod?: string;
 }
 
+export interface CacheInfo {
+  name: string;  // Full cache ID/name
+  displayName?: string;
+  model: string;
+  createTime: string;
+  updateTime: string;
+  expireTime: string;
+  usageMetadata?: {
+    totalTokenCount: number;
+  };
+}
+
+export interface CreateCacheResult {
+  cacheId: string;
+  displayName?: string;
+  expireTime: string;
+  model: string;
+  tokenCount?: number;
+}
+
 /**
  * Extract YouTube video ID from various URL formats
  */
@@ -570,6 +590,355 @@ export async function callGeminiWithVideo(
     });
 
     req.write(JSON.stringify(requestBody));
+    req.end();
+  });
+}
+
+/**
+ * Create a video cache for repeated queries (saves ~70% costs)
+ */
+export async function createVideoCache(
+  credentials: GeminiCredentials,
+  videoContent: ReturnType<typeof prepareVideoContent>,
+  options: {
+    displayName?: string;
+    ttlMinutes?: number;
+    model?: string;
+    systemInstruction?: string;
+  } = {}
+): Promise<CreateCacheResult> {
+  const model = options.model || 'gemini-2.5-flash';
+  const ttlMinutes = options.ttlMinutes || 60;
+  const ttlSeconds = ttlMinutes * 60;
+
+  const requestBody: any = {
+    model: credentials.type === 'vertexai'
+      ? `projects/${credentials.projectId}/locations/${credentials.location}/publishers/google/models/${model}`
+      : `models/${model}`,
+    displayName: options.displayName || `video-cache-${Date.now()}`,
+    contents: [{
+      role: 'user',
+      parts: [
+        videoContent.inlineData
+          ? { inlineData: videoContent.inlineData }
+          : { fileData: videoContent.fileData }
+      ]
+    }],
+    ttl: `${ttlSeconds}s`
+  };
+
+  if (options.systemInstruction) {
+    requestBody.systemInstruction = {
+      parts: [{ text: options.systemInstruction }]
+    };
+  }
+
+  let endpoint: string;
+  let headers: Record<string, string>;
+
+  if (credentials.type === 'vertexai') {
+    const accessToken = await getAccessToken(credentials);
+    endpoint = `https://${credentials.location}-aiplatform.googleapis.com/v1beta1/projects/${credentials.projectId}/locations/${credentials.location}/cachedContents`;
+    headers = {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    };
+  } else {
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/cachedContents?key=${credentials.apiKey}`;
+    headers = {
+      'Content-Type': 'application/json'
+    };
+  }
+
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(endpoint);
+    const bodyStr = JSON.stringify(requestBody);
+
+    const requestOptions = {
+      hostname: parsedUrl.hostname,
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Length': Buffer.byteLength(bodyStr)
+      }
+    };
+
+    const req = https.request(requestOptions, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const response = JSON.parse(data);
+
+          if (response.error) {
+            reject(new Error(`Cache creation error: ${response.error.message}`));
+            return;
+          }
+
+          resolve({
+            cacheId: response.name,
+            displayName: response.displayName,
+            expireTime: response.expireTime,
+            model: response.model,
+            tokenCount: response.usageMetadata?.totalTokenCount
+          });
+        } catch (e) {
+          reject(new Error(`Failed to parse cache response: ${e}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.setTimeout(600000, () => {
+      req.destroy();
+      reject(new Error('Cache creation timeout'));
+    });
+
+    req.write(bodyStr);
+    req.end();
+  });
+}
+
+/**
+ * Query a cached video with a prompt
+ */
+export async function queryVideoCache(
+  credentials: GeminiCredentials,
+  cacheId: string,
+  prompt: string,
+  options: {
+    model?: string;
+    maxOutputTokens?: number;
+  } = {}
+): Promise<any> {
+  const model = options.model || 'gemini-2.5-flash';
+  const maxOutputTokens = options.maxOutputTokens || 8192;
+
+  const requestBody = {
+    cachedContent: cacheId,
+    contents: [{
+      role: 'user',
+      parts: [{ text: prompt }]
+    }],
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens,
+      responseMimeType: 'application/json'
+    }
+  };
+
+  let endpoint: string;
+  let headers: Record<string, string>;
+
+  if (credentials.type === 'vertexai') {
+    const accessToken = await getAccessToken(credentials);
+    endpoint = `https://${credentials.location}-aiplatform.googleapis.com/v1beta1/projects/${credentials.projectId}/locations/${credentials.location}/publishers/google/models/${model}:generateContent`;
+    headers = {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    };
+  } else {
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${credentials.apiKey}`;
+    headers = {
+      'Content-Type': 'application/json'
+    };
+  }
+
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(endpoint);
+    const bodyStr = JSON.stringify(requestBody);
+
+    const requestOptions = {
+      hostname: parsedUrl.hostname,
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Length': Buffer.byteLength(bodyStr)
+      }
+    };
+
+    const req = https.request(requestOptions, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const response = JSON.parse(data);
+
+          if (response.error) {
+            reject(new Error(`Cache query error: ${response.error.message}`));
+            return;
+          }
+
+          const content = response.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!content) {
+            reject(new Error('No content in cache query response'));
+            return;
+          }
+
+          try {
+            resolve(JSON.parse(content));
+          } catch {
+            resolve({ raw: content });
+          }
+        } catch (e) {
+          reject(new Error(`Failed to parse cache query response: ${e}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.setTimeout(600000, () => {
+      req.destroy();
+      reject(new Error('Cache query timeout'));
+    });
+
+    req.write(bodyStr);
+    req.end();
+  });
+}
+
+/**
+ * Delete a video cache
+ */
+export async function deleteVideoCache(
+  credentials: GeminiCredentials,
+  cacheId: string
+): Promise<{ success: boolean; message: string }> {
+  let endpoint: string;
+  let headers: Record<string, string>;
+
+  if (credentials.type === 'vertexai') {
+    const accessToken = await getAccessToken(credentials);
+    // cacheId should be full path like: projects/.../locations/.../cachedContents/...
+    endpoint = `https://${credentials.location}-aiplatform.googleapis.com/v1beta1/${cacheId}`;
+    headers = {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    };
+  } else {
+    // For AI Studio, cacheId format: cachedContents/xxx
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/${cacheId}?key=${credentials.apiKey}`;
+    headers = {
+      'Content-Type': 'application/json'
+    };
+  }
+
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(endpoint);
+
+    const requestOptions = {
+      hostname: parsedUrl.hostname,
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: 'DELETE',
+      headers
+    };
+
+    const req = https.request(requestOptions, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode === 200 || res.statusCode === 204) {
+          resolve({ success: true, message: 'Cache deleted successfully' });
+          return;
+        }
+
+        try {
+          const response = JSON.parse(data);
+          if (response.error) {
+            reject(new Error(`Cache deletion error: ${response.error.message}`));
+            return;
+          }
+          resolve({ success: true, message: 'Cache deleted' });
+        } catch {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve({ success: true, message: 'Cache deleted' });
+          } else {
+            reject(new Error(`Cache deletion failed: HTTP ${res.statusCode}`));
+          }
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.setTimeout(30000, () => {
+      req.destroy();
+      reject(new Error('Cache deletion timeout'));
+    });
+
+    req.end();
+  });
+}
+
+/**
+ * List all video caches
+ */
+export async function listVideoCaches(
+  credentials: GeminiCredentials
+): Promise<CacheInfo[]> {
+  let endpoint: string;
+  let headers: Record<string, string>;
+
+  if (credentials.type === 'vertexai') {
+    const accessToken = await getAccessToken(credentials);
+    endpoint = `https://${credentials.location}-aiplatform.googleapis.com/v1beta1/projects/${credentials.projectId}/locations/${credentials.location}/cachedContents`;
+    headers = {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    };
+  } else {
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/cachedContents?key=${credentials.apiKey}`;
+    headers = {
+      'Content-Type': 'application/json'
+    };
+  }
+
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(endpoint);
+
+    const requestOptions = {
+      hostname: parsedUrl.hostname,
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: 'GET',
+      headers
+    };
+
+    const req = https.request(requestOptions, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const response = JSON.parse(data);
+
+          if (response.error) {
+            reject(new Error(`List caches error: ${response.error.message}`));
+            return;
+          }
+
+          const caches: CacheInfo[] = (response.cachedContents || []).map((cache: any) => ({
+            name: cache.name,
+            displayName: cache.displayName,
+            model: cache.model,
+            createTime: cache.createTime,
+            updateTime: cache.updateTime,
+            expireTime: cache.expireTime,
+            usageMetadata: cache.usageMetadata
+          }));
+
+          resolve(caches);
+        } catch (e) {
+          reject(new Error(`Failed to parse list caches response: ${e}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.setTimeout(30000, () => {
+      req.destroy();
+      reject(new Error('List caches timeout'));
+    });
+
     req.end();
   });
 }
