@@ -162,6 +162,69 @@ Return a JSON object with this structure:
 }`;
 
 /**
+ * Slide extraction prompt - detects and extracts slide/presentation metadata
+ */
+export const EXTRACT_SLIDES_PROMPT = `**Task - Slide/Presentation Detection**
+
+Analyze this video to identify each distinct slide or presentation screen change.
+
+**Instructions:**
+- Detect every slide transition or significant presentation change
+- Do NOT include minor animations within the same slide
+- For each slide, extract metadata including title and key points
+- Provide precise timestamps in milliseconds for frame extraction
+- If the slide/presentation is not fullscreen, provide bounding box coordinates
+
+**Output Format:**
+Return a JSON object with this structure:
+{
+  "slides": [
+    {
+      "id": 1,
+      "timestamp_ms": 15000,
+      "timestamp": "00:00:15",
+      "title": "Main title or heading visible on the slide",
+      "key_points": ["Bullet point 1", "Bullet point 2", "Key text visible"],
+      "type": "slide",
+      "description": "Brief description of slide content",
+      "bounding_box": null
+    },
+    {
+      "id": 2,
+      "timestamp_ms": 145000,
+      "timestamp": "00:02:25",
+      "title": "Next Slide Title",
+      "key_points": ["Point A", "Point B"],
+      "type": "chart",
+      "description": "Bar chart showing Q4 results",
+      "bounding_box": [100, 50, 900, 700]
+    }
+  ],
+  "metadata": {
+    "total_slides": 10,
+    "video_duration": "45:00",
+    "slide_types_found": ["slide", "chart", "diagram", "demo"],
+    "presentation_title": "Detected presentation title if visible",
+    "presenter": "Name if identified or null"
+  }
+}
+
+**Field Definitions:**
+- id: Sequential slide number (1, 2, 3, ...)
+- timestamp_ms: Milliseconds from video start when slide FIRST appears
+- timestamp: Same time in HH:MM:SS format
+- title: Main heading/title text on the slide
+- key_points: Array of bullet points or key text visible
+- type: One of: "slide", "title_slide", "chart", "diagram", "table", "demo", "code", "image", "video", "other"
+- description: Brief description of the visual content
+- bounding_box: [ymin, xmin, ymax, xmax] in 0-1000 scale if slide is NOT fullscreen, null if fullscreen
+
+**Important:**
+- Only include actual slide CHANGES, not every frame
+- Be precise with timestamps - they will be used for frame extraction
+- If no slides/presentation content is found, return empty slides array`;
+
+/**
  * Chunking instructions - appended when processing long videos
  */
 export const CHUNKING_INSTRUCTIONS = (chunkIndex: number, totalChunks: number, startTime: string) => `
@@ -212,7 +275,7 @@ export const LANGUAGE_INSTRUCTIONS: Record<string, string> = {
  * Get the appropriate prompt for an operation
  */
 export function getPromptForOperation(
-  operation: 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene',
+  operation: 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene' | 'extractSlides',
   options: {
     language?: string;
     chunkIndex?: number;
@@ -237,6 +300,9 @@ export function getPromptForOperation(
       break;
     case 'analyzeScene':
       basePrompt = SCENE_ANALYSIS_PROMPT;
+      break;
+    case 'extractSlides':
+      basePrompt = EXTRACT_SLIDES_PROMPT;
       break;
     default:
       throw new Error(`Unknown operation: ${operation}`);

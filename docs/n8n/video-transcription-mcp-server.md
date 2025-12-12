@@ -24,7 +24,7 @@ Ce workflow transcrit et analyse des vidéos (YouTube, URL directes) en utilisan
 
 | Paramètre | Type | Défaut | Description |
 |-----------|------|--------|-------------|
-| `operation` | string | `"transcribe"` | Opération à effectuer (voir ci-dessous): `transcribe`, `identifySpeakers`, `extractOcr`, `analyzeScene`, `createCache`, `queryCache`, `deleteCache`, `listCaches` |
+| `operation` | string | `"transcribe"` | Opération à effectuer: `transcribe`, `identifySpeakers`, `extractOcr`, `analyzeScene`, `extractSlides`, `createCache`, `queryCache`, `deleteCache`, `listCaches` |
 | `language` | string | `"auto"` | Langue de sortie: `"auto"`, `"en"`, `"fr"`, `"es"`, `"de"`, `"it"`, `"pt"` |
 
 ### Options de chunking (pour vidéos longues)
@@ -184,6 +184,57 @@ Analyse complète : transcription, locuteurs, OCR et description des scènes.
   }
 }
 ```
+
+### `extractSlides`
+Détecte et extrait les métadonnées des slides/présentations avec timestamps précis.
+
+**Sortie:**
+```json
+{
+  "slides": [
+    {
+      "id": 1,
+      "timestamp_ms": 15000,
+      "timestamp": "00:00:15",
+      "title": "Introduction",
+      "key_points": ["Point 1", "Point 2"],
+      "type": "slide",
+      "description": "Title slide with company logo",
+      "bounding_box": null
+    },
+    {
+      "id": 2,
+      "timestamp_ms": 145000,
+      "timestamp": "00:02:25",
+      "title": "Résultats Q4",
+      "key_points": ["CA +15%", "Marge 12%"],
+      "type": "chart",
+      "description": "Bar chart showing quarterly results",
+      "bounding_box": [100, 50, 900, 700]
+    }
+  ],
+  "metadata": {
+    "total_slides": 10,
+    "video_duration": "45:00",
+    "slide_types_found": ["slide", "chart", "diagram"],
+    "presentation_title": "Rapport Annuel 2025",
+    "presenter": "Jean Dupont"
+  }
+}
+```
+
+**Types de slides détectés:**
+- `slide` - Slide de présentation classique
+- `title_slide` - Slide de titre
+- `chart` - Graphique
+- `diagram` - Diagramme
+- `table` - Tableau
+- `demo` - Démonstration
+- `code` - Code source
+- `image` - Image plein écran
+- `video` - Vidéo intégrée
+
+**Note:** Les timestamps en millisecondes (`timestamp_ms`) peuvent être utilisés avec la Cloud Function `extract-slides` pour extraire les images des slides.
 
 ## Opérations de cache
 
@@ -381,6 +432,38 @@ curl -X POST http://localhost:5678/webhook/video-transcription \
     "operation": "transcribe",
     "endTime": "3:00"
   }'
+```
+
+### Extraire les slides d'une présentation
+
+```bash
+curl -X POST http://localhost:5678/webhook/video-transcription \
+  -H "Content-Type: application/json" \
+  -d '{
+    "videoUrl": "https://example.com/presentation.mp4",
+    "operation": "extractSlides"
+  }'
+```
+
+### Extraire les slides puis les images (avec Cloud Function)
+
+```bash
+# Étape 1: Extraire les métadonnées des slides
+SLIDES=$(curl -s -X POST http://localhost:5678/webhook/video-transcription \
+  -H "Content-Type: application/json" \
+  -d '{
+    "videoUrl": "https://example.com/presentation.mp4",
+    "operation": "extractSlides"
+  }')
+
+# Étape 2: Extraire les images via Cloud Function
+curl -X POST https://REGION-PROJECT_ID.cloudfunctions.net/extract-slides \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"video_url\": \"https://example.com/presentation.mp4\",
+    \"slides\": $(echo $SLIDES | jq '.slides'),
+    \"output\": {\"type\": \"base64\"}
+  }"
 ```
 
 ### Créer un cache pour une vidéo
@@ -622,6 +705,78 @@ Les paramètres `startTime` et `endTime` permettent de limiter la transcription 
 }
 ```
 
+## Cloud Function: extract-slides
+
+Une Cloud Function GCP est disponible pour extraire les images des slides à partir des timestamps retournés par `extractSlides`.
+
+### Architecture
+
+```
+┌─────────────────┐      JSON        ┌─────────────────────┐      Images
+│  n8n + Gemini   │  ─────────────►  │  GCP Cloud Function │  ─────────►  Base64 / GCS
+│  (extractSlides)│   timestamps     │  (ffmpeg/OpenCV)    │
+└─────────────────┘                  └─────────────────────┘
+```
+
+### Endpoint
+
+```
+POST https://REGION-PROJECT_ID.cloudfunctions.net/extract-slides
+```
+
+### Input
+
+```json
+{
+  "video_url": "https://example.com/video.mp4",
+  "slides": [
+    {"id": 1, "timestamp_ms": 15000, "title": "Introduction"},
+    {"id": 2, "timestamp_ms": 145000, "title": "Résultats"}
+  ],
+  "output": {
+    "type": "base64",
+    "bucket": "my-bucket",
+    "prefix": "slides/"
+  }
+}
+```
+
+### Output
+
+```json
+{
+  "success": true,
+  "total_slides": 2,
+  "extracted": 2,
+  "failed": 0,
+  "images": [
+    {
+      "slide_id": 1,
+      "title": "Introduction",
+      "timestamp_ms": 15000,
+      "image_base64": "...",
+      "status": "success"
+    }
+  ]
+}
+```
+
+### Déploiement
+
+```bash
+cd cloud-functions/extract-slides
+export GCP_PROJECT_ID=your-project-id
+export GCP_REGION=europe-west1
+./deploy.sh
+```
+
+### Coût estimé
+
+| Usage | Coût |
+|-------|------|
+| Cloud Function (512MB, 120s) | ~$0.000005/invocation |
+| 100 vidéos/mois | < $1 |
+
 ## Limitations
 
 - Les vidéos protégées par DRM ne sont pas supportées
@@ -629,8 +784,10 @@ Les paramètres `startTime` et `endTime` permettent de limiter la transcription 
 - La qualité de la transcription dépend de la qualité audio
 - L'identification des locuteurs fonctionne mieux avec des voix distinctes
 - L'OCR nécessite un texte suffisamment lisible à l'écran
+- `extractSlides` fonctionne mieux avec des présentations claires (PowerPoint, Keynote, Google Slides)
 
 ## Voir aussi
 
 - [Knowledge Graph MCP Server API](./knowledge-graph-mcp-server.md)
 - [Guide de Test](./TESTING_GUIDE.md)
+- [Cloud Function extract-slides](../../cloud-functions/extract-slides/)
