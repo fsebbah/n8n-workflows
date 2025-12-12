@@ -82,10 +82,10 @@ extract_slides_remote() {
     local metadata_file="$2"
     local video_url="$3"
     local save_video="$4"
+    local video_id="$5"
 
-    local dir_name=$(basename "$local_dir")
     local metadata_filename=$(basename "$metadata_file")
-    local remote_project_dir="${REMOTE_DIR}/projects/${dir_name}"
+    local remote_project_dir="${REMOTE_DIR}/projects/${video_id}"
 
     # Step 1: Create remote directory structure and copy local folder
     echo "  Creating remote directory: ${remote_project_dir}"
@@ -203,7 +203,7 @@ echo "Video URL:    $VIDEO_URL"
 echo "Video ID:     $VIDEO_ID"
 echo "Output:       $OUTPUT_DIR"
 echo "Save video:   $SAVE_VIDEO"
-echo "Remote:       ${EXTRACT_SERVER}:${REMOTE_DIR}/projects/$(basename $OUTPUT_DIR)"
+echo "Remote:       ${EXTRACT_SERVER}:${REMOTE_DIR}/projects/${VIDEO_ID}"
 echo "=============================================="
 echo ""
 
@@ -232,7 +232,7 @@ IMAGES_COUNT=0
 if [ "$SLIDES_COUNT" -gt 0 ]; then
     echo "[3/3] Extracting slide images via remote server..."
     START_TIME=$(date +%s)
-    extract_slides_remote "$OUTPUT_DIR" "$SLIDES_FILE" "$VIDEO_URL" "$SAVE_VIDEO"
+    extract_slides_remote "$OUTPUT_DIR" "$SLIDES_FILE" "$VIDEO_URL" "$SAVE_VIDEO" "$VIDEO_ID"
     END_TIME=$(date +%s)
     echo "  -> Completed in $((END_TIME - START_TIME))s"
 
@@ -265,7 +265,7 @@ TOTAL_MINUTES=$((TOTAL_DURATION / 60))
 TOTAL_SECONDS=$((TOTAL_DURATION % 60))
 
 echo ""
-echo "Remote mirror: ${EXTRACT_SERVER}:${REMOTE_DIR}/projects/$(basename $OUTPUT_DIR)/"
+echo "Remote mirror: ${EXTRACT_SERVER}:${REMOTE_DIR}/projects/${VIDEO_ID}/"
 echo ""
 echo "Total execution time: ${TOTAL_MINUTES}m ${TOTAL_SECONDS}s (${TOTAL_DURATION}s)"
 echo "=============================================="
