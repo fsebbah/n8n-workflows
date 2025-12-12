@@ -291,6 +291,45 @@ export class VideoTranscription implements INodeType {
         default: 'auto',
         description: 'Language for the transcription output',
       },
+      // Cache options for standard operations
+      {
+        displayName: 'Use Cache',
+        name: 'useCache',
+        type: 'boolean',
+        default: false,
+        description: 'Use context caching for ~70% cost savings on repeated queries. Creates a cache, processes the video, then optionally keeps the cache.',
+        displayOptions: {
+          show: {
+            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene'],
+          },
+        },
+      },
+      {
+        displayName: 'Cache TTL (Minutes)',
+        name: 'useCacheTtl',
+        type: 'number',
+        default: 60,
+        description: 'How long to keep the cache after processing',
+        displayOptions: {
+          show: {
+            useCache: [true],
+            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene'],
+          },
+        },
+      },
+      {
+        displayName: 'Keep Cache After Processing',
+        name: 'keepCache',
+        type: 'boolean',
+        default: false,
+        description: 'Keep the cache for future queries. If true, returns cacheId in metadata for reuse.',
+        displayOptions: {
+          show: {
+            useCache: [true],
+            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene'],
+          },
+        },
+      },
       // Chunking options
       {
         displayName: 'Enable Chunking',
@@ -581,10 +620,62 @@ export class VideoTranscription implements INodeType {
           continue;
         }
 
+        // Check if useCache is enabled for standard operations
+        const useCache = this.getNodeParameter('useCache', i, false) as boolean;
+
         // Standard video processing operations
         let result: any;
+        let cacheId: string | null = null;
 
-        if (enableChunking && videoInfo.data) {
+        if (useCache) {
+          // Use context caching for cost savings
+          const useCacheTtl = this.getNodeParameter('useCacheTtl', i, 60) as number;
+          const keepCache = this.getNodeParameter('keepCache', i, false) as boolean;
+
+          // Step 1: Create cache for the video
+          const videoContent = prepareVideoContent(videoInfo);
+          const cacheResult = await createVideoCache(
+            geminiCredentials,
+            videoContent,
+            {
+              displayName: `auto-cache-${operation}-${Date.now()}`,
+              ttlMinutes: useCacheTtl,
+              model: options.model,
+            }
+          );
+          cacheId = cacheResult.cacheId;
+
+          // Step 2: Query the cache with the operation prompt
+          const prompt = getPromptForOperation(
+            operation as 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene',
+            {
+              language: outputLanguage,
+              customInstructions: options.customInstructions,
+              startTime,
+              endTime,
+            }
+          );
+
+          result = await queryVideoCache(
+            geminiCredentials,
+            cacheId,
+            prompt,
+            {
+              model: options.model,
+              maxOutputTokens: options.maxOutputTokens,
+            }
+          );
+
+          // Step 3: Delete cache if not keeping it
+          if (!keepCache) {
+            try {
+              await deleteVideoCache(geminiCredentials, cacheId);
+              cacheId = null;
+            } catch {
+              // Ignore deletion errors, cache will expire anyway
+            }
+          }
+        } else if (enableChunking && videoInfo.data) {
           // Chunked processing for long videos
           const chunkDuration = this.getNodeParameter('chunkDuration', i) as number;
           const videoDuration = this.getNodeParameter('videoDuration', i) as number;
@@ -640,7 +731,7 @@ export class VideoTranscription implements INodeType {
           // Merge chunk results
           result = mergeTranscriptionResults(chunkResults);
         } else {
-          // Single video processing
+          // Single video processing (direct, no cache)
           const prompt = getPromptForOperation(
             operation as 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene',
             {
@@ -676,6 +767,8 @@ export class VideoTranscription implements INodeType {
               start: startTime || null,
               end: endTime || null,
             } : null,
+            useCache,
+            cacheId: cacheId || undefined,
           },
         };
 
