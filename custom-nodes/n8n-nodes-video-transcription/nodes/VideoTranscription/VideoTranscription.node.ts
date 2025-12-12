@@ -111,6 +111,12 @@ export class VideoTranscription implements INodeType {
             action: 'Analyze video scene completely',
           },
           {
+            name: 'Extract Slides',
+            value: 'extractSlides',
+            description: 'Detect and extract slide/presentation metadata with timestamps',
+            action: 'Extract slides from video',
+          },
+          {
             name: 'Create Cache',
             value: 'createCache',
             description: 'Upload video and create cache for multiple queries (saves ~70% on costs)',
@@ -221,7 +227,7 @@ export class VideoTranscription implements INodeType {
         description: 'Source of the video to process',
         displayOptions: {
           show: {
-            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene', 'createCache'],
+            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene', 'extractSlides', 'createCache'],
           },
         },
       },
@@ -300,7 +306,7 @@ export class VideoTranscription implements INodeType {
         description: 'Use context caching for ~70% cost savings on repeated queries. Creates a cache, processes the video, then optionally keeps the cache.',
         displayOptions: {
           show: {
-            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene'],
+            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene', 'extractSlides'],
           },
         },
       },
@@ -313,7 +319,7 @@ export class VideoTranscription implements INodeType {
         displayOptions: {
           show: {
             useCache: [true],
-            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene'],
+            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene', 'extractSlides'],
           },
         },
       },
@@ -326,7 +332,7 @@ export class VideoTranscription implements INodeType {
         displayOptions: {
           show: {
             useCache: [true],
-            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene'],
+            operation: ['transcribe', 'identifySpeakers', 'extractOcr', 'analyzeScene', 'extractSlides'],
           },
         },
       },
@@ -647,7 +653,7 @@ export class VideoTranscription implements INodeType {
 
           // Step 2: Query the cache with the operation prompt
           const prompt = getPromptForOperation(
-            operation as 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene',
+            operation as 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene' | 'extractSlides',
             {
               language: outputLanguage,
               customInstructions: options.customInstructions,
@@ -696,7 +702,7 @@ export class VideoTranscription implements INodeType {
 
             // Build prompt with chunking instructions
             const prompt = getPromptForOperation(
-              operation as 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene',
+              operation as 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene' | 'extractSlides',
               {
                 language: outputLanguage,
                 chunkIndex,
@@ -733,7 +739,7 @@ export class VideoTranscription implements INodeType {
         } else {
           // Single video processing (direct, no cache)
           const prompt = getPromptForOperation(
-            operation as 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene',
+            operation as 'transcribe' | 'identifySpeakers' | 'extractOcr' | 'analyzeScene' | 'extractSlides',
             {
               language: outputLanguage,
               customInstructions: options.customInstructions,
