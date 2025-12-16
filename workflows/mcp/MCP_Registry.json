@@ -10,10 +10,7 @@
       "id": "webhook-registry",
       "name": "Webhook Registry",
       "type": "n8n-nodes-base.webhook",
-      "position": [
-        304,
-        304
-      ],
+      "position": [304, 304],
       "webhookId": "mcp-registry",
       "typeVersion": 1
     },
@@ -27,10 +24,7 @@
       "id": "http-get-workflows",
       "name": "Get Active Workflows",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [
-        512,
-        304
-      ],
+      "position": [512, 304],
       "typeVersion": 4.2,
       "credentials": {
         "httpHeaderAuth": {
@@ -41,15 +35,12 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build registry from active workflows\nconst workflows = $input.first().json.data || [];\n\n// Filter active workflows starting with 'MCP -' (excluding this registry)\nconst mcpWorkflows = workflows.filter(w => \n  w.active && \n  w.name.startsWith('MCP -') && \n  w.name !== 'MCP - Registry'\n);\n\n// Extract webhook info from each workflow\nconst services = {};\n\nfor (const workflow of mcpWorkflows) {\n  // Find webhook node\n  const webhookNode = workflow.nodes?.find(n => \n    n.type === 'n8n-nodes-base.webhook'\n  );\n  \n  if (webhookNode) {\n    const webhookPath = webhookNode.parameters?.path || webhookNode.webhookId;\n    const serviceName = workflow.name.replace('MCP - ', '').toLowerCase().replace(/[^a-z0-9]/g, '-');\n    \n    // Extract operations from node names or parameters\n    const operationNodes = workflow.nodes?.filter(n => \n      n.type !== 'n8n-nodes-base.webhook' && \n      n.type !== 'n8n-nodes-base.respondToWebhook' &&\n      n.type !== 'n8n-nodes-base.switch' &&\n      n.type !== 'n8n-nodes-base.stickyNote'\n    ) || [];\n    \n    // Group operations by resource\n    const operations = {};\n    for (const node of operationNodes) {\n      const resource = node.parameters?.resource || 'default';\n      const operation = node.parameters?.operation || node.name;\n      if (!operations[resource]) {\n        operations[resource] = [];\n      }\n      if (!operations[resource].includes(operation)) {\n        operations[resource].push(operation);\n      }\n    }\n    \n    services[serviceName] = {\n      name: workflow.name,\n      workflow_id: workflow.id,\n      webhook_url: `http://pi6.local:5678/webhook/${webhookPath}`,\n      active: workflow.active,\n      operations: operations\n    };\n  }\n}\n\nconst registry = {\n  version: \"1.0\",\n  updated_at: new Date().toISOString(),\n  n8n: {\n    host: \"pi6.local\",\n    port: 5678,\n    protocol: \"http\"\n  },\n  total_services: Object.keys(services).length,\n  services: services\n};\n\nreturn { json: registry };"
+        "jsCode": "// Tool schemas - defines parameters for each MCP tool\nconst toolSchemas = {\n  \"video-transcription\": {\n    description: \"Transcribe audio/video files using OpenAI Whisper\",\n    parameters: {\n      required: {\n        url: { type: \"string\", description: \"URL of the audio/video file to transcribe\" }\n      },\n      optional: {\n        language: { type: \"string\", description: \"Language code (e.g., 'en', 'fr')\", default: \"auto-detect\" },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"text-to-speech\": {\n    description: \"Convert text to speech using OpenAI TTS\",\n    parameters: {\n      required: {\n        text: { type: \"string\", description: \"Text to convert to speech\" }\n      },\n      optional: {\n        voice: { type: \"string\", enum: [\"alloy\", \"echo\", \"fable\", \"onyx\", \"nova\", \"shimmer\"], default: \"alloy\" },\n        model: { type: \"string\", enum: [\"tts-1\", \"tts-1-hd\"], default: \"tts-1\" },\n        speed: { type: \"number\", minimum: 0.25, maximum: 4.0, default: 1.0 },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"linkedin\": {\n    description: \"Interact with LinkedIn profiles and posts\",\n    parameters: {\n      required: {\n        action: { type: \"string\", enum: [\"get_profile\", \"search\"], description: \"Action to perform\" }\n      },\n      optional: {\n        profile_url: { type: \"string\", description: \"LinkedIn profile URL (for get_profile)\" },\n        query: { type: \"string\", description: \"Search query (for search action)\" },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"pdf-extractor\": {\n    description: \"Extract text content from PDF files\",\n    parameters: {\n      required: {\n        url: { type: \"string\", description: \"URL of the PDF file to extract\" }\n      },\n      optional: {\n        pages: { type: \"string\", description: \"Page range (e.g., '1-5', 'all')\", default: \"all\" },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"entity-extractor\": {\n    description: \"Extract named entities from text using OpenAI\",\n    parameters: {\n      required: {\n        text: { type: \"string\", description: \"Text to analyze for entities\" }\n      },\n      optional: {\n        entity_types: { type: \"array\", items: \"string\", description: \"Types to extract\", default: [\"PERSON\", \"ORGANIZATION\", \"LOCATION\", \"DATE\"] },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"summarizer\": {\n    description: \"Summarize text using Anthropic Claude\",\n    parameters: {\n      required: {\n        text: { type: \"string\", description: \"Text to summarize\" }\n      },\n      optional: {\n        style: { type: \"string\", enum: [\"concise\", \"detailed\", \"bullet-points\"], default: \"concise\" },\n        max_length: { type: \"integer\", description: \"Max length in words\", default: 200 },\n        language: { type: \"string\", description: \"Output language\", default: \"same as input\" },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"text-generator\": {\n    description: \"Generate text using OpenAI GPT-4o\",\n    parameters: {\n      required: {\n        prompt: { type: \"string\", description: \"Prompt for text generation\" }\n      },\n      optional: {\n        model: { type: \"string\", enum: [\"gpt-4o\", \"gpt-4o-mini\", \"gpt-4-turbo\"], default: \"gpt-4o\" },\n        temperature: { type: \"number\", minimum: 0, maximum: 2, default: 0.7 },\n        max_tokens: { type: \"integer\", default: 1000 },\n        system_prompt: { type: \"string\", description: \"System prompt for context\" },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"code-generator\": {\n    description: \"Generate code using OpenAI GPT-4o\",\n    parameters: {\n      required: {\n        prompt: { type: \"string\", description: \"Description of code to generate\" }\n      },\n      optional: {\n        language: { type: \"string\", description: \"Programming language\", default: \"python\" },\n        framework: { type: \"string\", description: \"Framework or library context\" },\n        context: { type: \"string\", description: \"Additional context or existing code\" },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"youtube-searcher\": {\n    description: \"Search YouTube using the Data API v3\",\n    parameters: {\n      required: {\n        query: { type: \"string\", description: \"Search query\" }\n      },\n      optional: {\n        type: { type: \"string\", enum: [\"video\", \"channel\", \"playlist\"], default: \"video\" },\n        max_results: { type: \"integer\", minimum: 1, maximum: 50, default: 10 },\n        order: { type: \"string\", enum: [\"relevance\", \"date\", \"rating\", \"viewCount\"], default: \"relevance\" },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"google-searcher\": {\n    description: \"Search Google using SerpAPI\",\n    parameters: {\n      required: {\n        query: { type: \"string\", description: \"Search query\" }\n      },\n      optional: {\n        num_results: { type: \"integer\", minimum: 1, maximum: 100, default: 10 },\n        language: { type: \"string\", description: \"Language code\", default: \"en\" },\n        country: { type: \"string\", description: \"Country code\", default: \"us\" },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"vector-store\": {\n    description: \"Store, search, and manage vectors in Qdrant\",\n    parameters: {\n      required: {\n        action: { type: \"string\", enum: [\"store\", \"search\", \"delete\"], description: \"Action to perform\" }\n      },\n      optional: {\n        collection: { type: \"string\", description: \"Collection name\", default: \"default\" },\n        text: { type: \"string\", description: \"Text to embed (for store)\" },\n        query: { type: \"string\", description: \"Query for search\" },\n        id: { type: \"string\", description: \"Vector ID (for delete)\" },\n        top_k: { type: \"integer\", description: \"Results to return\", default: 5 },\n        metadata: { type: \"object\", description: \"Additional metadata\" },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"image-ocr\": {\n    description: \"Extract text from images using Mistral Pixtral\",\n    parameters: {\n      required: {\n        image_url: { type: \"string\", description: \"URL of the image to analyze\" }\n      },\n      optional: {\n        language: { type: \"string\", description: \"Expected text language\", default: \"auto-detect\" },\n        output_format: { type: \"string\", enum: [\"text\", \"structured\"], default: \"text\" },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"llm-summarizer\": {\n    description: \"Summarize with multi-provider support (Anthropic, OpenAI, Mistral)\",\n    parameters: {\n      required: {\n        text: { type: \"string\", description: \"Text to summarize\" }\n      },\n      optional: {\n        provider: { type: \"string\", enum: [\"anthropic\", \"openai\", \"mistral\"], default: \"anthropic\" },\n        format: { type: \"string\", enum: [\"bullet-points\", \"paragraph\", \"executive-summary\"], default: \"paragraph\" },\n        max_length: { type: \"integer\", description: \"Max summary length\" },\n        language: { type: \"string\", description: \"Output language\", default: \"same as input\" },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  },\n  \"text-classifier\": {\n    description: \"Classify text into categories using OpenAI GPT-4o-mini\",\n    parameters: {\n      required: {\n        text: { type: \"string\", description: \"Text to classify\" },\n        categories: { type: \"array\", items: \"string\", description: \"Category labels\" }\n      },\n      optional: {\n        multi_label: { type: \"boolean\", description: \"Allow multiple categories\", default: false },\n        execution_mode: { type: \"string\", enum: [\"online\", \"offline\"], default: \"online\" }\n      }\n    }\n  }\n};\n\n// Build registry from active workflows\nconst workflows = $input.first().json.data || [];\n\n// Filter active workflows starting with 'MCP -' (excluding this registry)\nconst mcpWorkflows = workflows.filter(w => \n  w.active && \n  w.name.startsWith('MCP -') && \n  w.name !== 'MCP - Registry'\n);\n\n// Extract webhook info from each workflow\nconst tools = {};\n\nfor (const workflow of mcpWorkflows) {\n  const webhookNode = workflow.nodes?.find(n => n.type === 'n8n-nodes-base.webhook');\n  \n  if (webhookNode) {\n    const webhookPath = webhookNode.parameters?.path || webhookNode.webhookId;\n    const toolName = webhookPath; // Use webhook path as tool name\n    const serviceName = workflow.name.replace('MCP - ', '').toLowerCase().replace(/[^a-z0-9]/g, '-');\n    \n    // Get schema if available\n    const schema = toolSchemas[toolName] || toolSchemas[serviceName] || null;\n    \n    tools[toolName] = {\n      name: workflow.name,\n      workflow_id: workflow.id,\n      endpoint: `/webhook/${webhookPath}`,\n      webhook_url: `http://pi6.local:5678/webhook/${webhookPath}`,\n      method: \"POST\",\n      active: workflow.active,\n      description: schema?.description || `MCP Tool: ${workflow.name}`,\n      parameters: schema?.parameters || { required: {}, optional: {} }\n    };\n  }\n}\n\nconst registry = {\n  version: \"2.0\",\n  updated_at: new Date().toISOString(),\n  n8n: {\n    host: \"pi6.local\",\n    port: 5678,\n    protocol: \"http\",\n    webhook_base: \"http://pi6.local:5678/webhook\"\n  },\n  total_tools: Object.keys(tools).length,\n  tools: tools\n};\n\nreturn { json: registry };"
       },
       "id": "code-registry",
       "name": "Build Registry",
       "type": "n8n-nodes-base.code",
-      "position": [
-        704,
-        304
-      ],
+      "position": [704, 304],
       "typeVersion": 2
     },
     {
@@ -71,46 +62,19 @@
       "id": "respond-registry",
       "name": "Respond Registry",
       "type": "n8n-nodes-base.respondToWebhook",
-      "position": [
-        912,
-        304
-      ],
+      "position": [912, 304],
       "typeVersion": 1.1
     }
   ],
   "connections": {
     "Webhook Registry": {
-      "main": [
-        [
-          {
-            "node": "Get Active Workflows",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Get Active Workflows", "type": "main", "index": 0 }]]
     },
     "Get Active Workflows": {
-      "main": [
-        [
-          {
-            "node": "Build Registry",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Build Registry", "type": "main", "index": 0 }]]
     },
     "Build Registry": {
-      "main": [
-        [
-          {
-            "node": "Respond Registry",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Respond Registry", "type": "main", "index": 0 }]]
     }
   },
   "settings": {
