@@ -12,16 +12,17 @@
 
 ## Description
 
-Workflow n8n pour la traduction de PDF en préservant la mise en page originale (layout). Utilise Mathpix pour l'extraction LaTeX/Markdown structuré, puis un LLM pour la traduction, et génère un nouveau PDF avec la même mise en page.
+Workflow n8n pour la traduction de PDF en préservant la mise en page originale (layout). Utilise **Mistral OCR** pour l'extraction structurée, puis un LLM pour la traduction, et génère un nouveau PDF avec la même mise en page. Pour les documents avec formules mathématiques, **Mathpix** est combiné pour l'extraction LaTeX.
 
 ## Stack technique
 
 | Composant | Outil | Justification |
 |-----------|-------|---------------|
-| Extraction layout | **Mathpix** | Spécialisé documents scientifiques, LaTeX |
+| Extraction PDF | **Mistral OCR** | Souverain 🇫🇷, extraction structurée |
+| Formules maths (optionnel) | **Mathpix** | Spécialisé LaTeX, si formules détectées |
 | Traduction | **DeepL** / OpenAI | Qualité traduction |
 | Génération PDF | **Puppeteer** / WeasyPrint | HTML → PDF |
-| Formules maths | **KaTeX** / MathJax | Rendu LaTeX |
+| Rendu formules | **KaTeX** / MathJax | Rendu LaTeX (si Mathpix utilisé) |
 
 ## Endpoint
 
@@ -35,7 +36,7 @@ Content-Type: application/json
   "options": {
     "source_language": "en" | "auto",
     "target_language": "fr",
-    "preserve_math": true,
+    "has_math_formulas": false,
     "preserve_tables": true,
     "preserve_images": true,
     "output_format": "pdf" | "docx" | "html",
@@ -59,32 +60,35 @@ Content-Type: application/json
       "words_translated": 5420,
       "formulas_preserved": 45,
       "tables_preserved": 8,
-      "images_preserved": 12
+      "images_preserved": 12,
+      "mathpix_used": false
     },
     "source_language_detected": "en",
     "target_language": "fr"
   },
   "meta": {
-    "provider": "mathpix+deepl",
+    "provider": "mistral-ocr+deepl",
+    "mathpix_used": false,
     "execution_mode": "online",
-    "cost_estimate_usd": 1.50,
-    "processing_time_ms": 45000
+    "cost_estimate_usd": 0.50,
+    "processing_time_ms": 25000
   }
 }
 ```
 
 ## Workflow Architecture
 
+### Cas standard (sans formules mathématiques)
+
 ```
 [Input PDF]
       │
       ▼
-[Mathpix API] → Extraction structurée
-      │         (LaTeX, Markdown, positions)
+[Mistral OCR] → Extraction structurée
+      │         (Markdown, positions, tableaux)
       ▼
 [Parse Structure] → Identifier éléments:
       │            - Texte à traduire
-      │            - Formules (ne pas traduire)
       │            - Tableaux (traduire contenu)
       │            - Images (conserver)
       ▼
@@ -93,7 +97,6 @@ Content-Type: application/json
       ▼
 [Reconstruct] → Réassembler avec layout
       │         - Replacer texte traduit
-      │         - Conserver formules LaTeX
       │         - Reconstruire tableaux
       ▼
 [Generate PDF] → Puppeteer/WeasyPrint
@@ -102,9 +105,75 @@ Content-Type: application/json
 [Output] → PDF traduit + statistiques
 ```
 
-## Mathpix API Integration
+### Cas avec formules mathématiques (has_math_formulas: true)
 
-### Extraction
+```
+[Input PDF]
+      │
+      ▼
+[Mistral OCR] → Extraction texte + layout
+      │
+      ▼
+[Mathpix API] → Extraction formules LaTeX uniquement
+      │         ($E=mc^2$, équations, etc.)
+      ▼
+[Merge] → Combiner résultats
+      │   - Texte de Mistral
+      │   - Formules de Mathpix
+      ▼
+[Parse Structure] → Identifier éléments:
+      │            - Texte à traduire
+      │            - Formules (NE PAS traduire)
+      │            - Tableaux (traduire contenu)
+      │            - Images (conserver)
+      ▼
+[Translation API] → Traduire texte uniquement
+      │            (DeepL / OpenAI)
+      ▼
+[Reconstruct] → Réassembler avec layout
+      │         - Replacer texte traduit
+      │         - Conserver formules LaTeX intactes
+      │         - Reconstruire tableaux
+      ▼
+[Generate PDF] → Puppeteer/WeasyPrint
+      │         HTML + KaTeX (formules) → PDF
+      ▼
+[Output] → PDF traduit + statistiques
+```
+
+## Mistral OCR - Extraction principale
+
+### Endpoint Mistral
+
+```
+POST https://api.mistral.ai/v1/ocr
+Headers:
+  Authorization: Bearer <MISTRAL_API_KEY>
+
+Body:
+{
+  "model": "mistral-ocr-latest",
+  "document": "<base64_ou_url>",
+  "output_format": "markdown"
+}
+```
+
+### Response Mistral
+
+```json
+{
+  "id": "ocr-abc123",
+  "content": "# Title\n\nThis is a paragraph about physics.\n\n| Col1 | Col2 |\n|------|------|\n| A | B |",
+  "pages": [...],
+  "confidence": 0.95
+}
+```
+
+## Mathpix API - Formules uniquement (optionnel)
+
+> **Utilisé seulement si** `has_math_formulas: true`
+
+### Endpoint Mathpix
 
 ```
 POST https://api.mathpix.com/v3/pdf
@@ -117,7 +186,6 @@ Body:
   "url": "https://example.com/document.pdf",
   "conversion_formats": {
     "md": true,
-    "docx": true,
     "tex.zip": true
   },
   "math_inline_delimiters": ["$", "$"],
@@ -125,15 +193,17 @@ Body:
 }
 ```
 
-### Response Mathpix
+### Response Mathpix (formules extraites)
 
 ```json
 {
   "pdf_id": "abc123",
   "status": "completed",
   "md": "# Title\n\nThis is a paragraph with $E=mc^2$ inline math.\n\n$$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$",
-  "pages": [...],
-  "line_data": [...]
+  "formulas": [
+    {"latex": "E=mc^2", "type": "inline", "page": 1},
+    {"latex": "\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}", "type": "display", "page": 1}
+  ]
 }
 ```
 
@@ -169,39 +239,53 @@ function translateWithLayout(mathpixOutput, targetLang) {
 ## Definition of Done
 
 - [ ] Endpoint `POST /webhook/pdf-layout-translator`
-- [ ] Extraction via Mathpix (LaTeX, Markdown)
-- [ ] Préservation formules mathématiques
+- [ ] Extraction via Mistral OCR (Markdown structuré)
+- [ ] Option Mathpix si formules mathématiques (`has_math_formulas: true`)
+- [ ] Préservation formules mathématiques (si présentes)
 - [ ] Préservation tableaux (traduction contenu)
 - [ ] Préservation images
 - [ ] Traduction via DeepL ou OpenAI
 - [ ] Génération PDF avec layout préservé
 - [ ] Support langues: EN↔FR, EN↔DE, EN↔ES
-- [ ] Tests: article scientifique, document technique
+- [ ] Tests: document standard, document avec formules
 
 ## Tests requis
 
 | Test | Description | Attendu |
 |------|-------------|---------|
-| Article scientifique | PDF avec formules | Formules préservées |
+| Document standard | PDF texte simple | Mistral OCR utilisé |
+| Article scientifique | PDF avec formules (`has_math_formulas: true`) | Mathpix combiné, formules préservées |
 | Tableau complexe | PDF avec tableaux | Tableaux traduits |
 | Document technique | Manuel avec images | Images conservées |
 | Multi-colonnes | PDF 2 colonnes | Layout préservé |
 | Citations | Références biblio | Non traduit |
 | EN→FR | Document anglais | Traduction FR |
 | FR→EN | Document français | Traduction EN |
+| Sans formules | PDF scientifique sans maths | Mistral seul, pas de Mathpix |
 
 ## Dépendances
 
-- **Mathpix API** - Extraction structurée
-  - `MATHPIX_APP_ID`
-  - `MATHPIX_APP_KEY`
+### Requis
+- **Mistral API** - Extraction OCR principale
+  - `MISTRAL_API_KEY`
 - **DeepL API** - Traduction
   - `DEEPL_API_KEY`
 - **OpenAI API** (fallback) - Traduction
   - `OPENAI_API_KEY`
 - **Puppeteer** (npm) - Génération PDF
 
-## Tarification Mathpix
+### Optionnel (si formules mathématiques)
+- **Mathpix API** - Extraction LaTeX uniquement
+  - `MATHPIX_APP_ID`
+  - `MATHPIX_APP_KEY`
+
+## Tarification
+
+### Mistral OCR (principal)
+- Tarification selon tokens traités
+- **Coût estimé**: ~$0.01-0.05 par page
+
+### Mathpix (optionnel - formules maths)
 
 | Plan | Prix | Limites |
 |------|------|---------|
@@ -210,16 +294,18 @@ function translateWithLayout(mathpixOutput, targetLang) {
 | Pro | $99/mois | 50000 pages/mois |
 | Enterprise | Custom | Illimité |
 
-**Coût estimé par page**: ~$0.10
+**Coût estimé par page**: ~$0.10 (uniquement si `has_math_formulas: true`)
 
 ## Notes d'implémentation
 
-1. Traitement asynchrone pour gros PDF (> 20 pages)
-2. Callback webhook pour notification fin de traitement
-3. Stockage temporaire des PDF générés (TTL 24h)
-4. Cache Mathpix (extraction coûteuse)
-5. Fallback OpenAI si DeepL indisponible
-6. Métriques: pages/jour, coût/document
+1. **Mistral OCR par défaut** pour tous les PDF
+2. **Mathpix uniquement si** `has_math_formulas: true` (détection manuelle ou auto)
+3. Traitement asynchrone pour gros PDF (> 20 pages)
+4. Callback webhook pour notification fin de traitement
+5. Stockage temporaire des PDF générés (TTL 24h)
+6. Cache Mistral et Mathpix séparément (extraction coûteuse)
+7. Fallback OpenAI si DeepL indisponible
+8. Métriques: pages/jour, coût/document, mathpix_used
 
 ## Cas particuliers
 
