@@ -536,6 +536,91 @@
 
 ---
 
+## Stack IA & Contenu — Phase 2 (P2-04 à P2-13)
+
+> **Dernière mise à jour** : 2025-12-16
+> **Outils concernés** : P2-04, P2-08, P2-09, P2-10, P2-11, P2-12, P2-13
+
+### Tableau de synthèse
+
+| ID | Workflow | Outil(s) | Statut | Notes |
+|----|----------|----------|--------|-------|
+| P2-04 | `table_extractor` | **Mistral OCR** | 🟢 | Souverain 🇫🇷, spécialisé documents |
+| P2-08 | `quiz_generator` | OpenAI (GPT-4o) | 🟢 | JSON Mode strict |
+| P2-09 | `news_searcher` | **Multi-sources** | 🟢 | GNews, Mediastack, Google RSS, Newscatcher |
+| P2-10 | `academic_searcher` | **Multi-sources** | 🟢 | Semantic Scholar, OpenAlex, Unpaywall, CORE |
+| P2-11 | `notion` | Notion API | 🟢 | Standard |
+| P2-12 | `image_generator` | OpenAI (DALL-E 3) | 🟢 | Standard |
+| P2-13 | `syllabus_generator` | OpenAI (GPT-4o) | 🟢 | Standard |
+
+### P2-04: table_extractor — Mistral OCR
+
+#### Choix technique
+
+| Critère | Mistral OCR | GPT-4o Vision |
+|---------|-------------|---------------|
+| Souveraineté | 🇫🇷 Europe | 🇺🇸 USA |
+| Spécialisation | Document Understanding | Vision généraliste |
+| Coût | Inférieur | Élevé |
+| Sortie | Markdown structuré | JSON direct |
+| Précision tableaux | Excellente | Bonne (risque hallucination) |
+
+**Modèle** : `mistral-ocr-latest`
+
+#### Definition of Done
+- [ ] Endpoint `POST /webhook/table-extractor`
+- [ ] Input: URL ou base64 (PDF/image)
+- [ ] Output: JSON structuré avec headers, rows, confidence
+- [ ] Fallback GPT-4o si confidence < 0.8
+- [ ] Tests: PDF tableau simple, image complexe, multi-tableaux
+
+### P2-09: news_searcher — Multi-sources
+
+#### Sources implémentées
+
+| Outil | Type | Quota gratuit | Corps complet |
+|-------|------|---------------|---------------|
+| **GNews API** | Principal | 100 req/jour | ✅ Oui |
+| **Mediastack** | Secondaire | 500 req/mois | ✅ Oui |
+| **Google News RSS** | Fallback | Illimité | ❌ Titre + lien |
+| **Newscatcher** | Premium | Payant | ✅ Oui |
+
+#### Definition of Done
+- [ ] Endpoint `POST /webhook/news-searcher`
+- [ ] Endpoint unifié avec déduplication
+- [ ] Support multi-sources configurable
+- [ ] Enrichissement contenu si corps manquant
+- [ ] Tests: recherche FR, multi-sources, fallback RSS
+
+### P2-10: academic_searcher — Multi-sources
+
+#### Sources implémentées
+
+| Outil | Couverture | Accès PDF | Rate limit |
+|-------|------------|-----------|------------|
+| **Semantic Scholar** | CS, Bio, Médecine | ❌ Métadonnées | 10 req/s |
+| **OpenAlex** | 250M+ works | ❌ Métadonnées | 10 req/s |
+| **Unpaywall** | DOI → Open Access | ✅ Lien PDF OA | 100k/jour |
+| **CORE** | Open Access | ✅ Texte intégral | 10 req/10s |
+
+#### Definition of Done
+- [ ] Endpoint `POST /webhook/academic-searcher`
+- [ ] Endpoint unifié avec déduplication
+- [ ] Enrichissement Unpaywall pour PDF OA
+- [ ] Option texte intégral via CORE
+- [ ] Tests: recherche multi-sources, filtres année/citations
+
+### P2-08, P2-11, P2-12, P2-13 — Workflows Standards
+
+| ID | Tool | Provider | Model | Notes |
+|----|------|----------|-------|-------|
+| P2-08 | `quiz_generator` | OpenAI | GPT-4o | JSON Mode strict |
+| P2-11 | `notion` | Notion | API v2 | CRUD pages/databases |
+| P2-12 | `image_generator` | OpenAI | DALL-E 3 | 1024x1024 défaut |
+| P2-13 | `syllabus_generator` | OpenAI | GPT-4o | Format structuré |
+
+---
+
 ## Résumé des Correspondances
 
 | Catégorie | Tools | Nodes natifs | HTTP Request | Code node |
