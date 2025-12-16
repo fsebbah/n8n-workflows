@@ -1,0 +1,186 @@
+{
+  "name": "MCP - Image OCR",
+  "nodes": [
+    {
+      "id": "webhook-ocr",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "image-ocr-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "image-ocr",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryData": true
+        }
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [460, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.image_url || $binary }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-image",
+      "name": "Error: No Image",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing image. Provide image_url or upload binary image.\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"mistral\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "mistral-ocr",
+      "name": "Mistral Vision OCR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mistralCloudApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"model\": \"pixtral-12b-2409\", \"messages\": [{ \"role\": \"user\", \"content\": [{ \"type\": \"text\", \"text\": $json.body.prompt || \"Extract all text from this image. Return the text exactly as it appears, preserving formatting where possible. If there are multiple columns or sections, process them in reading order.\" }, { \"type\": \"image_url\", \"image_url\": { \"url\": $json.body.image_url || ('data:image/' + ($binary.data?.mimeType?.split('/')[1] || 'png') + ';base64,' + $binary.data?.data) } }] }], \"max_tokens\": $json.body.max_tokens || 4096 } }}"
+      },
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "mistral-credentials",
+          "name": "Mistral account"
+        }
+      }
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [920, 200],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ { \"success\": true, \"data\": { \"text\": $json.choices[0]?.message?.content || '', \"model\": 'pixtral-12b-2409', \"source\": $('Webhook').first().json.body.image_url ? 'url' : 'binary' }, \"meta\": { \"provider\": \"mistral\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"usage\": { \"prompt_tokens\": $json.usage?.prompt_tokens || 0, \"completion_tokens\": $json.usage?.completion_tokens || 0 } } } }}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1140, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 80],
+      "parameters": {
+        "color": 6,
+        "width": 550,
+        "height": 220,
+        "content": "## MCP - Image OCR\n\n**Endpoint:** POST /webhook/image-ocr\n\n**Parameters:**\n- `image_url` (string): URL of image to process\n- OR upload binary image file\n- `prompt` (optional): Custom extraction instructions\n- `max_tokens` (optional): Max output tokens (default: 4096)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Extracted text from image\n\n**Note:** Uses Mistral Pixtral vision model for OCR"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Mistral Vision OCR",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Vision OCR": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
