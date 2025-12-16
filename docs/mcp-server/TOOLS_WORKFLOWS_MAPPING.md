@@ -192,7 +192,7 @@
 | 8 | `docx_extractor_tool` | Docx Extractor | - | ⏳ À créer |
 | 9 | `entity_extractor_tool` | Entity Extractor | - | ⏳ À créer |
 | 10 | `get_pdf_extractor_tool` | PDF Extractor Factory | - | ⏳ À créer |
-| 11 | `get_pdf_layout_translator_tool` | PDF Layout Translator | - | ⏳ À créer (Mathpix) |
+| 11 | `get_pdf_layout_translator_tool` | PDF Layout Translator | - | ⏳ À créer |
 | 12 | `html_extractor_tool` | HTML Extractor | - | ⏳ À créer |
 | 13 | `metadata_extractor_tool` | Metadata Extractor | - | ⏳ À créer |
 | 14 | `pdf_extractor_tool` | PDF Extractor | - | ⏳ À créer |
@@ -293,7 +293,7 @@
 - [ ] Visual Media (OCR, Image generation)
 
 ### Priorité 3 - Workflows avancés
-- [ ] PDF Layout Translator (Mathpix)
+- [ ] PDF Layout Translator
 - [ ] Vector Store (Qdrant/Pinecone)
 - [ ] Bulk operations
 
@@ -333,11 +333,11 @@
 | `docx_extractor_tool` | ✅ **Extract from File** | Code node + docxtemplater | `Extractfromfile/` (5+) |
 | `entity_extractor_tool` | ✅ **OpenAI** / **Anthropic** | LLM avec prompt extraction | `Openai/` (8) |
 | `get_pdf_extractor_tool` | ✅ **Extract from File** | HTTP → pdf-parse | `Extractfromfile/` (5+) |
-| `get_pdf_layout_translator_tool` | ❌ Aucun | HTTP Request → Mathpix API | Aucun |
+| `get_pdf_layout_translator_tool` | ❌ Aucun | HTTP Request → API externe | Aucun |
 | `html_extractor_tool` | ✅ **HTML Extract** | HTTP Request + cheerio | `Http/` (176) |
 | `metadata_extractor_tool` | ⚠️ Partiel | Code node | `Extractfromfile/` |
 | `pdf_extractor_tool` | ✅ **Extract from File** | AWS Textract | `Awstextract/` (1) |
-| `table_extractor_tool` | ⚠️ Partiel | AWS Textract / Mathpix | `Awstextract/` (1) |
+| `table_extractor_tool` | ⚠️ Partiel | AWS Textract | `Awstextract/` (1) |
 
 **Workflows utilisables** :
 - `Extractfromfile/0601_Extractfromfile_Manual_Create_Webhook.json`
@@ -406,13 +406,14 @@
 
 ---
 
-### Visual Media (3 tools)
+### Visual Media (4 tools)
 
 | Tool MCP | Node n8n natif | Alternative | Workflows existants |
 |----------|----------------|-------------|---------------------|
-| `get_image_ocr_tool` | ⚠️ Partiel | HTTP → OCR.space/Mathpix/Google Vision | Aucun |
+| `get_image_ocr_tool` | ⚠️ Partiel | HTTP → OCR.space/Google Vision | Aucun |
 | `image_embedder_tool` | ❌ Aucun | HTTP → CLIP API / OpenAI Vision | Aucun |
 | `image_generator_tool` | ✅ **OpenAI** (DALL-E) | HTTP → Stable Diffusion | `Editimage/` (2) |
+| `mathpix_tool` | ❌ Aucun | HTTP → Mathpix API | 🔍 **Analyse à faire** |
 
 **Workflows utilisables** :
 - `Editimage/0575_Editimage_Manual_Update_Webhook.json`
@@ -454,7 +455,7 @@ Ces tools n'ont pas d'équivalent natif n8n et nécessitent la création de **cu
 | 2 | `text_to_speech_tool` | **ElevenLabs** | ElevenLabs API | Haute |
 | 3 | `transcriber_tool` | **OpenAI Whisper** | OpenAI Audio API | Haute |
 | 4 | `graph_builder_tool` | **QuickChart** | QuickChart.io API | Basse |
-| 5 | `get_pdf_layout_translator_tool` | **Mathpix** | Mathpix API | Haute |
+| 5 | `get_pdf_layout_translator_tool` | **API externe** | À définir | Haute |
 | 6 | `language_detector_tool` | **Language Detector** | detectlanguage.com / OpenAI | Basse |
 | 7 | `academic_searcher_tool` | **arXiv / Semantic Scholar** | arXiv API | Moyenne |
 | 8 | `google_searcher_tool` | **SerpAPI** | SerpAPI | Moyenne |
@@ -507,27 +508,7 @@ Credentials:
 - elevenLabsApi: { apiKey }
 ```
 
-#### 3. Mathpix Node (PDF/Image OCR)
-
-```
-Nom: n8n-nodes-mathpix
-Type: n8n-nodes-base.mathpix
-
-Opérations:
-- processImage: OCR image → LaTeX/text
-- processPdf: OCR PDF → structured output
-- convertPdf: PDF → DOCX/HTML/MD
-
-Paramètres:
-- src: URL ou Binary
-- formats: text | latex | html | data
-- ocr: math | text | all
-
-Credentials:
-- mathpixApi: { app_id, app_key }
-```
-
-#### 4. SerpAPI Node (Google Search)
+#### 3. SerpAPI Node (Google Search)
 
 ```
 Nom: n8n-nodes-serpapi
@@ -654,12 +635,11 @@ Alternative: Utiliser OpenAI avec prompt
 
 ### Plan de Développement
 
-#### Phase 1 - Priorité Haute (3 nodes)
+#### Phase 1 - Priorité Haute (2 nodes)
 | Node | Effort | Documentation |
 |------|--------|---------------|
 | OpenAI Whisper | 2-3 jours | [docs/n8n/CUSTOM_NODE_DEVELOPMENT.md](../n8n/CUSTOM_NODE_DEVELOPMENT.md) |
 | ElevenLabs | 2-3 jours | [docs/n8n/CUSTOM_NODE_DEVELOPMENT.md](../n8n/CUSTOM_NODE_DEVELOPMENT.md) |
-| Mathpix | 3-4 jours | [docs/n8n/CUSTOM_NODE_DEVELOPMENT.md](../n8n/CUSTOM_NODE_DEVELOPMENT.md) |
 
 #### Phase 2 - Priorité Moyenne (4 nodes)
 | Node | Effort |
