@@ -192,7 +192,7 @@
 | 8 | `docx_extractor_tool` | Docx Extractor | - | ⏳ À créer |
 | 9 | `entity_extractor_tool` | Entity Extractor | - | ⏳ À créer |
 | 10 | `get_pdf_extractor_tool` | PDF Extractor Factory | - | ⏳ À créer |
-| 11 | `get_pdf_layout_translator_tool` | PDF Layout Translator | - | ⏳ À créer (Mathpix) |
+| 11 | `get_pdf_layout_translator_tool` | PDF Layout Translator | - | ⏳ À créer |
 | 12 | `html_extractor_tool` | HTML Extractor | - | ⏳ À créer |
 | 13 | `metadata_extractor_tool` | Metadata Extractor | - | ⏳ À créer |
 | 14 | `pdf_extractor_tool` | PDF Extractor | - | ⏳ À créer |
@@ -293,7 +293,7 @@
 - [ ] Visual Media (OCR, Image generation)
 
 ### Priorité 3 - Workflows avancés
-- [ ] PDF Layout Translator (Mathpix)
+- [ ] PDF Layout Translator
 - [ ] Vector Store (Qdrant/Pinecone)
 - [ ] Bulk operations
 
@@ -317,7 +317,7 @@
 
 | Tool MCP | Node n8n natif | Alternative | Workflows existants |
 |----------|----------------|-------------|---------------------|
-| `csv_processor_tool` | ✅ **Spreadsheet File** | `Code` node pour transformations | `Converttofile/` (3) |
+| `csv_processor_tool` | ✅ **Spreadsheet File** | `Code` node pour transformations | Voir [Stack Scraping](#stack-scraping-n8n--phase-2-v2) |
 | `graph_builder_tool` | ❌ Aucun | HTTP Request → QuickChart.io | Aucun |
 
 **Workflows utilisables** :
@@ -333,11 +333,11 @@
 | `docx_extractor_tool` | ✅ **Extract from File** | Code node + docxtemplater | `Extractfromfile/` (5+) |
 | `entity_extractor_tool` | ✅ **OpenAI** / **Anthropic** | LLM avec prompt extraction | `Openai/` (8) |
 | `get_pdf_extractor_tool` | ✅ **Extract from File** | HTTP → pdf-parse | `Extractfromfile/` (5+) |
-| `get_pdf_layout_translator_tool` | ❌ Aucun | HTTP Request → Mathpix API | Aucun |
-| `html_extractor_tool` | ✅ **HTML Extract** | HTTP Request + cheerio | `Http/` (176) |
-| `metadata_extractor_tool` | ⚠️ Partiel | Code node | `Extractfromfile/` |
+| `get_pdf_layout_translator_tool` | ❌ Aucun | HTTP Request → API externe | Aucun |
+| `html_extractor_tool` | ⚠️ Partiel | **Cheerio** (CSS/XPath) | Voir [Stack Scraping](#stack-scraping-n8n--phase-2-v2) |
+| `metadata_extractor_tool` | ⚠️ Partiel | **metascraper** | Voir [Stack Scraping](#stack-scraping-n8n--phase-2-v2) |
 | `pdf_extractor_tool` | ✅ **Extract from File** | AWS Textract | `Awstextract/` (1) |
-| `table_extractor_tool` | ⚠️ Partiel | AWS Textract / Mathpix | `Awstextract/` (1) |
+| `table_extractor_tool` | ⚠️ Partiel | AWS Textract | `Awstextract/` (1) |
 
 **Workflows utilisables** :
 - `Extractfromfile/0601_Extractfromfile_Manual_Create_Webhook.json`
@@ -350,11 +350,12 @@
 
 | Tool MCP | Node n8n natif | Alternative | Workflows existants |
 |----------|----------------|-------------|---------------------|
-| `bulk_url_processor_tool` | ✅ **Split In Batches** + **HTTP Request** | Loop node | `Splitinbatches/`, `Http/` |
+| `bulk_url_processor_tool` | ⚠️ Partiel | **Crawlee + BullMQ** (batch) | Voir [Stack Scraping](#stack-scraping-n8n--phase-2-v2) |
 | `cost_calculator_tool` | ✅ **Code** node | Function node | `Code/` (183) |
 | `usage_tracker_tool` | ✅ **n8n API** | Execution history | Interne n8n |
-| `web_scraper_tool` | ✅ **HTTP Request** + **HTML Extract** | Puppeteer (custom) | `Http/` (176) |
+| `web_scraper_tool` | ⚠️ Partiel | **Crawlee + Cheerio + Readability** | Voir [Stack Scraping](#stack-scraping-n8n--phase-2-v2) |
 
+**Stack recommandé** : Crawlee (orchestration) + Cheerio (parsing) + Redis (cache/queue)
 **Workflows utilisables** :
 - `Http/` - 176 workflows avec HTTP Request
 - `Code/` - 183 workflows avec Code node
@@ -406,17 +407,132 @@
 
 ---
 
-### Visual Media (3 tools)
+### Visual Media (4 tools)
 
 | Tool MCP | Node n8n natif | Alternative | Workflows existants |
 |----------|----------------|-------------|---------------------|
-| `get_image_ocr_tool` | ⚠️ Partiel | HTTP → OCR.space/Mathpix/Google Vision | Aucun |
+| `get_image_ocr_tool` | ⚠️ Partiel | HTTP → OCR.space/Google Vision | Aucun |
 | `image_embedder_tool` | ❌ Aucun | HTTP → CLIP API / OpenAI Vision | Aucun |
 | `image_generator_tool` | ✅ **OpenAI** (DALL-E) | HTTP → Stable Diffusion | `Editimage/` (2) |
+| `mathpix_tool` | ❌ Aucun | HTTP → Mathpix API | 🔍 **Analyse à faire** |
 
 **Workflows utilisables** :
 - `Editimage/0575_Editimage_Manual_Update_Webhook.json`
 - `Editimage/1369_Editimage_Manual_Automation_Webhook.json`
+
+---
+
+## Stack Scraping n8n — Phase 2 (v2)
+
+> **Dernière mise à jour** : 2025-12-16
+> **Outils concernés** : P2-06, P2-02, P2-03, P2-05, P2-07
+
+### Stack Validé
+
+| Composant | Rôle | Licence |
+|-----------|------|---------|
+| **Crawlee** | Orchestration crawl (PlaywrightCrawler / CheerioCrawler) | Apache-2.0 |
+| **Cheerio** | Parsing HTML léger (DOM-like) | MIT |
+| **Readability** | Extraction article principal (Mozilla) | Apache-2.0 |
+| **metascraper** | Extraction métadonnées structurées | MIT |
+| **Redis + BullMQ** | Queue asynchrone & rate-limiting | MIT |
+| **DuckDB** (optionnel) | Stockage analytique local | MIT |
+
+### Workflows Scraping — Diagnostic Révisé
+
+| ID | Tool | Objectif principal | Stack recommandé | Services externes |
+|----|------|-------------------|------------------|-------------------|
+| **P2-06** | `web_scraper_tool` | Récupération HTML + extraction contenu | Crawlee + Cheerio + Readability | Redis (cache) |
+| **P2-02** | `csv_processor_tool` | Parse/transform CSV | Node natif `Spreadsheet File` | - |
+| **P2-03** | `html_extractor_tool` | Extraction sélective CSS/XPath | Cheerio (sélecteurs) | - |
+| **P2-05** | `metadata_extractor_tool` | Méta OpenGraph, JSON-LD, Twitter | metascraper | - |
+| **P2-07** | `bulk_url_processor_tool` | Batch URLs avec parallélisme contrôlé | Crawlee autoscaling + BullMQ | Redis |
+
+### Architecture Cible
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                         n8n Workflow                                │
+├────────────────────────────────────────────────────────────────────┤
+│  Webhook → Validate → Queue (BullMQ) → Worker Pool → Format → Respond │
+└────────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                     Micro-service Node.js                           │
+├────────────────────────────────────────────────────────────────────┤
+│  Crawlee Orchestrator                                               │
+│  ├── PlaywrightCrawler (JS-heavy sites)                            │
+│  ├── CheerioCrawler (static HTML)                                  │
+│  └── Plugins: Readability, metascraper                             │
+├────────────────────────────────────────────────────────────────────┤
+│  Redis                                                              │
+│  ├── Cache HTTP (TTL configurable)                                 │
+│  ├── Rate-limit par domaine                                        │
+│  └── Queue BullMQ (retry, backoff)                                 │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Ajouts Critiques
+
+| Catégorie | Composant | Justification |
+|-----------|-----------|---------------|
+| **Observabilité** | OpenTelemetry + Grafana | Traçage requêtes, métriques latence |
+| **Cache** | Redis (clé = hash URL) | Éviter re-fetch, réduire ban IP |
+| **Rate-limiting** | BullMQ `limiter` | Respect robots.txt, politesse |
+| **Légal** | Header `User-Agent` explicite | Conformité CGU sites |
+| **SSL** | Certificats Let's Encrypt | HTTPS obligatoire |
+
+### Priorité d'Implémentation
+
+| Ordre | Tool | Raison |
+|-------|------|--------|
+| 1 | `web_scraper_tool` | Fondation pour tous les autres |
+| 2 | `html_extractor_tool` | Dépendance directe scraper |
+| 3 | `metadata_extractor_tool` | Enrichissement données |
+| 4 | `csv_processor_tool` | Export/import données |
+| 5 | `bulk_url_processor_tool` | Orchestration batch |
+
+### Definition of Done — Par Workflow
+
+#### P2-06: web_scraper_tool
+- [ ] Endpoint `POST /webhook/web-scraper`
+- [ ] Support URL unique + liste URLs
+- [ ] Extraction: raw HTML, texte nettoyé (Readability), titre
+- [ ] Cache Redis (TTL 1h par défaut)
+- [ ] Gestion erreurs: timeout, 4xx, 5xx
+- [ ] Tests: URL statique, site JS, URL invalide
+
+#### P2-02: csv_processor_tool
+- [ ] Endpoint `POST /webhook/csv-processor`
+- [ ] Input: URL CSV ou base64
+- [ ] Opérations: parse, filter, transform, aggregate
+- [ ] Output: JSON array ou CSV transformé
+- [ ] Tests: CSV standard, CSV avec BOM, délimiteurs variés
+
+#### P2-03: html_extractor_tool
+- [ ] Endpoint `POST /webhook/html-extractor`
+- [ ] Input: HTML brut ou URL
+- [ ] Sélecteurs: CSS (défaut), XPath (option)
+- [ ] Multi-select: tableau de sélecteurs
+- [ ] Output: données extraites structurées
+- [ ] Tests: page simple, nested elements, attributs
+
+#### P2-05: metadata_extractor_tool
+- [ ] Endpoint `POST /webhook/metadata-extractor`
+- [ ] Input: URL ou HTML
+- [ ] Extraction: OpenGraph, Twitter Cards, JSON-LD, meta tags
+- [ ] Output: objet métadonnées normalisé
+- [ ] Tests: article blog, page produit, page sans méta
+
+#### P2-07: bulk_url_processor_tool
+- [ ] Endpoint `POST /webhook/bulk-url-processor`
+- [ ] Input: array URLs (max 100)
+- [ ] Parallélisme: configurable (défaut 5)
+- [ ] Rate-limit: par domaine
+- [ ] Output: résultats agrégés avec statuts individuels
+- [ ] Mode async: webhook callback optionnel
+- [ ] Tests: 10 URLs mixtes, timeout partiel, retry
 
 ---
 
@@ -454,7 +570,7 @@ Ces tools n'ont pas d'équivalent natif n8n et nécessitent la création de **cu
 | 2 | `text_to_speech_tool` | **ElevenLabs** | ElevenLabs API | Haute |
 | 3 | `transcriber_tool` | **OpenAI Whisper** | OpenAI Audio API | Haute |
 | 4 | `graph_builder_tool` | **QuickChart** | QuickChart.io API | Basse |
-| 5 | `get_pdf_layout_translator_tool` | **Mathpix** | Mathpix API | Haute |
+| 5 | `get_pdf_layout_translator_tool` | **API externe** | À définir | Haute |
 | 6 | `language_detector_tool` | **Language Detector** | detectlanguage.com / OpenAI | Basse |
 | 7 | `academic_searcher_tool` | **arXiv / Semantic Scholar** | arXiv API | Moyenne |
 | 8 | `google_searcher_tool` | **SerpAPI** | SerpAPI | Moyenne |
@@ -507,27 +623,7 @@ Credentials:
 - elevenLabsApi: { apiKey }
 ```
 
-#### 3. Mathpix Node (PDF/Image OCR)
-
-```
-Nom: n8n-nodes-mathpix
-Type: n8n-nodes-base.mathpix
-
-Opérations:
-- processImage: OCR image → LaTeX/text
-- processPdf: OCR PDF → structured output
-- convertPdf: PDF → DOCX/HTML/MD
-
-Paramètres:
-- src: URL ou Binary
-- formats: text | latex | html | data
-- ocr: math | text | all
-
-Credentials:
-- mathpixApi: { app_id, app_key }
-```
-
-#### 4. SerpAPI Node (Google Search)
+#### 3. SerpAPI Node (Google Search)
 
 ```
 Nom: n8n-nodes-serpapi
@@ -654,12 +750,11 @@ Alternative: Utiliser OpenAI avec prompt
 
 ### Plan de Développement
 
-#### Phase 1 - Priorité Haute (3 nodes)
+#### Phase 1 - Priorité Haute (2 nodes)
 | Node | Effort | Documentation |
 |------|--------|---------------|
 | OpenAI Whisper | 2-3 jours | [docs/n8n/CUSTOM_NODE_DEVELOPMENT.md](../n8n/CUSTOM_NODE_DEVELOPMENT.md) |
 | ElevenLabs | 2-3 jours | [docs/n8n/CUSTOM_NODE_DEVELOPMENT.md](../n8n/CUSTOM_NODE_DEVELOPMENT.md) |
-| Mathpix | 3-4 jours | [docs/n8n/CUSTOM_NODE_DEVELOPMENT.md](../n8n/CUSTOM_NODE_DEVELOPMENT.md) |
 
 #### Phase 2 - Priorité Moyenne (4 nodes)
 | Node | Effort |
