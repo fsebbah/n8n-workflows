@@ -109,18 +109,18 @@ for WORKFLOW_FILE in "${MISSING[@]}"; do
 
     echo "📦 Import: $WORKFLOW_NAME"
 
-    # Générer un UUID valide pour versionId
-    NEW_VERSION_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null || python3 -c "import uuid; print(uuid.uuid4())")
-
-    # Créer fichier temporaire avec les modifications
+    # Créer fichier temporaire avec les propriétés non-portables supprimées
+    # Selon docs/n8n/WORKFLOW_BEST_PRACTICES.md:
+    # "Propriétés à Éviter à l'Import: active, versionId, meta, tags, id"
     TMP_FILE=$(mktemp /tmp/workflow_XXXXXX.json)
-    jq --arg vid "$NEW_VERSION_ID" '
+    jq '
       del(.id) |
-      .active = false |
-      .versionId = $vid |
+      del(.active) |
+      del(.versionId) |
       del(.createdAt) |
       del(.updatedAt) |
-      del(.meta)
+      del(.meta) |
+      del(.tags)
     ' "$WORKFLOW_FILE" > "$TMP_FILE"
 
     # Import via n8n CLI
