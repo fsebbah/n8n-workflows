@@ -37,19 +37,19 @@ echo ""
 
 # Récupérer la liste des workflows existants dans n8n
 echo "📋 Récupération des workflows existants dans n8n..."
-EXISTING_WORKFLOWS=$(n8n list:workflow 2>/dev/null | grep -oP '(?<=│ ).*?(?= │)' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v "^ID$" | grep -v "^Name$" | grep -v "^-" || echo "")
 
-# Créer un tableau des noms existants
+# Format de sortie: ID|Name (pipe separator)
 declare -A EXISTING_MAP
-while IFS= read -r line; do
-    if [[ -n "$line" && "$line" != "ID" && "$line" != "Name" ]]; then
-        # Nettoyer le nom
-        clean_name=$(echo "$line" | xargs)
+while IFS='|' read -r id name; do
+    if [[ -n "$name" ]]; then
+        # Nettoyer le nom (trim whitespace sans xargs pour éviter les problèmes de quotes)
+        clean_name="${name#"${name%%[![:space:]]*}"}"  # trim leading
+        clean_name="${clean_name%"${clean_name##*[![:space:]]}"}"  # trim trailing
         if [[ -n "$clean_name" ]]; then
             EXISTING_MAP["$clean_name"]=1
         fi
     fi
-done <<< "$EXISTING_WORKFLOWS"
+done < <(n8n list:workflow 2>/dev/null)
 
 echo "   Workflows existants: ${#EXISTING_MAP[@]}"
 echo ""
