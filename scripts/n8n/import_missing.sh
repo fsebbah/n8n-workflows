@@ -109,14 +109,16 @@ for WORKFLOW_FILE in "${MISSING[@]}"; do
 
     echo "📦 Import: $WORKFLOW_NAME"
 
-    # Créer fichier temporaire avec les propriétés non-portables supprimées
-    # Selon docs/n8n/WORKFLOW_BEST_PRACTICES.md:
-    # "Propriétés à Éviter à l'Import: active, versionId, meta, tags, id"
+    # Générer un UUID pour versionId
+    VERSION_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null || python3 -c "import uuid; print(uuid.uuid4())")
+
+    # Créer fichier temporaire avec les propriétés adaptées pour l'import
+    # Note: active et versionId sont NOT NULL dans la DB
     TMP_FILE=$(mktemp /tmp/workflow_XXXXXX.json)
-    jq '
+    jq --arg vid "$VERSION_ID" '
       del(.id) |
-      del(.active) |
-      del(.versionId) |
+      .active = false |
+      .versionId = $vid |
       del(.createdAt) |
       del(.updatedAt) |
       del(.meta) |

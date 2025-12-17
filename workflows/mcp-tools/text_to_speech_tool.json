@@ -70,42 +70,54 @@
     {
       "id": "openai-tts",
       "name": "OpenAI TTS",
-      "type": "n8n-nodes-base.openAi",
-      "typeVersion": 1.8,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         680,
         300
       ],
       "parameters": {
-        "resource": "audio",
-        "operation": "generate",
-        "input": "={{ $json.body.text }}",
-        "voice": "={{ $json.body.voice || 'alloy' }}",
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/speech",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.body.model || 'tts-1' }}\",\n  \"input\": \"{{ $json.body.text }}\",\n  \"voice\": \"{{ $json.body.voice || 'alloy' }}\",\n  \"response_format\": \"{{ $json.body.format || 'mp3' }}\",\n  \"speed\": {{ $json.body.speed || 1 }}\n}",
         "options": {
-          "model": "={{ $json.body.model || 'tts-1' }}",
-          "responseFormat": "={{ $json.body.format || 'mp3' }}",
-          "speed": "={{ $json.body.speed || 1 }}"
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 60000
         }
       },
-      "credentials": {
-        "openAiApi": {
-          "id": "openai-credentials",
-          "name": "OpenAI account"
-        }
-      }
+      "onError": "continueRegularOutput"
     },
     {
       "id": "format-output",
       "name": "Format Output",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         900,
         300
       ],
       "parameters": {
-        "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"data\": { \"audio_base64\": $json.data, \"format\": $('Webhook').first().json.body.format || 'mp3', \"voice\": $('Webhook').first().json.body.voice || 'alloy' }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"model\": $('Webhook').first().json.body.model || 'tts-1' } } }}"
+        "jsCode": "// Get the binary data from TTS response\nconst items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst format = webhookData.body.format || 'mp3';\nconst voice = webhookData.body.voice || 'alloy';\nconst model = webhookData.body.model || 'tts-1';\n\n// Check if we have binary data\nif (items[0].binary && items[0].binary.data) {\n  const binaryData = items[0].binary.data;\n  \n  return {\n    json: {\n      success: true,\n      data: {\n        audio_base64: binaryData.data,\n        format: format,\n        voice: voice,\n        mime_type: binaryData.mimeType || `audio/${format}`\n      },\n      meta: {\n        provider: 'openai',\n        model: model,\n        execution_mode: webhookData.body.execution_mode || 'online'\n      }\n    }\n  };\n} else {\n  // Return error if no binary data\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to generate audio',\n        status: 'TTS_ERROR'\n      },\n      meta: {\n        provider: 'openai',\n        execution_mode: webhookData.body.execution_mode || 'online'\n      }\n    }\n  };\n}"
       }
     },
     {
@@ -134,9 +146,9 @@
       ],
       "parameters": {
         "color": 6,
-        "width": 400,
-        "height": 180,
-        "content": "## MCP - Text to Speech\n\n**Endpoint:** POST /webhook/text-to-speech\n\n**Parameters:**\n- `text` (required): Text to convert\n- `voice`: alloy, echo, fable, onyx, nova, shimmer\n- `model`: tts-1 or tts-1-hd\n- `format`: mp3, opus, aac, flac\n- `speed`: 0.25 to 4.0"
+        "width": 450,
+        "height": 220,
+        "content": "## MCP - Text to Speech\n\n**Endpoint:** POST /webhook/text-to-speech\n\n**Parameters:**\n- `text` (required): Text to convert\n- `openai_api_key` (required): OpenAI API key\n- `voice`: alloy, echo, fable, onyx, nova, shimmer\n- `model`: tts-1 or tts-1-hd\n- `format`: mp3, opus, aac, flac\n- `speed`: 0.25 to 4.0\n\n**Returns:** Audio as base64"
       }
     }
   ],

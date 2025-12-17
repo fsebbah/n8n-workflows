@@ -101,7 +101,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// For base64 input, we need to upload to a temporary storage\n// In production, this would upload to S3/MinIO and return a URL\n// For now, we'll use AssemblyAI's upload endpoint\n\nconst base64Data = $input.first().json.body.data;\nconst options = $input.first().json.body.options || {};\n\n// Remove data URL prefix if present\nconst cleanBase64 = base64Data.replace(/^data:audio\\/[a-z]+;base64,/, '');\n\nreturn {\n  json: {\n    audioBase64: cleanBase64,\n    options: options,\n    needsUpload: true\n  }\n};"
+        "jsCode": "// For base64 input, we need to upload to a temporary storage\nconst base64Data = $input.first().json.body.data;\nconst options = $input.first().json.body.options || {};\nconst apiKey = $input.first().json.body.assemblyai_api_key;\n\n// Remove data URL prefix if present\nconst cleanBase64 = base64Data.replace(/^data:audio\\/[a-z]+;base64,/, '');\n\nreturn {\n  json: {\n    audioBase64: cleanBase64,\n    options: options,\n    needsUpload: true,\n    assemblyai_api_key: apiKey\n  }\n};"
       },
       "id": "prepare-base64",
       "name": "Prepare Base64",
@@ -116,17 +116,25 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.assemblyai.com/v2/upload",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.assemblyai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/octet-stream"
+            }
+          ]
+        },
         "sendBody": true,
         "contentType": "raw",
         "body": "={{ Buffer.from($json.audioBase64, 'base64') }}",
         "options": {
-          "response": {
-            "response": {
-              "fullResponse": false
-            }
-          }
+          "timeout": 120000
         }
       },
       "id": "upload-to-assemblyai",
@@ -137,16 +145,11 @@
         1120,
         200
       ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "assemblyai-auth",
-          "name": "AssemblyAI API Key"
-        }
-      }
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Prepare URL audio input\nconst audioUrl = $input.first().json.body.data;\nconst options = $input.first().json.body.options || {};\n\nreturn {\n  json: {\n    audioUrl: audioUrl,\n    options: options,\n    needsUpload: false\n  }\n};"
+        "jsCode": "// Prepare URL audio input\nconst audioUrl = $input.first().json.body.data;\nconst options = $input.first().json.body.options || {};\nconst apiKey = $input.first().json.body.assemblyai_api_key;\n\nreturn {\n  json: {\n    audioUrl: audioUrl,\n    options: options,\n    needsUpload: false,\n    assemblyai_api_key: apiKey\n  }\n};"
       },
       "id": "prepare-url",
       "name": "Prepare URL",
@@ -159,7 +162,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Merge uploaded URL with options\nconst uploadResponse = $input.first().json;\nconst previousData = $('Prepare Base64').first().json;\n\nreturn {\n  json: {\n    audioUrl: uploadResponse.upload_url,\n    options: previousData.options\n  }\n};"
+        "jsCode": "// Merge uploaded URL with options\nconst uploadResponse = $input.first().json;\nconst previousData = $('Prepare Base64').first().json;\n\nreturn {\n  json: {\n    audioUrl: uploadResponse.upload_url,\n    options: previousData.options,\n    assemblyai_api_key: previousData.assemblyai_api_key\n  }\n};"
       },
       "id": "merge-upload-result",
       "name": "Merge Upload Result",
@@ -172,7 +175,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Prepare AssemblyAI transcription request\nconst input = $input.first().json;\nconst options = input.options || {};\n\nconst requestBody = {\n  audio_url: input.audioUrl,\n  speaker_labels: true\n};\n\n// Add optional parameters\nif (options.speakers_expected) {\n  requestBody.speakers_expected = options.speakers_expected;\n}\n\nif (options.language && options.language !== 'auto') {\n  requestBody.language_code = options.language;\n}\n\nif (options.language === 'auto') {\n  requestBody.language_detection = true;\n}\n\nreturn {\n  json: {\n    requestBody: requestBody,\n    options: options\n  }\n};"
+        "jsCode": "// Prepare AssemblyAI transcription request\nconst input = $input.first().json;\nconst options = input.options || {};\n\nconst requestBody = {\n  audio_url: input.audioUrl,\n  speaker_labels: true\n};\n\n// Add optional parameters\nif (options.speakers_expected) {\n  requestBody.speakers_expected = options.speakers_expected;\n}\n\nif (options.language && options.language !== 'auto') {\n  requestBody.language_code = options.language;\n}\n\nif (options.language === 'auto') {\n  requestBody.language_detection = true;\n}\n\nreturn {\n  json: {\n    requestBody: requestBody,\n    options: options,\n    assemblyai_api_key: input.assemblyai_api_key\n  }\n};"
       },
       "id": "prepare-transcription-request",
       "name": "Prepare Transcription Request",
@@ -187,12 +190,26 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.assemblyai.com/v2/transcript",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.assemblyai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
-        "options": {}
+        "options": {
+          "timeout": 30000
+        }
       },
       "id": "start-transcription",
       "name": "Start Transcription",
@@ -202,16 +219,11 @@
         1780,
         300
       ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "assemblyai-auth",
-          "name": "AssemblyAI API Key"
-        }
-      }
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Store transcript ID and options for polling\nconst response = $input.first().json;\nconst previousData = $('Prepare Transcription Request').first().json;\n\nreturn {\n  json: {\n    transcriptId: response.id,\n    status: response.status,\n    options: previousData.options,\n    pollCount: 0,\n    startTime: Date.now()\n  }\n};"
+        "jsCode": "// Store transcript ID and options for polling\nconst response = $input.first().json;\nconst previousData = $('Prepare Transcription Request').first().json;\n\nreturn {\n  json: {\n    transcriptId: response.id,\n    status: response.status,\n    options: previousData.options,\n    pollCount: 0,\n    startTime: Date.now(),\n    assemblyai_api_key: previousData.assemblyai_api_key\n  }\n};"
       },
       "id": "store-transcript-id",
       "name": "Store Transcript ID",
@@ -226,9 +238,19 @@
       "parameters": {
         "method": "GET",
         "url": "=https://api.assemblyai.com/v2/transcript/{{ $json.transcriptId }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "options": {}
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.assemblyai_api_key }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
       },
       "id": "poll-status",
       "name": "Poll Status",
@@ -238,12 +260,7 @@
         2220,
         300
       ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "assemblyai-auth",
-          "name": "AssemblyAI API Key"
-        }
-      }
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -328,7 +345,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Increment poll count and prepare for next poll\nconst response = $input.first().json;\nconst storedData = $('Store Transcript ID').first().json;\n\nconst pollCount = storedData.pollCount + 1;\nconst elapsedMs = Date.now() - storedData.startTime;\n\n// Timeout after 30 minutes\nif (elapsedMs > 30 * 60 * 1000) {\n  throw new Error('Transcription timeout after 30 minutes');\n}\n\nreturn {\n  json: {\n    transcriptId: storedData.transcriptId,\n    status: response.status,\n    options: storedData.options,\n    pollCount: pollCount,\n    startTime: storedData.startTime\n  }\n};"
+        "jsCode": "// Increment poll count and prepare for next poll\nconst response = $input.first().json;\nconst storedData = $('Store Transcript ID').first().json;\n\nconst pollCount = storedData.pollCount + 1;\nconst elapsedMs = Date.now() - storedData.startTime;\n\n// Timeout after 30 minutes\nif (elapsedMs > 30 * 60 * 1000) {\n  throw new Error('Transcription timeout after 30 minutes');\n}\n\nreturn {\n  json: {\n    transcriptId: storedData.transcriptId,\n    status: response.status,\n    options: storedData.options,\n    pollCount: pollCount,\n    startTime: storedData.startTime,\n    assemblyai_api_key: storedData.assemblyai_api_key\n  }\n};"
       },
       "id": "prepare-next-poll",
       "name": "Prepare Next Poll",
@@ -390,6 +407,22 @@
         2880,
         200
       ]
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 550,
+        "height": 220,
+        "content": "## MCP - Speaker Identifier\n\n**Endpoint:** POST /webhook/speaker-identifier\n\n**Parameters:**\n- `data` (required): Audio URL or base64 encoded audio\n- `assemblyai_api_key` (required): AssemblyAI API key\n- `source` (optional): 'url' or 'base64' (default: url)\n- `options.speakers_expected` (optional): Number of expected speakers\n- `options.language` (optional): Language code or 'auto'\n- `options.include_transcription` (optional): Include full transcript (default: true)\n\n**Returns:** Speaker statistics, utterances with timestamps"
+      }
     }
   ],
   "connections": {
@@ -600,9 +633,5 @@
   },
   "settings": {
     "executionOrder": "v1"
-  },
-  "staticData": null,
-  "tags": [],
-  "triggerCount": 0,
-  "updatedAt": "2025-12-17T00:00:00.000Z"
+  }
 }
