@@ -118,76 +118,72 @@
     {
       "id": "single-label-classify",
       "name": "Single Label Classification",
-      "type": "n8n-nodes-base.openAi",
-      "typeVersion": 1.8,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         940,
         300
       ],
       "parameters": {
-        "resource": "chat",
-        "operation": "message",
-        "model": "gpt-4o-mini",
-        "messages": {
-          "values": [
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "content": "You are a precise text classifier. Classify the given text into exactly ONE of the provided categories. Return a JSON object with 'category' (the chosen category) and 'confidence' (a number between 0 and 1). Only respond with valid JSON, no explanation.",
-              "role": "system"
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.openai_api_key }}"
             },
             {
-              "content": "={{ 'Classify the following text into one of these categories: ' + $json.body.categories.join(', ') + '\\n\\nText to classify:\\n' + $json.body.text }}",
-              "role": "user"
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
         },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a precise text classifier. Classify the given text into exactly ONE of the provided categories. Return a JSON object with 'category' (the chosen category) and 'confidence' (a number between 0 and 1). Only respond with valid JSON, no explanation.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Classify the following text into one of these categories: {{ $json.body.categories.join(', ') }}\\n\\nText to classify:\\n{{ $json.body.text }}\"\n    }\n  ],\n  \"temperature\": 0.1\n}",
         "options": {
-          "temperature": 0.1,
-          "responseFormat": "json_object"
+          "timeout": 30000
         }
       },
-      "credentials": {
-        "openAiApi": {
-          "id": "openai-credentials",
-          "name": "OpenAI account"
-        }
-      }
+      "onError": "continueRegularOutput"
     },
     {
       "id": "multi-label-classify",
       "name": "Multi Label Classification",
-      "type": "n8n-nodes-base.openAi",
-      "typeVersion": 1.8,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         940,
         100
       ],
       "parameters": {
-        "resource": "chat",
-        "operation": "message",
-        "model": "gpt-4o-mini",
-        "messages": {
-          "values": [
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "content": "You are a precise text classifier. Classify the given text into ALL applicable categories from the provided list. Return a JSON object with 'categories' (array of objects, each with 'category' and 'confidence' between 0 and 1). Only include categories with confidence > 0.3. Only respond with valid JSON, no explanation.",
-              "role": "system"
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.openai_api_key }}"
             },
             {
-              "content": "={{ 'Classify the following text into applicable categories from this list: ' + $json.body.categories.join(', ') + '\\n\\nText to classify:\\n' + $json.body.text }}",
-              "role": "user"
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
         },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a precise text classifier. Classify the given text into ALL applicable categories from the provided list. Return a JSON object with 'categories' (array of objects, each with 'category' and 'confidence' between 0 and 1). Only include categories with confidence > 0.3. Only respond with valid JSON, no explanation.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Classify the following text into applicable categories from this list: {{ $json.body.categories.join(', ') }}\\n\\nText to classify:\\n{{ $json.body.text }}\"\n    }\n  ],\n  \"temperature\": 0.1\n}",
         "options": {
-          "temperature": 0.1,
-          "responseFormat": "json_object"
+          "timeout": 30000
         }
       },
-      "credentials": {
-        "openAiApi": {
-          "id": "openai-credentials",
-          "name": "OpenAI account"
-        }
-      }
+      "onError": "continueRegularOutput"
     },
     {
       "id": "format-single",
@@ -200,7 +196,7 @@
       ],
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "={{ (() => { try { const result = JSON.parse($json.message.content); return { \"success\": true, \"data\": { \"classification\": { \"category\": result.category, \"confidence\": result.confidence }, \"mode\": \"single_label\", \"input_categories\": $('Webhook').first().json.body.categories, \"text_length\": $('Webhook').first().json.body.text.length }, \"meta\": { \"provider\": \"openai\", \"model\": \"gpt-4o-mini\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } }; } catch(e) { return { \"success\": false, \"error\": { \"code\": 500, \"message\": \"Failed to parse classification result\", \"status\": \"PARSE_ERROR\" } }; } })() }}"
+        "jsonOutput": "={{ (() => { try { const content = $json.choices?.[0]?.message?.content || '{}'; const result = JSON.parse(content); return { \"success\": true, \"data\": { \"classification\": { \"category\": result.category, \"confidence\": result.confidence }, \"mode\": \"single_label\", \"input_categories\": $('Webhook').first().json.body.categories, \"text_length\": $('Webhook').first().json.body.text.length }, \"meta\": { \"provider\": \"openai\", \"model\": \"gpt-4o-mini\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } }; } catch(e) { return { \"success\": false, \"error\": { \"code\": 500, \"message\": \"Failed to parse classification result: \" + e.message, \"status\": \"PARSE_ERROR\" } }; } })() }}"
       }
     },
     {
@@ -214,7 +210,7 @@
       ],
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "={{ (() => { try { const result = JSON.parse($json.message.content); return { \"success\": true, \"data\": { \"classifications\": result.categories || [], \"mode\": \"multi_label\", \"input_categories\": $('Webhook').first().json.body.categories, \"text_length\": $('Webhook').first().json.body.text.length }, \"meta\": { \"provider\": \"openai\", \"model\": \"gpt-4o-mini\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } }; } catch(e) { return { \"success\": false, \"error\": { \"code\": 500, \"message\": \"Failed to parse classification result\", \"status\": \"PARSE_ERROR\" } }; } })() }}"
+        "jsonOutput": "={{ (() => { try { const content = $json.choices?.[0]?.message?.content || '{}'; const result = JSON.parse(content); return { \"success\": true, \"data\": { \"classifications\": result.categories || [], \"mode\": \"multi_label\", \"input_categories\": $('Webhook').first().json.body.categories, \"text_length\": $('Webhook').first().json.body.text.length }, \"meta\": { \"provider\": \"openai\", \"model\": \"gpt-4o-mini\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } }; } catch(e) { return { \"success\": false, \"error\": { \"code\": 500, \"message\": \"Failed to parse classification result: \" + e.message, \"status\": \"PARSE_ERROR\" } }; } })() }}"
       }
     },
     {
@@ -244,8 +240,8 @@
       "parameters": {
         "color": 4,
         "width": 550,
-        "height": 220,
-        "content": "## MCP - Text Classifier\n\n**Endpoint:** POST /webhook/text-classifier\n\n**Parameters:**\n- `text` (required): Text to classify\n- `categories` (required): Array of category labels\n- `multi_label` (optional): true for multi-label classification (default: false)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Classification result with category/confidence scores"
+        "height": 240,
+        "content": "## MCP - Text Classifier\n\n**Endpoint:** POST /webhook/text-classifier\n\n**Parameters:**\n- `text` (required): Text to classify\n- `categories` (required): Array of category labels\n- `openai_api_key` (required): OpenAI API key\n- `multi_label` (optional): true for multi-label classification (default: false)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Classification result with category/confidence scores"
       }
     }
   ],

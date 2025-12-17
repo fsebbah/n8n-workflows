@@ -69,35 +69,37 @@
     {
       "id": "openai-extract",
       "name": "OpenAI Extract Entities",
-      "type": "n8n-nodes-base.openAi",
-      "typeVersion": 1.8,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         700,
         200
       ],
       "parameters": {
-        "resource": "chat",
-        "operation": "message",
-        "model": "gpt-4o-mini",
-        "messages": {
-          "values": [
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "content": "={{ \"You are an expert entity extractor. Extract all named entities from the following text and return them in JSON format.\\n\\nCategories to extract:\\n- PERSON: Names of people\\n- ORGANIZATION: Companies, institutions, agencies\\n- LOCATION: Cities, countries, addresses, places\\n- DATE: Dates and time expressions\\n- MONEY: Monetary values\\n- PRODUCT: Products, services\\n- EVENT: Events, conferences\\n- OTHER: Other relevant entities\\n\\nEntity types requested: \" + ($json.body.entity_types ? $json.body.entity_types.join(\", \") : \"all\") + \"\\n\\nText to analyze:\\n\" + $json.body.text + \"\\n\\nReturn ONLY a valid JSON object with this structure:\\n{\\n  \\\"entities\\\": [\\n    {\\\"text\\\": \\\"entity text\\\", \\\"type\\\": \\\"CATEGORY\\\", \\\"confidence\\\": 0.95}\\n  ],\\n  \\\"summary\\\": {\\n    \\\"total_count\\\": number,\\n    \\\"by_type\\\": {\\\"PERSON\\\": count, ...}\\n  }\\n}\" }}",
-              "role": "user"
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
         },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are an expert entity extractor. Extract all named entities from the following text and return them in JSON format.\\n\\nCategories to extract:\\n- PERSON: Names of people\\n- ORGANIZATION: Companies, institutions, agencies\\n- LOCATION: Cities, countries, addresses, places\\n- DATE: Dates and time expressions\\n- MONEY: Monetary values\\n- PRODUCT: Products, services\\n- EVENT: Events, conferences\\n- OTHER: Other relevant entities\\n\\nEntity types requested: {{ $json.body.entity_types ? $json.body.entity_types.join(', ') : 'all' }}\\n\\nText to analyze:\\n{{ $json.body.text }}\\n\\nReturn ONLY a valid JSON object with this structure:\\n{\\n  \\\"entities\\\": [\\n    {\\\"text\\\": \\\"entity text\\\", \\\"type\\\": \\\"CATEGORY\\\", \\\"confidence\\\": 0.95}\\n  ],\\n  \\\"summary\\\": {\\n    \\\"total_count\\\": number,\\n    \\\"by_type\\\": {\\\"PERSON\\\": count, ...}\\n  }\\n}\"\n    }\n  ],\n  \"temperature\": 0.1\n}",
         "options": {
-          "temperature": 0.1,
-          "response_format": "json_object"
+          "timeout": 30000
         }
       },
-      "credentials": {
-        "openAiApi": {
-          "id": "openai-credentials",
-          "name": "OpenAI account"
-        }
-      }
+      "onError": "continueRegularOutput"
     },
     {
       "id": "parse-response",
@@ -110,7 +112,7 @@
       ],
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "={{ (() => { try { const content = $json.message.content; const parsed = JSON.parse(content); return { entities: parsed.entities || [], summary: parsed.summary || { total_count: 0, by_type: {} } }; } catch(e) { return { entities: [], summary: { total_count: 0, by_type: {} }, parse_error: e.message }; } })() }}"
+        "jsonOutput": "={{ (() => { try { const content = $json.choices?.[0]?.message?.content || '{}'; const parsed = JSON.parse(content); return { entities: parsed.entities || [], summary: parsed.summary || { total_count: 0, by_type: {} } }; } catch(e) { return { entities: [], summary: { total_count: 0, by_type: {} }, parse_error: e.message }; } })() }}"
       }
     },
     {
@@ -154,8 +156,8 @@
       "parameters": {
         "color": 6,
         "width": 500,
-        "height": 180,
-        "content": "## MCP - Entity Extractor\n\n**Endpoint:** POST /webhook/entity-extractor\n\n**Parameters:**\n- `text` (required): Text to extract entities from\n- `entity_types` (optional): Array of types to extract [\"PERSON\", \"ORGANIZATION\", \"LOCATION\", ...]\n- `execution_mode` (optional): online | offline\n\n**Returns:** List of entities with type and confidence"
+        "height": 200,
+        "content": "## MCP - Entity Extractor\n\n**Endpoint:** POST /webhook/entity-extractor\n\n**Parameters:**\n- `text` (required): Text to extract entities from\n- `openai_api_key` (required): OpenAI API key\n- `entity_types` (optional): Array of types to extract [\"PERSON\", \"ORGANIZATION\", \"LOCATION\", ...]\n- `execution_mode` (optional): online | offline\n\n**Returns:** List of entities with type and confidence"
       }
     }
   ],

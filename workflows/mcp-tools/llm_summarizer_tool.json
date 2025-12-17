@@ -132,39 +132,37 @@
     {
       "id": "openai-summarize",
       "name": "OpenAI Summarize",
-      "type": "n8n-nodes-base.openAi",
-      "typeVersion": 1.8,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         940,
         100
       ],
       "parameters": {
-        "resource": "chat",
-        "operation": "message",
-        "model": "gpt-4o-mini",
-        "messages": {
-          "values": [
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "content": "You are a professional summarizer. Create clear, concise summaries that capture the main points and key information.",
-              "role": "system"
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.openai_api_key }}"
             },
             {
-              "content": "={{ 'Summarize the following text' + ($json.body.format ? ' in ' + $json.body.format + ' format' : '') + ':\\n\\n' + $json.body.text }}",
-              "role": "user"
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
         },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a professional summarizer. Create clear, concise summaries that capture the main points and key information.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Summarize the following text{{ $json.body.format ? ' in ' + $json.body.format + ' format' : '' }}:\\n\\n{{ $json.body.text }}\"\n    }\n  ],\n  \"temperature\": 0.3,\n  \"max_tokens\": {{ $json.body.max_tokens || 1024 }}\n}",
         "options": {
-          "temperature": 0.3,
-          "maxTokens": "={{ $json.body.max_tokens || 1024 }}"
+          "timeout": 60000
         }
       },
-      "credentials": {
-        "openAiApi": {
-          "id": "openai-credentials",
-          "name": "OpenAI account"
-        }
-      }
+      "onError": "continueRegularOutput"
     },
     {
       "id": "mistral-summarize",
@@ -178,18 +176,28 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.mistral.ai/v1/chat/completions",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "mistralCloudApi",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.mistral_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { \"model\": \"mistral-small-latest\", \"messages\": [{ \"role\": \"system\", \"content\": \"You are a professional summarizer. Create clear, concise summaries.\" }, { \"role\": \"user\", \"content\": \"Summarize the following text\" + ($json.body.format ? \" in \" + $json.body.format + \" format\" : \"\") + \":\\n\\n\" + $json.body.text }], \"max_tokens\": $json.body.max_tokens || 1024, \"temperature\": 0.3 } }}"
-      },
-      "credentials": {
-        "mistralCloudApi": {
-          "id": "mistral-credentials",
-          "name": "Mistral account"
+        "jsonBody": "={\n  \"model\": \"mistral-small-latest\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a professional summarizer. Create clear, concise summaries.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Summarize the following text{{ $json.body.format ? ' in ' + $json.body.format + ' format' : '' }}:\\n\\n{{ $json.body.text }}\"\n    }\n  ],\n  \"max_tokens\": {{ $json.body.max_tokens || 1024 }},\n  \"temperature\": 0.3\n}",
+        "options": {
+          "timeout": 60000
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "anthropic-summarize",
@@ -203,27 +211,32 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.anthropic.com/v1/messages",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "anthropicApi",
+        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
+              "name": "x-api-key",
+              "value": "={{ $json.body.anthropic_api_key }}"
+            },
+            {
               "name": "anthropic-version",
               "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { \"model\": \"claude-3-5-sonnet-20241022\", \"max_tokens\": $json.body.max_tokens || 1024, \"messages\": [{ \"role\": \"user\", \"content\": \"Summarize the following text\" + ($json.body.format ? \" in \" + $json.body.format + \" format\" : \"\") + \":\\n\\n\" + $json.body.text }] } }}"
-      },
-      "credentials": {
-        "anthropicApi": {
-          "id": "anthropic-credentials",
-          "name": "Anthropic account"
+        "jsonBody": "={\n  \"model\": \"claude-3-5-sonnet-20241022\",\n  \"max_tokens\": {{ $json.body.max_tokens || 1024 }},\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Summarize the following text{{ $json.body.format ? ' in ' + $json.body.format + ' format' : '' }}:\\n\\n{{ $json.body.text }}\"\n    }\n  ]\n}",
+        "options": {
+          "timeout": 60000
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "format-openai",
@@ -236,7 +249,7 @@
       ],
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"data\": { \"summary\": $json.message.content, \"original_length\": $('Webhook').first().json.body.text.length, \"summary_length\": $json.message.content.length }, \"meta\": { \"provider\": \"openai\", \"model\": \"gpt-4o-mini\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
+        "jsonOutput": "={{ { \"success\": true, \"data\": { \"summary\": $json.choices?.[0]?.message?.content || '', \"original_length\": $('Webhook').first().json.body.text.length, \"summary_length\": ($json.choices?.[0]?.message?.content || '').length }, \"meta\": { \"provider\": \"openai\", \"model\": \"gpt-4o-mini\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
       }
     },
     {
@@ -250,7 +263,7 @@
       ],
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"data\": { \"summary\": $json.choices[0]?.message?.content || '', \"original_length\": $('Webhook').first().json.body.text.length, \"summary_length\": ($json.choices[0]?.message?.content || '').length }, \"meta\": { \"provider\": \"mistral\", \"model\": \"mistral-small-latest\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
+        "jsonOutput": "={{ { \"success\": true, \"data\": { \"summary\": $json.choices?.[0]?.message?.content || '', \"original_length\": $('Webhook').first().json.body.text.length, \"summary_length\": ($json.choices?.[0]?.message?.content || '').length }, \"meta\": { \"provider\": \"mistral\", \"model\": \"mistral-small-latest\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
       }
     },
     {
@@ -264,7 +277,7 @@
       ],
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"data\": { \"summary\": $json.content[0]?.text || '', \"original_length\": $('Webhook').first().json.body.text.length, \"summary_length\": ($json.content[0]?.text || '').length }, \"meta\": { \"provider\": \"anthropic\", \"model\": \"claude-3-5-sonnet-20241022\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
+        "jsonOutput": "={{ { \"success\": true, \"data\": { \"summary\": $json.content?.[0]?.text || '', \"original_length\": $('Webhook').first().json.body.text.length, \"summary_length\": ($json.content?.[0]?.text || '').length }, \"meta\": { \"provider\": \"anthropic\", \"model\": \"claude-3-5-sonnet-20241022\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
       }
     },
     {
@@ -293,9 +306,9 @@
       ],
       "parameters": {
         "color": 6,
-        "width": 550,
-        "height": 220,
-        "content": "## MCP - LLM Summarizer\n\n**Endpoint:** POST /webhook/llm-summarizer\n\n**Parameters:**\n- `text` (required): Text to summarize\n- `provider` (optional): anthropic (default), openai, mistral\n- `format` (optional): bullet-points, paragraph, executive-summary\n- `max_tokens` (optional): Max output tokens (default: 1024)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Summary with length stats and provider info"
+        "width": 600,
+        "height": 260,
+        "content": "## MCP - LLM Summarizer\n\n**Endpoint:** POST /webhook/llm-summarizer\n\n**Parameters:**\n- `text` (required): Text to summarize\n- `provider` (optional): anthropic (default), openai, mistral\n- API key based on provider:\n  - `anthropic_api_key` for anthropic (default)\n  - `openai_api_key` for openai\n  - `mistral_api_key` for mistral\n- `format` (optional): bullet-points, paragraph, executive-summary\n- `max_tokens` (optional): Max output tokens (default: 1024)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Summary with length stats and provider info"
       }
     }
   ],
