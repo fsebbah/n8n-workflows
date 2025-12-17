@@ -12,10 +12,7 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        240,
-        300
-      ],
+      "position": [240, 300],
       "webhookId": "analyze-message-webhook"
     },
     {
@@ -45,10 +42,7 @@
       "name": "Validate Input",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        460,
-        300
-      ]
+      "position": [460, 300]
     },
     {
       "parameters": {
@@ -62,30 +56,23 @@
       "name": "Error Invalid Input",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        680,
-        480
-      ]
+      "position": [680, 480]
     },
     {
       "parameters": {
-        "jsCode": "// Prepare data for parallel processing\nconst body = $input.first().json.body;\nconst text = body.text;\nconst options = body.options || {\n  sentiment: true,\n  intent: true,\n  entities: true,\n  priority: true,\n  language: true\n};\n\nreturn {\n  json: {\n    text: text,\n    options: options,\n    startTime: Date.now()\n  }\n};"
+        "jsCode": "// Prepare data for parallel processing\nconst body = $input.first().json.body;\nconst text = body.text;\nconst options = body.options || {\n  sentiment: true,\n  intent: true,\n  entities: true,\n  priority: true,\n  language: true\n};\n\n// API Keys passed from MCP Server\nconst googleApiKey = body.google_api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\n\nreturn {\n  json: {\n    text: text,\n    options: options,\n    googleApiKey: googleApiKey,\n    openaiApiKey: openaiApiKey,\n    startTime: Date.now()\n  }\n};"
       },
       "id": "prepare-data",
       "name": "Prepare Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        680,
-        300
-      ]
+      "position": [680, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "https://language.googleapis.com/v1/documents:analyzeSentiment",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleCloudNaturalLanguageOAuth2Api",
+        "url": "=https://language.googleapis.com/v1/documents:analyzeSentiment?key={{ $json.googleApiKey }}",
+        "authentication": "none",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"document\": {\n    \"type\": \"PLAIN_TEXT\",\n    \"content\": \"{{ $json.text }}\"\n  },\n  \"encodingType\": \"UTF8\"\n}",
@@ -97,24 +84,14 @@
       "name": "Google Sentiment",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        940,
-        140
-      ],
-      "credentials": {
-        "googleCloudNaturalLanguageOAuth2Api": {
-          "id": "google-nlp-creds",
-          "name": "Google Cloud NLP"
-        }
-      },
+      "position": [940, 140],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "https://language.googleapis.com/v1/documents:analyzeEntities",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleCloudNaturalLanguageOAuth2Api",
+        "url": "=https://language.googleapis.com/v1/documents:analyzeEntities?key={{ $('Prepare Data').first().json.googleApiKey }}",
+        "authentication": "none",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"document\": {\n    \"type\": \"PLAIN_TEXT\",\n    \"content\": \"{{ $('Prepare Data').first().json.text }}\"\n  },\n  \"encodingType\": \"UTF8\"\n}",
@@ -126,24 +103,27 @@
       "name": "Google Entities",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        940,
-        300
-      ],
-      "credentials": {
-        "googleCloudNaturalLanguageOAuth2Api": {
-          "id": "google-nlp-creds",
-          "name": "Google Cloud NLP"
-        }
-      },
+      "position": [940, 300],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/chat/completions",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "openAiApi",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Prepare Data').first().json.openaiApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Tu es un analyseur de messages. Analyse le message utilisateur et retourne un JSON avec:\\n\\n1. intent: {\\n   \\\"intent\\\": \\\"action_request\\\" | \\\"question\\\" | \\\"feedback\\\" | \\\"complaint\\\" | \\\"clarification\\\" | \\\"greeting\\\" | \\\"cancel\\\",\\n   \\\"sub_intent\\\": string ou null,\\n   \\\"confidence\\\": 0.0-1.0,\\n   \\\"requires_confirmation\\\": boolean\\n}\\n\\n2. priority: {\\n   \\\"priority\\\": \\\"critical\\\" | \\\"high\\\" | \\\"medium\\\" | \\\"low\\\",\\n   \\\"score\\\": 0.0-1.0,\\n   \\\"indicators\\\": [mots-clés détectés]\\n}\\n\\n3. language: {\\n   \\\"language\\\": code ISO 2 lettres,\\n   \\\"confidence\\\": 0.0-1.0\\n}\\n\\nRetourne UNIQUEMENT le JSON, pas d'explication.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $('Prepare Data').first().json.text }}\"\n    }\n  ],\n  \"temperature\": 0.1,\n  \"max_tokens\": 500\n}",
@@ -155,30 +135,18 @@
       "name": "OpenAI Intent+Priority",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        940,
-        460
-      ],
-      "credentials": {
-        "openAiApi": {
-          "id": "openai-creds",
-          "name": "OpenAI API"
-        }
-      },
+      "position": [940, 460],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Merge results from parallel calls\nconst prepareData = $('Prepare Data').first().json;\nconst text = prepareData.text;\nconst options = prepareData.options;\nconst startTime = prepareData.startTime;\n\n// Get Google Sentiment result\nlet sentimentResult = null;\ntry {\n  const googleSentiment = $('Google Sentiment').first().json;\n  if (googleSentiment && googleSentiment.documentSentiment) {\n    const ds = googleSentiment.documentSentiment;\n    sentimentResult = {\n      sentiment: ds.score > 0.2 ? 'positive' : ds.score < -0.2 ? 'negative' : 'neutral',\n      score: ds.score,\n      magnitude: ds.magnitude,\n      confidence: Math.min(1, Math.abs(ds.score) + ds.magnitude / 2)\n    };\n  }\n} catch (e) {\n  sentimentResult = { error: 'Google Sentiment failed', fallback: true };\n}\n\n// Get Google Entities result\nlet entitiesResult = [];\ntry {\n  const googleEntities = $('Google Entities').first().json;\n  if (googleEntities && googleEntities.entities) {\n    entitiesResult = googleEntities.entities.map(e => ({\n      type: e.type,\n      value: e.name,\n      salience: e.salience,\n      metadata: e.metadata || {}\n    }));\n  }\n} catch (e) {\n  entitiesResult = [];\n}\n\n// Get OpenAI result\nlet intentResult = null;\nlet priorityResult = null;\nlet languageResult = null;\n\ntry {\n  const openaiResponse = $('OpenAI Intent+Priority').first().json;\n  if (openaiResponse && openaiResponse.choices && openaiResponse.choices[0]) {\n    const content = openaiResponse.choices[0].message.content;\n    const parsed = JSON.parse(content);\n    \n    intentResult = parsed.intent || null;\n    priorityResult = parsed.priority || null;\n    languageResult = parsed.language || null;\n  }\n} catch (e) {\n  // Fallback values\n  intentResult = { intent: 'unknown', confidence: 0, error: 'OpenAI parsing failed' };\n  priorityResult = { priority: 'medium', score: 0.5 };\n  languageResult = { language: 'unknown', confidence: 0 };\n}\n\n// Build final response\nconst response = {\n  success: true,\n  text: text,\n  analysis: {}\n};\n\nif (options.sentiment !== false) {\n  response.analysis.sentiment = sentimentResult;\n}\n\nif (options.intent !== false) {\n  response.analysis.intent = intentResult;\n}\n\nif (options.entities !== false) {\n  response.analysis.entities = entitiesResult;\n}\n\nif (options.priority !== false) {\n  response.analysis.priority = priorityResult;\n}\n\nif (options.language !== false) {\n  response.analysis.language = languageResult;\n}\n\nresponse.meta = {\n  providers: {\n    sentiment: 'google-cloud-nlp',\n    entities: 'google-cloud-nlp',\n    intent: 'openai-gpt4o-mini',\n    priority: 'openai-gpt4o-mini',\n    language: 'openai-gpt4o-mini'\n  },\n  processing_time_ms: Date.now() - startTime\n};\n\nreturn { json: response };"
+        "jsCode": "// Merge results from parallel calls\nconst prepareData = $('Prepare Data').first().json;\nconst text = prepareData.text;\nconst options = prepareData.options;\nconst startTime = prepareData.startTime;\n\n// Get Google Sentiment result\nlet sentimentResult = null;\ntry {\n  const googleSentiment = $('Google Sentiment').first().json;\n  if (googleSentiment && googleSentiment.documentSentiment) {\n    const ds = googleSentiment.documentSentiment;\n    sentimentResult = {\n      sentiment: ds.score > 0.2 ? 'positive' : ds.score < -0.2 ? 'negative' : 'neutral',\n      score: ds.score,\n      magnitude: ds.magnitude,\n      confidence: Math.min(1, Math.abs(ds.score) + ds.magnitude / 2)\n    };\n  } else if (googleSentiment && googleSentiment.error) {\n    sentimentResult = { error: googleSentiment.error.message || 'Google API error', fallback: true };\n  }\n} catch (e) {\n  sentimentResult = { error: 'Google Sentiment failed: ' + e.message, fallback: true };\n}\n\n// Get Google Entities result\nlet entitiesResult = [];\ntry {\n  const googleEntities = $('Google Entities').first().json;\n  if (googleEntities && googleEntities.entities) {\n    entitiesResult = googleEntities.entities.map(e => ({\n      type: e.type,\n      value: e.name,\n      salience: e.salience,\n      metadata: e.metadata || {}\n    }));\n  } else if (googleEntities && googleEntities.error) {\n    entitiesResult = [{ error: googleEntities.error.message || 'Google API error' }];\n  }\n} catch (e) {\n  entitiesResult = [{ error: 'Google Entities failed: ' + e.message }];\n}\n\n// Get OpenAI result\nlet intentResult = null;\nlet priorityResult = null;\nlet languageResult = null;\n\ntry {\n  const openaiResponse = $('OpenAI Intent+Priority').first().json;\n  if (openaiResponse && openaiResponse.choices && openaiResponse.choices[0]) {\n    const content = openaiResponse.choices[0].message.content;\n    const parsed = JSON.parse(content);\n    \n    intentResult = parsed.intent || null;\n    priorityResult = parsed.priority || null;\n    languageResult = parsed.language || null;\n  } else if (openaiResponse && openaiResponse.error) {\n    intentResult = { error: openaiResponse.error.message || 'OpenAI API error' };\n  }\n} catch (e) {\n  // Fallback values\n  intentResult = { intent: 'unknown', confidence: 0, error: 'OpenAI parsing failed: ' + e.message };\n  priorityResult = { priority: 'medium', score: 0.5 };\n  languageResult = { language: 'unknown', confidence: 0 };\n}\n\n// Build final response\nconst response = {\n  success: true,\n  text: text,\n  analysis: {}\n};\n\nif (options.sentiment !== false) {\n  response.analysis.sentiment = sentimentResult;\n}\n\nif (options.intent !== false) {\n  response.analysis.intent = intentResult;\n}\n\nif (options.entities !== false) {\n  response.analysis.entities = entitiesResult;\n}\n\nif (options.priority !== false) {\n  response.analysis.priority = priorityResult;\n}\n\nif (options.language !== false) {\n  response.analysis.language = languageResult;\n}\n\nresponse.meta = {\n  providers: {\n    sentiment: 'google-cloud-nlp',\n    entities: 'google-cloud-nlp',\n    intent: 'openai-gpt4o-mini',\n    priority: 'openai-gpt4o-mini',\n    language: 'openai-gpt4o-mini'\n  },\n  processing_time_ms: Date.now() - startTime\n};\n\nreturn { json: response };"
       },
       "id": "merge-results",
       "name": "Merge Results",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1200,
-        300
-      ]
+      "position": [1200, 300]
     },
     {
       "parameters": {
@@ -200,10 +168,7 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1420,
-        300
-      ]
+      "position": [1420, 300]
     }
   ],
   "connections": {
@@ -293,9 +258,5 @@
   },
   "settings": {
     "executionOrder": "v1"
-  },
-  "staticData": null,
-  "tags": [],
-  "triggerCount": 0,
-  "updatedAt": "2025-12-17T00:00:00.000Z"
+  }
 }
