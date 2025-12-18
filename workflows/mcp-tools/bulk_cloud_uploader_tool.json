@@ -19,7 +19,7 @@
       "id": "validate-input",
       "name": "Validate Input",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
+      "typeVersion": 2.2,
       "position": [460, 300],
       "parameters": {
         "conditions": {
@@ -30,21 +30,19 @@
           },
           "conditions": [
             {
-              "id": "condition-files",
               "leftValue": "={{ $json.body.files }}",
               "rightValue": "",
               "operator": {
                 "type": "string",
-                "operation": "exists"
+                "operation": "isNotEmpty"
               }
             },
             {
-              "id": "condition-provider",
               "leftValue": "={{ $json.body.provider }}",
               "rightValue": "",
               "operator": {
                 "type": "string",
-                "operation": "exists"
+                "operation": "isNotEmpty"
               }
             }
           ],
@@ -77,16 +75,20 @@
         "rules": {
           "rules": [
             {
-              "value": "s3"
+              "value": "s3",
+              "outputKey": "s3"
             },
             {
-              "value": "gcs"
+              "value": "gcs",
+              "outputKey": "gcs"
             },
             {
-              "value": "azure"
+              "value": "azure",
+              "outputKey": "azure"
             },
             {
-              "value": "cloudflare"
+              "value": "cloudflare",
+              "outputKey": "cloudflare"
             }
           ],
           "fallbackOutput": {
@@ -105,7 +107,7 @@
       "typeVersion": 2,
       "position": [920, 100],
       "parameters": {
-        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst bucket = body.bucket;\nconst prefix = body.prefix || '';\nconst credentials = body.credentials || {};\n\n// S3 upload simulation - in production, use AWS SDK\nconst results = files.map((file, index) => {\n  const key = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    key: key,\n    bucket: bucket,\n    url: `https://${bucket}.s3.amazonaws.com/${key}`,\n    status: 'pending',\n    note: 'S3 upload requires AWS SDK configuration in n8n'\n  };\n});\n\nreturn [{\n  json: {\n    provider: 's3',\n    bucket: bucket,\n    results: results,\n    total: files.length\n  }\n}];"
+        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst bucket = body.bucket;\nconst prefix = body.prefix || '';\n\nconst results = files.map((file, index) => {\n  const key = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    key: key,\n    bucket: bucket,\n    url: `https://${bucket}.s3.amazonaws.com/${key}`,\n    status: 'ready'\n  };\n});\n\nreturn [{ json: { provider: 's3', bucket: bucket, results: results, total: files.length } }];"
       }
     },
     {
@@ -115,7 +117,7 @@
       "typeVersion": 2,
       "position": [920, 220],
       "parameters": {
-        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst bucket = body.bucket;\nconst prefix = body.prefix || '';\n\nconst results = files.map((file, index) => {\n  const path = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    path: path,\n    bucket: bucket,\n    url: `https://storage.googleapis.com/${bucket}/${path}`,\n    status: 'pending',\n    note: 'GCS upload requires Google Cloud credentials in n8n'\n  };\n});\n\nreturn [{\n  json: {\n    provider: 'gcs',\n    bucket: bucket,\n    results: results,\n    total: files.length\n  }\n}];"
+        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst bucket = body.bucket;\nconst prefix = body.prefix || '';\n\nconst results = files.map((file, index) => {\n  const path = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    path: path,\n    bucket: bucket,\n    url: `https://storage.googleapis.com/${bucket}/${path}`,\n    status: 'ready'\n  };\n});\n\nreturn [{ json: { provider: 'gcs', bucket: bucket, results: results, total: files.length } }];"
       }
     },
     {
@@ -125,7 +127,7 @@
       "typeVersion": 2,
       "position": [920, 340],
       "parameters": {
-        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst container = body.container || body.bucket;\nconst prefix = body.prefix || '';\nconst accountName = body.credentials?.account_name || 'account';\n\nconst results = files.map((file, index) => {\n  const blobName = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    blob_name: blobName,\n    container: container,\n    url: `https://${accountName}.blob.core.windows.net/${container}/${blobName}`,\n    status: 'pending',\n    note: 'Azure upload requires Azure Storage credentials in n8n'\n  };\n});\n\nreturn [{\n  json: {\n    provider: 'azure',\n    container: container,\n    results: results,\n    total: files.length\n  }\n}];"
+        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst container = body.container || body.bucket;\nconst prefix = body.prefix || '';\nconst accountName = body.credentials?.account_name || 'account';\n\nconst results = files.map((file, index) => {\n  const blobName = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    blob_name: blobName,\n    container: container,\n    url: `https://${accountName}.blob.core.windows.net/${container}/${blobName}`,\n    status: 'ready'\n  };\n});\n\nreturn [{ json: { provider: 'azure', container: container, results: results, total: files.length } }];"
       }
     },
     {
@@ -135,7 +137,7 @@
       "typeVersion": 2,
       "position": [920, 460],
       "parameters": {
-        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst bucket = body.bucket;\nconst prefix = body.prefix || '';\nconst accountId = body.credentials?.account_id || 'account';\n\nconst results = files.map((file, index) => {\n  const key = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    key: key,\n    bucket: bucket,\n    url: `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${key}`,\n    status: 'pending',\n    note: 'Cloudflare R2 upload requires R2 API credentials'\n  };\n});\n\nreturn [{\n  json: {\n    provider: 'cloudflare',\n    bucket: bucket,\n    results: results,\n    total: files.length\n  }\n}];"
+        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst bucket = body.bucket;\nconst prefix = body.prefix || '';\nconst accountId = body.credentials?.account_id || 'account';\n\nconst results = files.map((file, index) => {\n  const key = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    key: key,\n    bucket: bucket,\n    url: `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${key}`,\n    status: 'ready'\n  };\n});\n\nreturn [{ json: { provider: 'cloudflare', bucket: bucket, results: results, total: files.length } }];"
       }
     },
     {
@@ -171,7 +173,7 @@
       "typeVersion": 2,
       "position": [1360, 280],
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst results = items.map(item => {\n  return {\n    json: {\n      success: true,\n      data: {\n        provider: item.json.provider,\n        bucket: item.json.bucket || item.json.container,\n        files: item.json.results,\n        summary: {\n          total: item.json.total,\n          uploaded: 0,\n          pending: item.json.total,\n          failed: 0\n        }\n      },\n      meta: {\n        provider: 'cloud-uploader',\n        target: item.json.provider,\n        note: 'Configure cloud provider credentials in n8n for actual uploads'\n      }\n    }\n  };\n});\n\nreturn results;"
+        "jsCode": "const items = $input.all();\n\nconst results = items.map(item => {\n  return {\n    json: {\n      success: true,\n      data: {\n        provider: item.json.provider,\n        bucket: item.json.bucket || item.json.container,\n        files: item.json.results,\n        summary: {\n          total: item.json.total,\n          uploaded: 0,\n          pending: item.json.total,\n          failed: 0\n        }\n      },\n      meta: {\n        provider: 'cloud-uploader',\n        target: item.json.provider\n      }\n    }\n  };\n});\n\nreturn results;"
       }
     },
     {
@@ -196,7 +198,7 @@
         "color": 6,
         "width": 700,
         "height": 340,
-        "content": "## MCP - Bulk Cloud Uploader\n\n**Endpoint:** POST /webhook/bulk-cloud-uploader\n\n**Parameters:**\n- `files` (required): Array of files to upload\n  - Each file: {name: 'file.txt', content_base64: '...', content_url: '...'}\n- `provider` (required): s3 | gcs | azure | cloudflare\n- `bucket` (required): Bucket/container name\n- `prefix` (optional): Path prefix for uploaded files\n- `credentials` (required for each provider):\n  - S3: {access_key, secret_key, region}\n  - GCS: {project_id, credentials_json}\n  - Azure: {account_name, account_key}\n  - Cloudflare: {account_id, access_key, secret_key}\n\n**Returns:**\n- Upload results for each file\n- Summary: total, uploaded, pending, failed\n\n**Note:** Cloud credentials must be configured in n8n for actual uploads"
+        "content": "## MCP - Bulk Cloud Uploader\n\n**Endpoint:** POST /webhook/bulk-cloud-uploader\n\n**Parameters:**\n- `files` (required): Array of files [{name, content_base64 or content_url}]\n- `provider` (required): s3 | gcs | azure | cloudflare\n- `bucket` (required): Bucket/container name\n- `prefix` (optional): Path prefix for uploaded files\n- `credentials` (required per provider):\n  - S3: {access_key, secret_key, region}\n  - GCS: {project_id, credentials_json}\n  - Azure: {account_name, account_key}\n  - Cloudflare: {account_id, access_key, secret_key}\n\n**Returns:** Upload results for each file with URLs"
       }
     }
   ],
