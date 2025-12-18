@@ -1,0 +1,433 @@
+{
+  "name": "MCP - Notion",
+  "nodes": [
+    {
+      "id": "webhook-notion",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "notion-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "notion",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [460, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-action",
+      "name": "Error: No Action",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 600],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: action (search, get_page, create_page, update_page, query_database)\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"notion\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "route-action",
+      "name": "Route Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [700, 300],
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "value": "search",
+              "outputKey": "search"
+            },
+            {
+              "value": "get_page",
+              "outputKey": "get_page"
+            },
+            {
+              "value": "create_page",
+              "outputKey": "create_page"
+            },
+            {
+              "value": "query_database",
+              "outputKey": "query_database"
+            }
+          ],
+          "fallbackOutput": {
+            "fallbackOutputIndex": 4
+          }
+        },
+        "dataType": "string",
+        "value": "={{ $json.body.action }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "notion-search",
+      "name": "Notion Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/search",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Webhook').first().json.body.notion_api_key }}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"{{ $('Webhook').first().json.body.query || '' }}\",\n  \"filter\": {{ $('Webhook').first().json.body.filter ? JSON.stringify($('Webhook').first().json.body.filter) : '{}' }},\n  \"page_size\": {{ $('Webhook').first().json.body.options?.page_size || 10 }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "notion-get-page",
+      "name": "Notion Get Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 220],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.notion.com/v1/pages/{{ $('Webhook').first().json.body.page_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Webhook').first().json.body.notion_api_key }}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "notion-create-page",
+      "name": "Notion Create Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 340],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Webhook').first().json.body.notion_api_key }}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Webhook').first().json.body.page_data) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "notion-query-db",
+      "name": "Notion Query Database",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 460],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $('Webhook').first().json.body.database_id }}/query",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Webhook').first().json.body.notion_api_key }}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {{ $('Webhook').first().json.body.filter ? JSON.stringify($('Webhook').first().json.body.filter) : '{}' }},\n  \"sorts\": {{ $('Webhook').first().json.body.sorts ? JSON.stringify($('Webhook').first().json.body.sorts) : '[]' }},\n  \"page_size\": {{ $('Webhook').first().json.body.options?.page_size || 100 }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "error-unknown",
+      "name": "Error: Unknown Action",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [920, 580],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Unknown action: \" + $('Webhook').first().json.body.action, \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"notion\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1140, 300],
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "all",
+        "numberInputs": 4
+      }
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 300],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst startTime = Date.now();\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.code || item.json.status === 'error') {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.status || 500,\n          message: item.json.message || 'Notion API error',\n          status: item.json.code || 'API_ERROR'\n        },\n        meta: {\n          provider: 'notion',\n          action: webhookData.body.action,\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n\n  const action = webhookData.body.action;\n  let data = {};\n\n  if (action === 'search') {\n    data = {\n      results: (item.json.results || []).map(r => ({\n        id: r.id,\n        type: r.object,\n        title: r.properties?.title?.title?.[0]?.plain_text || r.properties?.Name?.title?.[0]?.plain_text || 'Untitled',\n        url: r.url,\n        created_time: r.created_time,\n        last_edited_time: r.last_edited_time\n      })),\n      has_more: item.json.has_more || false,\n      next_cursor: item.json.next_cursor || null\n    };\n  } else if (action === 'get_page') {\n    data = {\n      id: item.json.id,\n      properties: item.json.properties,\n      url: item.json.url,\n      created_time: item.json.created_time,\n      last_edited_time: item.json.last_edited_time\n    };\n  } else if (action === 'create_page') {\n    data = {\n      id: item.json.id,\n      url: item.json.url,\n      created: true\n    };\n  } else if (action === 'query_database') {\n    data = {\n      results: item.json.results || [],\n      has_more: item.json.has_more || false,\n      next_cursor: item.json.next_cursor || null\n    };\n  } else {\n    data = item.json;\n  }\n\n  return {\n    json: {\n      success: true,\n      data: data,\n      meta: {\n        provider: 'notion',\n        action: action,\n        execution_mode: webhookData.body.execution_mode || 'online',\n        processing_time_ms: Date.now() - startTime\n      }\n    }\n  };\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1580, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 650,
+        "height": 320,
+        "content": "## MCP - Notion\n\n**Endpoint:** POST /webhook/notion\n\n**Parameters:**\n- `action` (required): search | get_page | create_page | query_database\n- `notion_api_key` (required): Notion Integration API key\n\n**For search:**\n- `query` (optional): Search text\n- `filter` (optional): {\"property\": \"object\", \"value\": \"page\"}\n\n**For get_page:**\n- `page_id` (required): Page ID\n\n**For create_page:**\n- `page_data` (required): Full page object with parent, properties, children\n\n**For query_database:**\n- `database_id` (required): Database ID\n- `filter` (optional): Notion filter object\n- `sorts` (optional): Notion sorts array\n\n**Returns:** Search results, page data, or database query results"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Route Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Action": {
+      "main": [
+        [
+          {
+            "node": "Notion Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion Get Page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion Create Page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion Query Database",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Unknown Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion Search": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion Get Page": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Notion Create Page": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Notion Query Database": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

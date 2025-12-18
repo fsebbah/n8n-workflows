@@ -1,0 +1,276 @@
+{
+  "name": "MCP - Metadata Extractor",
+  "nodes": [
+    {
+      "id": "webhook-metadata",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "metadata-extractor-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "metadata-extractor",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [460, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.data }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-data",
+      "name": "Error: No Data",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 500],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: data (URL or HTML)\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"http-extract\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "check-source",
+      "name": "Check Source Type",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [700, 200],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.source }}",
+              "rightValue": "html",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "fetch-url",
+      "name": "Fetch URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 100],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Webhook').first().json.body.data }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "prepare-html",
+      "name": "Prepare HTML",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [920, 300],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ { \"html\": $('Webhook').first().json.body.data, \"url\": null, \"status\": 200 } }}"
+      }
+    },
+    {
+      "id": "merge-html",
+      "name": "Merge HTML",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1140, 200],
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "all"
+      }
+    },
+    {
+      "id": "extract-metadata",
+      "name": "Extract Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 200],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst startTime = Date.now();\n\nfunction extractMetaTags(html) {\n  const meta = {};\n  \n  // Title\n  const titleMatch = html.match(/<title[^>]*>([^<]*)<\\/title>/i);\n  if (titleMatch) meta.title = titleMatch[1].trim();\n  \n  // Meta description\n  const descMatch = html.match(/<meta[^>]*name=[\"']description[\"'][^>]*content=[\"']([^\"']*)[\"'][^>]*>/i) ||\n                    html.match(/<meta[^>]*content=[\"']([^\"']*)[\"'][^>]*name=[\"']description[\"'][^>]*>/i);\n  if (descMatch) meta.description = descMatch[1];\n  \n  // OpenGraph\n  const ogTags = {};\n  const ogRegex = /<meta[^>]*property=[\"']og:([^\"']*)[\"'][^>]*content=[\"']([^\"']*)[\"'][^>]*>/gi;\n  const ogRegex2 = /<meta[^>]*content=[\"']([^\"']*)[\"'][^>]*property=[\"']og:([^\"']*)[\"'][^>]*>/gi;\n  let ogMatch;\n  while ((ogMatch = ogRegex.exec(html)) !== null) {\n    ogTags['og:' + ogMatch[1]] = ogMatch[2];\n  }\n  while ((ogMatch = ogRegex2.exec(html)) !== null) {\n    ogTags['og:' + ogMatch[2]] = ogMatch[1];\n  }\n  \n  // Twitter Cards\n  const twitterTags = {};\n  const twitterRegex = /<meta[^>]*name=[\"']twitter:([^\"']*)[\"'][^>]*content=[\"']([^\"']*)[\"'][^>]*>/gi;\n  const twitterRegex2 = /<meta[^>]*content=[\"']([^\"']*)[\"'][^>]*name=[\"']twitter:([^\"']*)[\"'][^>]*>/gi;\n  let twMatch;\n  while ((twMatch = twitterRegex.exec(html)) !== null) {\n    twitterTags['twitter:' + twMatch[1]] = twMatch[2];\n  }\n  while ((twMatch = twitterRegex2.exec(html)) !== null) {\n    twitterTags['twitter:' + twMatch[2]] = twMatch[1];\n  }\n  \n  // JSON-LD\n  let jsonLd = null;\n  const jsonLdMatch = html.match(/<script[^>]*type=[\"']application\\/ld\\+json[\"'][^>]*>([\\s\\S]*?)<\\/script>/i);\n  if (jsonLdMatch) {\n    try {\n      jsonLd = JSON.parse(jsonLdMatch[1]);\n    } catch (e) { /* ignore parse errors */ }\n  }\n  \n  // Favicon\n  let favicon = null;\n  const faviconMatch = html.match(/<link[^>]*rel=[\"'](?:shortcut )?icon[\"'][^>]*href=[\"']([^\"']*)[\"'][^>]*>/i) ||\n                       html.match(/<link[^>]*href=[\"']([^\"']*)[\"'][^>]*rel=[\"'](?:shortcut )?icon[\"'][^>]*>/i);\n  if (faviconMatch) favicon = faviconMatch[1];\n  \n  // Author\n  const authorMatch = html.match(/<meta[^>]*name=[\"']author[\"'][^>]*content=[\"']([^\"']*)[\"'][^>]*>/i);\n  if (authorMatch) meta.author = authorMatch[1];\n  \n  return {\n    standard: meta,\n    opengraph: ogTags,\n    twitter: twitterTags,\n    json_ld: jsonLd,\n    favicon: favicon\n  };\n}\n\nconst results = items.map(item => {\n  try {\n    const html = item.json.html || item.json.body || '';\n    const url = item.json.url || webhookData.body.data;\n    \n    if (!html && item.json.error) {\n      return {\n        json: {\n          success: false,\n          error: {\n            code: 500,\n            message: 'Failed to fetch URL: ' + (item.json.error.message || 'Unknown error'),\n            status: 'FETCH_ERROR'\n          },\n          meta: {\n            provider: 'http-extract',\n            execution_mode: webhookData.body.execution_mode || 'online'\n          }\n        }\n      };\n    }\n    \n    const sources = extractMetaTags(html);\n    \n    // Build normalized metadata (priority: OG > Twitter > Standard)\n    const normalized = {\n      title: sources.opengraph['og:title'] || sources.twitter['twitter:title'] || sources.standard.title || null,\n      description: sources.opengraph['og:description'] || sources.twitter['twitter:description'] || sources.standard.description || null,\n      image: sources.opengraph['og:image'] || sources.twitter['twitter:image'] || null,\n      url: sources.opengraph['og:url'] || url,\n      site_name: sources.opengraph['og:site_name'] || null,\n      type: sources.opengraph['og:type'] || null,\n      author: sources.json_ld?.author?.name || sources.standard.author || null,\n      published_time: sources.opengraph['og:article:published_time'] || sources.json_ld?.datePublished || null,\n      favicon: sources.favicon\n    };\n    \n    return {\n      json: {\n        success: true,\n        data: {\n          ...normalized,\n          sources: sources\n        },\n        meta: {\n          provider: 'http-extract',\n          execution_mode: webhookData.body.execution_mode || 'online',\n          cache_hit: false,\n          processing_time_ms: Date.now() - startTime\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Metadata extraction failed: ' + e.message,\n          status: 'EXTRACT_ERROR'\n        },\n        meta: {\n          provider: 'http-extract',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1580, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 600,
+        "height": 280,
+        "content": "## MCP - Metadata Extractor\n\n**Endpoint:** POST /webhook/metadata-extractor\n\n**Parameters:**\n- `data` (required): URL or HTML content\n- `source` (optional): url | html (default: url)\n- `options.include_json_ld` (optional): boolean (default: true)\n- `options.include_twitter` (optional): boolean (default: true)\n- `options.include_opengraph` (optional): boolean (default: true)\n- `options.include_standard` (optional): boolean (default: true)\n- `options.fetch_favicon` (optional): boolean (default: true)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Normalized metadata with OG, Twitter, JSON-LD, standard meta tags\n\n**Priority:** OpenGraph > Twitter Cards > JSON-LD > Standard Meta"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Check Source Type",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Source Type": {
+      "main": [
+        [
+          {
+            "node": "Prepare HTML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch URL": {
+      "main": [
+        [
+          {
+            "node": "Merge HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare HTML": {
+      "main": [
+        [
+          {
+            "node": "Merge HTML",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge HTML": {
+      "main": [
+        [
+          {
+            "node": "Extract Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Metadata": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
