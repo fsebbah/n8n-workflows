@@ -1,0 +1,328 @@
+{
+  "name": "MCP - Email IMAP",
+  "nodes": [
+    {
+      "id": "webhook-email",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "email-imap-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "email-imap",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-action",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-action",
+      "name": "Error: No Action",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 500],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: action (list_folders, search, fetch_email, fetch_attachments)\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"imap\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "route-action",
+      "name": "Route Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [700, 300],
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "value": "list_folders",
+              "outputKey": "list_folders"
+            },
+            {
+              "value": "search",
+              "outputKey": "search"
+            },
+            {
+              "value": "fetch_email",
+              "outputKey": "fetch_email"
+            }
+          ],
+          "fallbackOutput": {
+            "fallbackOutputIndex": 3
+          }
+        },
+        "dataType": "string",
+        "value": "={{ $json.body.action }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "imap-list-folders",
+      "name": "IMAP List Folders",
+      "type": "n8n-nodes-base.imap",
+      "typeVersion": 2,
+      "position": [920, 100],
+      "parameters": {
+        "mailbox": "INBOX",
+        "options": {}
+      },
+      "credentials": {
+        "imap": {
+          "id": "dynamic",
+          "name": "Dynamic IMAP"
+        }
+      }
+    },
+    {
+      "id": "imap-search",
+      "name": "IMAP Search",
+      "type": "n8n-nodes-base.imap",
+      "typeVersion": 2,
+      "position": [920, 220],
+      "parameters": {
+        "mailbox": "={{ $('Webhook').first().json.body.folder || 'INBOX' }}",
+        "options": {
+          "customEmailConfig": "={{ $('Webhook').first().json.body.search_criteria || 'UNSEEN' }}"
+        }
+      },
+      "credentials": {
+        "imap": {
+          "id": "dynamic",
+          "name": "Dynamic IMAP"
+        }
+      }
+    },
+    {
+      "id": "imap-fetch",
+      "name": "IMAP Fetch Email",
+      "type": "n8n-nodes-base.imap",
+      "typeVersion": 2,
+      "position": [920, 340],
+      "parameters": {
+        "mailbox": "={{ $('Webhook').first().json.body.folder || 'INBOX' }}",
+        "options": {}
+      },
+      "credentials": {
+        "imap": {
+          "id": "dynamic",
+          "name": "Dynamic IMAP"
+        }
+      }
+    },
+    {
+      "id": "error-unknown",
+      "name": "Error: Unknown Action",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [920, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Unknown action: \" + $('Webhook').first().json.body.action, \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"imap\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1140, 220],
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "all",
+        "numberInputs": 3
+      }
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 220],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst action = webhookData.body.action;\n\nconst results = items.map(item => {\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: item.json.error.message || 'IMAP error',\n          status: 'IMAP_ERROR'\n        },\n        meta: {\n          provider: 'imap',\n          action: action\n        }\n      }\n    };\n  }\n\n  let data = {};\n  \n  if (action === 'list_folders') {\n    data = {\n      folders: item.json.folders || []\n    };\n  } else if (action === 'search') {\n    data = {\n      emails: (item.json.emails || []).map(e => ({\n        uid: e.uid,\n        subject: e.subject,\n        from: e.from,\n        date: e.date,\n        flags: e.flags\n      })),\n      count: (item.json.emails || []).length\n    };\n  } else if (action === 'fetch_email') {\n    data = {\n      uid: item.json.uid,\n      subject: item.json.subject,\n      from: item.json.from,\n      to: item.json.to,\n      date: item.json.date,\n      body_text: item.json.text,\n      body_html: item.json.html,\n      attachments: (item.json.attachments || []).map(a => ({\n        filename: a.filename,\n        contentType: a.contentType,\n        size: a.size\n      }))\n    };\n  } else {\n    data = item.json;\n  }\n\n  return {\n    json: {\n      success: true,\n      data: data,\n      meta: {\n        provider: 'imap',\n        action: action\n      }\n    }\n  };\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1580, 220],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 650,
+        "height": 280,
+        "content": "## MCP - Email IMAP\n\n**Endpoint:** POST /webhook/email-imap\n\n**Note:** IMAP credentials must be configured in n8n credentials store.\n\n**Parameters:**\n- `action` (required): list_folders | search | fetch_email\n\n**For search:**\n- `folder` (optional): Mailbox folder (default: INBOX)\n- `search_criteria` (optional): IMAP search string (default: UNSEEN)\n\n**For fetch_email:**\n- `folder` (optional): Mailbox folder\n- `uid` (required): Email UID to fetch\n\n**Returns:** Folder list, email search results, or full email content"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Route Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Action": {
+      "main": [
+        [
+          {
+            "node": "IMAP List Folders",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IMAP Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IMAP Fetch Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Unknown Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IMAP List Folders": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IMAP Search": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "IMAP Fetch Email": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

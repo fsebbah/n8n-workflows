@@ -1,0 +1,185 @@
+{
+  "name": "MCP - Language Detector",
+  "nodes": [
+    {
+      "id": "webhook-lang",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "language-detector-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "language-detector",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-text",
+              "leftValue": "={{ $json.body.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-text",
+      "name": "Error: No Text",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: text\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"model\": \"gpt-4o-mini\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "openai-detect",
+      "name": "OpenAI Detect Language",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a language detection expert. Detect the language of the given text and return a JSON object with:\\n- code: ISO 639-1 code (e.g., 'en', 'fr', 'es', 'de', 'zh', 'ja', 'ar')\\n- name: Full language name in English\\n- confidence: Confidence score 0.0 to 1.0\\n- script: Writing script (latin, cyrillic, arabic, han, etc.)\\n- is_mixed: Boolean if multiple languages detected\\n- languages: Array of detected languages if mixed\\n\\nReturn ONLY valid JSON.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Detect the language of this text:\\n\\n{{ $json.body.text.substring(0, 1000) }}\"\n    }\n  ],\n  \"temperature\": 0.1,\n  \"max_tokens\": 256\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-response",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 200],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst results = items.map(item => {\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'OpenAI API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: 'gpt-4o-mini'\n        }\n      }\n    };\n  }\n\n  try {\n    const content = item.json.choices?.[0]?.message?.content || '{}';\n    const detection = JSON.parse(content);\n    \n    return {\n      json: {\n        success: true,\n        data: {\n          code: detection.code || 'unknown',\n          name: detection.name || 'Unknown',\n          confidence: detection.confidence || 0,\n          script: detection.script || 'unknown',\n          is_mixed: detection.is_mixed || false,\n          languages: detection.languages || null,\n          text_sample: webhookData.body.text.substring(0, 100) + (webhookData.body.text.length > 100 ? '...' : '')\n        },\n        meta: {\n          provider: 'openai',\n          model: 'gpt-4o-mini'\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to parse detection response: ' + e.message,\n          status: 'PARSE_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: 'gpt-4o-mini'\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1140, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 650,
+        "height": 260,
+        "content": "## MCP - Language Detector\n\n**Endpoint:** POST /webhook/language-detector\n\n**Parameters:**\n- `text` (required): Text to analyze\n- `openai_api_key` (required): OpenAI API key\n\n**Returns:**\n- `code`: ISO 639-1 language code (en, fr, es, de, zh, ja, ar, etc.)\n- `name`: Full language name in English\n- `confidence`: Detection confidence (0.0 to 1.0)\n- `script`: Writing script (latin, cyrillic, arabic, han, etc.)\n- `is_mixed`: Boolean if multiple languages detected\n- `languages`: Array of detected languages if mixed\n\n**Model:** gpt-4o-mini (fast, cost-effective)"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Detect Language",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Detect Language": {
+      "main": [
+        [
+          {
+            "node": "Parse Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

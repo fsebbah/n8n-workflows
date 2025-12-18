@@ -1,0 +1,207 @@
+{
+  "name": "MCP - Chart Generator",
+  "nodes": [
+    {
+      "id": "webhook-chart",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "chart-generator-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chart-generator",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-data",
+              "leftValue": "={{ $json.body.data }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-data",
+      "name": "Error: No Data",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: data (chart data object)\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"quickchart\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "build-chart-config",
+      "name": "Build Chart Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 200],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body;\n\nconst chartType = body.chart_type || 'bar';\nconst title = body.title || '';\nconst data = body.data;\nconst options = body.options || {};\n\n// Build Chart.js configuration\nlet chartConfig = {\n  type: chartType,\n  data: {},\n  options: {\n    responsive: true,\n    plugins: {\n      title: {\n        display: !!title,\n        text: title\n      },\n      legend: {\n        display: options.show_legend !== false\n      }\n    }\n  }\n};\n\n// Handle different data formats\nif (Array.isArray(data)) {\n  // Simple array format: [{label: 'A', value: 10}, {label: 'B', value: 20}]\n  const labels = data.map(d => d.label || d.name || d.x || '');\n  const values = data.map(d => d.value || d.y || d.count || 0);\n  \n  chartConfig.data = {\n    labels: labels,\n    datasets: [{\n      label: body.dataset_label || 'Data',\n      data: values,\n      backgroundColor: options.colors || [\n        'rgba(54, 162, 235, 0.8)',\n        'rgba(255, 99, 132, 0.8)',\n        'rgba(255, 206, 86, 0.8)',\n        'rgba(75, 192, 192, 0.8)',\n        'rgba(153, 102, 255, 0.8)',\n        'rgba(255, 159, 64, 0.8)'\n      ]\n    }]\n  };\n} else if (data.labels && data.datasets) {\n  // Chart.js native format\n  chartConfig.data = data;\n} else if (data.labels && data.values) {\n  // Simple labels + values format\n  chartConfig.data = {\n    labels: data.labels,\n    datasets: [{\n      label: body.dataset_label || 'Data',\n      data: data.values,\n      backgroundColor: options.colors || 'rgba(54, 162, 235, 0.8)'\n    }]\n  };\n}\n\n// Special handling for pie/doughnut charts\nif (['pie', 'doughnut'].includes(chartType)) {\n  chartConfig.options.plugins.legend.position = options.legend_position || 'right';\n}\n\n// Special handling for line charts\nif (chartType === 'line') {\n  if (chartConfig.data.datasets) {\n    chartConfig.data.datasets = chartConfig.data.datasets.map(ds => ({\n      ...ds,\n      fill: options.fill !== false,\n      tension: options.tension || 0.1\n    }));\n  }\n}\n\nreturn [{\n  json: {\n    chartConfig: chartConfig,\n    width: body.width || 600,\n    height: body.height || 400,\n    format: body.format || 'png',\n    backgroundColor: body.background_color || 'white'\n  }\n}];"
+      }
+    },
+    {
+      "id": "generate-chart",
+      "name": "Generate Chart",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://quickchart.io/chart",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chart\": {{ JSON.stringify($json.chartConfig) }},\n  \"width\": {{ $json.width }},\n  \"height\": {{ $json.height }},\n  \"format\": \"{{ $json.format }}\",\n  \"backgroundColor\": \"{{ $json.backgroundColor }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 200],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst chartData = $('Build Chart Config').first().json;\n\nconst results = items.map(item => {\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: item.json.error.message || 'Chart generation failed',\n          status: 'CHART_ERROR'\n        },\n        meta: { provider: 'quickchart' }\n      }\n    };\n  }\n\n  // QuickChart returns the image URL or base64\n  const chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartData.chartConfig))}&w=${chartData.width}&h=${chartData.height}&bkg=${encodeURIComponent(chartData.backgroundColor)}`;\n  \n  return {\n    json: {\n      success: true,\n      data: {\n        chart_url: chartUrl,\n        chart_config: chartData.chartConfig,\n        dimensions: {\n          width: chartData.width,\n          height: chartData.height\n        },\n        format: chartData.format\n      },\n      meta: {\n        provider: 'quickchart',\n        chart_type: chartData.chartConfig.type\n      }\n    }\n  };\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1360, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 700,
+        "height": 340,
+        "content": "## MCP - Chart Generator\n\n**Endpoint:** POST /webhook/chart-generator\n\n**Parameters:**\n- `data` (required): Chart data - formats supported:\n  - Array: [{label: 'A', value: 10}, {label: 'B', value: 20}]\n  - Object: {labels: ['A','B'], values: [10,20]}\n  - Chart.js: {labels: [...], datasets: [...]}\n- `chart_type` (optional): bar | line | pie | doughnut | radar | polarArea (default: bar)\n- `title` (optional): Chart title\n- `dataset_label` (optional): Dataset label\n- `width` (optional): Width in pixels (default: 600)\n- `height` (optional): Height in pixels (default: 400)\n- `format` (optional): png | svg | webp (default: png)\n- `background_color` (optional): Background color (default: white)\n- `options.colors` (optional): Array of colors\n- `options.show_legend` (optional): Show legend (default: true)\n\n**Returns:** Chart URL and configuration\n\n**Provider:** QuickChart.io (free, no API key required)"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Build Chart Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Chart Config": {
+      "main": [
+        [
+          {
+            "node": "Generate Chart",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Chart": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
