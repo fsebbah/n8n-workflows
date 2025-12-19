@@ -1,31 +1,41 @@
-# Gemini Image MCP Server API
+# Gemini Image MCP Server API (Imagen 3)
 
 Documentation pour le serveur MCP Gemini Image accessible via webhook n8n.
+
+**Mise jour v2**: Migration de Gemini 2.5 Flash Image vers **Imagen 3** pour une meilleure qualite et des fonctionnalites professionnelles.
 
 ## Quick Start
 
 ```bash
-# 1. Générer une image simple
+# 1. Generer une image simple
 curl -X POST http://localhost:5678/webhook/gemini-image \
   -H "Content-Type: application/json" \
   -d '{"prompt": "A cute robot made of felt", "aspectRatio": "16:9"}'
 
-# 2. Créer un character sheet
+# 2. Generer avec negative prompt et seed
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -d '{"prompt": "A robot in a forest", "negativePrompt": "blurry, text, watermark", "seed": 42}'
+
+# 3. Creer un character sheet
 curl -X POST http://localhost:5678/webhook/gemini-image \
   -d '{"operation": "createCharacterSheet", "sourceImage": "'$(base64 -w0 robot.png)'", "views": ["front", "back"]}'
-
-# 3. Composer une scène
-curl -X POST http://localhost:5678/webhook/gemini-image \
-  -d '{"operation": "composeScene", "referenceImages": [{"data": "'$(base64 -w0 sheet.png)'", "role": "character"}], "scenePrompt": "The robot in a forest"}'
 ```
+
+## Modeles Imagen 3 disponibles
+
+| Modele | Usage | Quota/min | Description |
+|--------|-------|-----------|-------------|
+| `imagen-3.0-generate-002` | Generation haute qualite | 20 | Modele standard recommande |
+| `imagen-3.0-fast-generate-001` | Generation rapide | 200 | 10x plus rapide, ideal pour prototypage |
+| `imagen-3.0-capability-001` | Edition d'images | 20 | Inpainting, outpainting, extraction |
 
 ## Installation
 
-### Prérequis
+### Prerequis
 
-1. **n8n** installé et fonctionnel
-2. **Google Cloud Project** avec Vertex AI API activée
-3. **Credentials Vertex AI** configurés dans n8n
+1. **n8n** installe et fonctionnel
+2. **Google Cloud Project** avec Vertex AI API activee
+3. **Credentials Vertex AI** configures dans n8n (obligatoire - Imagen 3 n'est disponible que via Vertex AI)
 
 ### Installation du Custom Node
 
@@ -33,17 +43,17 @@ curl -X POST http://localhost:5678/webhook/gemini-image \
 # 1. Copier le package dans le dossier nodes de n8n
 cp -r custom-nodes/n8n-nodes-gemini-image ~/.n8n/nodes/
 
-# 2. Installer les dépendances
-cd ~/.n8n/nodes
+# 2. Installer les dependances
+cd ~/.n8n/nodes/n8n-nodes-gemini-image
 npm install
 
-# 3. Redémarrer n8n
+# 3. Redemarrer n8n
 ```
 
 ### Import du Workflow
 
-1. Dans n8n, aller dans **Workflows** → **Import**
-2. Sélectionner `workflows/gemini-image-workflow.json`
+1. Dans n8n, aller dans **Workflows** -> **Import**
+2. Selectionner `workflows/gemini-image-workflow.json`
 3. Configurer les credentials Vertex AI dans le node "Gemini Image"
 4. Activer le workflow
 
@@ -55,86 +65,101 @@ POST /webhook/gemini-image
 
 ## Vue d'ensemble
 
-Ce workflow génère et manipule des images en utilisant Gemini 2.5 Flash Image ("Nano Banana"). Il supporte la génération depuis un prompt, l'extraction de personnages, la création de character sheets et la composition de scènes.
+Ce workflow genere et manipule des images en utilisant **Imagen 3** (Vertex AI). Il supporte la generation depuis un prompt, l'extraction de personnages, la creation de character sheets et la composition de scenes.
 
-## Opérations disponibles
+## Operations disponibles
 
 ### `generate`
-Génère une image à partir d'un prompt texte.
+Genere une image a partir d'un prompt texte avec support du negative prompt et du seed.
 
 ### `extractCharacter`
-Extrait un personnage d'une image avec fond transparent.
+Extrait un personnage d'une image avec fond transparent (utilise imagen-3.0-capability-001).
 
 ### `createCharacterSheet`
-Génère plusieurs vues d'un personnage (front, back, side).
+Genere plusieurs vues d'un personnage (front, back, side) avec le meme seed pour la coherence.
 
 ### `composeScene`
-Compose une scène en utilisant des images de référence.
+Compose une scene en utilisant des images de reference.
 
-## Paramètres de la requête
+## Parametres de la requete
 
-### Paramètres communs
+### Parametres communs
 
-| Paramètre | Type | Défaut | Description |
+| Parametre | Type | Defaut | Description |
 |-----------|------|--------|-------------|
-| `operation` | string | `"generate"` | Opération: `generate`, `extractCharacter`, `createCharacterSheet`, `composeScene` |
-| `aspectRatio` | string | `"16:9"` | Ratio: `1:1`, `16:9`, `9:16`, `2:3`, `3:2`, `4:3`, `21:9` |
+| `operation` | string | `"generate"` | Operation: `generate`, `extractCharacter`, `createCharacterSheet`, `composeScene` |
+| `imageModel` | string | `"imagen-3.0-generate-002"` | Modele: `imagen-3.0-generate-002` (qualite) ou `imagen-3.0-fast-generate-001` (rapide) |
+| `aspectRatio` | string | `"16:9"` | Ratio: `1:1`, `16:9`, `9:16`, `4:3`, `3:4` |
 | `outputFormat` | string | `"png"` | Format: `png`, `webp`, `jpeg` |
-| `model` | string | `"gemini-2.5-flash-preview-native-audio-dialog"` | Modèle Gemini |
-| `includeTextFeedback` | boolean | `false` | Inclure le feedback textuel du modèle |
+| `safetySetting` | string | `"block_medium_and_above"` | Filtre: `block_low_and_above`, `block_medium_and_above`, `block_only_high` |
 
-### Paramètres GCS (optionnels)
+### Nouveaux parametres Imagen 3
 
-| Paramètre | Type | Défaut | Description |
+| Parametre | Type | Defaut | Description |
 |-----------|------|--------|-------------|
-| `uploadToGcs` | boolean | `false` | Uploader l'image générée vers Google Cloud Storage |
+| `negativePrompt` | string | - | Elements a exclure de l'image (ex: "blurry, text, watermark") |
+| `seed` | integer | random | Graine pour reproductibilite (1-2147483647). Meme seed = meme resultat |
+| `enhancePrompt` | boolean | `false` | Laisse Imagen ameliorer automatiquement le prompt |
+| `addWatermark` | boolean | `false` | Ajoute un filigrane numerique |
+| `personGeneration` | string | `"allow_adult"` | `allow_adult` ou `dont_allow` |
+
+### Parametres GCS (optionnels)
+
+| Parametre | Type | Defaut | Description |
+|-----------|------|--------|-------------|
+| `uploadToGcs` | boolean | `false` | Uploader l'image generee vers Google Cloud Storage |
 | `gcsBucket` | string | - | **Requis si uploadToGcs=true.** Nom du bucket GCS |
-| `gcsPathPrefix` | string | `"gemini-images"` | Préfixe du chemin dans le bucket |
-| `signedUrlExpirationHours` | number | `24` | Durée de validité de l'URL signée (en heures) |
+| `gcsPathPrefix` | string | `"imagen3-images"` | Prefixe du chemin dans le bucket |
+| `signedUrlExpirationHours` | number | `24` | Duree de validite de l'URL signee (en heures) |
 | `userId` | string | - | ID utilisateur pour organiser les fichiers |
 
-### Paramètres pour `generate`
+### Parametres pour `generate`
 
-| Paramètre | Type | Description |
+| Parametre | Type | Description |
 |-----------|------|-------------|
-| `prompt` | string | **Requis.** Description de l'image à générer |
+| `prompt` | string | **Requis.** Description de l'image a generer |
+| `negativePrompt` | string | Elements a exclure (ex: "blurry, low quality") |
+| `seed` | integer | Seed pour reproductibilite |
 
-### Paramètres pour `extractCharacter`
+### Parametres pour `extractCharacter`
 
-| Paramètre | Type | Description |
+| Parametre | Type | Description |
 |-----------|------|-------------|
 | `sourceImage` | string | **Requis.** Image source en base64 |
-| `sourceImageMimeType` | string | Type MIME (défaut: `image/png`) |
-| `characterDescription` | string | Description du personnage à extraire (défaut: `"the main character"`) |
-| `backgroundType` | string | Type de fond: `white`, `transparent`, `solid` (défaut: `white`) |
+| `sourceImageMimeType` | string | Type MIME (defaut: `image/png`) |
+| `characterDescription` | string | Description du personnage a extraire (defaut: `"the main character"`) |
+| `backgroundType` | string | Type de fond: `white`, `transparent`, `solid` (defaut: `white`) |
 | `backgroundColor` | string | Couleur si `backgroundType=solid` (ex: `blue`, `#FF0000`) |
+| `negativePrompt` | string | Elements a exclure |
 
-### Paramètres pour `createCharacterSheet`
+### Parametres pour `createCharacterSheet`
 
-| Paramètre | Type | Description |
+| Parametre | Type | Description |
 |-----------|------|-------------|
 | `sourceImage` | string | **Requis.** Image source en base64 |
-| `sourceImageMimeType` | string | Type MIME (défaut: `image/png`) |
-| `views` | string[] | Vues à générer (défaut: `["front", "back"]`) |
-| `characterName` | string | Nom affiché dans le titre du sheet (optionnel) |
-| `includeLabels` | boolean | Inclure les labels texte (défaut: `true`) |
+| `sourceImageMimeType` | string | Type MIME (defaut: `image/png`) |
+| `views` | string[] | Vues a generer (defaut: `["front", "back"]`) |
+| `characterName` | string | Nom affiche dans le titre du sheet (optionnel) |
+| `includeLabels` | boolean | Inclure les labels texte (defaut: `true`) |
+| `seed` | integer | **Recommande.** Utiliser le meme seed pour coherence entre vues |
 
 **Vues disponibles:**
 - `front` - Vue de face
 - `back` - Vue de dos
-- `left side` - Vue côté gauche
-- `right side` - Vue côté droit
+- `left side` - Vue cote gauche
+- `right side` - Vue cote droit
 - `3/4` - Vue 3/4
 
-### Paramètres pour `composeScene`
+### Parametres pour `composeScene`
 
-| Paramètre | Type | Description |
+| Parametre | Type | Description |
 |-----------|------|-------------|
-| `referenceImages` | array | **Requis.** Images de référence (voir format ci-dessous) |
-| `scenePrompt` | string | **Requis.** Description de la scène à composer |
-| `promptStyle` | string | Style: `descriptive` (état final) ou `imperative` (actions) |
-| `lighting` | string | Style d'éclairage (ex: `"Golden hour"`, `"Studio lighting"`) |
-| `cameraAngle` | string | Angle de caméra (ex: `"3/4 back angle"`, `"close-up"`) |
+| `referenceImages` | array | **Requis.** Images de reference (voir format ci-dessous) |
+| `scenePrompt` | string | **Requis.** Description de la scene a composer |
+| `lighting` | string | Style d'eclairage (ex: `"Golden hour"`, `"Studio lighting"`) |
+| `cameraAngle` | string | Angle de camera (ex: `"3/4 back angle"`, `"close-up"`) |
+| `negativePrompt` | string | Elements a exclure |
+| `seed` | integer | Seed pour reproductibilite |
 
 **Format referenceImages:**
 ```json
@@ -154,7 +179,7 @@ Compose une scène en utilisant des images de référence.
 
 ## Format de sortie
 
-### Sans GCS (base64 uniquement)
+### Reponse standard
 
 ```json
 {
@@ -165,15 +190,17 @@ Compose une scène en utilisant des images de référence.
     "mimeType": "image/png",
     "format": "png"
   },
-  "model": "gemini-2.5-flash-preview-native-audio-dialog",
-  "textFeedback": null,
+  "model": "imagen-3.0-generate-002",
+  "seed": 42,
+  "textFeedback": "Generated a cute felt robot standing in a forest clearing...",
   "metadata": {
-    "processedAt": "2024-12-19T10:30:00Z"
+    "processedAt": "2024-12-19T10:30:00Z",
+    "apiVersion": "imagen-3"
   }
 }
 ```
 
-### Avec GCS (base64 + URL signée)
+### Avec GCS (base64 + URL signee)
 
 ```json
 {
@@ -186,22 +213,23 @@ Compose une scène en utilisant des images de référence.
   },
   "gcs": {
     "bucket": "my-bucket",
-    "path": "gemini-images/user-123/1703001234567-generate-png.png",
-    "gcsUrl": "gs://my-bucket/gemini-images/user-123/1703001234567-generate-png.png",
-    "signedUrl": "https://storage.googleapis.com/my-bucket/gemini-images/...",
+    "path": "imagen3-images/user-123/1703001234567-generate-png.png",
+    "gcsUrl": "gs://my-bucket/imagen3-images/user-123/1703001234567-generate-png.png",
+    "signedUrl": "https://storage.googleapis.com/my-bucket/imagen3-images/...",
     "expiresAt": "2024-12-20T10:30:00Z"
   },
-  "model": "gemini-2.5-flash-preview-native-audio-dialog",
-  "textFeedback": null,
+  "model": "imagen-3.0-generate-002",
+  "seed": 42,
   "metadata": {
-    "processedAt": "2024-12-19T10:30:00Z"
+    "processedAt": "2024-12-19T10:30:00Z",
+    "apiVersion": "imagen-3"
   }
 }
 ```
 
-## Exemples de requêtes
+## Exemples de requetes
 
-### Générer une image simple
+### Generer une image simple
 
 ```bash
 curl -X POST http://localhost:5678/webhook/gemini-image \
@@ -213,20 +241,30 @@ curl -X POST http://localhost:5678/webhook/gemini-image \
   }'
 ```
 
-### Générer et uploader vers GCS
+### Generer avec negative prompt et seed (reproductibilite)
 
 ```bash
 curl -X POST http://localhost:5678/webhook/gemini-image \
   -H "Content-Type: application/json" \
   -d '{
     "operation": "generate",
-    "prompt": "A cute robot made of felt, standing on a mountain",
-    "aspectRatio": "16:9",
-    "uploadToGcs": true,
-    "gcsBucket": "my-images-bucket",
-    "gcsPathPrefix": "generated",
-    "userId": "user-123",
-    "signedUrlExpirationHours": 48
+    "prompt": "A professional portrait of a business executive",
+    "negativePrompt": "blurry, low quality, text, watermark, distorted",
+    "seed": 42,
+    "safetySetting": "block_medium_and_above"
+  }'
+```
+
+### Generer avec le modele rapide (10x quota)
+
+```bash
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "generate",
+    "prompt": "A quick concept sketch of a futuristic car",
+    "imageModel": "imagen-3.0-fast-generate-001",
+    "aspectRatio": "16:9"
   }'
 ```
 
@@ -240,24 +278,12 @@ curl -X POST http://localhost:5678/webhook/gemini-image \
     "sourceImage": "'$(base64 -w0 image.png)'",
     "sourceImageMimeType": "image/png",
     "characterDescription": "the blue robot",
-    "backgroundType": "white"
+    "backgroundType": "white",
+    "negativePrompt": "artifacts, noise"
   }'
 ```
 
-### Extraire avec fond transparent
-
-```bash
-curl -X POST http://localhost:5678/webhook/gemini-image \
-  -H "Content-Type: application/json" \
-  -d '{
-    "operation": "extractCharacter",
-    "sourceImage": "'$(base64 -w0 image.png)'",
-    "characterDescription": "the main character",
-    "backgroundType": "transparent"
-  }'
-```
-
-### Créer un character sheet
+### Creer un character sheet coherent
 
 ```bash
 curl -X POST http://localhost:5678/webhook/gemini-image \
@@ -267,11 +293,12 @@ curl -X POST http://localhost:5678/webhook/gemini-image \
     "sourceImage": "'$(base64 -w0 character.png)'",
     "views": ["front", "back", "left side"],
     "characterName": "Robot",
-    "includeLabels": true
+    "includeLabels": true,
+    "seed": 123456
   }'
 ```
 
-### Composer une scène (style descriptif)
+### Composer une scene
 
 ```bash
 curl -X POST http://localhost:5678/webhook/gemini-image \
@@ -283,108 +310,124 @@ curl -X POST http://localhost:5678/webhook/gemini-image \
         "data": "'$(base64 -w0 character-sheet.png)'",
         "mimeType": "image/png",
         "role": "Robot character sheet"
-      },
-      {
-        "data": "'$(base64 -w0 previous-scene.png)'",
-        "mimeType": "image/png",
-        "role": "Previous scene"
       }
     ],
     "scenePrompt": "The robot walks through a dense felt forest",
-    "promptStyle": "descriptive",
     "lighting": "Golden hour, soft and diffused",
     "cameraAngle": "3/4 back angle",
-    "aspectRatio": "16:9"
+    "aspectRatio": "16:9",
+    "negativePrompt": "blurry, distorted"
   }'
 ```
 
-### Composer une scène (style impératif)
+## Aspect Ratios supportes (Imagen 3)
 
-```bash
-curl -X POST http://localhost:5678/webhook/gemini-image \
-  -H "Content-Type: application/json" \
-  -d '{
-    "operation": "composeScene",
-    "referenceImages": [
-      {
-        "data": "'$(base64 -w0 scene.png)'",
-        "mimeType": "image/png",
-        "role": "Current scene"
-      }
-    ],
-    "scenePrompt": "Remove the ice axes. Move the mountain to the left. Add a wooden bridge between the peaks.",
-    "promptStyle": "imperative",
-    "aspectRatio": "16:9"
-  }'
-```
-
-## Aspect Ratios
-
-| Ratio | Dimensions | Usage |
+| Ratio | Resolution | Usage |
 |-------|------------|-------|
-| `1:1` | 1024×1024 | Avatars, icônes |
-| `2:3` | 768×1152 | Portraits |
-| `3:2` | 1152×768 | Paysages |
-| `9:16` | 768×1344 | Mobile, Stories |
-| `16:9` | 1344×768 | Bannières, vidéos |
-| `21:9` | ~1344×576 | Cinématique |
+| `1:1` | 1024x1024 | Avatars, icones |
+| `3:4` | 896x1280 | Portraits |
+| `4:3` | 1280x896 | Paysages |
+| `9:16` | 768x1408 | Mobile, Stories |
+| `16:9` | 1408x768 | Bannieres, videos |
 
-## Techniques pour la cohérence (du Colab)
+**Note**: Les ratios `2:3`, `3:2`, `21:9` ne sont **pas supportes** par Imagen 3.
 
-### Character Sheet
-Créez d'abord un character sheet avec vues front/back pour maintenir la cohérence dans les scènes suivantes.
+## Safety Filters (Filtres de securite)
 
-### Prompts descriptifs vs impératifs
+| Niveau | Description |
+|--------|-------------|
+| `block_low_and_above` | Le plus strict - bloque la plupart du contenu potentiellement sensible |
+| `block_medium_and_above` | Equilibre (defaut) - filtrage modere |
+| `block_only_high` | Le plus permissif - bloque uniquement le contenu clairement inapproprie |
 
-**Descriptif** (décrit l'état final):
+## Pipeline creatif Image -> Video
+
+Pour transformer une image Imagen 3 en video Veo:
+
 ```
-The robot is sleeping peacefully in a hammock...
+1. createCharacterSheet (imagen-3.0-generate-002)
+   -> Personnage coherent sous tous angles
+
+2. composeScene (imagen-3.0-capability-001)
+   -> Personnage place dans decor
+
+3. veo-video:generateFromImage
+   -> Image s'anime naturellement
 ```
 
-**Impératif** (décrit les actions):
-```
-Remove the ice axes. Move the mountain to the left. Add a bridge...
-```
-
-### Références dans le prompt
-```
-- Image 1: Robot character sheet.
-- Image 2: Previous scene.
-- Scene: The robot walks through the forest...
-```
+**Conseil**: Utilisez le **meme aspect ratio** sur Image et Video pour eviter les deformations.
 
 ## Codes d'erreur
 
 | Code | Description |
 |------|-------------|
 | 400 | Aucun input fourni (ni prompt, ni sourceImage, ni scenePrompt) |
-| 500 | Erreur de l'API Gemini |
+| 400 | `SAFETY_BLOCKED` - Prompt bloque par les filtres de securite |
+| 500 | Erreur de l'API Imagen 3 |
 | 500 | Erreur d'authentification Vertex AI |
+
+### Erreurs de securite
+
+Si le prompt est bloque:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "SAFETY_BLOCKED",
+    "reason": "SAFETY_REASON_VIOLENCE",
+    "message": "Image generation blocked by safety filter",
+    "suggestion": "Please reformulate your prompt to avoid sensitive content"
+  }
+}
+```
 
 ## APIs Google requises
 
 | API | Console URL | Requis pour |
 |-----|-------------|-------------|
-| **Vertex AI API** | [Activer](https://console.cloud.google.com/flows/enableapi?apiid=aiplatform.googleapis.com) | Génération d'images |
+| **Vertex AI API** | [Activer](https://console.cloud.google.com/flows/enableapi?apiid=aiplatform.googleapis.com) | Generation d'images |
 | **Cloud Storage API** | [Activer](https://console.cloud.google.com/flows/enableapi?apiid=storage.googleapis.com) | Upload GCS (si `uploadToGcs=true`) |
 
-## Notes d'implémentation
+## Notes d'implementation
 
-- Le workflow utilise le modèle `gemini-2.5-flash-preview-native-audio-dialog` (Nano Banana)
-- Location: `global` pour les modèles preview
-- Les credentials Vertex AI sont gérés par n8n (pas de clé en dur)
-- Les images sont retournées en base64 dans la réponse JSON
-- **GCS Upload**: Optionnel, permet de stocker l'image dans Cloud Storage et retourne une URL signée
-- Les URLs signées expirent après la durée configurée (défaut: 24h)
+- Le workflow utilise **Imagen 3** via Vertex AI (modeles stables, non-preview)
+- Location recommandee: `us-central1` pour Imagen 3
+- Les credentials Vertex AI sont geres par n8n (pas de cle en dur)
+- Les images sont retournees en base64 dans la reponse JSON
+- Le seed est retourne dans la reponse pour reproduction ulterieure
+- **GCS Upload**: Optionnel, permet de stocker l'image dans Cloud Storage et retourne une URL signee
 
-## Intégration avec MCP Server
+## Migration depuis v1 (Gemini 2.5 Flash)
+
+### Changements de parametres
+
+| Ancien | Nouveau | Notes |
+|--------|---------|-------|
+| `model: "gemini-2.5-flash-preview-native-audio-dialog"` | `imageModel: "imagen-3.0-generate-002"` | Nouveau nom de parametre |
+| `aspectRatio: "2:3"` | `aspectRatio: "3:4"` | Ratio proche |
+| `aspectRatio: "3:2"` | `aspectRatio: "4:3"` | Ratio proche |
+| `aspectRatio: "21:9"` | `aspectRatio: "16:9"` | Non supporte, utiliser 16:9 |
+| - | `negativePrompt` | Nouveau parametre |
+| - | `seed` | Nouveau parametre |
+| - | `safetySetting` | Nouveau parametre |
+
+### Nouveautes v2
+
+- Support du **negative prompt** pour exclure des elements
+- Support du **seed** pour la reproductibilite
+- **Safety filters** configurables
+- Modele **Fast** pour 10x plus de quota
+- Retour du seed utilise dans la reponse
+
+## Integration avec MCP Server
 
 Exemple d'outil MCP:
 
 ```typescript
 {
   name: "generate_image",
-  description: "Generate an image using Gemini",
+  description: "Generate an image using Imagen 3",
   inputSchema: {
     type: "object",
     properties: {
@@ -394,9 +437,16 @@ Exemple d'outil MCP:
         default: "generate"
       },
       prompt: { type: "string", description: "Text prompt for image generation" },
+      negativePrompt: { type: "string", description: "Elements to exclude" },
+      seed: { type: "integer", description: "Seed for reproducibility" },
+      imageModel: {
+        type: "string",
+        enum: ["imagen-3.0-generate-002", "imagen-3.0-fast-generate-001"],
+        default: "imagen-3.0-generate-002"
+      },
       aspectRatio: {
         type: "string",
-        enum: ["1:1", "16:9", "9:16", "2:3", "3:2"],
+        enum: ["1:1", "16:9", "9:16", "4:3", "3:4"],
         default: "16:9"
       }
     },
@@ -407,6 +457,7 @@ Exemple d'outil MCP:
 
 ## Voir aussi
 
+- [Veo Video MCP Server API](./veo-video-mcp-server.md) - Pour l'animation des images
 - [Video Transcription MCP Server API](./video-transcription-mcp-server.md)
 - [Knowledge Graph MCP Server API](./knowledge-graph-mcp-server.md)
 - [Workflow Best Practices](./WORKFLOW_BEST_PRACTICES.md)

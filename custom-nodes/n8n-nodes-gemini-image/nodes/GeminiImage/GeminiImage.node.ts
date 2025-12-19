@@ -8,10 +8,14 @@ import {
 } from 'n8n-workflow';
 
 import {
-  GeminiImageClient,
-  GeminiImageOptions,
+  Imagen3Client,
+  Imagen3GenerateOptions,
+  Imagen3EditOptions,
   ReferenceImage,
-} from '../../shared/GeminiImageClient';
+  IMAGEN3_MODELS,
+  IMAGEN3_ASPECT_RATIOS,
+  IMAGEN3_SAFETY_SETTINGS,
+} from '../../shared/Imagen3Client';
 import { GcsUploader } from '../../shared/GcsUploader';
 
 export class GeminiImage implements INodeType {
@@ -20,9 +24,9 @@ export class GeminiImage implements INodeType {
     name: 'geminiImage',
     icon: 'file:gemini-image.svg',
     group: ['transform'],
-    version: 1,
+    version: 2,
     subtitle: '={{$parameter["operation"]}}',
-    description: 'Generate and manipulate images using Gemini 2.5 Flash Image (Nano Banana)',
+    description: 'Generate and manipulate images using Imagen 3 (Vertex AI)',
     defaults: {
       name: 'Gemini Image',
     },
@@ -31,42 +35,10 @@ export class GeminiImage implements INodeType {
     credentials: [
       {
         name: 'googleVertexAiApi',
-        required: false,
-        displayOptions: {
-          show: {
-            credentialType: ['vertexai'],
-          },
-        },
-      },
-      {
-        name: 'googleAiStudioApi',
-        required: false,
-        displayOptions: {
-          show: {
-            credentialType: ['aistudio'],
-          },
-        },
+        required: true,
       },
     ],
     properties: [
-      // Credential Type
-      {
-        displayName: 'Credential Type',
-        name: 'credentialType',
-        type: 'options',
-        options: [
-          {
-            name: 'Google Vertex AI',
-            value: 'vertexai',
-          },
-          {
-            name: 'Google AI Studio',
-            value: 'aistudio',
-          },
-        ],
-        default: 'vertexai',
-        description: 'Which API to use for Gemini',
-      },
       // Operation
       {
         displayName: 'Operation',
@@ -353,7 +325,32 @@ export class GeminiImage implements INodeType {
           },
         },
       },
-      // Aspect Ratio
+      // Model Selection
+      {
+        displayName: 'Model',
+        name: 'imageModel',
+        type: 'options',
+        options: [
+          {
+            name: 'Imagen 3 Standard (High Quality)',
+            value: 'imagen-3.0-generate-002',
+            description: 'High quality generation - 20 requests/min quota',
+          },
+          {
+            name: 'Imagen 3 Fast (10x Quota)',
+            value: 'imagen-3.0-fast-generate-001',
+            description: 'Faster generation - 200 requests/min quota',
+          },
+        ],
+        default: 'imagen-3.0-generate-002',
+        description: 'Which Imagen 3 model to use for generation',
+        displayOptions: {
+          show: {
+            operation: ['generate', 'createCharacterSheet'],
+          },
+        },
+      },
+      // Aspect Ratio (Imagen 3 supported ratios only)
       {
         displayName: 'Aspect Ratio',
         name: 'aspectRatio',
@@ -362,18 +359,72 @@ export class GeminiImage implements INodeType {
           { name: '1:1 (Square)', value: '1:1' },
           { name: '16:9 (Landscape)', value: '16:9' },
           { name: '9:16 (Portrait)', value: '9:16' },
-          { name: '2:3 (Portrait Photo)', value: '2:3' },
-          { name: '3:2 (Landscape Photo)', value: '3:2' },
           { name: '4:3 (Presentation)', value: '4:3' },
-          { name: '21:9 (Cinematic)', value: '21:9' },
+          { name: '3:4 (Portrait)', value: '3:4' },
         ],
         default: '16:9',
-        description: 'Aspect ratio of the generated image',
+        description: 'Aspect ratio of the generated image (Imagen 3 supported ratios)',
         displayOptions: {
           show: {
             operation: ['generate', 'composeScene'],
           },
         },
+      },
+      // Negative Prompt
+      {
+        displayName: 'Negative Prompt',
+        name: 'negativePrompt',
+        type: 'string',
+        typeOptions: {
+          rows: 2,
+        },
+        default: '',
+        placeholder: 'blurry, low quality, text, watermark, distorted',
+        description: 'Elements to exclude from the generated image',
+        displayOptions: {
+          show: {
+            operation: ['generate', 'composeScene', 'extractCharacter'],
+          },
+        },
+      },
+      // Seed
+      {
+        displayName: 'Seed',
+        name: 'seed',
+        type: 'number',
+        default: 0,
+        placeholder: '42',
+        description: 'Seed for reproducibility (0 = random). Same seed + same prompt = same result.',
+        displayOptions: {
+          show: {
+            operation: ['generate', 'createCharacterSheet', 'composeScene'],
+          },
+        },
+      },
+      // Safety Setting
+      {
+        displayName: 'Safety Filter',
+        name: 'safetySetting',
+        type: 'options',
+        options: [
+          {
+            name: 'Block Low and Above (Strictest)',
+            value: 'block_low_and_above',
+            description: 'Block most potentially sensitive content',
+          },
+          {
+            name: 'Block Medium and Above (Default)',
+            value: 'block_medium_and_above',
+            description: 'Balanced filtering',
+          },
+          {
+            name: 'Block Only High (Most Permissive)',
+            value: 'block_only_high',
+            description: 'Only block clearly inappropriate content',
+          },
+        ],
+        default: 'block_medium_and_above',
+        description: 'Safety filter level for content generation',
       },
       // Output Format
       {
@@ -397,18 +448,36 @@ export class GeminiImage implements INodeType {
         default: {},
         options: [
           {
-            displayName: 'Model',
-            name: 'model',
-            type: 'string',
-            default: 'gemini-2.5-flash-preview-native-audio-dialog',
-            description: 'Gemini model to use (default: Nano Banana)',
-          },
-          {
             displayName: 'Include Text Feedback',
             name: 'includeTextFeedback',
             type: 'boolean',
+            default: true,
+            description: 'Include textual feedback from the model (recommended for MCP usage)',
+          },
+          {
+            displayName: 'Enhance Prompt',
+            name: 'enhancePrompt',
+            type: 'boolean',
             default: false,
-            description: 'Include textual feedback from the model',
+            description: 'Let Imagen 3 automatically improve your prompt',
+          },
+          {
+            displayName: 'Add Watermark',
+            name: 'addWatermark',
+            type: 'boolean',
+            default: false,
+            description: 'Add digital watermark to generated images',
+          },
+          {
+            displayName: 'Person Generation',
+            name: 'personGeneration',
+            type: 'options',
+            options: [
+              { name: 'Allow Adults', value: 'allow_adult' },
+              { name: 'Do Not Allow', value: 'dont_allow' },
+            ],
+            default: 'allow_adult',
+            description: 'Whether to allow generation of human faces',
           },
           {
             displayName: 'Upload to GCS',
@@ -479,11 +548,14 @@ export class GeminiImage implements INodeType {
     for (let i = 0; i < items.length; i++) {
       try {
         const operation = this.getNodeParameter('operation', i) as string;
-        const credentialType = this.getNodeParameter('credentialType', i) as string;
         const outputFormat = this.getNodeParameter('outputFormat', i) as string;
+        const safetySetting = this.getNodeParameter('safetySetting', i, 'block_medium_and_above') as string;
+
         const advancedOptions = this.getNodeParameter('options', i, {}) as {
-          model?: string;
           includeTextFeedback?: boolean;
+          enhancePrompt?: boolean;
+          addWatermark?: boolean;
+          personGeneration?: string;
           uploadToGcs?: boolean;
           gcsBucket?: string;
           gcsPathPrefix?: string;
@@ -491,27 +563,18 @@ export class GeminiImage implements INodeType {
           userId?: string;
         };
 
-        // Get credentials
-        const credentials = await this.getCredentials(
-          credentialType === 'vertexai' ? 'googleVertexAiApi' : 'googleAiStudioApi'
-        );
+        // Get credentials (Imagen 3 requires Vertex AI)
+        const credentials = await this.getCredentials('googleVertexAiApi');
 
-        // Create client
-        const client = credentialType === 'vertexai'
-          ? new GeminiImageClient({
-              projectId: credentials.projectId as string,
-              location: (credentials.location as string) || 'global',
-              serviceAccountKey: credentials.serviceAccountKey as string | undefined,
-            })
-          : new GeminiImageClient({
-              apiKey: credentials.apiKey as string,
-            });
+        // Create Imagen 3 client
+        const client = new Imagen3Client({
+          projectId: credentials.projectId as string,
+          location: (credentials.location as string) || 'us-central1',
+          serviceAccountKey: credentials.serviceAccountKey as string | undefined,
+        });
 
-        const imageOptions: GeminiImageOptions = {
-          model: advancedOptions.model,
-          outputFormat: outputFormat as 'png' | 'webp' | 'jpeg',
-          includeTextFeedback: advancedOptions.includeTextFeedback,
-        };
+        // Map output format to MIME type
+        const outputMimeType = `image/${outputFormat}` as 'image/png' | 'image/jpeg' | 'image/webp';
 
         let result;
 
@@ -519,13 +582,28 @@ export class GeminiImage implements INodeType {
           case 'generate': {
             const prompt = this.getNodeParameter('prompt', i) as string;
             const aspectRatio = this.getNodeParameter('aspectRatio', i) as string;
+            const imageModel = this.getNodeParameter('imageModel', i, 'imagen-3.0-generate-002') as string;
+            const negativePrompt = this.getNodeParameter('negativePrompt', i, '') as string;
+            const seed = this.getNodeParameter('seed', i, 0) as number;
 
             if (!prompt) {
               throw new NodeOperationError(this.getNode(), 'Prompt is required', { itemIndex: i });
             }
 
-            imageOptions.aspectRatio = aspectRatio as GeminiImageOptions['aspectRatio'];
-            result = await client.generate(prompt, imageOptions);
+            const generateOptions: Imagen3GenerateOptions = {
+              model: imageModel as Imagen3GenerateOptions['model'],
+              aspectRatio: aspectRatio as Imagen3GenerateOptions['aspectRatio'],
+              outputFormat: outputMimeType,
+              safetySetting: safetySetting as Imagen3GenerateOptions['safetySetting'],
+              negativePrompt: negativePrompt || undefined,
+              seed: seed > 0 ? seed : undefined,
+              enhancePrompt: advancedOptions.enhancePrompt,
+              addWatermark: advancedOptions.addWatermark,
+              personGeneration: advancedOptions.personGeneration as Imagen3GenerateOptions['personGeneration'],
+              includeTextFeedback: advancedOptions.includeTextFeedback ?? true,
+            };
+
+            result = await client.generate(prompt, generateOptions);
             break;
           }
 
@@ -535,6 +613,7 @@ export class GeminiImage implements INodeType {
             const characterDescription = this.getNodeParameter('characterDescription', i) as string;
             const backgroundType = this.getNodeParameter('backgroundType', i, 'white') as 'transparent' | 'white' | 'solid';
             const backgroundColor = this.getNodeParameter('backgroundColor', i, '') as string;
+            const negativePrompt = this.getNodeParameter('negativePrompt', i, '') as string;
 
             if (!sourceImage) {
               throw new NodeOperationError(this.getNode(), 'Source image is required', { itemIndex: i });
@@ -546,7 +625,9 @@ export class GeminiImage implements INodeType {
             };
 
             result = await client.extractCharacter(refImage, characterDescription, {
-              ...imageOptions,
+              outputFormat: outputMimeType,
+              safetySetting: safetySetting as Imagen3EditOptions['safetySetting'],
+              negativePrompt: negativePrompt || undefined,
               backgroundType,
               backgroundColor: backgroundColor || undefined,
             });
@@ -559,6 +640,8 @@ export class GeminiImage implements INodeType {
             const views = this.getNodeParameter('views', i) as string[];
             const characterName = this.getNodeParameter('characterName', i, '') as string;
             const includeLabels = this.getNodeParameter('includeLabels', i, true) as boolean;
+            const imageModel = this.getNodeParameter('imageModel', i, 'imagen-3.0-generate-002') as string;
+            const seed = this.getNodeParameter('seed', i, 0) as number;
 
             if (!sourceImage) {
               throw new NodeOperationError(this.getNode(), 'Source image is required', { itemIndex: i });
@@ -574,7 +657,12 @@ export class GeminiImage implements INodeType {
             };
 
             result = await client.createCharacterSheet(refImage, views, {
-              ...imageOptions,
+              model: imageModel as Imagen3GenerateOptions['model'],
+              outputFormat: outputMimeType,
+              safetySetting: safetySetting as Imagen3GenerateOptions['safetySetting'],
+              seed: seed > 0 ? seed : undefined,
+              enhancePrompt: advancedOptions.enhancePrompt,
+              personGeneration: advancedOptions.personGeneration as Imagen3GenerateOptions['personGeneration'],
               characterName: characterName || undefined,
               includeLabels,
             });
@@ -587,9 +675,10 @@ export class GeminiImage implements INodeType {
             };
             const scenePrompt = this.getNodeParameter('scenePrompt', i) as string;
             const aspectRatio = this.getNodeParameter('aspectRatio', i) as string;
-            const promptStyle = this.getNodeParameter('promptStyle', i, 'descriptive') as 'descriptive' | 'imperative';
             const lighting = this.getNodeParameter('lighting', i, '') as string;
             const cameraAngle = this.getNodeParameter('cameraAngle', i, '') as string;
+            const negativePrompt = this.getNodeParameter('negativePrompt', i, '') as string;
+            const seed = this.getNodeParameter('seed', i, 0) as number;
 
             if (!scenePrompt) {
               throw new NodeOperationError(this.getNode(), 'Scene prompt is required', { itemIndex: i });
@@ -605,10 +694,11 @@ export class GeminiImage implements INodeType {
               throw new NodeOperationError(this.getNode(), 'At least one reference image is required for scene composition', { itemIndex: i });
             }
 
-            imageOptions.aspectRatio = aspectRatio as GeminiImageOptions['aspectRatio'];
             result = await client.composeScene(referenceImages, scenePrompt, {
-              ...imageOptions,
-              promptStyle,
+              outputFormat: outputMimeType,
+              safetySetting: safetySetting as Imagen3EditOptions['safetySetting'],
+              negativePrompt: negativePrompt || undefined,
+              seed: seed > 0 ? seed : undefined,
               lighting: lighting || undefined,
               cameraAngle: cameraAngle || undefined,
             });
@@ -624,9 +714,11 @@ export class GeminiImage implements INodeType {
           operation,
           mimeType: result.mimeType,
           model: result.model,
+          seed: result.seed,
           textFeedback: result.textFeedback,
           metadata: {
             processedAt: new Date().toISOString(),
+            apiVersion: 'imagen-3',
           },
         };
 
@@ -653,10 +745,10 @@ export class GeminiImage implements INodeType {
           const gcsUploader = new GcsUploader(
             {
               bucketName: advancedOptions.gcsBucket,
-              pathPrefix: advancedOptions.gcsPathPrefix || 'gemini-images',
+              pathPrefix: advancedOptions.gcsPathPrefix || 'imagen3-images',
               signedUrlExpirationHours: advancedOptions.signedUrlExpirationHours || 24,
             },
-            credentialType === 'vertexai' ? credentials.serviceAccountKey as string | undefined : undefined
+            credentials.serviceAccountKey as string | undefined
           );
 
           const gcsResult = await gcsUploader.upload(
