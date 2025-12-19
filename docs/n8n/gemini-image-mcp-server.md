@@ -2,6 +2,51 @@
 
 Documentation pour le serveur MCP Gemini Image accessible via webhook n8n.
 
+## Quick Start
+
+```bash
+# 1. Générer une image simple
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "A cute robot made of felt", "aspectRatio": "16:9"}'
+
+# 2. Créer un character sheet
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -d '{"operation": "createCharacterSheet", "sourceImage": "'$(base64 -w0 robot.png)'", "views": ["front", "back"]}'
+
+# 3. Composer une scène
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -d '{"operation": "composeScene", "referenceImages": [{"data": "'$(base64 -w0 sheet.png)'", "role": "character"}], "scenePrompt": "The robot in a forest"}'
+```
+
+## Installation
+
+### Prérequis
+
+1. **n8n** installé et fonctionnel
+2. **Google Cloud Project** avec Vertex AI API activée
+3. **Credentials Vertex AI** configurés dans n8n
+
+### Installation du Custom Node
+
+```bash
+# 1. Copier le package dans le dossier nodes de n8n
+cp -r custom-nodes/n8n-nodes-gemini-image ~/.n8n/nodes/
+
+# 2. Installer les dépendances
+cd ~/.n8n/nodes
+npm install
+
+# 3. Redémarrer n8n
+```
+
+### Import du Workflow
+
+1. Dans n8n, aller dans **Workflows** → **Import**
+2. Sélectionner `workflows/gemini-image-workflow.json`
+3. Configurer les credentials Vertex AI dans le node "Gemini Image"
+4. Activer le workflow
+
 ## Endpoint
 
 ```
