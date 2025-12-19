@@ -3,6 +3,7 @@ import {
   INodeExecutionData,
   INodeType,
   INodeTypeDescription,
+  IDataObject,
   NodeOperationError,
 } from 'n8n-workflow';
 
@@ -11,6 +12,7 @@ import {
   GeminiImageOptions,
   ReferenceImage,
 } from '../../shared/GeminiImageClient';
+import { GcsUploader } from '../../shared/GcsUploader';
 
 export class GeminiImage implements INodeType {
   description: INodeTypeDescription = {
@@ -303,6 +305,63 @@ export class GeminiImage implements INodeType {
             default: false,
             description: 'Include textual feedback from the model',
           },
+          {
+            displayName: 'Upload to GCS',
+            name: 'uploadToGcs',
+            type: 'boolean',
+            default: false,
+            description: 'Upload generated image to Google Cloud Storage and return signed URL',
+          },
+          {
+            displayName: 'GCS Bucket',
+            name: 'gcsBucket',
+            type: 'string',
+            default: '',
+            placeholder: 'my-bucket-name',
+            description: 'Google Cloud Storage bucket name (required if uploadToGcs is true)',
+            displayOptions: {
+              show: {
+                uploadToGcs: [true],
+              },
+            },
+          },
+          {
+            displayName: 'GCS Path Prefix',
+            name: 'gcsPathPrefix',
+            type: 'string',
+            default: 'gemini-images',
+            description: 'Path prefix for uploaded images in the bucket',
+            displayOptions: {
+              show: {
+                uploadToGcs: [true],
+              },
+            },
+          },
+          {
+            displayName: 'Signed URL Expiration (Hours)',
+            name: 'signedUrlExpirationHours',
+            type: 'number',
+            default: 24,
+            description: 'How many hours the signed URL should be valid',
+            displayOptions: {
+              show: {
+                uploadToGcs: [true],
+              },
+            },
+          },
+          {
+            displayName: 'User ID',
+            name: 'userId',
+            type: 'string',
+            default: '',
+            placeholder: 'user-123',
+            description: 'Optional user ID to organize files in GCS',
+            displayOptions: {
+              show: {
+                uploadToGcs: [true],
+              },
+            },
+          },
         ],
       },
     ],
@@ -320,6 +379,11 @@ export class GeminiImage implements INodeType {
         const advancedOptions = this.getNodeParameter('options', i, {}) as {
           model?: string;
           includeTextFeedback?: boolean;
+          uploadToGcs?: boolean;
+          gcsBucket?: string;
+          gcsPathPrefix?: string;
+          signedUrlExpirationHours?: number;
+          userId?: string;
         };
 
         // Get credentials
@@ -423,16 +487,18 @@ export class GeminiImage implements INodeType {
         }
 
         // Prepare output
-        const outputData: INodeExecutionData = {
-          json: {
-            operation,
-            mimeType: result.mimeType,
-            model: result.model,
-            textFeedback: result.textFeedback,
-            metadata: {
-              processedAt: new Date().toISOString(),
-            },
+        const jsonOutput: IDataObject = {
+          operation,
+          mimeType: result.mimeType,
+          model: result.model,
+          textFeedback: result.textFeedback,
+          metadata: {
+            processedAt: new Date().toISOString(),
           },
+        };
+
+        const outputData: INodeExecutionData = {
+          json: jsonOutput,
           binary: {
             data: await this.helpers.prepareBinaryData(
               result.imageData,
@@ -443,7 +509,38 @@ export class GeminiImage implements INodeType {
         };
 
         // Also include base64 in JSON for easy use
-        outputData.json.imageBase64 = result.imageData.toString('base64');
+        jsonOutput.imageBase64 = result.imageData.toString('base64');
+
+        // Upload to GCS if requested
+        if (advancedOptions.uploadToGcs) {
+          if (!advancedOptions.gcsBucket) {
+            throw new NodeOperationError(this.getNode(), 'GCS Bucket is required when uploadToGcs is enabled', { itemIndex: i });
+          }
+
+          const gcsUploader = new GcsUploader(
+            {
+              bucketName: advancedOptions.gcsBucket,
+              pathPrefix: advancedOptions.gcsPathPrefix || 'gemini-images',
+              signedUrlExpirationHours: advancedOptions.signedUrlExpirationHours || 24,
+            },
+            credentialType === 'vertexai' ? credentials.serviceAccountKey as string | undefined : undefined
+          );
+
+          const gcsResult = await gcsUploader.upload(
+            result.imageData,
+            `${operation}-${outputFormat}.${outputFormat}`,
+            result.mimeType,
+            advancedOptions.userId
+          );
+
+          jsonOutput.gcs = {
+            bucket: gcsResult.bucket,
+            path: gcsResult.path,
+            gcsUrl: gcsResult.gcsUrl,
+            signedUrl: gcsResult.signedUrl,
+            expiresAt: gcsResult.expiresAt.toISOString(),
+          };
+        }
 
         returnData.push(outputData);
       } catch (error) {

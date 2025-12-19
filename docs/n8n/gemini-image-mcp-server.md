@@ -38,6 +38,16 @@ Compose une scène en utilisant des images de référence.
 | `model` | string | `"gemini-2.5-flash-preview-native-audio-dialog"` | Modèle Gemini |
 | `includeTextFeedback` | boolean | `false` | Inclure le feedback textuel du modèle |
 
+### Paramètres GCS (optionnels)
+
+| Paramètre | Type | Défaut | Description |
+|-----------|------|--------|-------------|
+| `uploadToGcs` | boolean | `false` | Uploader l'image générée vers Google Cloud Storage |
+| `gcsBucket` | string | - | **Requis si uploadToGcs=true.** Nom du bucket GCS |
+| `gcsPathPrefix` | string | `"gemini-images"` | Préfixe du chemin dans le bucket |
+| `signedUrlExpirationHours` | number | `24` | Durée de validité de l'URL signée (en heures) |
+| `userId` | string | - | ID utilisateur pour organiser les fichiers |
+
 ### Paramètres pour `generate`
 
 | Paramètre | Type | Description |
@@ -92,6 +102,8 @@ Compose une scène en utilisant des images de référence.
 
 ## Format de sortie
 
+### Sans GCS (base64 uniquement)
+
 ```json
 {
   "success": true,
@@ -100,6 +112,32 @@ Compose une scène en utilisant des images de référence.
     "base64": "<base64_encoded_image>",
     "mimeType": "image/png",
     "format": "png"
+  },
+  "model": "gemini-2.5-flash-preview-native-audio-dialog",
+  "textFeedback": null,
+  "metadata": {
+    "processedAt": "2024-12-19T10:30:00Z"
+  }
+}
+```
+
+### Avec GCS (base64 + URL signée)
+
+```json
+{
+  "success": true,
+  "operation": "generate",
+  "image": {
+    "base64": "<base64_encoded_image>",
+    "mimeType": "image/png",
+    "format": "png"
+  },
+  "gcs": {
+    "bucket": "my-bucket",
+    "path": "gemini-images/user-123/1703001234567-generate-png.png",
+    "gcsUrl": "gs://my-bucket/gemini-images/user-123/1703001234567-generate-png.png",
+    "signedUrl": "https://storage.googleapis.com/my-bucket/gemini-images/...",
+    "expiresAt": "2024-12-20T10:30:00Z"
   },
   "model": "gemini-2.5-flash-preview-native-audio-dialog",
   "textFeedback": null,
@@ -120,6 +158,23 @@ curl -X POST http://localhost:5678/webhook/gemini-image \
     "operation": "generate",
     "prompt": "A cute robot made of felt, standing on a mountain, studio lighting, soft textures",
     "aspectRatio": "16:9"
+  }'
+```
+
+### Générer et uploader vers GCS
+
+```bash
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "generate",
+    "prompt": "A cute robot made of felt, standing on a mountain",
+    "aspectRatio": "16:9",
+    "uploadToGcs": true,
+    "gcsBucket": "my-images-bucket",
+    "gcsPathPrefix": "generated",
+    "userId": "user-123",
+    "signedUrlExpirationHours": 48
   }'
 ```
 
@@ -217,9 +272,10 @@ Remove the ice axes. Move the mountain to the left. Add a bridge...
 
 ## APIs Google requises
 
-| API | Console URL |
-|-----|-------------|
-| **Vertex AI API** | [Activer](https://console.cloud.google.com/flows/enableapi?apiid=aiplatform.googleapis.com) |
+| API | Console URL | Requis pour |
+|-----|-------------|-------------|
+| **Vertex AI API** | [Activer](https://console.cloud.google.com/flows/enableapi?apiid=aiplatform.googleapis.com) | Génération d'images |
+| **Cloud Storage API** | [Activer](https://console.cloud.google.com/flows/enableapi?apiid=storage.googleapis.com) | Upload GCS (si `uploadToGcs=true`) |
 
 ## Notes d'implémentation
 
@@ -227,6 +283,8 @@ Remove the ice axes. Move the mountain to the left. Add a bridge...
 - Location: `global` pour les modèles preview
 - Les credentials Vertex AI sont gérés par n8n (pas de clé en dur)
 - Les images sont retournées en base64 dans la réponse JSON
+- **GCS Upload**: Optionnel, permet de stocker l'image dans Cloud Storage et retourne une URL signée
+- Les URLs signées expirent après la durée configurée (défaut: 24h)
 
 ## Intégration avec MCP Server
 

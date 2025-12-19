@@ -56,7 +56,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Prepare data for Gemini Image node\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\n// Get operation from request (default: generate)\nconst operation = body.operation || 'generate';\n\n// Common parameters\nconst aspectRatio = body.aspectRatio || '16:9';\nconst outputFormat = body.outputFormat || 'png';\nconst model = body.model || 'gemini-2.5-flash-preview-native-audio-dialog';\nconst includeTextFeedback = body.includeTextFeedback === true || body.includeTextFeedback === 'true';\n\n// Operation-specific parameters\nconst result = {\n  operation,\n  aspectRatio,\n  outputFormat,\n  model,\n  includeTextFeedback,\n  originalRequest: { ...body }\n};\n\nswitch (operation) {\n  case 'generate':\n    result.prompt = body.prompt || '';\n    break;\n    \n  case 'extractCharacter':\n    result.sourceImage = body.sourceImage || '';\n    result.sourceImageMimeType = body.sourceImageMimeType || 'image/png';\n    result.characterDescription = body.characterDescription || 'the main character';\n    break;\n    \n  case 'createCharacterSheet':\n    result.sourceImage = body.sourceImage || '';\n    result.sourceImageMimeType = body.sourceImageMimeType || 'image/png';\n    result.views = body.views || ['front', 'back'];\n    break;\n    \n  case 'composeScene':\n    result.referenceImages = body.referenceImages || [];\n    result.scenePrompt = body.scenePrompt || '';\n    break;\n}\n\nreturn [{ json: result }];"
+        "jsCode": "// Prepare data for Gemini Image node\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\n// Get operation from request (default: generate)\nconst operation = body.operation || 'generate';\n\n// Common parameters\nconst aspectRatio = body.aspectRatio || '16:9';\nconst outputFormat = body.outputFormat || 'png';\nconst model = body.model || 'gemini-2.5-flash-preview-native-audio-dialog';\nconst includeTextFeedback = body.includeTextFeedback === true || body.includeTextFeedback === 'true';\n\n// GCS upload parameters\nconst uploadToGcs = body.uploadToGcs === true || body.uploadToGcs === 'true';\nconst gcsBucket = body.gcsBucket || '';\nconst gcsPathPrefix = body.gcsPathPrefix || 'gemini-images';\nconst signedUrlExpirationHours = body.signedUrlExpirationHours || 24;\nconst userId = body.userId || '';\n\n// Operation-specific parameters\nconst result = {\n  operation,\n  aspectRatio,\n  outputFormat,\n  model,\n  includeTextFeedback,\n  uploadToGcs,\n  gcsBucket,\n  gcsPathPrefix,\n  signedUrlExpirationHours,\n  userId,\n  originalRequest: { ...body }\n};\n\nswitch (operation) {\n  case 'generate':\n    result.prompt = body.prompt || '';\n    break;\n    \n  case 'extractCharacter':\n    result.sourceImage = body.sourceImage || '';\n    result.sourceImageMimeType = body.sourceImageMimeType || 'image/png';\n    result.characterDescription = body.characterDescription || 'the main character';\n    break;\n    \n  case 'createCharacterSheet':\n    result.sourceImage = body.sourceImage || '';\n    result.sourceImageMimeType = body.sourceImageMimeType || 'image/png';\n    result.views = body.views || ['front', 'back'];\n    break;\n    \n  case 'composeScene':\n    result.referenceImages = body.referenceImages || [];\n    result.scenePrompt = body.scenePrompt || '';\n    break;\n}\n\nreturn [{ json: result }];"
       },
       "id": "prepare-config",
       "name": "Prepare Config",
@@ -81,7 +81,12 @@
         "outputFormat": "={{ $json.outputFormat }}",
         "options": {
           "model": "={{ $json.model }}",
-          "includeTextFeedback": "={{ $json.includeTextFeedback }}"
+          "includeTextFeedback": "={{ $json.includeTextFeedback }}",
+          "uploadToGcs": "={{ $json.uploadToGcs }}",
+          "gcsBucket": "={{ $json.gcsBucket }}",
+          "gcsPathPrefix": "={{ $json.gcsPathPrefix }}",
+          "signedUrlExpirationHours": "={{ $json.signedUrlExpirationHours }}",
+          "userId": "={{ $json.userId }}"
         }
       },
       "id": "gemini-image",
@@ -98,7 +103,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Format response\nconst input = $input.first().json;\nconst binary = $input.first().binary;\n\nconst response = {\n  success: true,\n  operation: input.operation,\n  image: {\n    base64: input.imageBase64,\n    mimeType: input.mimeType,\n    format: input.mimeType.split('/')[1]\n  },\n  model: input.model,\n  textFeedback: input.textFeedback || null,\n  metadata: input.metadata\n};\n\nreturn [{ json: response }];"
+        "jsCode": "// Format response\nconst input = $input.first().json;\nconst binary = $input.first().binary;\n\nconst response = {\n  success: true,\n  operation: input.operation,\n  image: {\n    base64: input.imageBase64,\n    mimeType: input.mimeType,\n    format: input.mimeType.split('/')[1]\n  },\n  model: input.model,\n  textFeedback: input.textFeedback || null,\n  metadata: input.metadata\n};\n\n// Add GCS info if present\nif (input.gcs) {\n  response.gcs = input.gcs;\n}\n\nreturn [{ json: response }];"
       },
       "id": "format-response",
       "name": "Format Response",
