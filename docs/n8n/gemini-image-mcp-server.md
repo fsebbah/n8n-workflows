@@ -1,0 +1,263 @@
+# Gemini Image MCP Server API
+
+Documentation pour le serveur MCP Gemini Image accessible via webhook n8n.
+
+## Endpoint
+
+```
+POST /webhook/gemini-image
+```
+
+## Vue d'ensemble
+
+Ce workflow génère et manipule des images en utilisant Gemini 2.5 Flash Image ("Nano Banana"). Il supporte la génération depuis un prompt, l'extraction de personnages, la création de character sheets et la composition de scènes.
+
+## Opérations disponibles
+
+### `generate`
+Génère une image à partir d'un prompt texte.
+
+### `extractCharacter`
+Extrait un personnage d'une image avec fond transparent.
+
+### `createCharacterSheet`
+Génère plusieurs vues d'un personnage (front, back, side).
+
+### `composeScene`
+Compose une scène en utilisant des images de référence.
+
+## Paramètres de la requête
+
+### Paramètres communs
+
+| Paramètre | Type | Défaut | Description |
+|-----------|------|--------|-------------|
+| `operation` | string | `"generate"` | Opération: `generate`, `extractCharacter`, `createCharacterSheet`, `composeScene` |
+| `aspectRatio` | string | `"16:9"` | Ratio: `1:1`, `16:9`, `9:16`, `2:3`, `3:2`, `4:3`, `21:9` |
+| `outputFormat` | string | `"png"` | Format: `png`, `webp`, `jpeg` |
+| `model` | string | `"gemini-2.5-flash-preview-native-audio-dialog"` | Modèle Gemini |
+| `includeTextFeedback` | boolean | `false` | Inclure le feedback textuel du modèle |
+
+### Paramètres pour `generate`
+
+| Paramètre | Type | Description |
+|-----------|------|-------------|
+| `prompt` | string | **Requis.** Description de l'image à générer |
+
+### Paramètres pour `extractCharacter`
+
+| Paramètre | Type | Description |
+|-----------|------|-------------|
+| `sourceImage` | string | **Requis.** Image source en base64 |
+| `sourceImageMimeType` | string | Type MIME (défaut: `image/png`) |
+| `characterDescription` | string | Description du personnage à extraire (défaut: `"the main character"`) |
+
+### Paramètres pour `createCharacterSheet`
+
+| Paramètre | Type | Description |
+|-----------|------|-------------|
+| `sourceImage` | string | **Requis.** Image source en base64 |
+| `sourceImageMimeType` | string | Type MIME (défaut: `image/png`) |
+| `views` | string[] | Vues à générer (défaut: `["front", "back"]`) |
+
+**Vues disponibles:**
+- `front` - Vue de face
+- `back` - Vue de dos
+- `left side` - Vue côté gauche
+- `right side` - Vue côté droit
+- `3/4` - Vue 3/4
+
+### Paramètres pour `composeScene`
+
+| Paramètre | Type | Description |
+|-----------|------|-------------|
+| `referenceImages` | array | **Requis.** Images de référence (voir format ci-dessous) |
+| `scenePrompt` | string | **Requis.** Description de la scène à composer |
+
+**Format referenceImages:**
+```json
+[
+  {
+    "data": "<base64>",
+    "mimeType": "image/png",
+    "role": "character sheet"
+  },
+  {
+    "data": "<base64>",
+    "mimeType": "image/png",
+    "role": "previous scene"
+  }
+]
+```
+
+## Format de sortie
+
+```json
+{
+  "success": true,
+  "operation": "generate",
+  "image": {
+    "base64": "<base64_encoded_image>",
+    "mimeType": "image/png",
+    "format": "png"
+  },
+  "model": "gemini-2.5-flash-preview-native-audio-dialog",
+  "textFeedback": null,
+  "metadata": {
+    "processedAt": "2024-12-19T10:30:00Z"
+  }
+}
+```
+
+## Exemples de requêtes
+
+### Générer une image simple
+
+```bash
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "generate",
+    "prompt": "A cute robot made of felt, standing on a mountain, studio lighting, soft textures",
+    "aspectRatio": "16:9"
+  }'
+```
+
+### Extraire un personnage
+
+```bash
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "extractCharacter",
+    "sourceImage": "'$(base64 -w0 image.png)'",
+    "sourceImageMimeType": "image/png",
+    "characterDescription": "the blue robot"
+  }'
+```
+
+### Créer un character sheet
+
+```bash
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "createCharacterSheet",
+    "sourceImage": "'$(base64 -w0 character.png)'",
+    "views": ["front", "back", "left side"]
+  }'
+```
+
+### Composer une scène
+
+```bash
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "composeScene",
+    "referenceImages": [
+      {
+        "data": "'$(base64 -w0 character-sheet.png)'",
+        "mimeType": "image/png",
+        "role": "Robot character sheet"
+      },
+      {
+        "data": "'$(base64 -w0 previous-scene.png)'",
+        "mimeType": "image/png",
+        "role": "Previous scene"
+      }
+    ],
+    "scenePrompt": "The robot walks through a dense felt forest, viewed from 3/4 back angle. Golden hour lighting.",
+    "aspectRatio": "16:9"
+  }'
+```
+
+## Aspect Ratios
+
+| Ratio | Dimensions | Usage |
+|-------|------------|-------|
+| `1:1` | 1024×1024 | Avatars, icônes |
+| `2:3` | 768×1152 | Portraits |
+| `3:2` | 1152×768 | Paysages |
+| `9:16` | 768×1344 | Mobile, Stories |
+| `16:9` | 1344×768 | Bannières, vidéos |
+| `21:9` | ~1344×576 | Cinématique |
+
+## Techniques pour la cohérence (du Colab)
+
+### Character Sheet
+Créez d'abord un character sheet avec vues front/back pour maintenir la cohérence dans les scènes suivantes.
+
+### Prompts descriptifs vs impératifs
+
+**Descriptif** (décrit l'état final):
+```
+The robot is sleeping peacefully in a hammock...
+```
+
+**Impératif** (décrit les actions):
+```
+Remove the ice axes. Move the mountain to the left. Add a bridge...
+```
+
+### Références dans le prompt
+```
+- Image 1: Robot character sheet.
+- Image 2: Previous scene.
+- Scene: The robot walks through the forest...
+```
+
+## Codes d'erreur
+
+| Code | Description |
+|------|-------------|
+| 400 | Aucun input fourni (ni prompt, ni sourceImage, ni scenePrompt) |
+| 500 | Erreur de l'API Gemini |
+| 500 | Erreur d'authentification Vertex AI |
+
+## APIs Google requises
+
+| API | Console URL |
+|-----|-------------|
+| **Vertex AI API** | [Activer](https://console.cloud.google.com/flows/enableapi?apiid=aiplatform.googleapis.com) |
+
+## Notes d'implémentation
+
+- Le workflow utilise le modèle `gemini-2.5-flash-preview-native-audio-dialog` (Nano Banana)
+- Location: `global` pour les modèles preview
+- Les credentials Vertex AI sont gérés par n8n (pas de clé en dur)
+- Les images sont retournées en base64 dans la réponse JSON
+
+## Intégration avec MCP Server
+
+Exemple d'outil MCP:
+
+```typescript
+{
+  name: "generate_image",
+  description: "Generate an image using Gemini",
+  inputSchema: {
+    type: "object",
+    properties: {
+      operation: {
+        type: "string",
+        enum: ["generate", "extractCharacter", "createCharacterSheet", "composeScene"],
+        default: "generate"
+      },
+      prompt: { type: "string", description: "Text prompt for image generation" },
+      aspectRatio: {
+        type: "string",
+        enum: ["1:1", "16:9", "9:16", "2:3", "3:2"],
+        default: "16:9"
+      }
+    },
+    required: ["prompt"]
+  }
+}
+```
+
+## Voir aussi
+
+- [Video Transcription MCP Server API](./video-transcription-mcp-server.md)
+- [Knowledge Graph MCP Server API](./knowledge-graph-mcp-server.md)
+- [Workflow Best Practices](./WORKFLOW_BEST_PRACTICES.md)
