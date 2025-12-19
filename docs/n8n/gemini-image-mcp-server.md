@@ -61,6 +61,8 @@ Compose une scène en utilisant des images de référence.
 | `sourceImage` | string | **Requis.** Image source en base64 |
 | `sourceImageMimeType` | string | Type MIME (défaut: `image/png`) |
 | `characterDescription` | string | Description du personnage à extraire (défaut: `"the main character"`) |
+| `backgroundType` | string | Type de fond: `white`, `transparent`, `solid` (défaut: `white`) |
+| `backgroundColor` | string | Couleur si `backgroundType=solid` (ex: `blue`, `#FF0000`) |
 
 ### Paramètres pour `createCharacterSheet`
 
@@ -69,6 +71,8 @@ Compose une scène en utilisant des images de référence.
 | `sourceImage` | string | **Requis.** Image source en base64 |
 | `sourceImageMimeType` | string | Type MIME (défaut: `image/png`) |
 | `views` | string[] | Vues à générer (défaut: `["front", "back"]`) |
+| `characterName` | string | Nom affiché dans le titre du sheet (optionnel) |
+| `includeLabels` | boolean | Inclure les labels texte (défaut: `true`) |
 
 **Vues disponibles:**
 - `front` - Vue de face
@@ -83,6 +87,9 @@ Compose une scène en utilisant des images de référence.
 |-----------|------|-------------|
 | `referenceImages` | array | **Requis.** Images de référence (voir format ci-dessous) |
 | `scenePrompt` | string | **Requis.** Description de la scène à composer |
+| `promptStyle` | string | Style: `descriptive` (état final) ou `imperative` (actions) |
+| `lighting` | string | Style d'éclairage (ex: `"Golden hour"`, `"Studio lighting"`) |
+| `cameraAngle` | string | Angle de caméra (ex: `"3/4 back angle"`, `"close-up"`) |
 
 **Format referenceImages:**
 ```json
@@ -187,7 +194,21 @@ curl -X POST http://localhost:5678/webhook/gemini-image \
     "operation": "extractCharacter",
     "sourceImage": "'$(base64 -w0 image.png)'",
     "sourceImageMimeType": "image/png",
-    "characterDescription": "the blue robot"
+    "characterDescription": "the blue robot",
+    "backgroundType": "white"
+  }'
+```
+
+### Extraire avec fond transparent
+
+```bash
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "extractCharacter",
+    "sourceImage": "'$(base64 -w0 image.png)'",
+    "characterDescription": "the main character",
+    "backgroundType": "transparent"
   }'
 ```
 
@@ -199,11 +220,13 @@ curl -X POST http://localhost:5678/webhook/gemini-image \
   -d '{
     "operation": "createCharacterSheet",
     "sourceImage": "'$(base64 -w0 character.png)'",
-    "views": ["front", "back", "left side"]
+    "views": ["front", "back", "left side"],
+    "characterName": "Robot",
+    "includeLabels": true
   }'
 ```
 
-### Composer une scène
+### Composer une scène (style descriptif)
 
 ```bash
 curl -X POST http://localhost:5678/webhook/gemini-image \
@@ -222,7 +245,30 @@ curl -X POST http://localhost:5678/webhook/gemini-image \
         "role": "Previous scene"
       }
     ],
-    "scenePrompt": "The robot walks through a dense felt forest, viewed from 3/4 back angle. Golden hour lighting.",
+    "scenePrompt": "The robot walks through a dense felt forest",
+    "promptStyle": "descriptive",
+    "lighting": "Golden hour, soft and diffused",
+    "cameraAngle": "3/4 back angle",
+    "aspectRatio": "16:9"
+  }'
+```
+
+### Composer une scène (style impératif)
+
+```bash
+curl -X POST http://localhost:5678/webhook/gemini-image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "composeScene",
+    "referenceImages": [
+      {
+        "data": "'$(base64 -w0 scene.png)'",
+        "mimeType": "image/png",
+        "role": "Current scene"
+      }
+    ],
+    "scenePrompt": "Remove the ice axes. Move the mountain to the left. Add a wooden bridge between the peaks.",
+    "promptStyle": "imperative",
     "aspectRatio": "16:9"
   }'
 ```

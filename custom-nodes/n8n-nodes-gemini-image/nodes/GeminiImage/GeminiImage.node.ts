@@ -161,6 +161,39 @@ export class GeminiImage implements INodeType {
           },
         },
       },
+      // Background Type (for extract)
+      {
+        displayName: 'Background Type',
+        name: 'backgroundType',
+        type: 'options',
+        options: [
+          { name: 'White', value: 'white' },
+          { name: 'Transparent', value: 'transparent' },
+          { name: 'Solid Color', value: 'solid' },
+        ],
+        default: 'white',
+        description: 'Background type for the extracted character',
+        displayOptions: {
+          show: {
+            operation: ['extractCharacter'],
+          },
+        },
+      },
+      // Background Color (for extract with solid)
+      {
+        displayName: 'Background Color',
+        name: 'backgroundColor',
+        type: 'string',
+        default: '',
+        placeholder: 'blue, #FF0000, light gray',
+        description: 'Background color when using solid background',
+        displayOptions: {
+          show: {
+            operation: ['extractCharacter'],
+            backgroundType: ['solid'],
+          },
+        },
+      },
       // Views (for character sheet)
       {
         displayName: 'Views',
@@ -175,6 +208,33 @@ export class GeminiImage implements INodeType {
         ],
         default: ['front', 'back'],
         description: 'Views to generate in the character sheet',
+        displayOptions: {
+          show: {
+            operation: ['createCharacterSheet'],
+          },
+        },
+      },
+      // Character Name (for sheet)
+      {
+        displayName: 'Character Name',
+        name: 'characterName',
+        type: 'string',
+        default: '',
+        placeholder: 'Robot, Hero, Monster',
+        description: 'Optional name to display in the character sheet title',
+        displayOptions: {
+          show: {
+            operation: ['createCharacterSheet'],
+          },
+        },
+      },
+      // Include Labels (for sheet)
+      {
+        displayName: 'Include Labels',
+        name: 'includeLabels',
+        type: 'boolean',
+        default: true,
+        description: 'Include text labels for each view (e.g., "FRONT VIEW")',
         displayOptions: {
           show: {
             operation: ['createCharacterSheet'],
@@ -242,6 +302,51 @@ export class GeminiImage implements INodeType {
         default: '',
         placeholder: 'The robot walks through a felt forest...',
         description: 'Description of the scene to compose',
+        displayOptions: {
+          show: {
+            operation: ['composeScene'],
+          },
+        },
+      },
+      // Prompt Style (for compose)
+      {
+        displayName: 'Prompt Style',
+        name: 'promptStyle',
+        type: 'options',
+        options: [
+          { name: 'Descriptive', value: 'descriptive', description: 'Describe the final state of the scene' },
+          { name: 'Imperative', value: 'imperative', description: 'Describe actions to perform (move, remove, add)' },
+        ],
+        default: 'descriptive',
+        description: 'Style of prompt: descriptive (final state) or imperative (actions)',
+        displayOptions: {
+          show: {
+            operation: ['composeScene'],
+          },
+        },
+      },
+      // Lighting (for compose)
+      {
+        displayName: 'Lighting',
+        name: 'lighting',
+        type: 'string',
+        default: '',
+        placeholder: 'Golden hour, studio lighting, soft diffused',
+        description: 'Lighting style for the scene',
+        displayOptions: {
+          show: {
+            operation: ['composeScene'],
+          },
+        },
+      },
+      // Camera Angle (for compose)
+      {
+        displayName: 'Camera Angle',
+        name: 'cameraAngle',
+        type: 'string',
+        default: '',
+        placeholder: '3/4 back angle, front view, close-up',
+        description: 'Camera angle or viewpoint for the scene',
         displayOptions: {
           show: {
             operation: ['composeScene'],
@@ -428,6 +533,8 @@ export class GeminiImage implements INodeType {
             const sourceImage = this.getNodeParameter('sourceImage', i) as string;
             const sourceImageMimeType = this.getNodeParameter('sourceImageMimeType', i) as string;
             const characterDescription = this.getNodeParameter('characterDescription', i) as string;
+            const backgroundType = this.getNodeParameter('backgroundType', i, 'white') as 'transparent' | 'white' | 'solid';
+            const backgroundColor = this.getNodeParameter('backgroundColor', i, '') as string;
 
             if (!sourceImage) {
               throw new NodeOperationError(this.getNode(), 'Source image is required', { itemIndex: i });
@@ -438,7 +545,11 @@ export class GeminiImage implements INodeType {
               mimeType: sourceImageMimeType,
             };
 
-            result = await client.extractCharacter(refImage, characterDescription, imageOptions);
+            result = await client.extractCharacter(refImage, characterDescription, {
+              ...imageOptions,
+              backgroundType,
+              backgroundColor: backgroundColor || undefined,
+            });
             break;
           }
 
@@ -446,9 +557,15 @@ export class GeminiImage implements INodeType {
             const sourceImage = this.getNodeParameter('sourceImage', i) as string;
             const sourceImageMimeType = this.getNodeParameter('sourceImageMimeType', i) as string;
             const views = this.getNodeParameter('views', i) as string[];
+            const characterName = this.getNodeParameter('characterName', i, '') as string;
+            const includeLabels = this.getNodeParameter('includeLabels', i, true) as boolean;
 
             if (!sourceImage) {
               throw new NodeOperationError(this.getNode(), 'Source image is required', { itemIndex: i });
+            }
+
+            if (views.length === 0) {
+              throw new NodeOperationError(this.getNode(), 'At least one view must be selected', { itemIndex: i });
             }
 
             const refImage: ReferenceImage = {
@@ -456,7 +573,11 @@ export class GeminiImage implements INodeType {
               mimeType: sourceImageMimeType,
             };
 
-            result = await client.createCharacterSheet(refImage, views, imageOptions);
+            result = await client.createCharacterSheet(refImage, views, {
+              ...imageOptions,
+              characterName: characterName || undefined,
+              includeLabels,
+            });
             break;
           }
 
@@ -466,6 +587,9 @@ export class GeminiImage implements INodeType {
             };
             const scenePrompt = this.getNodeParameter('scenePrompt', i) as string;
             const aspectRatio = this.getNodeParameter('aspectRatio', i) as string;
+            const promptStyle = this.getNodeParameter('promptStyle', i, 'descriptive') as 'descriptive' | 'imperative';
+            const lighting = this.getNodeParameter('lighting', i, '') as string;
+            const cameraAngle = this.getNodeParameter('cameraAngle', i, '') as string;
 
             if (!scenePrompt) {
               throw new NodeOperationError(this.getNode(), 'Scene prompt is required', { itemIndex: i });
@@ -477,8 +601,17 @@ export class GeminiImage implements INodeType {
               role: img.role,
             }));
 
+            if (referenceImages.length === 0) {
+              throw new NodeOperationError(this.getNode(), 'At least one reference image is required for scene composition', { itemIndex: i });
+            }
+
             imageOptions.aspectRatio = aspectRatio as GeminiImageOptions['aspectRatio'];
-            result = await client.composeScene(referenceImages, scenePrompt, imageOptions);
+            result = await client.composeScene(referenceImages, scenePrompt, {
+              ...imageOptions,
+              promptStyle,
+              lighting: lighting || undefined,
+              cameraAngle: cameraAngle || undefined,
+            });
             break;
           }
 

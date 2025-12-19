@@ -190,17 +190,32 @@ export class GeminiImageClient {
 
   /**
    * Extrait un personnage d'une image (fond transparent)
+   * Basé sur le pattern du Colab: extraction propre avec fond blanc/transparent
    */
   async extractCharacter(
     sourceImage: ReferenceImage,
     characterDescription: string,
-    options?: GeminiImageOptions
+    options?: GeminiImageOptions & {
+      backgroundType?: 'transparent' | 'white' | 'solid';
+      backgroundColor?: string;
+    }
   ): Promise<GeminiImageResult> {
+    const bgType = options?.backgroundType || 'white';
+    let bgInstruction = '- Background: Pure white.';
+    if (bgType === 'transparent') {
+      bgInstruction = '- Background: Transparent (PNG with alpha channel).';
+    } else if (bgType === 'solid' && options?.backgroundColor) {
+      bgInstruction = `- Background: Solid ${options.backgroundColor} fill.`;
+    }
+
     const prompt = `
+- Image 1: Source image containing the character.
 - Scene: Character extraction.
-- Extract ${characterDescription} from the image.
-- Output: Clean cutout with transparent background (PNG).
-- The character should be centered and properly cropped.
+- Extract ${characterDescription} from Image 1.
+- The character should be cleanly extracted, centered, and properly cropped.
+- Preserve all details, textures, and fine edges of the character.
+${bgInstruction}
+- Style: Keep the exact same visual style as the original.
 `.trim();
 
     return this.generateWithReferences([sourceImage], prompt, {
@@ -211,50 +226,117 @@ export class GeminiImageClient {
 
   /**
    * Crée un character sheet (vues multiples)
+   * Basé sur le pattern du Colab avec layout structuré et labels
    */
   async createCharacterSheet(
     sourceImage: ReferenceImage,
     views: string[],
-    options?: GeminiImageOptions
+    options?: GeminiImageOptions & {
+      characterName?: string;
+      includeLabels?: boolean;
+      additionalDetails?: string;
+    }
   ): Promise<GeminiImageResult> {
+    // Positions for different view counts
+    const getPositions = (count: number): string[] => {
+      if (count === 1) return ['Center'];
+      if (count === 2) return ['Left', 'Right'];
+      if (count === 3) return ['Left', 'Center', 'Right'];
+      if (count === 4) return ['Far left', 'Left', 'Right', 'Far right'];
+      return views.map((_, i) => `Position ${i + 1}`);
+    };
+
+    const positions = getPositions(views.length);
     const viewsText = views.map((v, i) => {
-      const position = i === 0 ? 'Left' : i === views.length - 1 ? 'Right' : 'Center';
-      return `- ${position}: ${v} view of the character.`;
+      const pos = positions[i] || `Position ${i + 1}`;
+      return `- ${pos}: ${v.charAt(0).toUpperCase() + v.slice(1)} view of the character.`;
     }).join('\n');
 
+    const characterTitle = options?.characterName
+      ? `"${options.characterName.toUpperCase()} CHARACTER SHEET"`
+      : '"CHARACTER SHEET"';
+
+    const labels = views.map(v => `"${v.toUpperCase()} VIEW"`).join(', ');
+    const labelInstruction = options?.includeLabels !== false
+      ? `- Text: On the top, caption the image ${characterTitle} and, on the bottom, label each view (${labels}).`
+      : '';
+
+    const additionalDetails = options?.additionalDetails
+      ? `- ${options.additionalDetails}`
+      : '';
+
     const prompt = `
-- Scene: Character sheet.
+- Image 1: Source image of the character.
+- Scene: Character sheet generation.
 ${viewsText}
 - Background: Pure white.
-- Maintain consistent style and proportions across all views.
-- Text: Label each view at the bottom ("${views.map(v => v.toUpperCase() + ' VIEW').join('", "')}").
+- Maintain consistent style, proportions, colors, and details across all views.
+- Each view should show the same character from different angles.
+${labelInstruction}
+${additionalDetails}
 `.trim();
 
     return this.generateWithReferences([sourceImage], prompt, {
       ...options,
-      aspectRatio: '16:9', // Landscape pour character sheet
+      aspectRatio: options?.aspectRatio || '16:9', // Landscape pour character sheet
     });
   }
 
   /**
    * Compose une scène avec images de référence
+   * Basé sur le pattern du Colab avec annotations d'images et prompts structurés
    */
   async composeScene(
     referenceImages: ReferenceImage[],
     scenePrompt: string,
-    options?: GeminiImageOptions
+    options?: GeminiImageOptions & {
+      promptStyle?: 'descriptive' | 'imperative';
+      lighting?: string;
+      cameraAngle?: string;
+      preserveElements?: string[];
+      removeElements?: string[];
+    }
   ): Promise<GeminiImageResult> {
-    // Construire le prompt avec les références
+    // Construire les références d'images avec le format du Colab
     const imageRefs = referenceImages.map((img, i) =>
       `- Image ${i + 1}: ${img.role || 'Reference image'}.`
     ).join('\n');
 
+    // Instructions de préservation/suppression (pattern du Colab)
+    const preserveInstructions = options?.preserveElements?.length
+      ? options.preserveElements.map(e => `- Keep ${e} from the reference images.`).join('\n')
+      : '';
+
+    const removeInstructions = options?.removeElements?.length
+      ? options.removeElements.map(e => `- Remove ${e}.`).join('\n')
+      : '';
+
+    // Lighting instruction
+    const lightingInstruction = options?.lighting
+      ? `- Lighting: ${options.lighting}.`
+      : '';
+
+    // Camera angle instruction
+    const cameraInstruction = options?.cameraAngle
+      ? `- Camera angle: ${options.cameraAngle}.`
+      : '';
+
+    // Style du prompt (descriptif par défaut comme dans le Colab)
+    const styleNote = options?.promptStyle === 'imperative'
+      ? '- [Imperative mode: following action-based instructions]'
+      : '';
+
     const prompt = `
 ${imageRefs}
+${styleNote}
+${removeInstructions}
 - Scene: ${scenePrompt}
+${preserveInstructions}
 - Maintain visual consistency with the reference images.
-- Use the same style, textures, and lighting as the references.
-`.trim();
+- Use the same style, textures, and proportions as the references.
+${lightingInstruction}
+${cameraInstruction}
+`.trim().replace(/\n{3,}/g, '\n\n');
 
     return this.generateWithReferences(referenceImages, prompt, options);
   }
