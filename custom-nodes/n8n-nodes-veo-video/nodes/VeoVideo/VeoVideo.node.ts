@@ -309,6 +309,149 @@ export class VeoVideo implements INodeType {
           },
         },
       },
+      // Phase 5C: Negative Prompt
+      {
+        displayName: 'Negative Prompt',
+        name: 'negativePrompt',
+        type: 'string',
+        typeOptions: {
+          rows: 2,
+        },
+        default: '',
+        placeholder: 'blurry, low quality, text, watermark, distorted limbs',
+        description: 'Elements to exclude from the generated video',
+        displayOptions: {
+          show: {
+            operation: ['generateFromText', 'generateFromImage', 'generateLongVideo', 'extendVideo'],
+          },
+        },
+      },
+      // Phase 5C: Seed
+      {
+        displayName: 'Seed',
+        name: 'seed',
+        type: 'number',
+        default: 0,
+        placeholder: '42',
+        description: 'Seed for reproducibility (0 = random). Same seed = same visual base. Critical for long videos.',
+        displayOptions: {
+          show: {
+            operation: ['generateFromText', 'generateFromImage', 'generateLongVideo', 'extendVideo'],
+          },
+        },
+      },
+      // Phase 5C: FPS
+      {
+        displayName: 'FPS',
+        name: 'fps',
+        type: 'options',
+        options: [
+          { name: '24 fps (Cinematic)', value: 24 },
+          { name: '30 fps (Standard/TV)', value: 30 },
+        ],
+        default: 24,
+        description: 'Frames per second. 24fps for cinematic, 30fps for corporate/TV',
+        displayOptions: {
+          show: {
+            operation: ['generateFromText', 'generateFromImage', 'generateLongVideo', 'extendVideo'],
+          },
+        },
+      },
+      // Phase 5C: Safety Setting
+      {
+        displayName: 'Safety Filter',
+        name: 'safetySetting',
+        type: 'options',
+        options: [
+          {
+            name: 'Block Low and Above (Strictest)',
+            value: 'block_low_and_above',
+            description: 'Block most potentially sensitive content',
+          },
+          {
+            name: 'Block Medium and Above (Default)',
+            value: 'block_medium_and_above',
+            description: 'Balanced filtering',
+          },
+          {
+            name: 'Block Only High (Most Permissive)',
+            value: 'block_only_high',
+            description: 'Only block clearly inappropriate content',
+          },
+        ],
+        default: 'block_medium_and_above',
+        description: 'Safety filter level for content generation',
+        displayOptions: {
+          hide: {
+            operation: ['optimizePrompt'],
+          },
+        },
+      },
+      // Phase 5C: Output Mode
+      {
+        displayName: 'Output Mode',
+        name: 'outputMode',
+        type: 'options',
+        options: [
+          {
+            name: 'Base64 (Inline)',
+            value: 'base64',
+            description: 'Return video as base64 in response (good for short clips)',
+          },
+          {
+            name: 'GCS URL (Recommended for Long Videos)',
+            value: 'url',
+            description: 'Upload to Google Cloud Storage and return signed URL',
+          },
+        ],
+        default: 'base64',
+        description: 'How to return the generated video. GCS URL recommended for videos > 10s',
+        displayOptions: {
+          show: {
+            operation: ['generateFromText', 'generateFromImage', 'generateLongVideo', 'extendVideo'],
+          },
+        },
+      },
+      // Phase 5C: GCS Bucket
+      {
+        displayName: 'GCS Bucket',
+        name: 'gcsBucket',
+        type: 'string',
+        default: '',
+        placeholder: 'my-videos-bucket',
+        description: 'Google Cloud Storage bucket for video upload',
+        displayOptions: {
+          show: {
+            outputMode: ['url'],
+          },
+        },
+      },
+      // Phase 5C: GCS Path Prefix
+      {
+        displayName: 'GCS Path Prefix',
+        name: 'gcsPathPrefix',
+        type: 'string',
+        default: 'veo-videos',
+        description: 'Path prefix for uploaded videos in the bucket',
+        displayOptions: {
+          show: {
+            outputMode: ['url'],
+          },
+        },
+      },
+      // Phase 5C: Signed URL Expiration
+      {
+        displayName: 'Signed URL Expiration (Hours)',
+        name: 'signedUrlExpirationHours',
+        type: 'number',
+        default: 24,
+        description: 'How long the signed URL remains valid',
+        displayOptions: {
+          show: {
+            outputMode: ['url'],
+          },
+        },
+      },
       // Advanced Options
       {
         displayName: 'Options',
@@ -376,6 +519,15 @@ export class VeoVideo implements INodeType {
             const resolution = this.getNodeParameter('resolution', i) as string;
             const generateAudio = this.getNodeParameter('generateAudio', i) as boolean;
             const enhancePrompt = this.getNodeParameter('enhancePrompt', i) as boolean;
+            // Phase 5C parameters
+            const negativePrompt = this.getNodeParameter('negativePrompt', i, '') as string;
+            const seed = this.getNodeParameter('seed', i, 0) as number;
+            const fps = this.getNodeParameter('fps', i, 24) as number;
+            const safetySetting = this.getNodeParameter('safetySetting', i, 'block_medium_and_above') as string;
+            const outputMode = this.getNodeParameter('outputMode', i, 'base64') as string;
+            const gcsBucket = this.getNodeParameter('gcsBucket', i, '') as string;
+            const gcsPathPrefix = this.getNodeParameter('gcsPathPrefix', i, 'veo-videos') as string;
+            const signedUrlExpirationHours = this.getNodeParameter('signedUrlExpirationHours', i, 24) as number;
             const advancedOptions = this.getNodeParameter('options', i, {}) as {
               personGeneration?: string;
             };
@@ -398,6 +550,15 @@ export class VeoVideo implements INodeType {
               generateAudio: presetConfig?.defaults.generateAudio ?? generateAudio,
               enhancePrompt: presetConfig?.defaults.enhancePrompt ?? enhancePrompt,
               personGeneration: (advancedOptions.personGeneration || 'allow_adult') as VeoVideoOptions['personGeneration'],
+              // Phase 5C
+              negativePrompt: negativePrompt || undefined,
+              seed: seed > 0 ? seed : undefined,
+              fps: fps as VeoVideoOptions['fps'],
+              safetySetting: safetySetting as VeoVideoOptions['safetySetting'],
+              outputMode: outputMode as VeoVideoOptions['outputMode'],
+              gcsBucket: gcsBucket || undefined,
+              gcsPathPrefix,
+              signedUrlExpirationHours,
             };
 
             result = await client.generateFromText(finalPrompt, videoOptions);
@@ -410,10 +571,14 @@ export class VeoVideo implements INodeType {
                 resolution: result.resolution,
                 aspectRatio: result.aspectRatio,
                 hasAudio: result.hasAudio,
+                fps: result.fps,
+                seedUsed: result.seedUsed,
               },
               model: result.model,
               generationTimeSeconds: result.generationTimeSeconds,
               preset: presetName !== 'none' ? presetName : undefined,
+              videoUrl: result.videoUrl,
+              expiresAt: result.expiresAt,
               metadata: {
                 processedAt: new Date().toISOString(),
               },
@@ -432,6 +597,15 @@ export class VeoVideo implements INodeType {
             const resolution = this.getNodeParameter('resolution', i) as string;
             const generateAudio = this.getNodeParameter('generateAudio', i) as boolean;
             const enhancePrompt = this.getNodeParameter('enhancePrompt', i) as boolean;
+            // Phase 5C parameters
+            const negativePrompt = this.getNodeParameter('negativePrompt', i, '') as string;
+            const seed = this.getNodeParameter('seed', i, 0) as number;
+            const fps = this.getNodeParameter('fps', i, 24) as number;
+            const safetySetting = this.getNodeParameter('safetySetting', i, 'block_medium_and_above') as string;
+            const outputMode = this.getNodeParameter('outputMode', i, 'base64') as string;
+            const gcsBucket = this.getNodeParameter('gcsBucket', i, '') as string;
+            const gcsPathPrefix = this.getNodeParameter('gcsPathPrefix', i, 'veo-videos') as string;
+            const signedUrlExpirationHours = this.getNodeParameter('signedUrlExpirationHours', i, 24) as number;
             const advancedOptions = this.getNodeParameter('options', i, {}) as {
               personGeneration?: string;
             };
@@ -456,6 +630,15 @@ export class VeoVideo implements INodeType {
               generateAudio: presetConfig?.defaults.generateAudio ?? generateAudio,
               enhancePrompt: presetConfig?.defaults.enhancePrompt ?? enhancePrompt,
               personGeneration: (advancedOptions.personGeneration || 'allow_adult') as VeoVideoOptions['personGeneration'],
+              // Phase 5C
+              negativePrompt: negativePrompt || undefined,
+              seed: seed > 0 ? seed : undefined,
+              fps: fps as VeoVideoOptions['fps'],
+              safetySetting: safetySetting as VeoVideoOptions['safetySetting'],
+              outputMode: outputMode as VeoVideoOptions['outputMode'],
+              gcsBucket: gcsBucket || undefined,
+              gcsPathPrefix,
+              signedUrlExpirationHours,
             };
 
             const imageBuffer = Buffer.from(sourceImage, 'base64');
@@ -469,10 +652,14 @@ export class VeoVideo implements INodeType {
                 resolution: result.resolution,
                 aspectRatio: result.aspectRatio,
                 hasAudio: result.hasAudio,
+                fps: result.fps,
+                seedUsed: result.seedUsed,
               },
               model: result.model,
               generationTimeSeconds: result.generationTimeSeconds,
               preset: presetName !== 'none' ? presetName : undefined,
+              videoUrl: result.videoUrl,
+              expiresAt: result.expiresAt,
               metadata: {
                 processedAt: new Date().toISOString(),
               },
@@ -489,6 +676,15 @@ export class VeoVideo implements INodeType {
             const resolution = this.getNodeParameter('resolution', i) as string;
             const generateAudio = this.getNodeParameter('generateAudio', i) as boolean;
             const enhancePrompt = this.getNodeParameter('enhancePrompt', i) as boolean;
+            // Phase 5C parameters
+            const negativePrompt = this.getNodeParameter('negativePrompt', i, '') as string;
+            const seed = this.getNodeParameter('seed', i, 0) as number;
+            const fps = this.getNodeParameter('fps', i, 24) as number;
+            const safetySetting = this.getNodeParameter('safetySetting', i, 'block_medium_and_above') as string;
+            const outputMode = this.getNodeParameter('outputMode', i, 'base64') as string;
+            const gcsBucket = this.getNodeParameter('gcsBucket', i, '') as string;
+            const gcsPathPrefix = this.getNodeParameter('gcsPathPrefix', i, 'veo-videos') as string;
+            const signedUrlExpirationHours = this.getNodeParameter('signedUrlExpirationHours', i, 24) as number;
             const advancedOptions = this.getNodeParameter('options', i, {}) as {
               personGeneration?: string;
             };
@@ -510,6 +706,15 @@ export class VeoVideo implements INodeType {
               generateAudio: presetConfig?.defaults.generateAudio ?? generateAudio,
               enhancePrompt: presetConfig?.defaults.enhancePrompt ?? enhancePrompt,
               personGeneration: (advancedOptions.personGeneration || 'allow_adult') as VeoVideoOptions['personGeneration'],
+              // Phase 5C
+              negativePrompt: negativePrompt || undefined,
+              seed: seed > 0 ? seed : undefined,
+              fps: fps as VeoVideoOptions['fps'],
+              safetySetting: safetySetting as VeoVideoOptions['safetySetting'],
+              outputMode: outputMode as VeoVideoOptions['outputMode'],
+              gcsBucket: gcsBucket || undefined,
+              gcsPathPrefix,
+              signedUrlExpirationHours,
             };
 
             result = await client.generateLongVideo(finalPrompt, longVideoOptions);
@@ -524,10 +729,14 @@ export class VeoVideo implements INodeType {
                 hasAudio: result.hasAudio,
                 clipCount: result.clipCount,
                 clipDurations: result.clipDurations,
+                fps: result.fps,
+                seedUsed: result.seedUsed,
               },
               model: result.model,
               generationTimeSeconds: result.generationTimeSeconds,
               preset: presetName !== 'none' ? presetName : undefined,
+              videoUrl: result.videoUrl,
+              expiresAt: result.expiresAt,
               metadata: {
                 processedAt: new Date().toISOString(),
                 targetDuration,
@@ -546,6 +755,15 @@ export class VeoVideo implements INodeType {
             const aspectRatio = this.getNodeParameter('aspectRatio', i) as string;
             const resolution = this.getNodeParameter('resolution', i) as string;
             const generateAudio = this.getNodeParameter('generateAudio', i) as boolean;
+            // Phase 5C parameters
+            const negativePrompt = this.getNodeParameter('negativePrompt', i, '') as string;
+            const seed = this.getNodeParameter('seed', i, 0) as number;
+            const fps = this.getNodeParameter('fps', i, 24) as number;
+            const safetySetting = this.getNodeParameter('safetySetting', i, 'block_medium_and_above') as string;
+            const outputMode = this.getNodeParameter('outputMode', i, 'base64') as string;
+            const gcsBucket = this.getNodeParameter('gcsBucket', i, '') as string;
+            const gcsPathPrefix = this.getNodeParameter('gcsPathPrefix', i, 'veo-videos') as string;
+            const signedUrlExpirationHours = this.getNodeParameter('signedUrlExpirationHours', i, 24) as number;
             const advancedOptions = this.getNodeParameter('options', i, {}) as {
               personGeneration?: string;
             };
@@ -561,6 +779,15 @@ export class VeoVideo implements INodeType {
               generateAudio,
               extensionPrompt: extensionPrompt || undefined,
               personGeneration: (advancedOptions.personGeneration || 'allow_adult') as VeoVideoOptions['personGeneration'],
+              // Phase 5C
+              negativePrompt: negativePrompt || undefined,
+              seed: seed > 0 ? seed : undefined,
+              fps: fps as VeoVideoOptions['fps'],
+              safetySetting: safetySetting as VeoVideoOptions['safetySetting'],
+              outputMode: outputMode as VeoVideoOptions['outputMode'],
+              gcsBucket: gcsBucket || undefined,
+              gcsPathPrefix,
+              signedUrlExpirationHours,
             };
 
             const videoBuffer = Buffer.from(sourceVideo, 'base64');
@@ -574,9 +801,13 @@ export class VeoVideo implements INodeType {
                 resolution: result.resolution,
                 aspectRatio: result.aspectRatio,
                 hasAudio: result.hasAudio,
+                fps: result.fps,
+                seedUsed: result.seedUsed,
               },
               model: result.model,
               generationTimeSeconds: result.generationTimeSeconds,
+              videoUrl: result.videoUrl,
+              expiresAt: result.expiresAt,
               metadata: {
                 processedAt: new Date().toISOString(),
                 extensionDuration: durationSeconds,
