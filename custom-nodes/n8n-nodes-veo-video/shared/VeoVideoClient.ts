@@ -21,6 +21,16 @@ export interface VeoVideoOptions {
   personGeneration?: 'allow_adult' | 'dont_allow';
   enhancePrompt?: boolean;
   generateAudio?: boolean;
+  // Phase 5C: New parameters
+  seed?: number;
+  negativePrompt?: string;
+  fps?: 24 | 30;
+  safetySetting?: 'block_low_and_above' | 'block_medium_and_above' | 'block_only_high';
+  // Output options
+  outputMode?: 'base64' | 'url';
+  gcsBucket?: string;
+  gcsPathPrefix?: string;
+  signedUrlExpirationHours?: number;
 }
 
 export interface VeoVideoResult {
@@ -35,6 +45,11 @@ export interface VeoVideoResult {
   enhancedPrompt?: string;
   clipCount?: number;  // For long videos: number of clips generated
   clipDurations?: number[];  // Duration of each clip
+  // Phase 5C: New fields
+  seedUsed?: number;
+  fps?: number;
+  videoUrl?: string;  // GCS signed URL if outputMode='url'
+  expiresAt?: string;  // URL expiration timestamp
 }
 
 export interface VeoExtendOptions extends VeoVideoOptions {
@@ -70,6 +85,13 @@ export interface VeoOperationStatus {
   };
 }
 
+export interface VeoSafetyError {
+  code: 'SAFETY_BLOCKED';
+  reason: string;
+  message: string;
+  suggestion: string;
+}
+
 const DEFAULT_OPTIONS: VeoVideoOptions = {
   model: 'veo-3.1-generate-001',
   aspectRatio: '16:9',
@@ -79,6 +101,12 @@ const DEFAULT_OPTIONS: VeoVideoOptions = {
   personGeneration: 'allow_adult',
   enhancePrompt: true,
   generateAudio: true,
+  // Phase 5C defaults
+  fps: 24,
+  safetySetting: 'block_medium_and_above',
+  outputMode: 'base64',
+  gcsPathPrefix: 'veo-videos',
+  signedUrlExpirationHours: 24,
 };
 
 const POLLING_INTERVAL_MS = 15000; // 15 seconds
@@ -120,18 +148,34 @@ export class VeoVideoClient {
     const opts = { ...DEFAULT_OPTIONS, ...options };
     const startTime = Date.now();
 
-    // Build request body
+    // Build request body with Phase 5C parameters
+    const parameters: Record<string, unknown> = {
+      aspectRatio: opts.aspectRatio,
+      sampleCount: opts.numberOfVideos,
+      durationSeconds: opts.durationSeconds,
+      resolution: opts.resolution,
+      personGeneration: opts.personGeneration,
+      enhancePrompt: opts.enhancePrompt,
+      generateAudio: opts.generateAudio,
+    };
+
+    // Add Phase 5C parameters
+    if (opts.seed !== undefined && opts.seed > 0) {
+      parameters.seed = opts.seed;
+    }
+    if (opts.negativePrompt) {
+      parameters.negativePrompt = opts.negativePrompt;
+    }
+    if (opts.fps) {
+      parameters.fps = opts.fps;
+    }
+    if (opts.safetySetting) {
+      parameters.safetySetting = opts.safetySetting;
+    }
+
     const requestBody = {
       instances: [{ prompt }],
-      parameters: {
-        aspectRatio: opts.aspectRatio,
-        sampleCount: opts.numberOfVideos,
-        durationSeconds: opts.durationSeconds,
-        resolution: opts.resolution,
-        personGeneration: opts.personGeneration,
-        enhancePrompt: opts.enhancePrompt,
-        generateAudio: opts.generateAudio,
-      },
+      parameters,
     };
 
     // Start the generation operation
@@ -144,8 +188,11 @@ export class VeoVideoClient {
     const videoData = await this.extractVideoData(result);
     const generationTimeSeconds = Math.round((Date.now() - startTime) / 1000);
 
+    // Handle output mode (base64 vs GCS URL)
+    const outputResult = await this.handleOutput(videoData, opts);
+
     return {
-      videoData,
+      videoData: outputResult.videoData,
       mimeType: 'video/mp4',
       model: opts.model!,
       durationSeconds: opts.durationSeconds!,
@@ -153,6 +200,10 @@ export class VeoVideoClient {
       aspectRatio: opts.aspectRatio!,
       hasAudio: opts.generateAudio!,
       generationTimeSeconds,
+      seedUsed: opts.seed,
+      fps: opts.fps,
+      videoUrl: outputResult.videoUrl,
+      expiresAt: outputResult.expiresAt,
     };
   }
 
@@ -168,6 +219,31 @@ export class VeoVideoClient {
     const opts = { ...DEFAULT_OPTIONS, ...options };
     const startTime = Date.now();
 
+    // Build parameters with Phase 5C additions
+    const parameters: Record<string, unknown> = {
+      aspectRatio: opts.aspectRatio,
+      sampleCount: opts.numberOfVideos,
+      durationSeconds: opts.durationSeconds,
+      resolution: opts.resolution,
+      personGeneration: opts.personGeneration,
+      enhancePrompt: opts.enhancePrompt,
+      generateAudio: opts.generateAudio,
+    };
+
+    // Add Phase 5C parameters
+    if (opts.seed !== undefined && opts.seed > 0) {
+      parameters.seed = opts.seed;
+    }
+    if (opts.negativePrompt) {
+      parameters.negativePrompt = opts.negativePrompt;
+    }
+    if (opts.fps) {
+      parameters.fps = opts.fps;
+    }
+    if (opts.safetySetting) {
+      parameters.safetySetting = opts.safetySetting;
+    }
+
     // Build request body with image
     const imageBase64 = imageData.toString('base64');
     const requestBody = {
@@ -180,15 +256,7 @@ export class VeoVideoClient {
           },
         },
       ],
-      parameters: {
-        aspectRatio: opts.aspectRatio,
-        sampleCount: opts.numberOfVideos,
-        durationSeconds: opts.durationSeconds,
-        resolution: opts.resolution,
-        personGeneration: opts.personGeneration,
-        enhancePrompt: opts.enhancePrompt,
-        generateAudio: opts.generateAudio,
-      },
+      parameters,
     };
 
     // Start the generation operation
@@ -201,8 +269,11 @@ export class VeoVideoClient {
     const videoData = await this.extractVideoData(result);
     const generationTimeSeconds = Math.round((Date.now() - startTime) / 1000);
 
+    // Handle output mode
+    const outputResult = await this.handleOutput(videoData, opts);
+
     return {
-      videoData,
+      videoData: outputResult.videoData,
       mimeType: 'video/mp4',
       model: opts.model!,
       durationSeconds: opts.durationSeconds!,
@@ -210,6 +281,10 @@ export class VeoVideoClient {
       aspectRatio: opts.aspectRatio!,
       hasAudio: opts.generateAudio!,
       generationTimeSeconds,
+      seedUsed: opts.seed,
+      fps: opts.fps,
+      videoUrl: outputResult.videoUrl,
+      expiresAt: outputResult.expiresAt,
     };
   }
 
@@ -225,6 +300,30 @@ export class VeoVideoClient {
     const opts = { ...DEFAULT_OPTIONS, ...options };
     const startTime = Date.now();
 
+    const parameters: Record<string, unknown> = {
+      aspectRatio: opts.aspectRatio,
+      sampleCount: 1,
+      durationSeconds: extensionDuration,
+      resolution: opts.resolution,
+      personGeneration: opts.personGeneration,
+      enhancePrompt: false,  // Don't enhance for extensions
+      generateAudio: opts.generateAudio,
+    };
+
+    // Add Phase 5C parameters (seed is critical for coherence)
+    if (opts.seed !== undefined && opts.seed > 0) {
+      parameters.seed = opts.seed;
+    }
+    if (opts.negativePrompt) {
+      parameters.negativePrompt = opts.negativePrompt;
+    }
+    if (opts.fps) {
+      parameters.fps = opts.fps;
+    }
+    if (opts.safetySetting) {
+      parameters.safetySetting = opts.safetySetting;
+    }
+
     const videoBase64 = videoData.toString('base64');
     const requestBody = {
       instances: [
@@ -236,15 +335,7 @@ export class VeoVideoClient {
           },
         },
       ],
-      parameters: {
-        aspectRatio: opts.aspectRatio,
-        sampleCount: 1,
-        durationSeconds: extensionDuration,
-        resolution: opts.resolution,
-        personGeneration: opts.personGeneration,
-        enhancePrompt: false,  // Don't enhance for extensions
-        generateAudio: opts.generateAudio,
-      },
+      parameters,
     };
 
     const operation = await this.startOperation(opts.model!, requestBody);
@@ -252,8 +343,11 @@ export class VeoVideoClient {
     const extendedVideoData = await this.extractVideoData(result);
     const generationTimeSeconds = Math.round((Date.now() - startTime) / 1000);
 
+    // Handle output mode
+    const outputResult = await this.handleOutput(extendedVideoData, opts);
+
     return {
-      videoData: extendedVideoData,
+      videoData: outputResult.videoData,
       mimeType: 'video/mp4',
       model: opts.model!,
       durationSeconds: extensionDuration,
@@ -261,12 +355,17 @@ export class VeoVideoClient {
       aspectRatio: opts.aspectRatio!,
       hasAudio: opts.generateAudio!,
       generationTimeSeconds,
+      seedUsed: opts.seed,
+      fps: opts.fps,
+      videoUrl: outputResult.videoUrl,
+      expiresAt: outputResult.expiresAt,
     };
   }
 
   /**
    * Génère une vidéo longue en chaînant plusieurs clips
    * Ex: targetDuration=30 -> génère 8s + 8s + 8s + 6s = 30s
+   * Phase 5C: Uses same seed for all clips to maintain visual coherence
    */
   async generateLongVideo(
     prompt: string,
@@ -275,15 +374,22 @@ export class VeoVideoClient {
     const { targetDuration, onClipComplete, ...baseOptions } = options;
     const startTime = Date.now();
 
+    // Phase 5C: Generate or use provided seed for coherence
+    const coherenceSeed = baseOptions.seed && baseOptions.seed > 0
+      ? baseOptions.seed
+      : Math.floor(Math.random() * 2147483647);
+
     // Calculer les durées des clips nécessaires
     const clipDurations = this.calculateClipDurations(targetDuration);
     const totalClips = clipDurations.length;
 
-    // Générer le premier clip
+    // Générer le premier clip with seed
     const firstClipDuration = clipDurations[0] as 4 | 6 | 8;
     let currentVideo = await this.generateFromText(prompt, {
       ...baseOptions,
       durationSeconds: firstClipDuration,
+      seed: coherenceSeed,
+      outputMode: 'base64', // Keep intermediate clips as base64
     });
 
     let totalDuration = firstClipDuration;
@@ -293,7 +399,7 @@ export class VeoVideoClient {
       onClipComplete(1, totalClips, totalDuration);
     }
 
-    // Étendre avec les clips suivants
+    // Étendre avec les clips suivants using same seed
     for (let i = 1; i < clipDurations.length; i++) {
       const extensionDuration = clipDurations[i] as 4 | 6 | 8;
 
@@ -303,6 +409,8 @@ export class VeoVideoClient {
         {
           ...baseOptions,
           extensionPrompt: `Continue the scene: ${prompt}`,
+          seed: coherenceSeed,  // Same seed for coherence
+          outputMode: 'base64', // Keep intermediate clips as base64
         }
       );
 
@@ -317,8 +425,11 @@ export class VeoVideoClient {
 
     const generationTimeSeconds = Math.round((Date.now() - startTime) / 1000);
 
+    // Handle final output mode (only upload final concatenated video)
+    const outputResult = await this.handleOutput(currentVideo.videoData, baseOptions);
+
     return {
-      videoData: currentVideo.videoData,
+      videoData: outputResult.videoData,
       mimeType: 'video/mp4',
       model: baseOptions.model || DEFAULT_OPTIONS.model!,
       durationSeconds: totalDuration,
@@ -328,6 +439,10 @@ export class VeoVideoClient {
       generationTimeSeconds,
       clipCount: totalClips,
       clipDurations: allClipDurations,
+      seedUsed: coherenceSeed,
+      fps: baseOptions.fps,
+      videoUrl: outputResult.videoUrl,
+      expiresAt: outputResult.expiresAt,
     };
   }
 
@@ -461,6 +576,7 @@ Output ONLY the enhanced prompt, no explanations.`;
 
   /**
    * Démarre une opération de génération vidéo
+   * Phase 5C: Enhanced error handling with safety filter detection
    */
   private async startOperation(
     model: string,
@@ -482,6 +598,17 @@ Output ONLY the enhanced prompt, no explanations.`;
 
     if (!response.ok) {
       const errorText = await response.text();
+
+      // Phase 5C: Check for safety filter errors
+      const safetyError = this.parseSafetyError(errorText);
+      if (safetyError) {
+        const error = new Error(
+          `${safetyError.message}. ${safetyError.suggestion}`
+        ) as Error & { safetyError: VeoSafetyError };
+        error.safetyError = safetyError;
+        throw error;
+      }
+
       throw new Error(`Veo API error: ${response.status} - ${errorText}`);
     }
 
@@ -580,5 +707,130 @@ Output ONLY the enhanced prompt, no explanations.`;
 
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Phase 5C: Handle output mode (base64 vs GCS URL)
+   */
+  private async handleOutput(
+    videoData: Buffer,
+    options: VeoVideoOptions
+  ): Promise<{ videoData: Buffer; videoUrl?: string; expiresAt?: string }> {
+    if (options.outputMode !== 'url' || !options.gcsBucket) {
+      return { videoData };
+    }
+
+    // Upload to GCS and return signed URL
+    const { signedUrl, expiresAt } = await this.uploadToGcs(
+      videoData,
+      options.gcsBucket,
+      options.gcsPathPrefix || 'veo-videos',
+      options.signedUrlExpirationHours || 24
+    );
+
+    return {
+      videoData,
+      videoUrl: signedUrl,
+      expiresAt,
+    };
+  }
+
+  /**
+   * Phase 5C: Upload video to GCS and return signed URL
+   */
+  private async uploadToGcs(
+    videoData: Buffer,
+    bucketName: string,
+    pathPrefix: string,
+    expirationHours: number
+  ): Promise<{ signedUrl: string; expiresAt: string; gcsPath: string }> {
+    const { Storage } = await import('@google-cloud/storage');
+
+    // Use the same auth as the main client
+    const storage = new Storage({
+      projectId: this.projectId,
+      authClient: this.auth,
+    });
+
+    const bucket = storage.bucket(bucketName);
+    const timestamp = Date.now();
+    const filename = `${pathPrefix}/${timestamp}-video.mp4`;
+    const file = bucket.file(filename);
+
+    // Upload the video
+    await file.save(videoData, {
+      contentType: 'video/mp4',
+      metadata: {
+        cacheControl: 'public, max-age=31536000',
+      },
+    });
+
+    // Generate signed URL
+    const expiresAt = new Date(Date.now() + expirationHours * 60 * 60 * 1000);
+    const [signedUrl] = await file.getSignedUrl({
+      action: 'read',
+      expires: expiresAt,
+    });
+
+    return {
+      signedUrl,
+      expiresAt: expiresAt.toISOString(),
+      gcsPath: `gs://${bucketName}/${filename}`,
+    };
+  }
+
+  /**
+   * Phase 5C: Parse safety filter errors from API response
+   */
+  private parseSafetyError(errorText: string): VeoSafetyError | null {
+    const safetyReasons: Record<string, { message: string; suggestion: string }> = {
+      'SAFETY_REASON_VULGARITY': {
+        message: 'Le prompt contient du contenu vulgaire',
+        suggestion: 'Reformulez le prompt pour éviter le langage grossier',
+      },
+      'SAFETY_REASON_VIOLENCE': {
+        message: 'Le prompt contient du contenu violent',
+        suggestion: 'Reformulez le prompt pour éviter les éléments violents',
+      },
+      'SAFETY_REASON_SEXUAL': {
+        message: 'Le prompt contient du contenu sexuel',
+        suggestion: 'Reformulez le prompt pour éviter le contenu sexuel explicite',
+      },
+      'SAFETY_REASON_DANGEROUS': {
+        message: 'Le prompt contient du contenu dangereux',
+        suggestion: 'Reformulez le prompt pour éviter les activités dangereuses',
+      },
+      'SAFETY_REASON_HARASSMENT': {
+        message: 'Le prompt contient du harcèlement',
+        suggestion: 'Reformulez le prompt pour éviter le contenu offensant',
+      },
+      'SAFETY_REASON_HATE': {
+        message: 'Le prompt contient du contenu haineux',
+        suggestion: 'Reformulez le prompt pour éviter le discours de haine',
+      },
+    };
+
+    for (const [reason, details] of Object.entries(safetyReasons)) {
+      if (errorText.includes(reason)) {
+        return {
+          code: 'SAFETY_BLOCKED',
+          reason,
+          message: details.message,
+          suggestion: details.suggestion,
+        };
+      }
+    }
+
+    // Generic safety error
+    if (errorText.toLowerCase().includes('safety') || errorText.toLowerCase().includes('blocked')) {
+      return {
+        code: 'SAFETY_BLOCKED',
+        reason: 'SAFETY_REASON_UNKNOWN',
+        message: 'Le prompt a été bloqué par les filtres de sécurité',
+        suggestion: 'Reformulez le prompt pour éviter le contenu sensible',
+      };
+    }
+
+    return null;
   }
 }
