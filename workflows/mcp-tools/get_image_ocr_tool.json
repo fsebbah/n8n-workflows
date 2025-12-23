@@ -70,7 +70,7 @@
     },
     {
       "id": "mistral-ocr",
-      "name": "Mistral Vision OCR",
+      "name": "Mistral OCR API",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -79,7 +79,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://api.mistral.ai/v1/chat/completions",
+        "url": "https://api.mistral.ai/v1/ocr",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -96,9 +96,9 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { \"model\": \"pixtral-12b-2409\", \"messages\": [{ \"role\": \"user\", \"content\": [{ \"type\": \"text\", \"text\": $json.body.prompt || \"Extract all text from this image. Return the text exactly as it appears, preserving formatting where possible. If there are multiple columns or sections, process them in reading order.\" }, { \"type\": \"image_url\", \"image_url\": { \"url\": $json.body.image_url || ('data:image/' + ($binary.data?.mimeType?.split('/')[1] || 'png') + ';base64,' + $binary.data?.data) } }] }], \"max_tokens\": $json.body.max_tokens || 4096 } }}",
+        "jsonBody": "={{ { \"model\": \"mistral-ocr-latest\", \"document\": { \"type\": \"image_url\", \"image_url\": $json.body.image_url || ('data:image/' + ($binary.data?.mimeType?.split('/')[1] || 'png') + ';base64,' + $binary.data?.data) }, \"include_image_base64\": $json.body.include_images || false } }}",
         "options": {
-          "timeout": 60000
+          "timeout": 120000
         }
       },
       "onError": "continueRegularOutput"
@@ -114,7 +114,7 @@
       ],
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"data\": { \"text\": $json.choices?.[0]?.message?.content || '', \"model\": 'pixtral-12b-2409', \"source\": $('Webhook').first().json.body.image_url ? 'url' : 'binary' }, \"meta\": { \"provider\": \"mistral\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"usage\": { \"prompt_tokens\": $json.usage?.prompt_tokens || 0, \"completion_tokens\": $json.usage?.completion_tokens || 0 } } } }}"
+        "jsonOutput": "={{ { \"success\": true, \"data\": { \"text\": $json.pages?.map(p => p.markdown).join('\\n\\n') || '', \"pages\": $json.pages || [], \"model\": $json.model || 'mistral-ocr-latest', \"source\": $('Webhook').first().json.body.image_url ? 'url' : 'binary' }, \"meta\": { \"provider\": \"mistral\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"usage\": { \"pages_processed\": $json.usage_info?.pages_processed || 1, \"doc_size_bytes\": $json.usage_info?.doc_size_bytes || 0 } } } }}"
       }
     },
     {
@@ -145,7 +145,7 @@
         "color": 6,
         "width": 550,
         "height": 240,
-        "content": "## MCP - Image OCR\n\n**Endpoint:** POST /webhook/image-ocr\n\n**Parameters:**\n- `mistral_api_key` (required): Mistral API key\n- `image_url` (string): URL of image to process\n- OR upload binary image file\n- `prompt` (optional): Custom extraction instructions\n- `max_tokens` (optional): Max output tokens (default: 4096)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Extracted text from image\n\n**Note:** Uses Mistral Pixtral vision model for OCR"
+        "content": "## MCP - Image OCR\n\n**Endpoint:** POST /webhook/image-ocr\n\n**Model:** mistral-ocr-latest (Mistral OCR API v1)\n\n**Parameters:**\n- `mistral_api_key` (required): Mistral API key\n- `image_url` (string): URL of image to process\n- OR upload binary image file\n- `include_images` (optional): Include base64 images in response\n- `execution_mode` (optional): online | offline\n\n**Returns:** Extracted text (markdown) + pages array\n\n**API:** https://api.mistral.ai/v1/ocr"
       }
     }
   ],
