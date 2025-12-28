@@ -70,7 +70,7 @@ module.exports = {
       // Redémarrage automatique
       autorestart: true,
       watch: false,
-      max_memory_restart: '500M',
+      max_memory_restart: '1536M',
 
       // Logs - dans le dossier du projet
       error_file: '/home/fsebb/n8n-workflows/logs/n8n-error.log',
