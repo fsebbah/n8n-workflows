@@ -15,6 +15,85 @@ Développement : http://localhost:3031
 
 ## 2. Endpoints de Traduction
 
+### 2.0 Rechercher une traduction existante (Cache)
+
+**GET** `/api/translations/search`
+
+Vérifie si une traduction existe déjà en cache/base de données.
+
+#### Paramètres
+
+| Paramètre | Type | Priorité | Description |
+|-----------|------|----------|-------------|
+| `source_text_id` | UUID | 1 (optimal) | Recherche directe par UUID |
+| `commentary_id` | UUID | 1 | Recherche traduction d'un commentaire |
+| `traite` | string | 2 | Nom du traité (ex: Sukkah) |
+| `page` | string | 2 | Page du traité (ex: 28a) |
+| `commentator` | string | 2 | Nom du commentateur (ex: Rashi) |
+| `target_language` | string | **requis** | Langue cible (`fr`, `en`, `he`) |
+
+#### Exemples
+
+```bash
+# Par UUID (recommandé)
+GET /api/translations/search?source_text_id=abc-123&target_language=fr
+
+# Par référence structurée
+GET /api/translations/search?traite=Sukkah&page=28a&target_language=fr
+
+# Avec commentateur
+GET /api/translations/search?traite=Sukkah&page=28a&commentator=Rashi&target_language=fr
+```
+
+#### Réponse (trouvée)
+
+```json
+{
+  "found": true,
+  "translation_id": "uuid-traduction",
+  "source_text_id": "uuid-source",
+  "reference": "Sukkah 28a",
+  "source_text": "Texte original...",
+  "hebrew_text": "טקסט עברי...",
+  "translated_text": "Texte traduit en français...",
+  "target_language": "fr",
+  "provider": "openai",
+  "model": "gpt-4o",
+  "quality_score": 0.95,
+  "version": 1,
+  "created_at": "2025-12-28T10:00:00",
+  "traite": "Sukkah",
+  "page": "28a"
+}
+```
+
+#### Réponse (non trouvée)
+
+```json
+{
+  "found": false,
+  "source_text_id": null,
+  "traite": "Sukkah",
+  "page": "28a",
+  "target_language": "fr"
+}
+```
+
+#### Workflow n8n recommandé
+
+```
+1. GET /api/talmud/text/{traite}/{page}
+   → Récupère source_text_id
+
+2. GET /api/translations/search?source_text_id={uuid}&target_language=fr
+   → Si found=true : utiliser translated_text
+   → Si found=false : passer à l'étape 3
+
+3. POST /api/mcp/translate (créer la traduction)
+```
+
+---
+
 ### 2.1 Traduire un texte (Endpoint principal)
 
 **POST** `/api/translate`
@@ -435,6 +514,222 @@ Pour obtenir un token, contacter l'administrateur.
 - **API Documentation Swagger** : http://localhost:3031/api/docs
 - **Repository** : torah.solutions.api
 - **Support** : équipe backend
+
+---
+
+## 9. Endpoints de Vocalisation (Nekudot)
+
+Ces endpoints permettent de gérer les textes hébreux avec voyelles (nekudot/ניקוד).
+
+### 9.1 Rechercher un texte vocalisé
+
+**GET** `/api/vocalization/search`
+
+Vérifie si un texte vocalisé existe en base de données.
+
+#### Paramètres
+
+| Paramètre | Type | Priorité | Description |
+|-----------|------|----------|-------------|
+| `source_text_id` | UUID | 1 (optimal) | Recherche directe par UUID |
+| `commentary_id` | UUID | 1 | Recherche vocalisation d'un commentaire |
+| `traite` | string | 2 | Nom du traité (ex: Sukkah) |
+| `page` | string | 2 | Page du traité (ex: 28a) |
+| `commentator` | string | 2 | Nom du commentateur (ex: Rashi) |
+
+#### Exemples
+
+```bash
+# Par UUID (recommandé)
+GET /api/vocalization/search?source_text_id=abc-123
+
+# Par référence structurée
+GET /api/vocalization/search?traite=Sukkah&page=28a
+
+# Avec commentateur
+GET /api/vocalization/search?traite=Sukkah&page=28a&commentator=Rashi
+```
+
+#### Réponse (trouvée)
+
+```json
+{
+  "found": true,
+  "source_text_id": "uuid-source",
+  "reference": "Sukkah 28a",
+  "original_text": "בראשית ברא אלהים",
+  "hebrew_text": "טקסט עברי...",
+  "vocalized_text": "בְּרֵאשִׁית בָּרָא אֱלֹהִים",
+  "vocalized_by": "llm:gpt-4o",
+  "vocalized_at": "2025-12-28T10:00:00",
+  "traite": "Sukkah",
+  "page": "28a"
+}
+```
+
+#### Réponse (non trouvée)
+
+```json
+{
+  "found": false,
+  "source_text_id": null,
+  "traite": "Sukkah",
+  "page": "28a"
+}
+```
+
+---
+
+### 9.2 Sauvegarder un texte vocalisé
+
+**POST** `/api/vocalization/save`
+
+Sauvegarde un texte avec nekudot après vocalisation par LLM.
+
+#### Requête
+
+```json
+{
+  "source_text_id": "29428246-00aa-4755-b402-8e3d8ae4fd52",
+  "vocalized_text": "בְּרֵאשִׁית בָּרָא אֱלֹהִים",
+  "vocalized_by": "llm:gpt-4o"
+}
+```
+
+#### Paramètres
+
+| Champ | Type | Requis | Description |
+|-------|------|--------|-------------|
+| `source_text_id` | UUID | Oui* | UUID du texte source |
+| `commentary_id` | UUID | Oui* | UUID du commentaire (alternatif) |
+| `vocalized_text` | string | Oui | Texte avec nekudot |
+| `vocalized_by` | string | Oui | Source de vocalisation |
+
+*Fournir soit `source_text_id` soit `commentary_id`
+
+#### Valeurs pour `vocalized_by`
+
+| Valeur | Description |
+|--------|-------------|
+| `llm:gpt-4o` | Vocalisé par GPT-4o |
+| `llm:claude-3-5-sonnet` | Vocalisé par Claude |
+| `llm:gemini-pro` | Vocalisé par Gemini |
+| `manual` | Vocalisation manuelle |
+| `sefaria` | Importé de Sefaria |
+
+#### Réponse
+
+```json
+{
+  "success": true,
+  "message": "Vocalisation sauvegardée",
+  "source_text_id": "29428246-00aa-4755-b402-8e3d8ae4fd52",
+  "vocalized_at": "2025-12-28T23:45:00"
+}
+```
+
+---
+
+### 9.3 Workflow n8n recommandé pour la vocalisation
+
+```
+1. GET /api/talmud/text/{traite}/{page}
+   → Récupère source_text_id et hebrew_text
+
+2. GET /api/vocalization/search?source_text_id={uuid}
+   → Si found=true : utiliser vocalized_text
+   → Si found=false : passer à l'étape 3
+
+3. Appeler le LLM (OpenAI/Claude) pour vocaliser le texte
+   → Prompt: "Ajoute les nekudot (voyelles hébraïques) à ce texte: {hebrew_text}"
+
+4. POST /api/vocalization/save
+   → Sauvegarder le résultat pour le cache
+```
+
+#### Exemple de workflow n8n
+
+```json
+{
+  "nodes": [
+    {
+      "name": "Récupérer texte",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "http://torah.solutions:3031/api/talmud/text/Sukkah/28a"
+      }
+    },
+    {
+      "name": "Chercher vocalisation existante",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "http://torah.solutions:3031/api/vocalization/search?source_text_id={{ $json.source_text_id }}"
+      }
+    },
+    {
+      "name": "IF vocalisation existe",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "{{ $json.found }}", "value2": true}]
+        }
+      }
+    },
+    {
+      "name": "Appeler OpenAI pour vocaliser",
+      "type": "n8n-nodes-base.openAi",
+      "parameters": {
+        "model": "gpt-4o",
+        "prompt": "Ajoute les nekudot (voyelles hébraïques) à ce texte. Retourne uniquement le texte vocalisé, sans explication:\n\n{{ $json.hebrew_text }}"
+      }
+    },
+    {
+      "name": "Sauvegarder vocalisation",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "http://torah.solutions:3031/api/vocalization/save",
+        "body": {
+          "source_text_id": "{{ $json.source_text_id }}",
+          "vocalized_text": "{{ $json.choices[0].message.content }}",
+          "vocalized_by": "llm:gpt-4o"
+        }
+      }
+    }
+  ]
+}
+```
+
+---
+
+## 10. Colonnes de base de données pour la vocalisation
+
+Les colonnes suivantes ont été ajoutées aux tables `source_texts` et `commentary_details` :
+
+| Colonne | Type | Description |
+|---------|------|-------------|
+| `vocalized_text` | TEXT | Texte avec nekudot |
+| `vocalized_at` | TIMESTAMP | Date de vocalisation |
+| `vocalized_by` | VARCHAR(100) | Source (ex: llm:gpt-4o) |
+
+### Requêtes SQL utiles
+
+```sql
+-- Compter les textes vocalisés vs non vocalisés
+SELECT
+    COUNT(*) FILTER (WHERE vocalized_text IS NOT NULL) as with_nekudot,
+    COUNT(*) FILTER (WHERE vocalized_text IS NULL) as without_nekudot
+FROM source_texts;
+
+-- Récupérer les textes non vocalisés d'un traité
+SELECT id, reference, hebrew_text
+FROM source_texts
+WHERE reference LIKE 'Sukkah%'
+  AND vocalized_text IS NULL
+ORDER BY reference;
+```
 
 ---
 

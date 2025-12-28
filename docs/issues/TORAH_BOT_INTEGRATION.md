@@ -18,7 +18,7 @@ POST http://pi6.local:5678/webhook/torah-discord-translate
 
 | Paramètre | Type | Description |
 |-----------|------|-------------|
-| `text` | string | Texte hébreu/araméen à traduire |
+| `text` | string | Texte à traduire (hébreu, araméen, anglais, etc.) |
 | `api_key` | string | Clé API Anthropic (Claude) |
 | `openai_api_key` | string | Clé API OpenAI (GPT-4o) |
 
@@ -26,6 +26,7 @@ POST http://pi6.local:5678/webhook/torah-discord-translate
 
 | Paramètre | Type | Description |
 |-----------|------|-------------|
+| `source_language` | string | Langue source : `auto` (défaut - détection automatique), `he`, `en`, `fr`, `es` |
 | `target_language` | string | Langue cible : `fr` (défaut), `en`, `es` |
 | `source_text_id` | UUID | ID du texte source (depuis API Talmud) - **priorité 1** |
 | `commentary_id` | UUID | ID du commentaire (depuis API Talmud) - **priorité 1** |
