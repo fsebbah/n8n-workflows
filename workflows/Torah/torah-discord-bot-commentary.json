@@ -1,0 +1,224 @@
+{
+  "name": "Torah Discord Bot - Commentary Search",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-discord-message",
+        "options": {}
+      },
+      "id": "webhook-discord",
+      "name": "Discord Message Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "notes": "Recoit les messages Discord. Payload: {message: 'Sukkah 10a Rashi'}"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraction d'intention simple via regex (sans LLM)\nconst input = $input.first().json;\nconst message = (input.body?.message || input.message || '').toLowerCase();\n\n// Patterns pour les traites\nconst traitePatterns = {\n  'sukkah': 'Sukkah', 'souccah': 'Sukkah', 'sukka': 'Sukkah', 'soucca': 'Sukkah',\n  'berakhot': 'Berakhot', 'berachot': 'Berakhot', 'brachot': 'Berakhot', 'brakhot': 'Berakhot',\n  'pesachim': 'Pesachim', 'pessahim': 'Pesachim', 'pessachim': 'Pesachim',\n  'shabbat': 'Shabbat', 'shabat': 'Shabbat', 'chabbat': 'Shabbat',\n  'eruvin': 'Eruvin', 'erouvin': 'Eruvin', 'eiruvin': 'Eruvin',\n  'bekhorot': 'Bekhorot', 'bechorot': 'Bekhorot'\n};\n\n// Patterns pour les commentateurs\nconst commentatorPatterns = {\n  'rashi': 'Rashi', 'rachi': 'Rashi',\n  'tosafot': 'Tosafot', 'tossafot': 'Tosafot', 'tosfot': 'Tosafot',\n  'steinsaltz': 'Steinsaltz', 'steinzaltz': 'Steinsaltz',\n  'ritva': 'Ritva',\n  'meiri': 'Meiri',\n  'rashash': 'Rashash',\n  'rosh': 'Rosh',\n  'maharam': 'Maharam',\n  'all': 'all', 'tous': 'all', 'tout': 'all'\n};\n\nlet intent = { traite: null, page: null, commentator: 'all', action: 'get_commentary' };\nlet error = null;\n\n// Chercher le traite\nfor (const [pattern, name] of Object.entries(traitePatterns)) {\n  if (message.includes(pattern)) {\n    intent.traite = name;\n    break;\n  }\n}\n\n// Chercher la page (format: 10a, 28b, 2a, etc.)\nconst pageMatch = message.match(/\\b(\\d{1,3}[ab])\\b/);\nif (pageMatch) {\n  intent.page = pageMatch[1];\n}\n\n// Chercher le commentateur\nfor (const [pattern, name] of Object.entries(commentatorPatterns)) {\n  if (message.includes(pattern)) {\n    intent.commentator = name;\n    break;\n  }\n}\n\n// Validation\nif (!intent.traite) {\n  error = 'Traite non reconnu. Traites disponibles: Sukkah, Berakhot, Pesachim, Shabbat, Eruvin, Bekhorot';\n} else if (!intent.page) {\n  error = 'Page non reconnue. Format attendu: 10a, 28b, 2a, etc.';\n}\n\nreturn [{ json: { intent, error, originalMessage: message } }];"
+      },
+      "id": "extract-intent",
+      "name": "Extract Intent (Regex)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "no-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-intent",
+      "name": "Intent Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://pi6.local:3031/api/talmud/text/{{ $json.intent.traite }}/{{ $json.intent.page }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "get-talmud-text",
+      "name": "API - Get Talmud Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater les commentaires pour Discord\nconst input = $input.first().json;\nconst intent = $('Extract Intent (Regex)').first().json.intent;\n\nlet commentaries = input.commentaries || [];\nconst sourceText = input.source_text || input;\n\n// Filtrer par commentateur si specifie\nif (intent.commentator && intent.commentator.toLowerCase() !== 'all') {\n  const targetCommentator = intent.commentator.toLowerCase();\n  commentaries = commentaries.filter(c => {\n    const name = (c.commentator || '').toLowerCase();\n    return name.includes(targetCommentator) || targetCommentator.includes(name);\n  });\n}\n\n// Limiter le nombre de commentaires\nconst maxComments = 5;\nconst displayedComments = commentaries.slice(0, maxComments);\n\n// Construire le titre\nlet title = `${intent.traite} ${intent.page}`;\nif (intent.commentator && intent.commentator.toLowerCase() !== 'all') {\n  title += ` - ${intent.commentator}`;\n}\n\n// Description\nlet description = '';\nif (displayedComments.length === 0) {\n  description = 'Aucun commentaire trouve pour cette recherche.';\n} else {\n  description = `${commentaries.length} commentaire(s) trouve(s)`;\n  if (commentaries.length > maxComments) {\n    description += ` (affichage des ${maxComments} premiers)`;\n  }\n}\n\n// Creer les fields pour les commentaires\nconst fields = displayedComments.map((c, i) => {\n  let text = c.text || c.hebrew_text || '';\n  // Limiter la taille du texte pour Discord\n  if (text.length > 300) {\n    text = text.substring(0, 300) + '...';\n  }\n  return {\n    name: `${c.commentator || 'Commentaire'} (seg. ${c.segment || i+1})`,\n    value: text || '(texte non disponible)',\n    inline: false\n  };\n});\n\n// Ajouter la reference\nif (sourceText && sourceText.reference) {\n  fields.unshift({\n    name: 'Reference',\n    value: sourceText.reference,\n    inline: true\n  });\n}\n\nconst embed = {\n  title: title,\n  description: description,\n  color: 10181046,\n  fields: fields.slice(0, 10),\n  footer: { text: 'Torah Commentary Bot' },\n  timestamp: new Date().toISOString()\n};\n\nreturn [{ json: { embed, stats: { total: commentaries.length, displayed: displayedComments.length } } }];"
+      },
+      "id": "format-response",
+      "name": "Format for Discord",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{{ JSON.stringify($json.embed) }}]\n}",
+        "options": {}
+      },
+      "id": "discord-send-result",
+      "name": "Discord - Send Result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Erreur\",\n    \"description\": \"{{ $json.error || 'Erreur inconnue' }}\\n\\nEssayez un format comme:\\n- Sukkah 28b Rashi\\n- Berakhot 2a tous\\n- Pesachim 10a Tosafot\",\n    \"color\": 15548997,\n    \"footer\": {\"text\": \"Torah Commentary Bot\"}\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-send-error",
+      "name": "Discord - Send Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, stats: $json.stats } }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1570, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error } }}",
+        "options": {}
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1130, 420]
+    }
+  ],
+  "connections": {
+    "Discord Message Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Intent (Regex)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Intent (Regex)": {
+      "main": [
+        [
+          {
+            "node": "Intent Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent Valid?": {
+      "main": [
+        [
+          {
+            "node": "API - Get Talmud Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Discord - Send Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API - Get Talmud Text": {
+      "main": [
+        [
+          {
+            "node": "Format for Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format for Discord": {
+      "main": [
+        [
+          {
+            "node": "Discord - Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - Send Result": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - Send Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
