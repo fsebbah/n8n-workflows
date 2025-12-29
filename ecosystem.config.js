@@ -44,6 +44,9 @@ module.exports = {
 
         // Webhook URL
         WEBHOOK_URL: 'http://pi6.local:5678/',
+
+        // API Torah
+        TORAH_API_URL: 'http://pi6.local:3031',
       },
 
       // Environnement production (moins de logs)
@@ -65,6 +68,7 @@ module.exports = {
         N8N_VERSION_NOTIFICATIONS_ENABLED: 'false',
         N8N_TEMPLATES_ENABLED: 'false',
         WEBHOOK_URL: 'http://pi6.local:5678/',
+        TORAH_API_URL: 'http://pi6.local:3031',
       },
 
       // Redémarrage automatique

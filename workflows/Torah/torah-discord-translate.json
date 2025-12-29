@@ -99,7 +99,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=http://localhost:3031/api/translations/search?{{ $json.cacheSearchParams }}",
+        "url": "={{ $env.TORAH_API_URL }}/api/translations/search?{{ $json.cacheSearchParams }}",
         "options": {
           "timeout": 5000,
           "response": {
@@ -207,7 +207,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extraire la traduction Claude et préparer pour GPT-4o\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\n// Gestion fullResponse ou réponse directe\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier les erreurs HTTP Claude (vérifier le type d'erreur Claude spécifiquement)\nconst hasClaudeError = statusCode >= 400 || !!data.error;\nif (hasClaudeError) {\n  const errorMsg = data.error?.message || data.error?.error?.message || data.message || `Erreur HTTP ${statusCode}`;\n  const errorType = data.error?.type || 'unknown';\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode >= 400 ? statusCode : 401,\n        message: `Erreur API Claude: ${errorMsg}`,\n        status: 'CLAUDE_API_ERROR',\n        debug: { errorType: errorType, statusCode: statusCode }\n      }\n    }\n  }];\n}\n\n// Extraire la traduction de Claude\nlet claudeTranslation = '';\nif (data.content && data.content[0] && data.content[0].text) {\n  claudeTranslation = data.content[0].text.trim();\n}\n\nif (!claudeTranslation) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Aucune traduction retournée par Claude',\n        status: 'EMPTY_CLAUDE_RESPONSE',\n        debug: { statusCode: statusCode, hasContent: !!data.content, keys: Object.keys(data) }\n      }\n    }\n  }];\n}\n\n// Préparer les données pour GPT-4o\nreturn [{\n  json: {\n    claudeTranslation: claudeTranslation,\n    originalText: prevData.text,\n    targetLanguage: prevData.targetLanguage,\n    targetLangName: prevData.targetLangName,\n    sourceLanguage: prevData.sourceLanguage,\n    sourceTextId: prevData.sourceTextId,\n    commentaryId: prevData.commentaryId,\n    context: prevData.context,\n    contextInfo: prevData.contextInfo,\n    openaiApiKey: prevData.openaiApiKey,\n    discord: prevData.discord,\n    startTime: prevData.startTime,\n    claudeUsage: {\n      input_tokens: data.usage?.input_tokens || 0,\n      output_tokens: data.usage?.output_tokens || 0\n    }\n  }\n}];"
+        "jsCode": "// Extraire la traduction Claude et préparer pour GPT-4o\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\n// Gestion fullResponse ou réponse directe\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier les erreurs HTTP Claude\n// Claude retourne type='error' en cas d'erreur, ou un objet error avec message\nconst hasClaudeError = statusCode >= 400 || data.type === 'error' || (data.error && data.error.message);\nif (hasClaudeError) {\n  const errorMsg = data.error?.message || data.message || `Erreur HTTP ${statusCode}`;\n  const errorType = data.error?.type || data.type || 'unknown';\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode >= 400 ? statusCode : 401,\n        message: `Erreur API Claude: ${errorMsg}`,\n        status: 'CLAUDE_API_ERROR',\n        debug: { errorType: errorType, statusCode: statusCode }\n      }\n    }\n  }];\n}\n\n// Extraire la traduction de Claude\nlet claudeTranslation = '';\nif (data.content && data.content[0] && data.content[0].text) {\n  claudeTranslation = data.content[0].text.trim();\n}\n\nif (!claudeTranslation) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Aucune traduction retournée par Claude',\n        status: 'EMPTY_CLAUDE_RESPONSE',\n        debug: { statusCode: statusCode, hasContent: !!data.content, keys: Object.keys(data) }\n      }\n    }\n  }];\n}\n\n// Préparer les données pour GPT-4o\nreturn [{\n  json: {\n    claudeTranslation: claudeTranslation,\n    originalText: prevData.text,\n    targetLanguage: prevData.targetLanguage,\n    targetLangName: prevData.targetLangName,\n    sourceLanguage: prevData.sourceLanguage,\n    sourceTextId: prevData.sourceTextId,\n    commentaryId: prevData.commentaryId,\n    context: prevData.context,\n    contextInfo: prevData.contextInfo,\n    openaiApiKey: prevData.openaiApiKey,\n    discord: prevData.discord,\n    startTime: prevData.startTime,\n    claudeUsage: {\n      input_tokens: data.usage?.input_tokens || 0,\n      output_tokens: data.usage?.output_tokens || 0\n    }\n  }\n}];"
       },
       "id": "extract-claude-response",
       "name": "Extract Claude Response",
@@ -293,7 +293,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:3031/api/translations/save",
+        "url": "={{ $env.TORAH_API_URL }}/api/translations/save",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json._saveData) }}",
