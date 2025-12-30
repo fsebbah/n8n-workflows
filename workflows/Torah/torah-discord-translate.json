@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Discord Translation v6 (Mode + Approved)\n\n**Endpoint:** POST /webhook/torah-discord-translate\n\n**Required:**\n- `text`: Texte hébreu/araméen à traduire\n- `api_key`: Clé API Anthropic (Claude)\n- `openai_api_key`: Clé API OpenAI\n\n**Optional:**\n- `target_language`: fr (défaut), en, es\n- `mode`: standard | premium\n  - standard: claude-sonnet-4 + gpt-4o\n  - premium: claude-haiku-4.5 + gpt-5-mini\n- `source_text_id`: UUID du texte source\n- `commentary_id`: UUID du commentaire\n- `context`: { traite, page, commentator }\n- `discord.webhook_url`: URL webhook Discord\n- `request_id`: ID de tracking\n\n**Pipeline:**\n1. Check Cache (API Torah)\n2. Claude traduit + OpenAI traduit\n3. Si approved === true → approved\n4. Sinon → draft (review humain)\n\n**Réponse:**\n- `status`: approved | draft\n- `mode`: standard | premium\n- `translation.claude`: Traduction Claude\n- `translation.gpt4o`: Traduction OpenAI\n- `translation.final`: Claude si approved",
+        "content": "## Torah Discord Translation v7 (Pivot)\n\n**Endpoint:** POST /webhook/torah-discord-translate\n\n**Required:**\n- `text`: Texte hébreu/araméen à traduire\n- `api_key`: Clé API Anthropic (Claude)\n- `openai_api_key`: Clé API OpenAI\n\n**Optional:**\n- `target_language`: fr (défaut), en, es\n- `source_language`: he (défaut), ar, en\n- `mode`: standard | premium\n  - standard: claude-sonnet-4 + gpt-4o\n  - premium: claude-haiku-4.5 + gpt-5-mini\n- `use_pivot`: true | false (défaut)\n  - Si true: délègue au workflow pivot\n  - Pivot: source → en → target (2 appels)\n- `context`: { traite, page, commentator }\n- `discord.webhook_url`: URL webhook\n- `request_id`: ID de tracking\n\n**Pipeline:**\n1. Si use_pivot → Call Pivot Workflow\n2. Sinon → Check Cache → Claude → OpenAI\n3. Si approved === true → approved\n4. Sinon → draft (review humain)\n\n**Réponse:**\n- `status`: approved | draft\n- `mode`: standard | premium\n- `pivot_used`: true | false",
         "height": 420,
         "width": 320,
         "color": 6
@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Validation et préparation des données\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst startTime = Date.now();\n\n// Extraction des paramètres\nconst text = body.text || '';\nconst apiKey = body.api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\nconst targetLanguage = body.target_language || 'fr';\nconst sourceLanguage = body.source_language || 'auto';\nconst sourceTextId = body.source_text_id || null;\nconst commentaryId = body.commentary_id || null;\nconst context = body.context || {};\nconst discord = body.discord || {};\nconst requestId = body.request_id || null;\n\n// Mode: standard ou premium\nconst mode = body.mode || 'standard';\nconst validModes = ['standard', 'premium'];\nconst selectedMode = validModes.includes(mode) ? mode : 'standard';\n\n// Configuration des modèles selon le mode\nconst modelConfig = {\n  standard: {\n    claude: 'claude-sonnet-4-20250514',\n    openai: 'gpt-4o'\n  },\n  premium: {\n    claude: 'claude-haiku-4.5',\n    openai: 'gpt-5-mini'\n  }\n};\n\nconst models = modelConfig[selectedMode];\n\n// Validation\nconst errors = [];\nif (!text || text.trim().length === 0) {\n  errors.push('Le champ \"text\" est requis');\n}\nif (!apiKey || apiKey.trim().length === 0) {\n  errors.push('Le champ \"api_key\" (Anthropic) est requis');\n}\nif (!openaiApiKey || openaiApiKey.trim().length === 0) {\n  errors.push('Le champ \"openai_api_key\" est requis');\n}\n\n// Mapping langues\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen'\n};\n\nconst targetLangName = languageNames[targetLanguage] || 'français';\nconst sourceLangName = sourceLanguage === 'auto' ? null : (languageNames[sourceLanguage] || sourceLanguage);\n\n// Construction du contexte pour le prompt\nlet contextInfo = '';\nif (context.traite || context.page || context.commentator) {\n  contextInfo = `\\n\\nContexte: ${context.commentator || ''} sur ${context.traite || ''} ${context.page || ''}`.trim();\n}\n\n// Construire l'URL de recherche cache\nlet cacheSearchParams = `target_language=${targetLanguage}`;\nif (sourceTextId) {\n  cacheSearchParams += `&source_text_id=${sourceTextId}`;\n} else if (commentaryId) {\n  cacheSearchParams += `&commentary_id=${commentaryId}`;\n} else if (context.traite && context.page) {\n  cacheSearchParams += `&traite=${encodeURIComponent(context.traite)}&page=${encodeURIComponent(context.page)}`;\n  if (context.commentator) {\n    cacheSearchParams += `&commentator=${encodeURIComponent(context.commentator)}`;\n  }\n  cacheSearchParams += `&text=${encodeURIComponent(text)}&exact=true`;\n}\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    text: text,\n    apiKey: apiKey,\n    openaiApiKey: openaiApiKey,\n    targetLanguage: targetLanguage,\n    targetLangName: targetLangName,\n    sourceLanguage: sourceLanguage,\n    sourceLangName: sourceLangName,\n    sourceTextId: sourceTextId,\n    commentaryId: commentaryId,\n    contextInfo: contextInfo,\n    context: context,\n    discord: discord,\n    requestId: requestId,\n    startTime: startTime,\n    cacheSearchParams: cacheSearchParams,\n    canSearchCache: !!(sourceTextId || commentaryId || (context.traite && context.page)),\n    mode: selectedMode,\n    claudeModel: models.claude,\n    openaiModel: models.openai\n  }\n}];"
+        "jsCode": "// Validation et préparation des données\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst startTime = Date.now();\n\n// Extraction des paramètres\nconst text = body.text || '';\nconst apiKey = body.api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\nconst targetLanguage = body.target_language || 'fr';\nconst sourceLanguage = body.source_language || 'auto';\nconst sourceTextId = body.source_text_id || null;\nconst commentaryId = body.commentary_id || null;\nconst context = body.context || {};\nconst discord = body.discord || {};\nconst requestId = body.request_id || null;\n\n// Mode: standard ou premium\nconst mode = body.mode || 'standard';\nconst validModes = ['standard', 'premium'];\nconst selectedMode = validModes.includes(mode) ? mode : 'standard';\n\n// Pivot: utiliser la traduction via l'anglais\nconst usePivot = body.use_pivot === true;\n\n// Configuration des modèles selon le mode\nconst modelConfig = {\n  standard: {\n    claude: 'claude-sonnet-4-20250514',\n    openai: 'gpt-4o'\n  },\n  premium: {\n    claude: 'claude-haiku-4.5',\n    openai: 'gpt-5-mini'\n  }\n};\n\nconst models = modelConfig[selectedMode];\n\n// Validation\nconst errors = [];\nif (!text || text.trim().length === 0) {\n  errors.push('Le champ \"text\" est requis');\n}\nif (!apiKey || apiKey.trim().length === 0) {\n  errors.push('Le champ \"api_key\" (Anthropic) est requis');\n}\nif (!openaiApiKey || openaiApiKey.trim().length === 0) {\n  errors.push('Le champ \"openai_api_key\" est requis');\n}\n\n// Mapping langues\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen'\n};\n\nconst targetLangName = languageNames[targetLanguage] || 'français';\nconst sourceLangName = sourceLanguage === 'auto' ? null : (languageNames[sourceLanguage] || sourceLanguage);\n\n// Construction du contexte pour le prompt\nlet contextInfo = '';\nif (context.traite || context.page || context.commentator) {\n  contextInfo = `\\n\\nContexte: ${context.commentator || ''} sur ${context.traite || ''} ${context.page || ''}`.trim();\n}\n\n// Construire l'URL de recherche cache\nlet cacheSearchParams = `target_language=${targetLanguage}`;\nif (sourceTextId) {\n  cacheSearchParams += `&source_text_id=${sourceTextId}`;\n} else if (commentaryId) {\n  cacheSearchParams += `&commentary_id=${commentaryId}`;\n} else if (context.traite && context.page) {\n  cacheSearchParams += `&traite=${encodeURIComponent(context.traite)}&page=${encodeURIComponent(context.page)}`;\n  if (context.commentator) {\n    cacheSearchParams += `&commentator=${encodeURIComponent(context.commentator)}`;\n  }\n  cacheSearchParams += `&text=${encodeURIComponent(text)}&exact=true`;\n}\n\n// Construire le payload pour le pivot workflow\nconst pivotPayload = {\n  text: text,\n  api_key: apiKey,\n  openai_api_key: openaiApiKey,\n  source_language: sourceLanguage === 'auto' ? 'he' : sourceLanguage,\n  target_language: targetLanguage,\n  mode: selectedMode,\n  context: context,\n  discord: discord,\n  request_id: requestId\n};\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    text: text,\n    apiKey: apiKey,\n    openaiApiKey: openaiApiKey,\n    targetLanguage: targetLanguage,\n    targetLangName: targetLangName,\n    sourceLanguage: sourceLanguage,\n    sourceLangName: sourceLangName,\n    sourceTextId: sourceTextId,\n    commentaryId: commentaryId,\n    contextInfo: contextInfo,\n    context: context,\n    discord: discord,\n    requestId: requestId,\n    startTime: startTime,\n    cacheSearchParams: cacheSearchParams,\n    canSearchCache: !!(sourceTextId || commentaryId || (context.traite && context.page)),\n    mode: selectedMode,\n    claudeModel: models.claude,\n    openaiModel: models.openai,\n    usePivot: usePivot,\n    pivotPayload: pivotPayload\n  }\n}];"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -448,6 +448,68 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [2600, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-pivot",
+              "leftValue": "={{ $json.usePivot }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-use-pivot",
+      "name": "Use Pivot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1060, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-discord-translate-pivot",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.pivotPayload) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "call-pivot-workflow",
+      "name": "Call Pivot Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1280, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la réponse du workflow pivot\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Si erreur HTTP\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || 'Erreur appel workflow pivot',\n        status: 'PIVOT_WORKFLOW_ERROR'\n      }\n    }\n  }];\n}\n\n// Passer la réponse du pivot avec le discord pour notification\nconst response = { ...data };\nresponse.discord = prevData.discord;\nresponse.pivot_used = true;\n\nreturn [{ json: response }];"
+      },
+      "id": "format-pivot-response",
+      "name": "Format Pivot Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 300]
     }
   ],
   "connections": {
@@ -477,7 +539,7 @@
       "main": [
         [
           {
-            "node": "Can Search Cache?",
+            "node": "Use Pivot?",
             "type": "main",
             "index": 0
           }
@@ -485,6 +547,46 @@
         [
           {
             "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Pivot?": {
+      "main": [
+        [
+          {
+            "node": "Call Pivot Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Can Search Cache?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Pivot Workflow": {
+      "main": [
+        [
+          {
+            "node": "Format Pivot Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Pivot Response": {
+      "main": [
+        [
+          {
+            "node": "Send to Discord?",
             "type": "main",
             "index": 0
           }
