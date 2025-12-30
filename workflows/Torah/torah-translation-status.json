@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Translation Status API\n\n**Endpoints:**\n- GET /webhook/torah-translation-status\n- GET /webhook/torah-translation-status?traite={name}\n\n**Paramètres:**\n- `traite` (optionnel): Nom du traité pour détail\n- `target_language`: fr (défaut), en, es\n- `discord.webhook_url`: Pour notification\n\n**Réponses:**\n- Sans traite: Vue globale tous traités\n- Avec traite: Détail page par page\n\n**Source:** torah.api endpoints\n- /api/talmud/traites/translation-status\n- /api/talmud/traite/{traite}/translation-status",
+        "content": "## Torah Traites API\n\n**Endpoints:**\n- GET /webhook/torah-translation-status\n- GET /webhook/torah-translation-status?traite={name}\n\n**Paramètres:**\n- `traite` (optionnel): Nom du traité pour détail\n- `target_language`: fr (défaut), en, es\n- `discord_webhook`: URL webhook Discord\n\n**Réponses:**\n- Sans traite: Liste des traités disponibles\n- Avec traite: Détail des pages du traité\n\n**Source:** torah.api endpoints\n- /api/talmud/traites\n- /api/talmud/traite/{traite}/translation-status",
         "height": 340,
         "width": 300,
         "color": 4
@@ -90,7 +90,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.TORAH_API_URL }}/api/talmud/traites/translation-status?target_language={{ $json.targetLanguage }}",
+        "url": "={{ $env.TORAH_API_URL }}/api/talmud/traites",
         "options": {
           "timeout": 30000,
           "response": {
@@ -119,7 +119,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Formater la réponse globale (tous les traités)\nconst input = $input.first().json;\nconst params = $('Parse Parameters').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur API Torah',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Traiter les traités\nconst traites = data.traites || data || [];\nconst traitesList = Array.isArray(traites) ? traites : [];\n\n// Calculer les statistiques globales\nlet totalTexts = 0;\nlet translatedTexts = 0;\n\nconst formattedTraites = traitesList.map(t => {\n  const total = t.total_pages || t.total || 0;\n  const translated = t.translated_pages || t.translated || 0;\n  const pct = total > 0 ? Math.round((translated / total) * 100) : 0;\n  \n  totalTexts += total;\n  translatedTexts += translated;\n  \n  return {\n    name: t.traite || t.name,\n    total_pages: total,\n    translated: translated,\n    pending: total - translated,\n    percentage: pct,\n    status: pct === 100 ? 'complete' : (pct > 0 ? 'in_progress' : 'not_started')\n  };\n});\n\n// Trier par pourcentage (moins traduits en premier)\nformattedTraites.sort((a, b) => a.percentage - b.percentage);\n\nconst globalPercentage = totalTexts > 0 ? Math.round((translatedTexts / totalTexts) * 100) : 0;\n\n// Construire la réponse\nconst response = {\n  success: true,\n  type: 'global_overview',\n  target_language: params.targetLanguage,\n  statistics: {\n    total_traites: formattedTraites.length,\n    total_pages: totalTexts,\n    translated: translatedTexts,\n    pending: totalTexts - translatedTexts,\n    percentage: globalPercentage\n  },\n  traites: formattedTraites,\n  traites_complete: formattedTraites.filter(t => t.status === 'complete').map(t => t.name),\n  traites_in_progress: formattedTraites.filter(t => t.status === 'in_progress').map(t => t.name),\n  traites_not_started: formattedTraites.filter(t => t.status === 'not_started').map(t => t.name),\n  discord: params.discord\n};\n\nreturn [{ json: response }];"
+        "jsCode": "// Formater la réponse globale (liste des traités disponibles)\nconst input = $input.first().json;\nconst params = $('Parse Parameters').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur API Torah',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Liste des traités disponibles\nconst traites = data.traites || [];\nconst total = data.total || traites.length;\n\n// Construire la réponse\nconst response = {\n  success: true,\n  type: 'traites_list',\n  total: total,\n  traites: traites,\n  discord: params.discord\n};\n\nreturn [{ json: response }];"
       },
       "id": "format-global-response",
       "name": "Format Global Response",
@@ -127,21 +127,7 @@
       "typeVersion": 2,
       "position": [1280, 400]
     },
-    {
-      "parameters": {
-        "mode": "combine",
-        "mergeByFields": {
-          "values": []
-        },
-        "options": {}
-      },
-      "id": "merge-responses",
-      "name": "Merge Responses",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3.1,
-      "position": [1500, 300]
-    },
-    {
+        {
       "parameters": {
         "conditions": {
           "options": {
@@ -185,7 +171,7 @@
         "url": "={{ $json.discord.webhook_url }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"{{ $json.type === 'traite_detail' ? '📖 Traité ' + $json.traite : '📚 Statut Global des Traductions' }}\",\n    \"color\": {{ $json.statistics.percentage === 100 ? 5763719 : ($json.statistics.percentage > 50 ? 16776960 : 15548997) }},\n    \"fields\": [\n      {\n        \"name\": \"Progression\",\n        \"value\": \"{{ $json.statistics.translated }}/{{ $json.statistics.total_pages }} ({{ $json.statistics.percentage }}%)\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"En attente\",\n        \"value\": \"{{ $json.statistics.pending }} pages\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"Langue cible\",\n        \"value\": \"{{ $json.target_language }}\",\n        \"inline\": true\n      }\n      {{ $json.type === 'global_overview' && $json.traites_not_started.length > 0 ? ',{\"name\": \"Non commencés\", \"value\": \"' + $json.traites_not_started.slice(0,5).join(', ') + ($json.traites_not_started.length > 5 ? '...' : '') + '\", \"inline\": false}' : '' }}\n      {{ $json.type === 'traite_detail' && $json.pending_pages.length > 0 ? ',{\"name\": \"Pages à traduire\", \"value\": \"' + $json.pending_pages.slice(0,10).join(', ') + ($json.pending_pages.length > 10 ? '...' : '') + '\", \"inline\": false}' : '' }}\n    ],\n    \"footer\": { \"text\": \"Torah Translation Status API\" },\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"{{ $json.type === 'traite_detail' ? '📖 Traité ' + $json.traite : '📚 Traités Disponibles' }}\",\n    \"color\": 5763719,\n    \"fields\": [\n      {{ $json.type === 'traites_list' ? '{\"name\": \"Total\", \"value\": \"' + $json.total + ' traités\", \"inline\": true}' : '' }}\n      {{ $json.type === 'traites_list' ? ',{\"name\": \"Liste\", \"value\": \"' + $json.traites.join(', ') + '\", \"inline\": false}' : '' }}\n      {{ $json.type === 'traite_detail' ? '{\"name\": \"Progression\", \"value\": \"' + $json.statistics.translated + '/' + $json.statistics.total_pages + ' (' + $json.statistics.percentage + '%)\", \"inline\": true}' : '' }}\n      {{ $json.type === 'traite_detail' ? ',{\"name\": \"En attente\", \"value\": \"' + $json.statistics.pending + ' pages\", \"inline\": true}' : '' }}\n      {{ $json.type === 'traite_detail' && $json.pending_pages.length > 0 ? ',{\"name\": \"Pages à traduire\", \"value\": \"' + $json.pending_pages.slice(0,10).join(', ') + ($json.pending_pages.length > 10 ? '...' : '') + '\", \"inline\": false}' : '' }}\n    ],\n    \"footer\": { \"text\": \"Torah API\" },\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
         "options": {
           "timeout": 10000
         }
@@ -286,7 +272,7 @@
       "main": [
         [
           {
-            "node": "Merge Responses",
+            "node": "Send to Discord?",
             "type": "main",
             "index": 0
           }
@@ -294,17 +280,6 @@
       ]
     },
     "Format Global Response": {
-      "main": [
-        [
-          {
-            "node": "Merge Responses",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "Merge Responses": {
       "main": [
         [
           {
