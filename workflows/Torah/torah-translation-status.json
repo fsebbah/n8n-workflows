@@ -1,0 +1,354 @@
+{
+  "name": "Torah Translation Status",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Translation Status API\n\n**Endpoints:**\n- GET /webhook/torah-translation-status\n- GET /webhook/torah-translation-status?traite={name}\n\n**Paramètres:**\n- `traite` (optionnel): Nom du traité pour détail\n- `target_language`: fr (défaut), en, es\n- `discord.webhook_url`: Pour notification\n\n**Réponses:**\n- Sans traite: Vue globale tous traités\n- Avec traite: Détail page par page\n\n**Source:** torah.api endpoints\n- /api/talmud/traites/translation-status\n- /api/talmud/traite/{traite}/translation-status",
+        "height": 340,
+        "width": 300,
+        "color": 4
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "torah-translation-status",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [400, 300],
+      "webhookId": "torah-translation-status"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire les paramètres de la requête\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst traite = query.traite || null;\nconst targetLanguage = query.target_language || 'fr';\nconst discord = query.discord_webhook || null;\n\nreturn [{\n  json: {\n    traite: traite,\n    targetLanguage: targetLanguage,\n    discord: discord ? { webhook_url: discord } : null,\n    hasTraite: !!traite\n  }\n}];"
+      },
+      "id": "parse-params",
+      "name": "Parse Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [620, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-traite",
+              "leftValue": "={{ $json.hasTraite }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-traite",
+      "name": "Traite Specified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [840, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TORAH_API_URL }}/api/talmud/traite/{{ $json.traite }}/translation-status?target_language={{ $json.targetLanguage }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "get-traite-status",
+      "name": "Get Traite Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TORAH_API_URL }}/api/talmud/traites/translation-status?target_language={{ $json.targetLanguage }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "get-global-status",
+      "name": "Get Global Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 400],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la réponse pour un traité spécifique\nconst input = $input.first().json;\nconst params = $('Parse Parameters').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur API Torah',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Calculer les statistiques\nconst pages = data.pages || [];\nconst totalPages = pages.length;\nconst translatedPages = pages.filter(p => p.translated === true).length;\nconst pendingPages = pages.filter(p => p.translated === false);\nconst percentage = totalPages > 0 ? Math.round((translatedPages / totalPages) * 100) : 0;\n\n// Construire la réponse\nconst response = {\n  success: true,\n  type: 'traite_detail',\n  traite: data.traite || params.traite,\n  target_language: params.targetLanguage,\n  statistics: {\n    total_pages: totalPages,\n    translated: translatedPages,\n    pending: totalPages - translatedPages,\n    percentage: percentage\n  },\n  pages: pages.map(p => ({\n    page: p.page,\n    translated: p.translated,\n    source_text_id: p.source_text_id || null,\n    translation_id: p.translation_id || null,\n    quality_score: p.quality_score || null,\n    status: p.status || null\n  })),\n  pending_pages: pendingPages.map(p => p.page),\n  discord: params.discord\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "format-traite-response",
+      "name": "Format Traite Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1280, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la réponse globale (tous les traités)\nconst input = $input.first().json;\nconst params = $('Parse Parameters').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur API Torah',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Traiter les traités\nconst traites = data.traites || data || [];\nconst traitesList = Array.isArray(traites) ? traites : [];\n\n// Calculer les statistiques globales\nlet totalTexts = 0;\nlet translatedTexts = 0;\n\nconst formattedTraites = traitesList.map(t => {\n  const total = t.total_pages || t.total || 0;\n  const translated = t.translated_pages || t.translated || 0;\n  const pct = total > 0 ? Math.round((translated / total) * 100) : 0;\n  \n  totalTexts += total;\n  translatedTexts += translated;\n  \n  return {\n    name: t.traite || t.name,\n    total_pages: total,\n    translated: translated,\n    pending: total - translated,\n    percentage: pct,\n    status: pct === 100 ? 'complete' : (pct > 0 ? 'in_progress' : 'not_started')\n  };\n});\n\n// Trier par pourcentage (moins traduits en premier)\nformattedTraites.sort((a, b) => a.percentage - b.percentage);\n\nconst globalPercentage = totalTexts > 0 ? Math.round((translatedTexts / totalTexts) * 100) : 0;\n\n// Construire la réponse\nconst response = {\n  success: true,\n  type: 'global_overview',\n  target_language: params.targetLanguage,\n  statistics: {\n    total_traites: formattedTraites.length,\n    total_pages: totalTexts,\n    translated: translatedTexts,\n    pending: totalTexts - translatedTexts,\n    percentage: globalPercentage\n  },\n  traites: formattedTraites,\n  traites_complete: formattedTraites.filter(t => t.status === 'complete').map(t => t.name),\n  traites_in_progress: formattedTraites.filter(t => t.status === 'in_progress').map(t => t.name),\n  traites_not_started: formattedTraites.filter(t => t.status === 'not_started').map(t => t.name),\n  discord: params.discord\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "format-global-response",
+      "name": "Format Global Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1280, 400]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "merge-responses",
+      "name": "Merge Responses",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "check-discord",
+              "leftValue": "={{ $json.discord?.webhook_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-discord",
+      "name": "Send to Discord?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1720, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.discord.webhook_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"{{ $json.type === 'traite_detail' ? '📖 Traité ' + $json.traite : '📚 Statut Global des Traductions' }}\",\n    \"color\": {{ $json.statistics.percentage === 100 ? 5763719 : ($json.statistics.percentage > 50 ? 16776960 : 15548997) }},\n    \"fields\": [\n      {\n        \"name\": \"Progression\",\n        \"value\": \"{{ $json.statistics.translated }}/{{ $json.statistics.total_pages }} ({{ $json.statistics.percentage }}%)\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"En attente\",\n        \"value\": \"{{ $json.statistics.pending }} pages\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"Langue cible\",\n        \"value\": \"{{ $json.target_language }}\",\n        \"inline\": true\n      }\n      {{ $json.type === 'global_overview' && $json.traites_not_started.length > 0 ? ',{\"name\": \"Non commencés\", \"value\": \"' + $json.traites_not_started.slice(0,5).join(', ') + ($json.traites_not_started.length > 5 ? '...' : '') + '\", \"inline\": false}' : '' }}\n      {{ $json.type === 'traite_detail' && $json.pending_pages.length > 0 ? ',{\"name\": \"Pages à traduire\", \"value\": \"' + $json.pending_pages.slice(0,10).join(', ') + ($json.pending_pages.length > 10 ? '...' : '') + '\", \"inline\": false}' : '' }}\n    ],\n    \"footer\": { \"text\": \"Torah Translation Status API\" },\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-discord",
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1940, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2160, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Parameters": {
+      "main": [
+        [
+          {
+            "node": "Traite Specified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traite Specified?": {
+      "main": [
+        [
+          {
+            "node": "Get Traite Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Global Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Traite Status": {
+      "main": [
+        [
+          {
+            "node": "Format Traite Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Global Status": {
+      "main": [
+        [
+          {
+            "node": "Format Global Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Traite Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Global Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Responses",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Responses": {
+      "main": [
+        [
+          {
+            "node": "Send to Discord?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Discord?": {
+      "main": [
+        [
+          {
+            "node": "Send to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Discord": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "active": true,
+  "versionId": "1"
+}
