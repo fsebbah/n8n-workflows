@@ -1,0 +1,375 @@
+{
+  "name": "Torah Translate Page",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Page Translation - Start Job\n\n**Endpoint:** POST /webhook/torah-translate-page\n\n**Request:**\n```json\n{\n  \"traite\": \"Berakhot\",\n  \"page\": \"2a\",\n  \"mode\": \"premium\",\n  \"target_language\": \"fr\",\n  \"api_key\": \"...\",\n  \"openai_api_key\": \"...\"\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_abc123\",\n  \"status\": \"started\",\n  \"segments_count\": 14,\n  \"estimated_seconds\": 100\n}\n```\n\n**Flow:**\n1. Validate input\n2. Fetch page segments from API\n3. Create job file in /tmp/torah-jobs/\n4. Launch worker workflow (async)\n5. Return job_id immediately",
+        "height": 420,
+        "width": 320,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-translate-page",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [400, 300],
+      "webhookId": "torah-translate-page"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validation des paramètres\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst traite = body.traite || '';\nconst page = body.page || '';\nconst mode = body.mode || 'premium';\nconst targetLanguage = body.target_language || 'fr';\nconst apiKey = body.api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\nconst requestId = body.request_id || null;\n\n// Validation\nconst errors = [];\nif (!traite) errors.push('Le champ \"traite\" est requis');\nif (!page) errors.push('Le champ \"page\" est requis');\nif (!apiKey) errors.push('Le champ \"api_key\" (Anthropic) est requis');\nif (!openaiApiKey) errors.push('Le champ \"openai_api_key\" est requis');\n\n// Générer un job_id unique\nconst jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    jobId: jobId,\n    traite: traite,\n    page: page,\n    mode: mode,\n    targetLanguage: targetLanguage,\n    apiKey: apiKey,\n    openaiApiKey: openaiApiKey,\n    requestId: requestId\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [620, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-validation",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [840, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TORAH_API_URL }}/api/talmud/text/{{ encodeURIComponent($json.traite) }}/{{ encodeURIComponent($json.page) }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "fetch-page",
+      "name": "Fetch Page Segments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire les segments de la page\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier les erreurs\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Extraire les segments depuis extra_data.versions[0].text\nlet segments = [];\nif (data.extra_data?.versions?.[0]?.text) {\n  segments = data.extra_data.versions[0].text;\n} else if (data.segments) {\n  segments = data.segments;\n}\n\nif (segments.length === 0) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: 'Aucun segment trouvé pour cette page',\n        status: 'NO_SEGMENTS'\n      }\n    }\n  }];\n}\n\n// Estimation du temps (~7 secondes par segment)\nconst estimatedSeconds = Math.ceil(segments.length * 7);\n\nreturn [{\n  json: {\n    success: true,\n    jobId: prevData.jobId,\n    traite: prevData.traite,\n    page: prevData.page,\n    mode: prevData.mode,\n    targetLanguage: prevData.targetLanguage,\n    apiKey: prevData.apiKey,\n    openaiApiKey: prevData.openaiApiKey,\n    requestId: prevData.requestId,\n    sourceTextId: data.id || null,\n    reference: data.reference || `${prevData.traite} ${prevData.page}`,\n    segments: segments,\n    segmentsCount: segments.length,\n    estimatedSeconds: estimatedSeconds\n  }\n}];"
+      },
+      "id": "extract-segments",
+      "name": "Extract Segments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1280, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-segments",
+      "name": "Segments Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1500, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Créer le fichier job dans /tmp/torah-jobs/\nconst input = $input.first().json;\n\nconst jobData = {\n  job_id: input.jobId,\n  status: 'started',\n  traite: input.traite,\n  page: input.page,\n  mode: input.mode,\n  target_language: input.targetLanguage,\n  reference: input.reference,\n  source_text_id: input.sourceTextId,\n  segments_count: input.segmentsCount,\n  current_segment: 0,\n  segments: input.segments,\n  translations: [],\n  started_at: new Date().toISOString(),\n  updated_at: new Date().toISOString(),\n  error: null\n};\n\n// Créer le répertoire s'il n'existe pas\nconst fs = require('fs');\nconst jobDir = '/tmp/torah-jobs';\nif (!fs.existsSync(jobDir)) {\n  fs.mkdirSync(jobDir, { recursive: true });\n}\n\n// Écrire le fichier job\nconst jobPath = `${jobDir}/${input.jobId}.json`;\nfs.writeFileSync(jobPath, JSON.stringify(jobData, null, 2));\n\n// Préparer les données pour le worker\nreturn [{\n  json: {\n    ...input,\n    jobPath: jobPath,\n    jobCreated: true\n  }\n}];"
+      },
+      "id": "create-job-file",
+      "name": "Create Job File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1720, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-translate-page-worker",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.jobId, traite: $json.traite, page: $json.page, mode: $json.mode, target_language: $json.targetLanguage, api_key: $json.apiKey, openai_api_key: $json.openaiApiKey, source_text_id: $json.sourceTextId, reference: $json.reference, segments: $json.segments, request_id: $json.requestId }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "launch-worker",
+      "name": "Launch Worker (async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1940, 100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Préparer la réponse immédiate\nconst input = $('Create Job File').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    job_id: input.jobId,\n    status: 'started',\n    traite: input.traite,\n    page: input.page,\n    segments_count: input.segmentsCount,\n    estimated_seconds: input.estimatedSeconds\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2380, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construire la réponse d'erreur de validation\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+      },
+      "id": "build-validation-error",
+      "name": "Build Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1060, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1280, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 500 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-page-error",
+      "name": "Respond Page Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1720, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Page Segments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Page Segments": {
+      "main": [
+        [
+          {
+            "node": "Extract Segments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Segments": {
+      "main": [
+        [
+          {
+            "node": "Segments Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Segments Found?": {
+      "main": [
+        [
+          {
+            "node": "Create Job File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Page Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Job File": {
+      "main": [
+        [
+          {
+            "node": "Launch Worker (async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Launch Worker (async)": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": true,
+  "versionId": "1"
+}
