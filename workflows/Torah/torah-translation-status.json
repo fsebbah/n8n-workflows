@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Traites API\n\n**Endpoints:**\n- GET /webhook/torah-translation-status\n- GET /webhook/torah-translation-status?traite={name}\n\n**Paramètres:**\n- `traite` (optionnel): Nom du traité pour détail\n- `target_language`: fr (défaut), en, es\n- `discord_webhook`: URL webhook Discord\n\n**Réponses:**\n- Sans traite: Liste des traités disponibles\n- Avec traite: Détail des pages du traité\n\n**Source:** torah.api endpoints\n- /api/talmud/traites\n- /api/talmud/traite/{traite}/translation-status",
+        "content": "## Torah Traites API\n\n**Endpoints:**\n- GET /webhook/torah-translation-status\n- GET /webhook/torah-translation-status?traite={name}\n\n**Paramètres:**\n- `traite` (optionnel): Nom du traité\n- `discord_webhook`: URL webhook Discord\n\n**Réponses:**\n- Sans traite: Liste des traités\n- Avec traite: Liste des pages\n\n**Source:** torah.api endpoints\n- /api/talmud/traites\n- /api/talmud/traite/{traite}/pages",
         "height": 340,
         "width": 300,
         "color": 4
@@ -70,7 +70,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.TORAH_API_URL }}/api/talmud/traite/{{ $json.traite }}/translation-status?target_language={{ $json.targetLanguage }}",
+        "url": "={{ $env.TORAH_API_URL }}/api/talmud/traite/{{ $json.traite }}/pages",
         "options": {
           "timeout": 30000,
           "response": {
@@ -109,7 +109,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Formater la réponse pour un traité spécifique\nconst input = $input.first().json;\nconst params = $('Parse Parameters').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur API Torah',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Calculer les statistiques\nconst pages = data.pages || [];\nconst totalPages = pages.length;\nconst translatedPages = pages.filter(p => p.translated === true).length;\nconst pendingPages = pages.filter(p => p.translated === false);\nconst percentage = totalPages > 0 ? Math.round((translatedPages / totalPages) * 100) : 0;\n\n// Construire la réponse\nconst response = {\n  success: true,\n  type: 'traite_detail',\n  traite: data.traite || params.traite,\n  target_language: params.targetLanguage,\n  statistics: {\n    total_pages: totalPages,\n    translated: translatedPages,\n    pending: totalPages - translatedPages,\n    percentage: percentage\n  },\n  pages: pages.map(p => ({\n    page: p.page,\n    translated: p.translated,\n    source_text_id: p.source_text_id || null,\n    translation_id: p.translation_id || null,\n    quality_score: p.quality_score || null,\n    status: p.status || null\n  })),\n  pending_pages: pendingPages.map(p => p.page),\n  discord: params.discord\n};\n\nreturn [{ json: response }];"
+        "jsCode": "// Formater la réponse pour un traité spécifique (liste des pages)\nconst input = $input.first().json;\nconst params = $('Parse Parameters').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur API Torah',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Liste des pages du traité\nconst pages = data.pages || [];\n\n// Construire la réponse\nconst response = {\n  success: true,\n  type: 'traite_pages',\n  traite: data.traite || params.traite,\n  total_pages: pages.length,\n  pages: pages,\n  discord: params.discord\n};\n\nreturn [{ json: response }];"
       },
       "id": "format-traite-response",
       "name": "Format Traite Response",
@@ -171,7 +171,7 @@
         "url": "={{ $json.discord.webhook_url }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"{{ $json.type === 'traite_detail' ? '📖 Traité ' + $json.traite : '📚 Traités Disponibles' }}\",\n    \"color\": 5763719,\n    \"fields\": [\n      {{ $json.type === 'traites_list' ? '{\"name\": \"Total\", \"value\": \"' + $json.total + ' traités\", \"inline\": true}' : '' }}\n      {{ $json.type === 'traites_list' ? ',{\"name\": \"Liste\", \"value\": \"' + $json.traites.join(', ') + '\", \"inline\": false}' : '' }}\n      {{ $json.type === 'traite_detail' ? '{\"name\": \"Progression\", \"value\": \"' + $json.statistics.translated + '/' + $json.statistics.total_pages + ' (' + $json.statistics.percentage + '%)\", \"inline\": true}' : '' }}\n      {{ $json.type === 'traite_detail' ? ',{\"name\": \"En attente\", \"value\": \"' + $json.statistics.pending + ' pages\", \"inline\": true}' : '' }}\n      {{ $json.type === 'traite_detail' && $json.pending_pages.length > 0 ? ',{\"name\": \"Pages à traduire\", \"value\": \"' + $json.pending_pages.slice(0,10).join(', ') + ($json.pending_pages.length > 10 ? '...' : '') + '\", \"inline\": false}' : '' }}\n    ],\n    \"footer\": { \"text\": \"Torah API\" },\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"{{ $json.type === 'traite_pages' ? '📖 ' + $json.traite : '📚 Traités Disponibles' }}\",\n    \"color\": 5763719,\n    \"fields\": [\n      {{ $json.type === 'traites_list' ? '{\"name\": \"Total\", \"value\": \"' + $json.total + ' traités\", \"inline\": true}' : '' }}\n      {{ $json.type === 'traites_list' ? ',{\"name\": \"Liste\", \"value\": \"' + $json.traites.join(', ') + '\", \"inline\": false}' : '' }}\n      {{ $json.type === 'traite_pages' ? '{\"name\": \"Total pages\", \"value\": \"' + $json.total_pages + ' pages\", \"inline\": true}' : '' }}\n      {{ $json.type === 'traite_pages' ? ',{\"name\": \"Pages\", \"value\": \"' + $json.pages.slice(0,15).join(', ') + ($json.pages.length > 15 ? '...' : '') + '\", \"inline\": false}' : '' }}\n    ],\n    \"footer\": { \"text\": \"Torah API\" },\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
         "options": {
           "timeout": 10000
         }
