@@ -163,6 +163,15 @@ def import_workflow(json_file):
     with open(json_file) as f:
         workflow_data = json.load(f)
 
+    # Remove properties not accepted by n8n API
+    properties_to_remove = [
+        'id', 'active', 'versionId', 'createdAt', 'updatedAt',
+        'meta', 'tags', 'triggerCount', 'staticData', 'isArchived',
+        'activeVersionId', 'versionCounter', 'description', 'pinData'
+    ]
+    for prop in properties_to_remove:
+        workflow_data.pop(prop, None)
+
     print(f"Importing workflow: {workflow_data.get('name', 'Unknown')}")
     response = api_request('POST', '/workflows', workflow_data, debug=True)
     if response and response.status_code in [200, 201]:

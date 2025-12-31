@@ -161,11 +161,21 @@
     },
     {
       "parameters": {
+        "jsCode": "// Préparer le payload pour le worker\nconst data = $input.first().json;\n\nreturn [{\n  json: {\n    workerPayload: {\n      job_id: data.jobId,\n      traite: data.traite,\n      page: data.page,\n      mode: data.mode,\n      target_language: data.targetLanguage,\n      api_key: data.apiKey,\n      openai_api_key: data.openaiApiKey,\n      source_text_id: data.sourceTextId,\n      reference: data.reference,\n      segments: data.segments,\n      request_id: data.requestId\n    },\n    // Garder les autres données pour Format Response\n    jobId: data.jobId,\n    traite: data.traite,\n    page: data.page,\n    segmentsCount: data.segmentsCount,\n    estimatedSeconds: data.estimatedSeconds\n  }\n}];"
+      },
+      "id": "prepare-worker-payload",
+      "name": "Prepare Worker Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2100, 100]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-translate-page-worker",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ job_id: $json.jobId, traite: $json.traite, page: $json.page, mode: $json.mode, target_language: $json.targetLanguage, api_key: $json.apiKey, openai_api_key: $json.openaiApiKey, source_text_id: $json.sourceTextId, reference: $json.reference, segments: $json.segments, request_id: $json.requestId }) }}",
+        "jsonBody": "={{ $json.workerPayload }}",
         "options": {
           "timeout": 5000
         }
@@ -174,12 +184,12 @@
       "name": "Launch Worker (async)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2160, 100],
+      "position": [2260, 100],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Préparer la réponse immédiate\nconst input = $('Extract Job ID').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    job_id: input.jobId,\n    status: 'started',\n    traite: input.traite,\n    page: input.page,\n    segments_count: input.segmentsCount,\n    estimated_seconds: input.estimatedSeconds\n  }\n}];"
+        "jsCode": "// Préparer la réponse immédiate\nconst input = $('Prepare Worker Payload').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    job_id: input.jobId,\n    status: 'started',\n    traite: input.traite,\n    page: input.page,\n    segments_count: input.segmentsCount,\n    estimated_seconds: input.estimatedSeconds\n  }\n}];"
       },
       "id": "format-response",
       "name": "Format Response",
@@ -357,6 +367,17 @@
       ]
     },
     "Extract Job ID": {
+      "main": [
+        [
+          {
+            "node": "Prepare Worker Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Worker Payload": {
       "main": [
         [
           {
