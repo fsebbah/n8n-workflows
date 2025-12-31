@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extraire le job_id des query params\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst jobId = query.job_id || null;\n\nif (!jobId) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: 'Le paramètre \"job_id\" est requis',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Chemin du fichier job\nconst jobPath = `/tmp/torah-jobs/${jobId}.json`;\n\nreturn [{\n  json: {\n    valid: true,\n    jobId: jobId,\n    jobPath: jobPath\n  }\n}];"
+        "jsCode": "// Extraire le job_id des query params\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst jobId = query.job_id || null;\n\nif (!jobId) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: 'Le paramètre \"job_id\" est requis',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    jobId: jobId\n  }\n}];"
       },
       "id": "parse-params",
       "name": "Parse Parameters",
@@ -69,13 +69,33 @@
     },
     {
       "parameters": {
-        "jsCode": "// Lire le fichier job\nconst input = $input.first().json;\nconst fs = require('fs');\n\nconst jobPath = input.jobPath;\nconst jobId = input.jobId;\n\n// Vérifier si le fichier existe\nif (!fs.existsSync(jobPath)) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: `Job non trouvé: ${jobId}`,\n        status: 'JOB_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Lire et parser le fichier\nlet jobData;\ntry {\n  const content = fs.readFileSync(jobPath, 'utf8');\n  jobData = JSON.parse(content);\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Erreur lecture fichier job: ' + e.message,\n        status: 'JOB_READ_ERROR'\n      }\n    }\n  }];\n}\n\n// Calculer la progression\nconst current = jobData.current_segment || 0;\nconst total = jobData.segments_count || 0;\nconst percentage = total > 0 ? Math.round((current / total) * 100) : 0;\n\n// Construire la réponse selon le statut\nconst response = {\n  job_id: jobData.job_id,\n  status: jobData.status,\n  traite: jobData.traite,\n  page: jobData.page,\n  progress: {\n    current: current,\n    total: total,\n    percentage: percentage\n  },\n  started_at: jobData.started_at\n};\n\n// Ajouter les infos selon le statut\nif (jobData.status === 'in_progress') {\n  // Ajouter le segment en cours si disponible\n  if (jobData.segments && jobData.segments[current]) {\n    const currentSegmentText = jobData.segments[current];\n    response.current_segment = currentSegmentText.substring(0, 100) + (currentSegmentText.length > 100 ? '...' : '');\n  }\n}\n\nif (jobData.status === 'completed') {\n  response.completed_at = jobData.completed_at;\n  // Calculer la durée\n  if (jobData.started_at && jobData.completed_at) {\n    const start = new Date(jobData.started_at);\n    const end = new Date(jobData.completed_at);\n    response.duration_seconds = Math.round((end - start) / 1000);\n  }\n  response.translations_saved = jobData.translations?.length || current;\n}\n\nif (jobData.status === 'failed') {\n  response.error = jobData.error;\n}\n\nreturn [{ json: response }];"
+        "method": "GET",
+        "url": "={{ $env.TORAH_API_URL }}/api/jobs/{{ $json.jobId }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
       },
-      "id": "read-job-file",
-      "name": "Read Job File",
+      "id": "get-job-api",
+      "name": "Get Job (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la réponse du job\nconst input = $input.first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Erreur API\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Job non trouvé',\n        status: 'JOB_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Retourner la réponse telle quelle de l'API\nreturn [{ json: data }];"
+      },
+      "id": "format-job-response",
+      "name": "Format Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1060, 200]
+      "position": [1280, 200]
     },
     {
       "parameters": {
@@ -149,7 +169,7 @@
       "main": [
         [
           {
-            "node": "Read Job File",
+            "node": "Get Job (API)",
             "type": "main",
             "index": 0
           }
@@ -163,7 +183,18 @@
         ]
       ]
     },
-    "Read Job File": {
+    "Get Job (API)": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
       "main": [
         [
           {

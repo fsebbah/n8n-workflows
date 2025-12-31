@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Page Translation Worker\n\n**Endpoint:** POST /webhook/torah-translate-page-worker\n\n**Called by:** torah-translate-page workflow\n\n**Process:**\n1. Respond immediately (async)\n2. Loop through each segment\n3. For each segment:\n   - Claude translation (draft)\n   - GPT-4o verification\n   - Save to API\n   - Update job file progress\n4. Mark job as completed\n\n**Time:** ~7s per segment\n- Claude: ~3s\n- GPT-4o: ~3s\n- Save: ~0.5s",
+        "content": "## Torah Page Translation Worker\n\n**Endpoint:** POST /webhook/torah-translate-page-worker\n\n**Called by:** torah-translate-page workflow\n\n**Process:**\n1. Respond immediately (async)\n2. PATCH /api/jobs → in_progress\n3. Loop through each segment:\n   - Claude translation (draft)\n   - GPT-4o verification\n   - POST /api/translations/save\n   - PATCH /api/jobs (progress)\n4. PATCH /api/jobs → completed\n\n**Time:** ~7s per segment",
         "height": 340,
         "width": 320,
         "color": 3
@@ -62,13 +62,31 @@
     },
     {
       "parameters": {
-        "jsCode": "// Mettre le statut à in_progress\nconst input = $input.first().json;\nconst fs = require('fs');\n\nconst jobPath = `/tmp/torah-jobs/${input.jobId}.json`;\n\ntry {\n  const content = fs.readFileSync(jobPath, 'utf8');\n  const jobData = JSON.parse(content);\n  jobData.status = 'in_progress';\n  jobData.updated_at = new Date().toISOString();\n  fs.writeFileSync(jobPath, JSON.stringify(jobData, null, 2));\n} catch (e) {\n  // Ignorer les erreurs de fichier\n}\n\nreturn [{ json: input }];"
+        "method": "PATCH",
+        "url": "={{ $env.TORAH_API_URL }}/api/jobs/{{ $json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'in_progress' }) }}",
+        "options": {
+          "timeout": 5000
+        }
       },
       "id": "update-status-in-progress",
       "name": "Set In Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Passer les données originales\nconst prevData = $('Parse Input').first().json;\nreturn [{ json: prevData }];"
+      },
+      "id": "pass-data",
+      "name": "Pass Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1060, 300]
+      "position": [1280, 300]
     },
     {
       "parameters": {
@@ -236,23 +254,59 @@
     },
     {
       "parameters": {
-        "jsCode": "// Mettre à jour le fichier job avec la progression\nconst input = $input.first().json;\nconst prevData = $('Extract GPT').first().json;\nconst fs = require('fs');\n\nconst jobPath = `/tmp/torah-jobs/${prevData.jobId}.json`;\nconst segmentIndex = prevData.segmentIndex;\nconst totalSegments = prevData.totalSegments;\n\ntry {\n  const content = fs.readFileSync(jobPath, 'utf8');\n  const jobData = JSON.parse(content);\n  \n  // Mettre à jour la progression\n  jobData.current_segment = segmentIndex + 1;\n  jobData.updated_at = new Date().toISOString();\n  \n  // Ajouter la traduction\n  if (!jobData.translations) jobData.translations = [];\n  jobData.translations.push({\n    segment_index: segmentIndex,\n    original: prevData.segmentText.substring(0, 100),\n    translation: prevData.finalTranslation.substring(0, 100),\n    confidence: prevData.confidence,\n    approved: prevData.approved\n  });\n  \n  // Vérifier si c'est le dernier segment\n  if (segmentIndex + 1 >= totalSegments) {\n    jobData.status = 'completed';\n    jobData.completed_at = new Date().toISOString();\n  }\n  \n  fs.writeFileSync(jobPath, JSON.stringify(jobData, null, 2));\n} catch (e) {\n  // Ignorer les erreurs\n}\n\nreturn [{ json: prevData }];"
+        "jsCode": "// Préparer les données pour la mise à jour\nconst input = $input.first().json;\nconst prevData = $('Extract GPT').first().json;\n\nconst segmentIndex = prevData.segmentIndex;\nconst totalSegments = prevData.totalSegments;\nconst isComplete = segmentIndex + 1 >= totalSegments;\n\nreturn [{\n  json: {\n    ...prevData,\n    isComplete: isComplete,\n    updatePayload: isComplete ? {\n      status: 'completed',\n      translations_saved: segmentIndex + 1\n    } : {\n      status: 'in_progress',\n      current_segment: segmentIndex + 1,\n      current_segment_text: prevData.segmentText.substring(0, 100),\n      translations_saved: segmentIndex + 1\n    }\n  }\n}];"
       },
-      "id": "update-progress",
-      "name": "Update Progress",
+      "id": "prepare-update",
+      "name": "Prepare Update",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [3040, 200]
     },
     {
       "parameters": {
-        "jsCode": "// Marquer le segment comme failed mais continuer\nconst input = $input.first().json;\nconst fs = require('fs');\n\nconst jobPath = `/tmp/torah-jobs/${input.jobId}.json`;\n\ntry {\n  const content = fs.readFileSync(jobPath, 'utf8');\n  const jobData = JSON.parse(content);\n  \n  // Ajouter l'erreur mais continuer\n  if (!jobData.errors) jobData.errors = [];\n  jobData.errors.push({\n    segment_index: input.segmentIndex,\n    error: input.claudeError || 'Claude translation failed'\n  });\n  \n  // Mettre à jour la progression quand même\n  jobData.current_segment = input.segmentIndex + 1;\n  jobData.updated_at = new Date().toISOString();\n  \n  // Vérifier si c'est le dernier segment\n  if (input.segmentIndex + 1 >= input.totalSegments) {\n    jobData.status = 'completed';\n    jobData.completed_at = new Date().toISOString();\n  }\n  \n  fs.writeFileSync(jobPath, JSON.stringify(jobData, null, 2));\n} catch (e) {\n  // Ignorer\n}\n\nreturn [{ json: input }];"
+        "method": "PATCH",
+        "url": "={{ $env.TORAH_API_URL }}/api/jobs/{{ $json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.updatePayload) }}",
+        "options": {
+          "timeout": 5000
+        }
       },
-      "id": "handle-error",
-      "name": "Handle Error",
+      "id": "update-progress-api",
+      "name": "Update Progress (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3260, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Préparer la mise à jour pour erreur\nconst input = $input.first().json;\n\nconst segmentIndex = input.segmentIndex;\nconst totalSegments = input.totalSegments;\nconst isComplete = segmentIndex + 1 >= totalSegments;\n\nreturn [{\n  json: {\n    ...input,\n    isComplete: isComplete,\n    updatePayload: isComplete ? {\n      status: 'completed',\n      translations_saved: segmentIndex\n    } : {\n      status: 'in_progress',\n      current_segment: segmentIndex + 1,\n      translations_saved: segmentIndex\n    }\n  }\n}];"
+      },
+      "id": "prepare-error-update",
+      "name": "Prepare Error Update",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [2380, 400]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.TORAH_API_URL }}/api/jobs/{{ $json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.updatePayload) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "update-error-api",
+      "name": "Update Error (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2600, 400],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {},
@@ -306,6 +360,17 @@
       ]
     },
     "Set In Progress": {
+      "main": [
+        [
+          {
+            "node": "Pass Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pass Data": {
       "main": [
         [
           {
@@ -367,24 +432,6 @@
         ]
       ]
     },
-    "Check Claude OK?": {
-      "main": [
-        [
-          {
-            "node": "GPT-4o Verify",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Handle Error",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "GPT-4o Verify": {
       "main": [
         [
@@ -411,14 +458,25 @@
       "main": [
         [
           {
-            "node": "Update Progress",
+            "node": "Prepare Update",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Update Progress": {
+    "Prepare Update": {
+      "main": [
+        [
+          {
+            "node": "Update Progress (API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Progress (API)": {
       "main": [
         [
           {
@@ -429,7 +487,36 @@
         ]
       ]
     },
-    "Handle Error": {
+    "Check Claude OK?": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o Verify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Error Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Error Update": {
+      "main": [
+        [
+          {
+            "node": "Update Error (API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Error (API)": {
       "main": [
         [
           {
