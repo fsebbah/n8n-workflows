@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Discord Translation v7 (Pivot)\n\n**Endpoint:** POST /webhook/torah-discord-translate\n\n**Required:**\n- `text`: Texte hébreu/araméen à traduire\n- `api_key`: Clé API Anthropic (Claude)\n- `openai_api_key`: Clé API OpenAI\n\n**Optional:**\n- `target_language`: fr (défaut), en, es\n- `source_language`: he (défaut), ar, en\n- `mode`: standard | premium\n  - standard: claude-sonnet-4 + gpt-4o\n  - premium: claude-haiku-4.5 + gpt-5-mini\n- `use_pivot`: true | false (défaut)\n  - Si true: délègue au workflow pivot\n  - Pivot: source → en → target (2 appels)\n- `context`: { traite, page, commentator }\n- `discord.webhook_url`: URL webhook\n- `request_id`: ID de tracking\n\n**Pipeline:**\n1. Si use_pivot → Call Pivot Workflow\n2. Sinon → Check Cache → Claude → OpenAI\n3. Si approved === true → approved\n4. Sinon → draft (review humain)\n\n**Réponse:**\n- `status`: approved | draft\n- `mode`: standard | premium\n- `pivot_used`: true | false",
+        "content": "## Torah Discord Translation v8 (Smart Cache)\n\n**Endpoint:** POST /webhook/torah-discord-translate\n\n**Required:**\n- `text`: Texte hébreu/araméen à traduire\n- `api_key`: Clé API Anthropic (Claude)\n- `openai_api_key`: Clé API OpenAI\n\n**Optional:**\n- `target_language`: fr (défaut), en, es\n- `source_language`: he (défaut), ar, en\n- `mode`: standard | premium\n- `use_pivot`: true | false (défaut)\n- `context`: { traite, page, commentator }\n- `commentary_id`: UUID du commentaire (nouveau)\n- `discord.webhook_url`: URL webhook\n- `request_id`: ID de tracking\n\n**Pipeline v8:**\n1. Si commentary_id → Check API has_translation\n   → Si existe → retourne traduction\n2. Si use_pivot → Call Pivot Workflow\n3. Sinon → Check Cache → Claude → OpenAI\n4. Si approved === true → approved\n5. Sinon → draft (review humain)\n\n**Réponse:**\n- `status`: approved | draft | cached\n- `mode`: standard | premium\n- `cached`: true si depuis BDD",
         "height": 420,
         "width": 320,
         "color": 6
@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Validation et préparation des données\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst startTime = Date.now();\n\n// Extraction des paramètres\nconst text = body.text || '';\nconst apiKey = body.api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\nconst targetLanguage = body.target_language || 'fr';\nconst sourceLanguage = body.source_language || 'auto';\nconst sourceTextId = body.source_text_id || null;\nconst commentaryId = body.commentary_id || null;\nconst context = body.context || {};\nconst discord = body.discord || {};\nconst requestId = body.request_id || null;\n\n// Mode: standard ou premium\nconst mode = body.mode || 'standard';\nconst validModes = ['standard', 'premium'];\nconst selectedMode = validModes.includes(mode) ? mode : 'standard';\n\n// Pivot: utiliser la traduction via l'anglais\nconst usePivot = body.use_pivot === true;\n\n// Configuration des modèles selon le mode\nconst modelConfig = {\n  standard: {\n    claude: 'claude-sonnet-4-20250514',\n    openai: 'gpt-4o'\n  },\n  premium: {\n    claude: 'claude-haiku-4.5',\n    openai: 'gpt-5-mini'\n  }\n};\n\nconst models = modelConfig[selectedMode];\n\n// Validation\nconst errors = [];\nif (!text || text.trim().length === 0) {\n  errors.push('Le champ \"text\" est requis');\n}\nif (!apiKey || apiKey.trim().length === 0) {\n  errors.push('Le champ \"api_key\" (Anthropic) est requis');\n}\nif (!openaiApiKey || openaiApiKey.trim().length === 0) {\n  errors.push('Le champ \"openai_api_key\" est requis');\n}\n\n// Mapping langues\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen'\n};\n\nconst targetLangName = languageNames[targetLanguage] || 'français';\nconst sourceLangName = sourceLanguage === 'auto' ? null : (languageNames[sourceLanguage] || sourceLanguage);\n\n// Construction du contexte pour le prompt\nlet contextInfo = '';\nif (context.traite || context.page || context.commentator) {\n  contextInfo = `\\n\\nContexte: ${context.commentator || ''} sur ${context.traite || ''} ${context.page || ''}`.trim();\n}\n\n// Construire l'URL de recherche cache\nlet cacheSearchParams = `target_language=${targetLanguage}`;\nif (sourceTextId) {\n  cacheSearchParams += `&source_text_id=${sourceTextId}`;\n} else if (commentaryId) {\n  cacheSearchParams += `&commentary_id=${commentaryId}`;\n} else if (context.traite && context.page) {\n  cacheSearchParams += `&traite=${encodeURIComponent(context.traite)}&page=${encodeURIComponent(context.page)}`;\n  if (context.commentator) {\n    cacheSearchParams += `&commentator=${encodeURIComponent(context.commentator)}`;\n  }\n  cacheSearchParams += `&text=${encodeURIComponent(text)}&exact=true`;\n}\n\n// Construire le payload pour le pivot workflow\nconst pivotPayload = {\n  text: text,\n  api_key: apiKey,\n  openai_api_key: openaiApiKey,\n  source_language: sourceLanguage === 'auto' ? 'he' : sourceLanguage,\n  target_language: targetLanguage,\n  mode: selectedMode,\n  context: context,\n  discord: discord,\n  request_id: requestId\n};\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    text: text,\n    apiKey: apiKey,\n    openaiApiKey: openaiApiKey,\n    targetLanguage: targetLanguage,\n    targetLangName: targetLangName,\n    sourceLanguage: sourceLanguage,\n    sourceLangName: sourceLangName,\n    sourceTextId: sourceTextId,\n    commentaryId: commentaryId,\n    contextInfo: contextInfo,\n    context: context,\n    discord: discord,\n    requestId: requestId,\n    startTime: startTime,\n    cacheSearchParams: cacheSearchParams,\n    canSearchCache: !!(sourceTextId || commentaryId || (context.traite && context.page)),\n    mode: selectedMode,\n    claudeModel: models.claude,\n    openaiModel: models.openai,\n    usePivot: usePivot,\n    pivotPayload: pivotPayload\n  }\n}];"
+        "jsCode": "// Validation et préparation des données\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst startTime = Date.now();\n\n// Extraction des paramètres\nconst text = body.text || '';\nconst apiKey = body.api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\nconst targetLanguage = body.target_language || 'fr';\nconst sourceLanguage = body.source_language || 'auto';\nconst sourceTextId = body.source_text_id || null;\nconst commentaryId = body.commentary_id || null;\nconst context = body.context || {};\nconst discord = body.discord || {};\nconst requestId = body.request_id || null;\n\n// Mode: standard ou premium\nconst mode = body.mode || 'standard';\nconst validModes = ['standard', 'premium'];\nconst selectedMode = validModes.includes(mode) ? mode : 'standard';\n\n// Pivot: utiliser la traduction via l'anglais\nconst usePivot = body.use_pivot === true;\n\n// Configuration des modèles selon le mode\nconst modelConfig = {\n  standard: {\n    claude: 'claude-sonnet-4-20250514',\n    openai: 'gpt-4o'\n  },\n  premium: {\n    claude: 'claude-haiku-4.5',\n    openai: 'gpt-5-mini'\n  }\n};\n\nconst models = modelConfig[selectedMode];\n\n// Validation\nconst errors = [];\nif (!text || text.trim().length === 0) {\n  errors.push('Le champ \"text\" est requis');\n}\nif (!apiKey || apiKey.trim().length === 0) {\n  errors.push('Le champ \"api_key\" (Anthropic) est requis');\n}\nif (!openaiApiKey || openaiApiKey.trim().length === 0) {\n  errors.push('Le champ \"openai_api_key\" est requis');\n}\n\n// Mapping langues\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen'\n};\n\nconst targetLangName = languageNames[targetLanguage] || 'français';\nconst sourceLangName = sourceLanguage === 'auto' ? null : (languageNames[sourceLanguage] || sourceLanguage);\n\n// Construction du contexte pour le prompt\nlet contextInfo = '';\nif (context.traite || context.page || context.commentator) {\n  contextInfo = `\\n\\nContexte: ${context.commentator || ''} sur ${context.traite || ''} ${context.page || ''}`.trim();\n}\n\n// Construire l'URL de recherche cache\nlet cacheSearchParams = `target_language=${targetLanguage}`;\nif (sourceTextId) {\n  cacheSearchParams += `&source_text_id=${sourceTextId}`;\n} else if (commentaryId) {\n  cacheSearchParams += `&commentary_id=${commentaryId}`;\n} else if (context.traite && context.page) {\n  cacheSearchParams += `&traite=${encodeURIComponent(context.traite)}&page=${encodeURIComponent(context.page)}`;\n  if (context.commentator) {\n    cacheSearchParams += `&commentator=${encodeURIComponent(context.commentator)}`;\n  }\n  cacheSearchParams += `&text=${encodeURIComponent(text)}&exact=true`;\n}\n\n// Construire le payload pour le pivot workflow\nconst pivotPayload = {\n  text: text,\n  api_key: apiKey,\n  openai_api_key: openaiApiKey,\n  source_language: sourceLanguage === 'auto' ? 'he' : sourceLanguage,\n  target_language: targetLanguage,\n  mode: selectedMode,\n  context: context,\n  discord: discord,\n  request_id: requestId\n};\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    text: text,\n    apiKey: apiKey,\n    openaiApiKey: openaiApiKey,\n    targetLanguage: targetLanguage,\n    targetLangName: targetLangName,\n    sourceLanguage: sourceLanguage,\n    sourceLangName: sourceLangName,\n    sourceTextId: sourceTextId,\n    commentaryId: commentaryId,\n    contextInfo: contextInfo,\n    context: context,\n    discord: discord,\n    requestId: requestId,\n    startTime: startTime,\n    cacheSearchParams: cacheSearchParams,\n    canSearchCache: !!(sourceTextId || commentaryId || (context.traite && context.page)),\n    isCommentary: !!commentaryId,\n    mode: selectedMode,\n    claudeModel: models.claude,\n    openaiModel: models.openai,\n    usePivot: usePivot,\n    pivotPayload: pivotPayload\n  }\n}];"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -510,6 +510,107 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-commentary",
+              "leftValue": "={{ $json.isCommentary }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-is-commentary",
+      "name": "Is Commentary?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1060, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TORAH_API_URL }}/api/commentaries/translations",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ids: [$json.commentaryId] }) }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "check-commentary-api",
+      "name": "Check Commentary API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1280, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vérifier si le commentaire a une traduction\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Si erreur API, passer à la traduction\nif (statusCode >= 400) {\n  return [{\n    json: {\n      hasTranslation: false,\n      ...prevData\n    }\n  }];\n}\n\n// Vérifier si la traduction existe\nconst translations = data.translations || {};\nconst translation = translations[prevData.commentaryId];\n\nif (translation && translation.text) {\n  return [{\n    json: {\n      hasTranslation: true,\n      cachedTranslation: translation.text,\n      cachedProvider: translation.provider || 'cached',\n      cachedModel: translation.model || 'cached',\n      cachedAt: translation.translated_at,\n      originalText: prevData.text,\n      targetLanguage: prevData.targetLanguage,\n      context: prevData.context,\n      discord: prevData.discord,\n      requestId: prevData.requestId,\n      startTime: prevData.startTime,\n      commentaryId: prevData.commentaryId\n    }\n  }];\n}\n\n// Pas de traduction, passer à Claude\nreturn [{\n  json: {\n    hasTranslation: false,\n    ...prevData\n  }\n}];"
+      },
+      "id": "check-commentary-result",
+      "name": "Commentary Has Translation?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-translation",
+              "leftValue": "={{ $json.hasTranslation }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-has-translation",
+      "name": "Has Translation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1720, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la réponse pour le commentaire depuis la BDD\nconst input = $input.first().json;\n\nconst endTime = Date.now();\nconst processingTime = endTime - input.startTime;\n\nreturn [{\n  json: {\n    success: true,\n    cached: true,\n    status: 'cached',\n    requestId: input.requestId,\n    translation: {\n      original: input.originalText,\n      translated: input.cachedTranslation,\n      source_language: 'he',\n      target_language: input.targetLanguage,\n      quality_score: 0.95\n    },\n    verification: {\n      approved: true,\n      confidence: 0.95,\n      issues: [],\n      notes: 'Traduction existante depuis la base de données'\n    },\n    metadata: {\n      traite: input.context.traite || null,\n      page: input.context.page || null,\n      commentator: input.context.commentator || null,\n      commentary_id: input.commentaryId,\n      models_used: [input.cachedProvider || 'database'],\n      source: 'database',\n      cached_at: input.cachedAt,\n      processing_time_ms: processingTime\n    },\n    llm_usage: [{\n      model: 'database',\n      provider: 'cache',\n      input_tokens: 0,\n      output_tokens: 0,\n      total_tokens: 0\n    }],\n    total_tokens: 0,\n    discord: input.discord\n  }\n}];"
+      },
+      "id": "format-commentary-response",
+      "name": "Format Commentary Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1940, -100]
     }
   ],
   "connections": {
@@ -564,7 +665,76 @@
         ],
         [
           {
+            "node": "Is Commentary?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Commentary?": {
+      "main": [
+        [
+          {
+            "node": "Check Commentary API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Can Search Cache?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Commentary API": {
+      "main": [
+        [
+          {
+            "node": "Commentary Has Translation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commentary Has Translation?": {
+      "main": [
+        [
+          {
+            "node": "Has Translation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Translation?": {
+      "main": [
+        [
+          {
+            "node": "Format Commentary Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Claude Sonnet 4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Commentary Response": {
+      "main": [
+        [
+          {
+            "node": "Send to Discord?",
             "type": "main",
             "index": 0
           }
