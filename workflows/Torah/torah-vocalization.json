@@ -12,7 +12,10 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [60, 60]
+      "position": [
+        60,
+        60
+      ]
     },
     {
       "parameters": {
@@ -25,7 +28,10 @@
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [400, 300],
+      "position": [
+        400,
+        300
+      ],
       "webhookId": "torah-vocalization"
     },
     {
@@ -36,7 +42,10 @@
       "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [620, 300]
+      "position": [
+        620,
+        300
+      ]
     },
     {
       "parameters": {
@@ -65,7 +74,10 @@
       "name": "Input Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [840, 300]
+      "position": [
+        840,
+        300
+      ]
     },
     {
       "parameters": {
@@ -94,7 +106,10 @@
       "name": "Can Search Cache?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1060, 200]
+      "position": [
+        1060,
+        200
+      ]
     },
     {
       "parameters": {
@@ -113,7 +128,10 @@
       "name": "Search Cache",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1280, 100],
+      "position": [
+        1280,
+        100
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -124,7 +142,10 @@
       "name": "Check Cache Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1500, 100]
+      "position": [
+        1500,
+        100
+      ]
     },
     {
       "parameters": {
@@ -153,7 +174,10 @@
       "name": "Cache Hit?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1720, 100]
+      "position": [
+        1720,
+        100
+      ]
     },
     {
       "parameters": {
@@ -163,7 +187,10 @@
       "name": "Format Cache Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1940, 0]
+      "position": [
+        1940,
+        0
+      ]
     },
     {
       "parameters": {
@@ -198,18 +225,24 @@
       "name": "GPT-4o Vocalize",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1940, 200],
+      "position": [
+        1940,
+        200
+      ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Extraire la vocalisation et préparer la sauvegarde\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst endTime = Date.now();\nconst processingTime = endTime - prevData.startTime;\n\n// Gestion fullResponse ou réponse directe\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier les erreurs\nconst hasError = statusCode >= 400 || !!data.error;\nif (hasError) {\n  const errorMsg = data.error?.message || `Erreur HTTP ${statusCode}`;\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode >= 400 ? statusCode : 401,\n        message: `Erreur API OpenAI: ${errorMsg}`,\n        status: 'OPENAI_API_ERROR'\n      }\n    }\n  }];\n}\n\n// Extraire le texte vocalisé\nlet vocalizedText = '';\nif (data.choices && data.choices[0]?.message?.content) {\n  vocalizedText = data.choices[0].message.content.trim();\n}\n\nif (!vocalizedText) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Aucune vocalisation retournée par GPT',\n        status: 'EMPTY_GPT_RESPONSE'\n      }\n    }\n  }];\n}\n\nconst usage = data.usage || {};\n\n// Construire la réponse\nconst response = {\n  success: true,\n  cached: false,\n  vocalization: {\n    original: prevData.text,\n    vocalized: vocalizedText\n  },\n  metadata: {\n    traite: prevData.context.traite || null,\n    page: prevData.context.page || null,\n    commentator: prevData.context.commentator || null,\n    source_text_id: prevData.sourceTextId || null,\n    commentary_id: prevData.commentaryId || null,\n    vocalized_by: 'llm:gpt-4o',\n    model: 'gpt-4o',\n    source: 'generated',\n    processing_time_ms: processingTime,\n    tokens: {\n      prompt_tokens: usage.prompt_tokens || 0,\n      completion_tokens: usage.completion_tokens || 0\n    }\n  },\n  // Données pour sauvegarde\n  _saveData: {\n    source_text_id: prevData.sourceTextId,\n    commentary_id: prevData.commentaryId,\n    vocalized_text: vocalizedText,\n    vocalized_by: 'llm:gpt-4o'\n  }\n};\n\nreturn [{ json: response }];"
+        "jsCode": "// Extraire la vocalisation et préparer la sauvegarde\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst endTime = Date.now();\nconst processingTime = endTime - prevData.startTime;\n\n// Gestion fullResponse ou réponse directe\nconst data = input.body || input;\nconst statusCode = input.statusCode;\n\n// Vérifier les erreurs de connexion (n8n retourne error.code comme string)\nif (input.error && typeof input.error.code === 'string') {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 503,\n        message: `Erreur connexion OpenAI: ${input.error.message || input.error.code}`,\n        status: 'CONNECTION_ERROR'\n      }\n    }\n  }];\n}\n\n// Vérifier les erreurs HTTP (statusCode >= 400 ou data.error avec message)\nconst hasHttpError = typeof statusCode === 'number' && statusCode >= 400;\nconst hasApiError = data.error && data.error.message;\nif (hasHttpError || hasApiError) {\n  const errorMsg = data.error?.message || `Erreur HTTP ${statusCode}`;\n  const errorCode = hasHttpError ? statusCode : 500;\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: errorCode,\n        message: `Erreur API OpenAI: ${errorMsg}`,\n        status: 'OPENAI_API_ERROR'\n      }\n    }\n  }];\n}\n\n// Extraire le texte vocalisé\nlet vocalizedText = '';\nif (data.choices && data.choices[0]?.message?.content) {\n  vocalizedText = data.choices[0].message.content.trim();\n}\n\nif (!vocalizedText) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Aucune vocalisation retournée par GPT',\n        status: 'EMPTY_GPT_RESPONSE'\n      }\n    }\n  }];\n}\n\nconst usage = data.usage || {};\n\n// Construire la réponse\nconst response = {\n  success: true,\n  cached: false,\n  vocalization: {\n    original: prevData.text,\n    vocalized: vocalizedText\n  },\n  metadata: {\n    traite: prevData.context.traite || null,\n    page: prevData.context.page || null,\n    commentator: prevData.context.commentator || null,\n    source_text_id: prevData.sourceTextId || null,\n    commentary_id: prevData.commentaryId || null,\n    vocalized_by: 'llm:gpt-4o',\n    model: 'gpt-4o',\n    source: 'generated',\n    processing_time_ms: processingTime,\n    tokens: {\n      prompt_tokens: usage.prompt_tokens || 0,\n      completion_tokens: usage.completion_tokens || 0\n    }\n  },\n  // Données pour sauvegarde\n  _saveData: {\n    source_text_id: prevData.sourceTextId,\n    commentary_id: prevData.commentaryId,\n    vocalized_text: vocalizedText,\n    vocalized_by: 'llm:gpt-4o'\n  }\n};\n\nreturn [{ json: response }];"
       },
       "id": "extract-gpt-response",
       "name": "Extract GPT Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2160, 200]
+      "position": [
+        2160,
+        200
+      ]
     },
     {
       "parameters": {
@@ -247,7 +280,10 @@
       "name": "Should Save?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2380, 200]
+      "position": [
+        2380,
+        200
+      ]
     },
     {
       "parameters": {
@@ -264,7 +300,10 @@
       "name": "Save to Cache",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2600, 100],
+      "position": [
+        2600,
+        100
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -275,14 +314,17 @@
       "name": "Clean Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2820, 150]
+      "position": [
+        2820,
+        150
+      ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseCode": "={{ $json.success ? 200 : (typeof $json.error?.code === 'number' ? $json.error.code : 500) }}",
           "responseHeaders": {
             "entries": [
               {
@@ -297,7 +339,10 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [3040, 100]
+      "position": [
+        3040,
+        100
+      ]
     },
     {
       "parameters": {
@@ -307,7 +352,10 @@
       "name": "Build Error Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1060, 420]
+      "position": [
+        1060,
+        420
+      ]
     },
     {
       "parameters": {
@@ -329,7 +377,10 @@
       "name": "Respond Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1280, 420]
+      "position": [
+        1280,
+        420
+      ]
     },
     {
       "parameters": {
@@ -358,7 +409,10 @@
       "name": "Is Commentary?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1060, 100]
+      "position": [
+        1060,
+        100
+      ]
     },
     {
       "parameters": {
@@ -380,18 +434,24 @@
       "name": "Check Nekudot API",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1280, 0],
+      "position": [
+        1280,
+        0
+      ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Vérifier si le commentaire a des nekudot\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Si erreur API, passer à la vocalisation\nif (statusCode >= 400) {\n  return [{\n    json: {\n      hasNekudot: false,\n      ...prevData\n    }\n  }];\n}\n\n// Vérifier si les nekudot existent\nconst nekudot = data.nekudot || {};\nconst nekudotData = nekudot[prevData.commentaryId];\n\nif (nekudotData && nekudotData.text) {\n  return [{\n    json: {\n      hasNekudot: true,\n      cachedNekudot: nekudotData.text,\n      cachedAt: nekudotData.vocalized_at,\n      originalText: prevData.text,\n      context: prevData.context,\n      startTime: prevData.startTime,\n      commentaryId: prevData.commentaryId\n    }\n  }];\n}\n\n// Pas de nekudot, passer à GPT-4o\nreturn [{\n  json: {\n    hasNekudot: false,\n    ...prevData\n  }\n}];"
+        "jsCode": "// Vérifier si le commentaire a des nekudot\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode;\n\n// Si erreur de connexion (error.code est une string comme 'ERR_BAD_REQUEST')\nif (input.error && typeof input.error.code === 'string') {\n  return [{\n    json: {\n      hasNekudot: false,\n      ...prevData\n    }\n  }];\n}\n\n// Si erreur HTTP, passer à la vocalisation\nif (typeof statusCode === 'number' && statusCode >= 400) {\n  return [{\n    json: {\n      hasNekudot: false,\n      ...prevData\n    }\n  }];\n}\n\n// Vérifier si les nekudot existent\nconst nekudot = data.nekudot || {};\nconst nekudotData = nekudot[prevData.commentaryId];\n\nif (nekudotData && nekudotData.text) {\n  return [{\n    json: {\n      hasNekudot: true,\n      cachedNekudot: nekudotData.text,\n      cachedAt: nekudotData.vocalized_at,\n      originalText: prevData.text,\n      context: prevData.context,\n      startTime: prevData.startTime,\n      commentaryId: prevData.commentaryId\n    }\n  }];\n}\n\n// Pas de nekudot, passer à GPT-4o\nreturn [{\n  json: {\n    hasNekudot: false,\n    ...prevData\n  }\n}];"
       },
       "id": "check-nekudot-result",
       "name": "Commentary Has Nekudot?",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1500, 0]
+      "position": [
+        1500,
+        0
+      ]
     },
     {
       "parameters": {
@@ -420,7 +480,10 @@
       "name": "Has Nekudot?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1720, 0]
+      "position": [
+        1720,
+        0
+      ]
     },
     {
       "parameters": {
@@ -430,7 +493,10 @@
       "name": "Format Nekudot Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1940, -100]
+      "position": [
+        1940,
+        -100
+      ]
     }
   ],
   "connections": {
