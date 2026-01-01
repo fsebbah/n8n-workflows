@@ -1,7 +1,7 @@
 # Unification de l'architecture de traduction Torah
 
 **Date** : 2026-01-01
-**Statut** : Proposition
+**Statut** : Validé (après discussion API + Bot + n8n)
 **Impact** : API, Bot, n8n
 
 ---
@@ -87,9 +87,12 @@ Actuellement, deux architectures coexistent pour les traductions :
 │       ▼                                                         │
 │  torah-discord-translate (point d'entrée unique)                │
 │       │                                                         │
+│       ├──► Vérifie CACHE                                        │
+│       │    └─► Si cache hit → réponse immédiate (pas de job)    │
+│       │                                                         │
 │       ├──► POST /api/jobs (crée job)                            │
-│       │    - type: "single" | "page"                            │
-│       │    - segments: [...]                                    │
+│       │    - job_type: "unit_translation" | "page_translation"  │
+│       │    - segments_count: N                                  │
 │       │                                                         │
 │       ├──► Appelle torah-translate-worker (async)               │
 │       │                                                         │
@@ -132,20 +135,19 @@ Actuellement, deux architectures coexistent pour les traductions :
 | Toujours asynchrone | Pas de timeout |
 | Suivi universel | Toutes les traductions ont un job_id |
 | Retry possible | Si erreur, on peut reprendre |
+| Cache optimisé | Réponse immédiate si déjà traduit |
 
 ---
 
 ## 3. Phases de développement
 
 ### Phase 1 : Préparation API
-**Durée estimée** : À définir par l'équipe API
 
-- Modifier le endpoint `POST /api/jobs` pour supporter les traductions unitaires
+- Modifier le endpoint `POST /api/jobs` pour supporter `job_type: "unit_translation"`
 - Modifier le endpoint `PATCH /api/jobs/{id}` pour accepter le format `tokens`
 - Modifier le endpoint `GET /api/jobs/{id}` pour retourner `tokens`
 
 ### Phase 2 : Worker unifié (n8n)
-**Durée estimée** : À définir par l'équipe n8n
 
 - Créer `torah-translate-worker` (nouveau worker unifié)
 - Intégrer la logique pivot dans le worker
@@ -153,13 +155,14 @@ Actuellement, deux architectures coexistent pour les traductions :
 - Modifier `torah-discord-translate` pour utiliser le nouveau flux
 
 ### Phase 3 : Adaptation Bot
-**Durée estimée** : À définir par l'équipe Bot
 
 - Modifier le bot pour toujours utiliser le flux asynchrone
 - Implémenter le polling pour toutes les traductions
 - Afficher les tokens dans Discord
+- Gérer les cas de désaccord Claude/GPT
 
 ### Phase 4 : Nettoyage
+
 - Supprimer les anciens workflows
 - Mettre à jour la documentation
 
@@ -169,33 +172,40 @@ Actuellement, deux architectures coexistent pour les traductions :
 
 ### 4.1 Modification `POST /api/jobs`
 
-**Nouveau champ requis :**
+**Champs :**
 
-| Champ | Type | Description |
-|-------|------|-------------|
-| `type` | string | `"single"` ou `"page"` |
-| `segments` | array | Liste des textes à traduire (1 pour single, N pour page) |
+| Champ | Type | Requis | Description |
+|-------|------|--------|-------------|
+| `job_type` | string | Oui | `"unit_translation"` ou `"page_translation"` |
+| `traite` | string | Oui | Nom du traité |
+| `page` | string | Oui | Référence de la page |
+| `target_language` | string | Oui | Code langue cible (fr, en, es...) |
+| `segments_count` | number | Oui | Nombre de segments à traduire |
+| `metadata` | object | Non | Données contextuelles optionnelles |
 
 **Exemple requête (traduction unitaire) :**
 ```json
 {
-  "type": "single",
+  "job_type": "unit_translation",
   "traite": "Berakhot",
   "page": "2a",
-  "commentator": "Rashi",
   "target_language": "fr",
-  "segments": ["texte du commentaire à traduire"]
+  "segments_count": 1,
+  "metadata": {
+    "commentator": "Rashi",
+    "text_type": "commentary"
+  }
 }
 ```
 
 **Exemple requête (traduction page) :**
 ```json
 {
-  "type": "page",
+  "job_type": "page_translation",
   "traite": "Sukkah",
   "page": "47a",
   "target_language": "fr",
-  "segments": ["segment 1", "segment 2", "...", "segment 12"]
+  "segments_count": 12
 }
 ```
 
@@ -240,11 +250,11 @@ Actuellement, deux architectures coexistent pour les traductions :
 ```json
 {
   "job_id": "job_abc123",
-  "type": "single",
+  "job_type": "unit_translation",
   "status": "completed",
   "traite": "Berakhot",
   "page": "2a",
-  "commentator": "Rashi",
+  "target_language": "fr",
   "progress": {
     "current": 1,
     "total": 1,
@@ -268,15 +278,14 @@ Actuellement, deux architectures coexistent pour les traductions :
       "total_tokens": 9000
     }
   },
-  "translations": [
-    {
-      "segment_index": 0,
-      "translated_text": "...",
-      "status": "approved"
-    }
-  ]
+  "metadata": {
+    "commentator": "Rashi",
+    "text_type": "commentary"
+  }
 }
 ```
+
+**Note** : Le champ `translations[]` n'est PAS inclus dans la réponse du job. Les traductions sont récupérées via un endpoint dédié si nécessaire.
 
 ---
 
@@ -295,20 +304,100 @@ translation = response.json()["translation"]["final"]
 ```python
 # Toutes les traductions (asynchrone)
 response = requests.post("/webhook/torah-discord-translate", data={...})
-job_id = response.json()["job_id"]
+data = response.json()
 
-# Polling
+# Cas 1: Cache hit (réponse immédiate)
+if data.get("cached"):
+    translation = data["translation"]["final"]
+    return translation
+
+# Cas 2: Nouvelle traduction (polling)
+job_id = data["job_id"]
 while True:
     status = requests.get(f"/webhook/torah-job-status?job_id={job_id}")
     if status.json()["status"] == "completed":
         break
-    await asyncio.sleep(2)
+    await asyncio.sleep(2)  # 2s fixe pour unitaire
 
-translation = status.json()["translations"][0]["translated_text"]
-tokens = status.json()["tokens"]
+# Récupérer la traduction finale
+final = requests.get(f"/webhook/torah-translation-result?job_id={job_id}")
+translation = final.json()["translation"]["final"]
+tokens = final.json()["tokens"]
 ```
 
-### 5.2 Affichage des tokens
+### 5.2 Gestion du cache
+
+| Situation | Réponse n8n | Action Bot |
+|-----------|-------------|------------|
+| Cache hit | `{ "cached": true, "translation": {...} }` | Afficher immédiatement |
+| Cache miss | `{ "job_id": "...", "cached": false }` | Démarrer polling |
+
+**Format cache hit :**
+```json
+{
+  "success": true,
+  "cached": true,
+  "translation": {
+    "original": "טקסט מקורי",
+    "final": "Texte traduit depuis le cache",
+    "source_language": "he",
+    "target_language": "fr"
+  },
+  "tokens": null
+}
+```
+
+Affichage suggéré : "📦 Traduction depuis le cache"
+
+### 5.3 Gestion des désaccords Claude/GPT
+
+Si `confidence < 0.9`, n8n renvoie `requires_vote: true` :
+
+```json
+{
+  "success": true,
+  "job_id": "job_abc123",
+  "translation": {
+    "original": "טקסט מקורי",
+    "final": null,
+    "claude_translation": "Traduction proposée par Claude",
+    "gpt_suggestion": "Suggestion alternative de GPT",
+    "source_language": "he",
+    "target_language": "fr"
+  },
+  "verification": {
+    "approved": false,
+    "confidence": 0.75,
+    "notes": "Désaccord sur l'interprétation de...",
+    "issues": ["ambiguity"]
+  },
+  "requires_vote": true
+}
+```
+
+**Action Bot** : Afficher les 2 traductions + boutons de vote (comportement existant conservé).
+
+**Endpoint votes** : Les votes sont envoyés à l'API (`/api/translations/{id}/vote`), pas à n8n.
+
+### 5.4 Gestion du polling
+
+**Traduction unitaire (~5-15s) :**
+
+| Paramètre | Valeur |
+|-----------|--------|
+| Intervalle | 2 secondes (fixe) |
+| Timeout global | 60 secondes |
+
+**Traduction de page (>60s) :**
+
+| Paramètre | Valeur |
+|-----------|--------|
+| Intervalle initial | 1 seconde |
+| Backoff | ×1.5 |
+| Intervalle max | 5 secondes |
+| Timeout global | 300 secondes |
+
+### 5.5 Affichage des tokens
 
 **Format suggéré pour Discord :**
 ```
@@ -318,22 +407,17 @@ tokens = status.json()["tokens"]
 └─ Total: 9,000
 ```
 
-### 5.3 Gestion du polling
+**Règle** : Si `tokens === null` (cache hit), ne pas afficher cette section.
 
-| Paramètre | Valeur suggérée |
-|-----------|-----------------|
-| Intervalle initial | 1 seconde |
-| Intervalle max | 5 secondes |
-| Timeout global | 120 secondes |
-| Backoff | Exponentiel (×1.5) |
-
-### 5.4 Messages utilisateur
+### 5.6 Messages utilisateur
 
 | État | Message Discord |
 |------|-----------------|
+| Cache hit | "📦 Traduction depuis le cache" |
 | Job créé | "⏳ Traduction en cours..." |
 | En progression | "⏳ Traduction: 5/12 segments (42%)" |
 | Terminé | "✅ Traduction terminée (8.5s, 9,000 tokens)" |
+| Désaccord | "⚖️ Désaccord - Choisissez une traduction:" |
 | Erreur | "❌ Erreur: [message]" |
 
 ---
@@ -346,29 +430,65 @@ tokens = status.json()["tokens"]
 
 **Logique :**
 ```
-1. Recevoir job_id + segments
+1. Recevoir job_id + données de traduction
 2. Pour chaque segment:
-   a. Déterminer si pivot nécessaire (source ≠ 'en' AND target ≠ 'en')
-   b. Si pivot:
+   a. Vérifier le cache
+      - Si cache hit: retourner immédiatement
+   b. Déterminer si pivot nécessaire (source ≠ 'en' AND target ≠ 'en')
+   c. Si pivot:
       - Claude: source → en
       - Claude: en → target
-   c. Si direct:
+   d. Si direct:
       - Claude: source → target
-   d. GPT vérifie
-   e. POST /api/translations/save
-   f. PATCH /api/jobs (progress + tokens)
+   e. GPT vérifie
+   f. Si confidence >= 0.9:
+      - POST /api/translations/save
+   g. Si confidence < 0.9:
+      - Marquer requires_vote = true
+   h. PATCH /api/jobs (progress + tokens)
 3. PATCH /api/jobs (status: completed)
+4. Retourner résultat final au webhook appelant
 ```
 
-### 6.2 Workflows à supprimer
+### 6.2 Format de réponse finale (retournée au Bot)
+
+**Traduction approuvée :**
+```json
+{
+  "success": true,
+  "job_id": "job_abc123",
+  "translation": {
+    "original": "טקסט מקורי",
+    "final": "Texte traduit final",
+    "source_language": "he",
+    "target_language": "fr",
+    "intermediate_en": "English intermediate text",
+    "pivot_used": true
+  },
+  "verification": {
+    "approved": true,
+    "confidence": 0.95,
+    "notes": "...",
+    "issues": []
+  },
+  "tokens": {
+    "claude": { "input_tokens": 150, "output_tokens": 200, "total_tokens": 350 },
+    "gpt": { "input_tokens": 300, "output_tokens": 100, "total_tokens": 400 },
+    "total": { "input_tokens": 450, "output_tokens": 300, "total_tokens": 750 }
+  },
+  "requires_vote": false
+}
+```
+
+### 6.3 Workflows à supprimer
 
 - `torah-discord-translate-pivot` (logique intégrée au worker)
 - `torah-translate-page-worker` (remplacé par worker unifié)
 
-### 6.3 Workflows à modifier
+### 6.4 Workflows à modifier
 
-- `torah-discord-translate` : devient orchestrateur simple (crée job + appelle worker)
-- `torah-translate-page` : peut être fusionné avec `torah-discord-translate`
+- `torah-discord-translate` : devient orchestrateur simple (vérifie cache + crée job + appelle worker)
+- `torah-translate-page` : fusionné avec `torah-discord-translate`
 
 ---
 
@@ -393,27 +513,38 @@ En cas de problème :
 ## 8. Checklist
 
 ### API
-- [ ] `POST /api/jobs` supporte `type: "single"`
+- [ ] `POST /api/jobs` supporte `job_type: "unit_translation"`
+- [ ] `POST /api/jobs` accepte `metadata` optionnel
 - [ ] `PATCH /api/jobs/{id}` accepte `tokens: { claude, gpt, total }`
-- [ ] `GET /api/jobs/{id}` retourne `tokens` et `translations`
+- [ ] `GET /api/jobs/{id}` retourne `tokens` (sans `translations[]`)
 - [ ] Tests unitaires mis à jour
 
 ### n8n
 - [ ] Worker unifié créé avec logique pivot
+- [ ] Gestion du cache dans l'orchestrateur
 - [ ] `torah-discord-translate` modifié (orchestrateur)
+- [ ] Format réponse finale avec `requires_vote`
 - [ ] Tests manuels effectués
 - [ ] Anciens workflows désactivés
 
 ### Bot
+- [ ] Gestion cache hit (réponse immédiate)
 - [ ] Flux asynchrone implémenté pour toutes les traductions
-- [ ] Polling implémenté
+- [ ] Polling implémenté (2s fixe unitaire, backoff pages)
 - [ ] Affichage tokens dans Discord
+- [ ] Gestion `requires_vote` pour désaccords
 - [ ] Tests effectués
 
 ---
 
-## 9. Questions ouvertes
+## 9. Décisions prises
 
-1. Faut-il garder une option "synchrone" pour les cas simples ?
-2. Quelle durée de rétention pour les jobs terminés ?
-3. Faut-il notifier le bot via webhook au lieu du polling ?
+| Question | Décision | Justification |
+|----------|----------|---------------|
+| Option synchrone ? | Non | Complexité de maintenance |
+| Rétention jobs ? | 7 jours | Suffisant pour debug |
+| Webhook vs polling ? | Polling (v1) | Plus simple à implémenter |
+| `type` vs `job_type` ? | `job_type` | Évite mot réservé |
+| Segments texte ou count ? | `segments_count` | n8n gère les textes |
+| `translations[]` dans job ? | Non | Évite duplication |
+| `commentator` ? | Dans `metadata` | Optionnel et flexible |
