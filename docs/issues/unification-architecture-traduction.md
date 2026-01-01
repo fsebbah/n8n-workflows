@@ -291,7 +291,57 @@ Actuellement, deux architectures coexistent pour les traductions :
 
 ## 5. Spécifications équipe Bot
 
-### 5.1 Modification du flux de traduction
+### 5.1 Flux de communication (2 endpoints uniquement)
+
+Le bot utilise **seulement 2 endpoints** :
+
+| Endpoint | Méthode | Description |
+|----------|---------|-------------|
+| `/webhook/torah-discord-translate` | POST | Démarrer une traduction |
+| `/webhook/torah-job-status` | GET | Vérifier le statut ET récupérer le résultat |
+
+**Flux complet :**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ ÉTAPE 1 : Démarrer la traduction                               │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  POST /webhook/torah-discord-translate                          │
+│       │                                                         │
+│       ├──► Si CACHE HIT:                                        │
+│       │    { cached: true, translation: {...} }                 │
+│       │    → FIN (pas de polling)                               │
+│       │                                                         │
+│       └──► Si CACHE MISS:                                       │
+│            { job_id: "xxx", cached: false }                     │
+│            → Démarrer polling                                   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ ÉTAPE 2 : Polling (si cache miss)                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  GET /webhook/torah-job-status?job_id=xxx                       │
+│       │                                                         │
+│       ├──► Si IN_PROGRESS:                                      │
+│       │    { status: "in_progress", progress: {...} }           │
+│       │    → Attendre 2s, recommencer                           │
+│       │                                                         │
+│       └──► Si COMPLETED:                                        │
+│            {                                                    │
+│              status: "completed",                               │
+│              translation: { final: "...", ... },                │
+│              tokens: { claude: {...}, gpt: {...}, total: {...} }│
+│              verification: { confidence: 0.95, ... }            │
+│            }                                                    │
+│            → FIN                                                │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 5.2 Modification du flux de traduction
 
 **Avant :**
 ```python
@@ -314,18 +364,21 @@ if data.get("cached"):
 # Cas 2: Nouvelle traduction (polling)
 job_id = data["job_id"]
 while True:
-    status = requests.get(f"/webhook/torah-job-status?job_id={job_id}")
-    if status.json()["status"] == "completed":
-        break
-    await asyncio.sleep(2)  # 2s fixe pour unitaire
+    result = requests.get(f"/webhook/torah-job-status?job_id={job_id}")
+    result_data = result.json()
 
-# Récupérer la traduction finale
-final = requests.get(f"/webhook/torah-translation-result?job_id={job_id}")
-translation = final.json()["translation"]["final"]
-tokens = final.json()["tokens"]
+    if result_data["status"] == "completed":
+        # La traduction est DANS la réponse du status
+        translation = result_data["translation"]["final"]
+        tokens = result_data["tokens"]
+        break
+
+    await asyncio.sleep(2)  # 2s fixe pour unitaire
 ```
 
-### 5.2 Gestion du cache
+**Important** : Pas de 3ème endpoint. La traduction complète est retournée par `torah-job-status` quand le job est terminé.
+
+### 5.3 Gestion du cache
 
 | Situation | Réponse n8n | Action Bot |
 |-----------|-------------|------------|
@@ -349,7 +402,7 @@ tokens = final.json()["tokens"]
 
 Affichage suggéré : "📦 Traduction depuis le cache"
 
-### 5.3 Gestion des désaccords Claude/GPT
+### 5.4 Gestion des désaccords Claude/GPT
 
 Si `confidence < 0.9`, n8n renvoie `requires_vote: true` :
 
@@ -379,7 +432,7 @@ Si `confidence < 0.9`, n8n renvoie `requires_vote: true` :
 
 **Endpoint votes** : Les votes sont envoyés à l'API (`/api/translations/{id}/vote`), pas à n8n.
 
-### 5.4 Gestion du polling
+### 5.5 Gestion du polling
 
 **Traduction unitaire (~5-15s) :**
 
@@ -397,7 +450,7 @@ Si `confidence < 0.9`, n8n renvoie `requires_vote: true` :
 | Intervalle max | 5 secondes |
 | Timeout global | 300 secondes |
 
-### 5.5 Affichage des tokens
+### 5.6 Affichage des tokens
 
 **Format suggéré pour Discord :**
 ```
@@ -409,7 +462,7 @@ Si `confidence < 0.9`, n8n renvoie `requires_vote: true` :
 
 **Règle** : Si `tokens === null` (cache hit), ne pas afficher cette section.
 
-### 5.6 Messages utilisateur
+### 5.7 Messages utilisateur
 
 | État | Message Discord |
 |------|-----------------|
@@ -548,3 +601,5 @@ En cas de problème :
 | Segments texte ou count ? | `segments_count` | n8n gère les textes |
 | `translations[]` dans job ? | Non | Évite duplication |
 | `commentator` ? | Dans `metadata` | Optionnel et flexible |
+| Nombre d'endpoints Bot ? | 2 uniquement | `torah-discord-translate` + `torah-job-status` |
+| Traduction dans status ? | Oui | Quand `status: completed`, la réponse inclut `translation` |
