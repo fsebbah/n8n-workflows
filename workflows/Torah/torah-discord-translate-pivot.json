@@ -356,13 +356,41 @@
     },
     {
       "parameters": {
-        "jsCode": "// Formater la réponse finale\nconst gptResponse = $input.first().json;\nconst translationData = $('Merge Translations').first().json;\n\nconst endTime = Date.now();\nconst processingTime = endTime - translationData.startTime;\n\n// Récupérer les modèles utilisés\nconst claudeModel = translationData.claudeModel || 'claude-sonnet-4-20250514';\nconst openaiModel = translationData.openaiModel || 'gpt-4o';\nconst mode = translationData.mode || 'standard';\nconst pivotUsed = translationData.pivotUsed || false;\n\n// Parser la réponse OpenAI\nconst gptData = gptResponse.body || gptResponse;\nconst gptStatusCode = gptResponse.statusCode || 200;\n\n// Valeurs par défaut si OpenAI échoue\nlet verification = {\n  my_translation: null,\n  approved: true,\n  confidence: 0.7,\n  issues: [],\n  notes: 'Vérification OpenAI non disponible'\n};\n\nlet gptUsageRaw = { prompt_tokens: 0, completion_tokens: 0 };\nlet verifierError = null;\n\nif (gptStatusCode >= 400 || gptData.error) {\n  verifierError = gptData.error?.message || gptData.error?.code || `HTTP ${gptStatusCode}`;\n} else if (gptData.choices && gptData.choices[0]?.message?.content) {\n  try {\n    verification = JSON.parse(gptData.choices[0].message.content);\n    gptUsageRaw = gptData.usage || gptUsageRaw;\n  } catch (e) {\n    verifierError = 'Erreur parsing JSON: ' + e.message;\n  }\n} else {\n  verifierError = 'Réponse OpenAI invalide';\n}\n\n// Les traductions\nconst claudeTranslation = translationData.claudeTranslation;\nconst gptTranslation = verification.my_translation || null;\nconst intermediateTranslation = translationData.intermediateTranslation || null;\n\n// Logique de validation: verification.approved === true\nconst confidence = verification.confidence || 0.7;\nconst isAutoApproved = verification.approved === true;\nconst status = isAutoApproved ? 'approved' : 'draft';\n\n// Construire llm_usage\nconst llmUsage = [\n  ...translationData.llmUsage,\n  {\n    model: openaiModel,\n    provider: 'openai',\n    step: 'verification',\n    input_tokens: gptUsageRaw.prompt_tokens || 0,\n    output_tokens: gptUsageRaw.completion_tokens || 0,\n    total_tokens: (gptUsageRaw.prompt_tokens || 0) + (gptUsageRaw.completion_tokens || 0)\n  }\n];\n\nconst totalTokens = llmUsage.reduce((sum, u) => sum + (u.total_tokens || 0), 0);\n\n// Construire la réponse\nconst response = {\n  success: true,\n  requestId: translationData.requestId,\n  status: status,\n  mode: mode,\n  pivot_used: pivotUsed,\n  translation: {\n    original: translationData.originalText,\n    intermediate: intermediateTranslation,\n    claude: claudeTranslation,\n    openai: gptTranslation,\n    final: isAutoApproved ? claudeTranslation : null,\n    source_language: translationData.sourceLanguage,\n    target_language: translationData.targetLanguage\n  },\n  verification: {\n    approved: verification.approved,\n    confidence: confidence,\n    auto_approved: isAutoApproved,\n    issues: verification.issues || [],\n    notes: verification.notes || null,\n    verifier_error: verifierError\n  },\n  metadata: {\n    traite: translationData.context.traite || null,\n    page: translationData.context.page || null,\n    commentator: translationData.context.commentator || null,\n    models_used: [claudeModel, openaiModel],\n    mode: mode,\n    pivot_used: pivotUsed,\n    source: 'generated',\n    processing_time_ms: processingTime\n  },\n  llm_usage: llmUsage,\n  total_tokens: totalTokens,\n  discord: translationData.discord\n};\n\nreturn [{ json: response }];"
+        "jsCode": "// Formater la réponse finale\nconst gptResponse = $input.first().json;\nconst translationData = $('Merge Translations').first().json;\n\nconst endTime = Date.now();\nconst processingTime = endTime - translationData.startTime;\n\n// Récupérer les modèles utilisés\nconst claudeModel = translationData.claudeModel || 'claude-sonnet-4-20250514';\nconst openaiModel = translationData.openaiModel || 'gpt-4o';\nconst mode = translationData.mode || 'standard';\nconst pivotUsed = translationData.pivotUsed || false;\n\n// Parser la réponse OpenAI\nconst gptData = gptResponse.body || gptResponse;\nconst gptStatusCode = gptResponse.statusCode || 200;\n\n// Valeurs par défaut si OpenAI échoue\nlet verification = {\n  my_translation: null,\n  approved: true,\n  confidence: 0.7,\n  issues: [],\n  notes: 'Vérification OpenAI non disponible'\n};\n\nlet gptUsageRaw = { prompt_tokens: 0, completion_tokens: 0 };\nlet verifierError = null;\n\nif (gptStatusCode >= 400 || gptData.error) {\n  verifierError = gptData.error?.message || gptData.error?.code || `HTTP ${gptStatusCode}`;\n} else if (gptData.choices && gptData.choices[0]?.message?.content) {\n  try {\n    verification = JSON.parse(gptData.choices[0].message.content);\n    gptUsageRaw = gptData.usage || gptUsageRaw;\n  } catch (e) {\n    verifierError = 'Erreur parsing JSON: ' + e.message;\n  }\n} else {\n  verifierError = 'Réponse OpenAI invalide';\n}\n\n// Les traductions\nconst claudeTranslation = translationData.claudeTranslation;\nconst gptTranslation = verification.my_translation || null;\nconst intermediateTranslation = translationData.intermediateTranslation || null;\n\n// Logique de validation: verification.approved === true\nconst confidence = verification.confidence || 0.7;\nconst isAutoApproved = verification.approved === true;\nconst status = isAutoApproved ? 'approved' : 'draft';\n\n// Construire llm_usage\nconst llmUsage = [\n  ...translationData.llmUsage,\n  {\n    model: openaiModel,\n    provider: 'openai',\n    step: 'verification',\n    input_tokens: gptUsageRaw.prompt_tokens || 0,\n    output_tokens: gptUsageRaw.completion_tokens || 0,\n    total_tokens: (gptUsageRaw.prompt_tokens || 0) + (gptUsageRaw.completion_tokens || 0)\n  }\n];\n\nconst totalTokens = llmUsage.reduce((sum, u) => sum + (u.total_tokens || 0), 0);\n\n// Construire les traductions par code langue\n// Si pivot: translation_en (intermédiaire) + translation_{target}\n// Si direct vers EN: translation_en uniquement\n// Si direct depuis EN: translation_{target} uniquement\nconst sourceLanguage = translationData.sourceLanguage;\nconst targetLanguage = translationData.targetLanguage;\n\nconst translationsByLang = {};\nif (pivotUsed) {\n  // Pivot: he -> en -> fr\n  translationsByLang['translation_en'] = intermediateTranslation;\n  translationsByLang['translation_' + targetLanguage] = claudeTranslation;\n} else if (targetLanguage === 'en') {\n  // Direct vers EN: he -> en\n  translationsByLang['translation_en'] = claudeTranslation;\n} else {\n  // Direct depuis EN: en -> fr\n  translationsByLang['translation_' + targetLanguage] = claudeTranslation;\n}\n\n// Construire la réponse\nconst response = {\n  success: true,\n  requestId: translationData.requestId,\n  status: status,\n  mode: mode,\n  pivot_used: pivotUsed,\n  translation: {\n    original: translationData.originalText,\n    intermediate: intermediateTranslation,\n    claude: claudeTranslation,\n    openai: gptTranslation,\n    final: isAutoApproved ? claudeTranslation : null,\n    source_language: sourceLanguage,\n    target_language: targetLanguage\n  },\n  verification: {\n    approved: verification.approved,\n    confidence: confidence,\n    auto_approved: isAutoApproved,\n    issues: verification.issues || [],\n    notes: verification.notes || null,\n    verifier_error: verifierError\n  },\n  metadata: {\n    traite: translationData.context.traite || null,\n    page: translationData.context.page || null,\n    commentator: translationData.context.commentator || null,\n    models_used: [claudeModel, openaiModel],\n    mode: mode,\n    pivot_used: pivotUsed,\n    source: 'generated',\n    processing_time_ms: processingTime\n  },\n  llm_usage: llmUsage,\n  total_tokens: totalTokens,\n  discord: translationData.discord,\n  // Données pour sauvegarde\n  _saveData: {\n    text: translationData.originalText,\n    translated_text: isAutoApproved ? claudeTranslation : null,\n    ...translationsByLang,\n    claude_translation: claudeTranslation,\n    gpt_translation: gptTranslation,\n    status: status,\n    source_language: sourceLanguage,\n    target_language: targetLanguage,\n    traite: translationData.context.traite || null,\n    page: translationData.context.page || null,\n    commentator: translationData.context.commentator || null,\n    quality_score: confidence,\n    notes: verification.notes || null,\n    issues: verification.issues || [],\n    provider: 'claude+openai',\n    model: claudeModel + '+' + openaiModel,\n    mode: mode,\n    pivot_used: pivotUsed,\n    request_id: translationData.requestId,\n    llm_usage: llmUsage\n  }\n};\n\nreturn [{ json: response }];"
       },
       "id": "format-final-response",
       "name": "Format Final Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [2840, 150]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TORAH_API_URL }}/api/translations/save",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json._saveData) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "save-to-cache",
+      "name": "Save to Cache",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3060, 150],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nettoyer la réponse (supprimer _saveData)\nconst input = $input.first().json;\nconst prevResponse = $('Format Final Response').first().json;\n\n// Supprimer les données internes\nconst response = { ...prevResponse };\ndelete response._saveData;\n\nreturn [{ json: response }];"
+      },
+      "id": "clean-response",
+      "name": "Clean Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3280, 150]
     },
     {
       "parameters": {
@@ -400,7 +428,7 @@
       "name": "Send to Discord?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [3060, 150]
+      "position": [3500, 150]
     },
     {
       "parameters": {
@@ -417,7 +445,7 @@
       "name": "Send to Discord",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3280, 50]
+      "position": [3720, 50]
     },
     {
       "parameters": {
@@ -439,7 +467,7 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [3500, 150]
+      "position": [3940, 150]
     },
     {
       "parameters": {
@@ -702,6 +730,28 @@
       ]
     },
     "Format Final Response": {
+      "main": [
+        [
+          {
+            "node": "Save to Cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Cache": {
+      "main": [
+        [
+          {
+            "node": "Clean Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Response": {
       "main": [
         [
           {
