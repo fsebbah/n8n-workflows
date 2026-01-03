@@ -1,0 +1,335 @@
+{
+  "name": "Stripe - Subscription Checkout Create",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Stripe Subscription Checkout Create\n\n**Endpoint:** POST /webhook/subscription-checkout-create\n\n**Purpose:** Creates a Stripe Checkout session for subscription signup.\nActs as a proxy - each project has its own Stripe account.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah\",\n  \"price_id\": \"price_xxx\",\n  \"customer_email\": \"user@example.com\",\n  \"callbacks\": {\n    \"success\": \"http://...\",\n    \"renewal\": \"http://...\"\n  },\n  \"urls\": {\n    \"success\": \"https://...\",\n    \"cancel\": \"https://...\"\n  },\n  \"metadata\": {},\n  \"options\": {\n    \"trial_days\": 7\n  }\n}\n```\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"checkout_url\": \"https://checkout.stripe.com/...\",\n  \"session_id\": \"cs_xxx\"\n}\n```\n\n**Setup:** Create SQLite credential named 'Stripe Config DB' pointing to data/stripe-config.db",
+        "height": 580,
+        "width": 380,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 40]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "subscription-checkout-create",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate and extract input parameters\nconst input = $input.first().json;\nconst body = input.body || {};\n\n// Required fields\nconst requiredFields = ['project_id', 'price_id', 'customer_email', 'urls'];\nconst missing = requiredFields.filter(f => !body[f]);\n\nif (missing.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required fields: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Validate URLs\nif (!body.urls.success || !body.urls.cancel) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'urls.success and urls.cancel are required',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Extract and normalize data\nreturn [{\n  json: {\n    valid: true,\n    project_id: body.project_id,\n    price_id: body.price_id,\n    customer_email: body.customer_email,\n    callbacks: body.callbacks || {},\n    urls: body.urls,\n    metadata: body.metadata || {},\n    options: body.options || {}\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT project_id, display_name, secret_key, webhook_secret, prices, active FROM stripe_projects WHERE project_id = '{{ $json.project_id }}' AND active = 1",
+        "options": {}
+      },
+      "id": "get-project-config",
+      "name": "Get Project Config",
+      "type": "n8n-nodes-base.sqlite",
+      "typeVersion": 1,
+      "position": [1140, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if project was found\nconst dbResults = $('Get Project Config').all();\nconst inputData = $('Validate Input').first().json;\n\nif (!dbResults || dbResults.length === 0 || !dbResults[0].json.project_id) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Project '${inputData.project_id}' not found or inactive`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nconst project = dbResults[0].json;\n\n// Parse prices JSON\nlet prices = {};\ntry {\n  prices = typeof project.prices === 'string' ? JSON.parse(project.prices) : project.prices;\n} catch (e) {\n  prices = {};\n}\n\nreturn [{\n  json: {\n    found: true,\n    project: {\n      project_id: project.project_id,\n      display_name: project.display_name,\n      secret_key: project.secret_key,\n      webhook_secret: project.webhook_secret,\n      prices: prices\n    },\n    input: inputData\n  }\n}];"
+      },
+      "id": "merge-project-data",
+      "name": "Merge Project Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-project-found",
+      "name": "Project Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1580, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Stripe API call with dynamic auth\nconst data = $input.first().json;\nconst secretKey = data.project.secret_key;\n\n// Build form-urlencoded body as string\nconst params = new URLSearchParams();\nparams.append('mode', 'subscription');\nparams.append('customer_email', data.input.customer_email);\nparams.append('line_items[0][price]', data.input.price_id);\nparams.append('line_items[0][quantity]', '1');\nparams.append('success_url', `${data.input.urls.success}?session_id={CHECKOUT_SESSION_ID}`);\nparams.append('cancel_url', data.input.urls.cancel);\nparams.append('metadata[project_id]', data.project.project_id);\n\n// Add callbacks to metadata\nif (data.input.callbacks.success) {\n  params.append('metadata[callback_success]', data.input.callbacks.success);\n}\nif (data.input.callbacks.renewal) {\n  params.append('metadata[callback_renewal]', data.input.callbacks.renewal);\n}\nif (data.input.callbacks.failure) {\n  params.append('metadata[callback_failure]', data.input.callbacks.failure);\n}\nif (data.input.callbacks.cancel) {\n  params.append('metadata[callback_cancel]', data.input.callbacks.cancel);\n}\n\n// Add custom metadata\nif (data.input.metadata) {\n  Object.entries(data.input.metadata).forEach(([key, value]) => {\n    params.append(`metadata[${key}]`, String(value));\n  });\n}\n\n// Add trial if specified\nif (data.input.options.trial_days) {\n  params.append('subscription_data[trial_period_days]', String(data.input.options.trial_days));\n}\n\n// Add coupon if specified\nif (data.input.options.coupon_code) {\n  params.append('discounts[0][coupon]', data.input.options.coupon_code);\n}\n\n// Add promotion codes if enabled\nif (data.input.options.allow_promotion_codes) {\n  params.append('allow_promotion_codes', 'true');\n}\n\nreturn [{\n  json: {\n    authHeader: `Bearer ${secretKey}`,\n    bodyString: params.toString()\n  }\n}];"
+      },
+      "id": "prepare-stripe-request",
+      "name": "Prepare Stripe Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.stripe.com/v1/checkout/sessions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.authHeader }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "body": "={{ $json.bodyString }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "call-stripe-api",
+      "name": "Call Stripe API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2020, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format success response\nconst stripeResponse = $input.first().json;\n\nif (stripeResponse.statusCode === 200 && stripeResponse.body) {\n  const session = stripeResponse.body;\n  return [{\n    json: {\n      success: true,\n      checkout_url: session.url,\n      session_id: session.id,\n      expires_at: session.expires_at\n    }\n  }];\n}\n\n// Handle Stripe error\nconst error = stripeResponse.body?.error || {};\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: stripeResponse.statusCode || 500,\n      message: error.message || 'Failed to create checkout session',\n      type: error.type || 'api_error',\n      stripe_code: error.code || null\n    }\n  }\n}];"
+      },
+      "id": "format-success-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2240, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}"
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2460, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error } }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}"
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error } }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 404 }}"
+        }
+      },
+      "id": "respond-project-not-found",
+      "name": "Respond Project Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1800, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "Merge Project Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Project Data": {
+      "main": [
+        [
+          {
+            "node": "Project Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Found?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Stripe Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Project Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Stripe Request": {
+      "main": [
+        [
+          {
+            "node": "Call Stripe API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Stripe API": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
