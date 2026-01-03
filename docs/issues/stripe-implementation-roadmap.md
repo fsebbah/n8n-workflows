@@ -1,7 +1,7 @@
 # Stripe Implementation Roadmap
 
 **Date:** 2026-01-03
-**Status:** In Progress (Phase 1 & 2 Complete)
+**Status:** In Progress (Phase 1, 2 & 3 Complete)
 **Related:** [stripe-integration.md](./stripe-integration.md)
 
 ---
@@ -96,25 +96,30 @@ This document tracks the remaining implementation tasks for the Stripe integrati
 
 ---
 
-## Phase 3: MCP Integration
+## Phase 3: MCP Integration ✅ COMPLETED
 
-### Issue #8: MCP Database Setup
+> **Status:** Completed
+> **Files:**
+> - `scripts/mcp/migrate-stripe-columns.sql`
+> - `scripts/mcp/migrate-stripe.sh`
+> - `workflows/MCP/mcp-sub-*.json`
 
-**Priority:** Medium
-**Estimation:** Low complexity
+### Issue #8: MCP Database Setup ✅
 
-**Description:**
-Create or update MCP user tables for subscription support.
+- [x] Create PostgreSQL migration script (`scripts/mcp/migrate-stripe-columns.sql`)
+- [x] Create tables: `mcp_users`, `mcp_api_usage`, `mcp_payment_history`, `mcp_api_keys`
+- [x] Add Stripe columns: `stripe_customer_id`, `stripe_subscription_id`, `subscription_status`
+- [x] Add rate limiting columns: `rate_limit_per_minute`, `rate_limit_per_day`
+- [x] Add credits system: `credits`, `credits_used_this_month`, `credits_reset_date`
+- [x] Create API key generation function
+- [x] Create bash wrapper script (`scripts/mcp/migrate-stripe.sh`)
 
----
+### Issue #9: MCP Callback Workflows ✅
 
-### Issue #9: MCP Callback Workflows
-
-**Priority:** Medium
-**Estimation:** Medium complexity
-
-**Description:**
-Create MCP-specific callback workflows.
+- [x] `mcp-sub-success`: Create user, generate API key, add credits
+- [x] `mcp-sub-renewal`: Add monthly credits, reset usage counters
+- [x] `mcp-sub-cancel`: Downgrade to free tier, reduce rate limits
+- [x] `mcp-sub-failure`: Set status to past_due, log failure
 
 ---
 
