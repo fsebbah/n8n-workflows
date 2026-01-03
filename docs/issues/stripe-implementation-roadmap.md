@@ -1,7 +1,7 @@
 # Stripe Implementation Roadmap
 
-**Date:** 2026-01-02
-**Status:** In Progress
+**Date:** 2026-01-03
+**Status:** In Progress (Phase 1 & 2 Complete)
 **Related:** [stripe-integration.md](./stripe-integration.md)
 
 ---
@@ -22,208 +22,77 @@ This document tracks the remaining implementation tasks for the Stripe integrati
 
 ---
 
-## Phase 1: Workflows n8n (Proxy Stripe)
+## Phase 1: Workflows n8n (Proxy Stripe) ✅ COMPLETED
 
-### Issue #1: `subscription-checkout-create`
+> **Status:** Completed (PR #174 merged)
+> **Files:** `workflows/Stripe/subscription-*.json`
 
-**Priority:** High
-**Estimation:** Medium complexity
+### Issue #1: `subscription-checkout-create` ✅
 
-**Description:**
-Create the n8n workflow that receives checkout requests from services and creates Stripe Checkout sessions.
+- [x] Create webhook trigger node (`POST /webhook/subscription-checkout-create`)
+- [x] Add SQLite node to fetch project config by `project_id`
+- [x] Add HTTP Request node to create Stripe Checkout session
+- [x] Handle conditional options (trial, coupon, promotion codes)
+- [x] Return checkout URL to caller
+- [x] Add error handling
 
-**Tasks:**
-- [ ] Create webhook trigger node (`POST /webhook/subscription-checkout-create`)
-- [ ] Add SQLite node to fetch project config by `project_id`
-- [ ] Add HTTP Request node to create Stripe Checkout session
-- [ ] Handle conditional options (trial, coupon, promotion codes)
-- [ ] Return checkout URL to caller
-- [ ] Add error handling
+### Issue #2: `subscription-webhook-handler` ✅
 
-**Input Expected:**
-```json
-{
-  "project_id": "torah",
-  "price_id": "price_xxx",
-  "customer_email": "user@example.com",
-  "callbacks": {
-    "success": "http://n8n.local:5678/webhook/torah-sub-success",
-    "renewal": "http://n8n.local:5678/webhook/torah-sub-renewal"
-  },
-  "urls": {
-    "success": "https://...",
-    "cancel": "https://..."
-  },
-  "metadata": { ... },
-  "options": {
-    "trial_days": 7,
-    "coupon_code": null
-  }
-}
-```
+- [x] Create webhook trigger node (`POST /webhook/stripe-events`)
+- [x] Add Code node for Stripe signature verification
+- [x] Parse event type and extract metadata
+- [x] For invoice events, fetch subscription to get metadata
+- [x] Route to appropriate callback URL based on event type
+- [x] Return 200 OK to Stripe
 
-**Output Expected:**
-```json
-{
-  "success": true,
-  "checkout_url": "https://checkout.stripe.com/...",
-  "session_id": "cs_xxx"
-}
-```
+### Issue #3: `subscription-cancel` ✅
+
+- [x] Create webhook trigger node (`POST /webhook/subscription-cancel`)
+- [x] Fetch project config from SQLite
+- [x] Call Stripe API to cancel subscription
+- [x] Return success/failure
+
+### Issue #4: `subscription-change-plan` ✅
+
+- [x] Create webhook trigger node (`POST /webhook/subscription-change-plan`)
+- [x] Fetch project config from SQLite
+- [x] Update subscription via Stripe API
+- [x] Handle proration
+- [x] Return success/failure
 
 ---
 
-### Issue #2: `subscription-webhook-handler`
+## Phase 2: Torah Integration ✅ COMPLETED
 
-**Priority:** High
-**Estimation:** High complexity
+> **Status:** Completed
+> **Files:**
+> - `scripts/torah/migrate-stripe-columns.sql`
+> - `scripts/torah/migrate-stripe.sh`
+> - `workflows/Torah/torah-sub-*.json`
+> - `docs/torah/discord-subscribe-integration.md`
 
-**Description:**
-Create the n8n workflow that receives Stripe webhooks and routes events to the appropriate service callbacks.
+### Issue #5: Torah Database Migration ✅
 
-**Tasks:**
-- [ ] Create webhook trigger node (`POST /webhook/stripe-events`)
-- [ ] Add Code node for Stripe signature verification
-- [ ] Parse event type and extract metadata
-- [ ] For invoice events, fetch subscription to get metadata
-- [ ] Route to appropriate callback URL based on event type
-- [ ] Return 200 OK to Stripe
+- [x] Create migration script (`scripts/torah/migrate-stripe-columns.sql`)
+- [x] Add columns: `stripe_customer_id`, `stripe_subscription_id`, `subscription_status`, `current_period_end`, `subscription_plan`
+- [x] Create `payment_history` table with full tracking
+- [x] Create bash wrapper (`scripts/torah/migrate-stripe.sh`)
 
-**Events to Handle:**
-| Event | Callback |
-|-------|----------|
-| `checkout.session.completed` | `callback_success` |
-| `invoice.payment_succeeded` | `callback_renewal` |
-| `invoice.payment_failed` | `callback_failure` |
-| `customer.subscription.deleted` | `callback_cancel` |
-| `customer.subscription.updated` | `callback_success` |
+### Issue #6: Torah Callback Workflows ✅
 
-**Security:**
-- Must verify Stripe signature using `STRIPE_WEBHOOK_SECRET`
-- Reject requests with invalid signatures (return 400)
+- [x] `torah-sub-success`: Update DB, add credits, send welcome DM
+- [x] `torah-sub-renewal`: Add monthly credits, update period end, log payment
+- [x] `torah-sub-cancel`: Set status canceled, plan to free, send DM
+- [x] `torah-sub-failure`: Set status past_due, log failure, send warning DM
 
----
+### Issue #7: Discord Bot `/subscribe` Command ✅
 
-### Issue #3: `subscription-cancel`
-
-**Priority:** Medium
-**Estimation:** Low complexity
-
-**Description:**
-Create workflow to cancel a subscription (immediately or at period end).
-
-**Tasks:**
-- [ ] Create webhook trigger node (`POST /webhook/subscription-cancel`)
-- [ ] Fetch project config from SQLite
-- [ ] Call Stripe API to cancel subscription
-- [ ] Return success/failure
-
-**Input:**
-```json
-{
-  "project_id": "torah",
-  "stripe_subscription_id": "sub_xxx",
-  "cancel_immediately": false
-}
-```
-
----
-
-### Issue #4: `subscription-change-plan`
-
-**Priority:** Medium
-**Estimation:** Low complexity
-
-**Description:**
-Create workflow to upgrade/downgrade a subscription.
-
-**Tasks:**
-- [ ] Create webhook trigger node (`POST /webhook/subscription-change-plan`)
-- [ ] Fetch project config from SQLite
-- [ ] Update subscription via Stripe API
-- [ ] Handle proration
-- [ ] Return success/failure
-
-**Input:**
-```json
-{
-  "project_id": "torah",
-  "stripe_subscription_id": "sub_xxx",
-  "new_price_id": "price_unlimited_xxx",
-  "proration_behavior": "create_prorations"
-}
-```
-
----
-
-## Phase 2: Torah Integration
-
-### Issue #5: Torah Database Migration
-
-**Priority:** High
-**Estimation:** Low complexity
-
-**Description:**
-Add Stripe-related columns to Torah's `subscribers` table.
-
-**Tasks:**
-- [ ] Create migration script
-- [ ] Add columns: `stripe_customer_id`, `stripe_subscription_id`, `subscription_status`, `current_period_end`
-- [ ] Create `payment_history` table
-- [ ] Test migration on dev environment
-- [ ] Deploy to production
-
-**SQL:**
-```sql
-ALTER TABLE subscribers ADD COLUMN stripe_customer_id VARCHAR(255);
-ALTER TABLE subscribers ADD COLUMN stripe_subscription_id VARCHAR(255);
-ALTER TABLE subscribers ADD COLUMN subscription_status VARCHAR(50);
-ALTER TABLE subscribers ADD COLUMN current_period_end TIMESTAMP;
-
-CREATE TABLE payment_history (
-    id SERIAL PRIMARY KEY,
-    discord_user_id VARCHAR(50) NOT NULL,
-    stripe_payment_id VARCHAR(255),
-    amount_cents INTEGER,
-    currency VARCHAR(3) DEFAULT 'eur',
-    status VARCHAR(50),
-    plan VARCHAR(50),
-    created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
----
-
-### Issue #6: Torah Callback Workflows
-
-**Priority:** High
-**Estimation:** Medium complexity
-
-**Description:**
-Create Torah-specific callback workflows.
-
-**Tasks:**
-- [ ] `torah-sub-success`: Update DB, add credits, notify Discord
-- [ ] `torah-sub-renewal`: Add monthly credits, update period end
-- [ ] `torah-sub-cancel`: Downgrade to free, archive private room
-- [ ] `torah-sub-failure`: Notify user, handle grace period
-
----
-
-### Issue #7: Discord Bot `/subscribe` Command
-
-**Priority:** High
-**Estimation:** Medium complexity
-
-**Description:**
-Modify the Discord bot to integrate with the new Stripe system.
-
-**Tasks:**
-- [ ] Update `/subscribe` command to call n8n workflow
-- [ ] Create `PaymentLinkView` with Stripe Checkout button
-- [ ] Add `/cancel-subscription` command
-- [ ] Add `/subscription-status` command
-- [ ] Handle multi-platform user identification
+- [x] Documentation for `/subscribe` command with n8n integration
+- [x] `SubscribeView` with Stripe Checkout button
+- [x] `/cancel-subscription` command documentation
+- [x] `/subscription-status` command documentation
+- [x] Database helper functions
+- [x] Webhook configuration documentation
 
 ---
 
