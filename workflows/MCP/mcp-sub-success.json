@@ -1,0 +1,231 @@
+{
+  "name": "MCP - Subscription Success",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP Subscription Success Callback\n\n**Endpoint:** POST /webhook/mcp-sub-success\n\n**Triggered by:** Stripe webhook handler on `checkout.session.completed`\n\n**Actions:**\n1. Create or update user in mcp_users table\n2. Generate API key if new user\n3. Add initial credits based on plan\n4. Send welcome email\n5. Log payment in mcp_payment_history\n\n**Input:**\n```json\n{\n  \"event_type\": \"checkout.session.completed\",\n  \"data\": {\n    \"customer_id\": \"cus_xxx\",\n    \"customer_email\": \"user@example.com\",\n    \"subscription_id\": \"sub_xxx\",\n    \"metadata\": {\n      \"plan\": \"premium\"\n    }\n  }\n}\n```",
+        "height": 480,
+        "width": 380,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 40]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mcp-sub-success",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate callback data\nconst input = $input.first().json;\nconst body = input.body || {};\n\nconst data = body.data || {};\nconst metadata = data.metadata || {};\n\n// Required fields\nif (!data.customer_email) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Missing customer_email in data',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Determine plan and credits\nconst plan = metadata.plan || 'basic';\nconst creditsMap = {\n  'free': 100,\n  'basic': 1000,\n  'premium': 5000,\n  'unlimited': 999999\n};\nconst rateLimitMap = {\n  'free': { per_minute: 10, per_day: 100 },\n  'basic': { per_minute: 30, per_day: 1000 },\n  'premium': { per_minute: 60, per_day: 5000 },\n  'unlimited': { per_minute: 120, per_day: 999999 }\n};\nconst credits = creditsMap[plan] || 1000;\nconst rateLimit = rateLimitMap[plan] || rateLimitMap.basic;\n\n// Generate API key\nconst chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';\nlet apiKey = 'mcp_';\nfor (let i = 0; i < 56; i++) {\n  apiKey += chars.charAt(Math.floor(Math.random() * chars.length));\n}\n\nreturn [{\n  json: {\n    valid: true,\n    email: data.customer_email,\n    name: metadata.name || null,\n    company: metadata.company || null,\n    stripe_customer_id: data.customer_id,\n    stripe_subscription_id: data.subscription_id,\n    plan: plan,\n    credits_to_add: credits,\n    rate_limit_per_minute: rateLimit.per_minute,\n    rate_limit_per_day: rateLimit.per_day,\n    api_key: apiKey,\n    api_key_prefix: apiKey.substring(0, 8),\n    event_type: body.event_type,\n    event_id: body.event_id,\n    amount_total: data.amount_total,\n    currency: data.currency || 'eur'\n  }\n}];"
+      },
+      "id": "extract-data",
+      "name": "Extract Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Data Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mcp_users (email, api_key, name, company, stripe_customer_id, stripe_subscription_id, subscription_status, subscription_plan, credits, rate_limit_per_minute, rate_limit_per_day, current_period_end, is_active, is_verified) VALUES ('{{ $json.email }}', '{{ $json.api_key }}', {{ $json.name ? \"'\" + $json.name + \"'\" : 'NULL' }}, {{ $json.company ? \"'\" + $json.company + \"'\" : 'NULL' }}, '{{ $json.stripe_customer_id }}', '{{ $json.stripe_subscription_id }}', 'active', '{{ $json.plan }}', {{ $json.credits_to_add }}, {{ $json.rate_limit_per_minute }}, {{ $json.rate_limit_per_day }}, NOW() + INTERVAL '1 month', true, true) ON CONFLICT (email) DO UPDATE SET stripe_customer_id = EXCLUDED.stripe_customer_id, stripe_subscription_id = EXCLUDED.stripe_subscription_id, subscription_status = 'active', subscription_plan = EXCLUDED.subscription_plan, credits = mcp_users.credits + {{ $json.credits_to_add }}, rate_limit_per_minute = EXCLUDED.rate_limit_per_minute, rate_limit_per_day = EXCLUDED.rate_limit_per_day, current_period_end = NOW() + INTERVAL '1 month', is_active = true, updated_at = NOW() RETURNING id, email, api_key, credits, subscription_plan",
+        "options": {}
+      },
+      "id": "upsert-user",
+      "name": "Upsert User",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1140, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check update result and prepare response\nconst dbResult = $input.first().json;\nconst prevData = $('Extract Data').first().json;\n\nif (!dbResult || !dbResult.id) {\n  return [{\n    json: {\n      success: false,\n      error: 'Failed to create/update user',\n      email: prevData.email\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    db_updated: true,\n    user_id: dbResult.id,\n    email: dbResult.email,\n    api_key: dbResult.api_key,\n    credits: dbResult.credits,\n    plan: dbResult.subscription_plan,\n    stripe_customer_id: prevData.stripe_customer_id,\n    stripe_subscription_id: prevData.stripe_subscription_id,\n    amount_total: prevData.amount_total,\n    currency: prevData.currency,\n    event_id: prevData.event_id\n  }\n}];"
+      },
+      "id": "check-update",
+      "name": "Check Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mcp_payment_history (user_id, email, stripe_customer_id, stripe_payment_id, stripe_subscription_id, amount_cents, currency, status, plan, billing_reason, period_start, period_end) VALUES ({{ $json.user_id }}, '{{ $json.email }}', '{{ $json.stripe_customer_id }}', '{{ $json.event_id }}', '{{ $json.stripe_subscription_id }}', {{ $json.amount_total || 0 }}, '{{ $json.currency }}', 'succeeded', '{{ $json.plan }}', 'subscription_create', NOW(), NOW() + INTERVAL '1 month') RETURNING id",
+        "options": {}
+      },
+      "id": "log-payment",
+      "name": "Log Payment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1580, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare final response with API key\nconst checkData = $('Check Update').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    processed: true,\n    email: checkData.email,\n    api_key: checkData.api_key,\n    plan: checkData.plan,\n    credits: checkData.credits\n  }\n}];"
+      },
+      "id": "prepare-response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2020, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error } }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}"
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Data": {
+      "main": [
+        [
+          {
+            "node": "Data Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Valid?": {
+      "main": [
+        [
+          {
+            "node": "Upsert User",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert User": {
+      "main": [
+        [
+          {
+            "node": "Check Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Update": {
+      "main": [
+        [
+          {
+            "node": "Log Payment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Payment": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
