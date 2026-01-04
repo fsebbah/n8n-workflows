@@ -47,7 +47,7 @@ module.exports = {
 
         // API Torah
         TORAH_API_URL: 'http://pi6.local:3031',
-        // TORAH_API_KEY: 'votre-clé-ici',  // À décommenter et remplir si authentification requise
+        TORAH_API_KEY: '17ae129e4b49828e7439cae4949803e0a78d3725ff5dd76857e32d071f33af26',  // À décommenter et remplir si authentification requise
       },
 
       // Environnement production (moins de logs)
