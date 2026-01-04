@@ -151,6 +151,78 @@ Utilisateur Discord
 
 ---
 
+### 2.3 Traduire des commentaires
+
+**POST** `http://pi6.local:5678/webhook/books-translate-commentaries`
+
+#### Request
+
+```json
+{
+  "text_name": "Genesis",
+  "chapter": 1,
+  "commentator": "Rashi",
+  "target_language": "fr",
+  "api_key": "sk-ant-xxx",
+  "openai_api_key": "sk-xxx"
+}
+```
+
+| Champ | Type | Requis | Description |
+|-------|------|--------|-------------|
+| `text_name` | string | **Oui** | Nom exact du livre |
+| `chapter` | integer | **Oui** | Numéro du chapitre |
+| `commentator` | string | Non | Nom du commentateur (ex: Rashi, Ibn Ezra). Si omis, traduit tous les commentateurs |
+| `target_language` | string | Non | Langue cible (défaut: `fr`) |
+| `api_key` | string | **Oui** | Clé API Anthropic |
+| `openai_api_key` | string | Non | Clé API OpenAI (pour vérification) |
+
+#### Response - Succès (200)
+
+```json
+{
+  "success": true,
+  "job_id": "job_c7x9k2m4pq",
+  "status": "started",
+  "text_name": "Genesis",
+  "chapter": 1,
+  "commentator": "Rashi",
+  "commentaries_count": 25,
+  "commentaries_to_translate": 18,
+  "estimated_seconds": 180
+}
+```
+
+#### Response - Déjà traduit (200)
+
+```json
+{
+  "success": true,
+  "alreadyComplete": true,
+  "message": "Tous les commentaires sont déjà traduits",
+  "text_name": "Genesis",
+  "chapter": 1,
+  "commentator": "Rashi",
+  "commentariesCount": 25,
+  "commentariesToTranslate": 0
+}
+```
+
+#### Commentateurs disponibles
+
+Les commentateurs varient selon les livres. Les plus courants :
+
+| Commentateur | Description |
+|--------------|-------------|
+| `Rashi` | Rabbi Shlomo Itzhaki (1040-1105) |
+| `Ibn Ezra` | Abraham Ibn Ezra (1089-1167) |
+| `Ramban` | Nachmanide (1194-1270) |
+| `Sforno` | Ovadia Sforno (1475-1550) |
+
+> **Note:** Pour la liste des commentateurs d'un chapitre, appeler `GET /api/books/{text}/{chapter}/commentaries`
+
+---
+
 ## 3. Implémentation Bot Discord
 
 ### 3.1 Commandes suggérées
@@ -158,6 +230,7 @@ Utilisateur Discord
 | Commande | Description |
 |----------|-------------|
 | `/books-translate <text> <chapter>` | Lance traduction d'un chapitre |
+| `/books-commentaries <text> <chapter> [commentator]` | Lance traduction des commentaires |
 | `/books-status <job_id>` | Vérifie statut d'un job |
 | `/books-list [project]` | Liste livres disponibles (optionnel) |
 
@@ -210,6 +283,28 @@ async def wait_for_completion(job_id: str, poll_interval: int = 5) -> dict:
             return status
 
         await asyncio.sleep(poll_interval)
+
+async def translate_commentaries(
+    text_name: str,
+    chapter: int,
+    commentator: str = None
+) -> dict:
+    """Lance la traduction des commentaires d'un chapitre."""
+    async with aiohttp.ClientSession() as session:
+        payload = {
+            "text_name": text_name,
+            "chapter": chapter,
+            "api_key": ANTHROPIC_KEY,
+            "openai_api_key": OPENAI_KEY
+        }
+        if commentator:
+            payload["commentator"] = commentator
+
+        async with session.post(
+            f"{N8N_URL}/webhook/books-translate-commentaries",
+            json=payload
+        ) as resp:
+            return await resp.json()
 ```
 
 ### 3.3 Exemple commande Discord.py
@@ -394,6 +489,7 @@ BOOKS_MAX_POLL_TIME=600
 
 ## 8. Checklist d'implémentation
 
+### Traduction de versets
 - [ ] Commande `/books-translate <text> <chapter>`
 - [ ] Commande `/books-status <job_id>`
 - [ ] Polling avec mise à jour du message
@@ -401,6 +497,12 @@ BOOKS_MAX_POLL_TIME=600
 - [ ] Gestion des erreurs
 - [ ] Timeout sur le polling
 - [ ] Affichage tokens utilisés
+
+### Traduction de commentaires
+- [ ] Commande `/books-commentaries <text> <chapter> [commentator]`
+- [ ] Réutilisation de `/books-status` pour le polling
+- [ ] Gestion paramètre optionnel `commentator`
+- [ ] Affichage du nombre de commentaires traduits
 
 ---
 
@@ -416,12 +518,22 @@ BOOKS_MAX_POLL_TIME=600
 3. Vérifier les logs n8n
 
 ```bash
-# Test manuel
+# Test manuel - Traduction de versets
 curl -X POST http://pi6.local:5678/webhook/books-translate \
   -H "Content-Type: application/json" \
   -d '{
     "text_name": "The Book of Maccabees II",
     "chapter": 1,
+    "api_key": "sk-ant-xxx"
+  }'
+
+# Test manuel - Traduction de commentaires
+curl -X POST http://pi6.local:5678/webhook/books-translate-commentaries \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text_name": "Genesis",
+    "chapter": 1,
+    "commentator": "Rashi",
     "api_key": "sk-ant-xxx"
   }'
 ```

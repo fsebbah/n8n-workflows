@@ -1,0 +1,459 @@
+{
+  "name": "Books Translate Commentaries",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Books Translate Commentaries\n\n**Endpoint:** POST /webhook/books-translate-commentaries\n\n**Request:**\n```json\n{\n  \"text_name\": \"Genesis\",\n  \"chapter\": 1,\n  \"commentator\": \"Rashi\",\n  \"api_key\": \"...\"\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_abc123\",\n  \"status\": \"started\",\n  \"text_name\": \"Genesis\",\n  \"chapter\": 1,\n  \"commentator\": \"Rashi\",\n  \"commentaries_count\": 45,\n  \"to_translate\": 32\n}\n```\n\n**Flow:**\n1. Validate input\n2. Fetch commentaries from Books API\n3. Filter untranslated commentaries\n4. Create job\n5. Launch worker (async)\n6. Return job_id immediately",
+        "height": 500,
+        "width": 340,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "books-translate-commentaries",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "webhookId": "books-translate-commentaries"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validation des paramètres\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst textName = body.text_name || '';\nconst chapter = body.chapter || null;\nconst commentator = body.commentator || null;\nconst targetLanguage = body.target_language || 'fr';\nconst apiKey = body.api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\n\n// Validation\nconst errors = [];\nif (!textName) errors.push('Le champ \"text_name\" est requis');\nif (chapter === null) errors.push('Le champ \"chapter\" est requis');\nif (!apiKey) errors.push('Le champ \"api_key\" (Anthropic) est requis');\n\n// Générer un job_id unique\nconst jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\n// Encoder le nom du livre pour l'URL\nconst encodedTextName = encodeURIComponent(textName);\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    jobId: jobId,\n    textName: textName,\n    encodedTextName: encodedTextName,\n    chapter: chapter,\n    commentator: commentator,\n    targetLanguage: targetLanguage,\n    apiKey: apiKey,\n    openaiApiKey: openaiApiKey\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-validation",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TORAH_API_URL }}/api/books/{{ $json.encodedTextName }}/{{ $json.chapter }}/commentaries?include_translation=true{{ $json.commentator ? '&commentator=' + encodeURIComponent($json.commentator) : '' }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "fetch-commentaries",
+      "name": "Fetch Commentaries",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire les commentaires\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier les erreurs\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || data.detail || 'Commentaires non trouvés',\n        status: 'COMMENTARIES_NOT_FOUND'\n      }\n    }\n  }];\n}\n\nconst commentaries = data.commentaries || [];\n\nif (commentaries.length === 0) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: `Aucun commentaire trouvé pour ${prevData.textName} chapitre ${prevData.chapter}` + (prevData.commentator ? ` (${prevData.commentator})` : ''),\n        status: 'NO_COMMENTARIES'\n      }\n    }\n  }];\n}\n\n// Filtrer les commentaires non traduits\nconst untranslated = commentaries.filter(c => !c.has_translation && !c.translation);\n\nif (untranslated.length === 0) {\n  return [{\n    json: {\n      success: true,\n      alreadyComplete: true,\n      message: 'Tous les commentaires sont déjà traduits',\n      textName: prevData.textName,\n      chapter: prevData.chapter,\n      commentator: prevData.commentator,\n      commentariesCount: commentaries.length,\n      toTranslate: 0\n    }\n  }];\n}\n\n// Estimation du temps (~6 secondes par commentaire)\nconst estimatedSeconds = Math.ceil(untranslated.length * 6);\n\nreturn [{\n  json: {\n    success: true,\n    alreadyComplete: false,\n    jobId: prevData.jobId,\n    textName: prevData.textName,\n    chapter: prevData.chapter,\n    commentator: prevData.commentator,\n    targetLanguage: prevData.targetLanguage,\n    apiKey: prevData.apiKey,\n    openaiApiKey: prevData.openaiApiKey,\n    commentaries: untranslated,\n    commentariesCount: commentaries.length,\n    toTranslate: untranslated.length,\n    estimatedSeconds: estimatedSeconds\n  }\n}];"
+      },
+      "id": "extract-commentaries",
+      "name": "Extract Commentaries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "check-not-complete",
+              "leftValue": "={{ $json.alreadyComplete }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-commentaries",
+      "name": "To Translate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1540, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TORAH_API_URL }}/api/jobs",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_type: 'commentary_translation', text_name: $json.textName, chapter: $json.chapter, commentator: $json.commentator || 'all', target_language: $json.targetLanguage, commentaries_count: $json.toTranslate, metadata: { requested_by: 'n8n_workflow' } }) }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "create-job-api",
+      "name": "Create Job (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire le job_id de la réponse API\nconst input = $input.first().json;\nconst prevData = $('Extract Commentaries').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nlet jobId = prevData.jobId;\nif (statusCode < 400 && data.job_id) {\n  jobId = data.job_id;\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    jobId: jobId,\n    jobCreated: statusCode < 400\n  }\n}];"
+      },
+      "id": "extract-job-id",
+      "name": "Extract Job ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Préparer le payload pour le worker\nconst data = $input.first().json;\n\nreturn [{\n  json: {\n    workerPayload: {\n      job_id: data.jobId,\n      text_name: data.textName,\n      chapter: data.chapter,\n      commentator: data.commentator,\n      target_language: data.targetLanguage,\n      api_key: data.apiKey,\n      openai_api_key: data.openaiApiKey,\n      commentaries: data.commentaries\n    },\n    jobId: data.jobId,\n    textName: data.textName,\n    chapter: data.chapter,\n    commentator: data.commentator,\n    commentariesCount: data.commentariesCount,\n    toTranslate: data.toTranslate,\n    estimatedSeconds: data.estimatedSeconds\n  }\n}];"
+      },
+      "id": "prepare-worker-payload",
+      "name": "Prepare Worker Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/books-commentary-worker",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.workerPayload }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "launch-worker",
+      "name": "Launch Worker (async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2420, 100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Préparer la réponse immédiate\nconst input = $('Prepare Worker Payload').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    job_id: input.jobId,\n    status: 'started',\n    text_name: input.textName,\n    chapter: input.chapter,\n    commentator: input.commentator || 'all',\n    commentaries_count: input.commentariesCount,\n    to_translate: input.toTranslate,\n    estimated_seconds: input.estimatedSeconds\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2860, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construire la réponse d'erreur de validation\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+      },
+      "id": "build-validation-error",
+      "name": "Build Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 500 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1760, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-already-complete",
+      "name": "Respond Already Complete",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1760, 200]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Commentaries",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Commentaries": {
+      "main": [
+        [
+          {
+            "node": "Extract Commentaries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Commentaries": {
+      "main": [
+        [
+          {
+            "node": "To Translate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To Translate?": {
+      "main": [
+        [
+          {
+            "node": "Create Job (API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Already Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Job (API)": {
+      "main": [
+        [
+          {
+            "node": "Extract Job ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Job ID": {
+      "main": [
+        [
+          {
+            "node": "Prepare Worker Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Worker Payload": {
+      "main": [
+        [
+          {
+            "node": "Launch Worker (async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Launch Worker (async)": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
