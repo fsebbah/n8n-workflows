@@ -1,0 +1,65 @@
+# /etc/nginx/sites-available/stripe.azy.solutions
+#
+# Stripe Webhook avec verification de signature
+# Flow: Stripe -> nginx -> Verify API -> n8n (si valide)
+
+server {
+    server_name stripe.azy.solutions;
+
+    # Webhook Stripe avec verification de signature
+    location ~ ^/webhook/stripe-webhook/(.+)$ {
+        set $project_id $1;
+
+        # Etape 1: Verifier la signature via Torah API
+        auth_request /internal/verify-stripe;
+        auth_request_set $auth_status $upstream_status;
+
+        # Etape 2: Si valide (200), forward a n8n
+        proxy_pass http://pi6.local:5678/webhook/stripe-webhook/$project_id;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Stripe-Verified "true";
+
+        # Conserver le body original pour n8n
+        proxy_pass_request_body on;
+    }
+
+    # Endpoint interne pour verification (non accessible publiquement)
+    location = /internal/verify-stripe {
+        internal;
+
+        # Forward vers l'API de verification
+        # L'API doit retourner 200 (valide) ou 401 (invalide)
+        proxy_pass http://pi6.local:3031/api/stripe/verify/$project_id;
+        proxy_pass_request_body on;
+        proxy_set_header Content-Type $content_type;
+        proxy_set_header Content-Length $content_length;
+        proxy_set_header stripe-signature $http_stripe_signature;
+        proxy_set_header X-Original-URI $request_uri;
+    }
+
+    # Autres webhooks (sans verification)
+    location /webhook/ {
+        proxy_pass http://pi6.local:5678/webhook/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    listen 443 ssl; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/stripe.azy.solutions/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/stripe.azy.solutions/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+}
+
+server {
+    if ($host = stripe.azy.solutions) {
+        return 301 https://$host$request_uri;
+    } # managed by Certbot
+
+    listen 80;
+    server_name stripe.azy.solutions;
+    return 404; # managed by Certbot
+}
