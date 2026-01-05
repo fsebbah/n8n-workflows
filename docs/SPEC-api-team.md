@@ -1,7 +1,7 @@
 # Specifications pour l'equipe API
 
 **Date:** 2025-01-05
-**Statut:** FINAL
+**Statut:** FINAL v2
 **Destinataire:** Equipe API / Backend
 
 ---
@@ -13,6 +13,8 @@ L'architecture Discord Bot utilise:
 - **Stripe API** comme source de verite pour les abonnements
 - **PostgreSQL** pour les credits utilisateurs (VOTRE RESPONSABILITE)
 
+**Base URL API:** `http://pi6.local:3031`
+
 ---
 
 ## 2. Ce que l'equipe API doit implementer
@@ -20,6 +22,7 @@ L'architecture Discord Bot utilise:
 ### 2.1 Schema PostgreSQL
 
 ```sql
+-- Table principale des credits
 CREATE TABLE IF NOT EXISTS user_credits (
     project_id VARCHAR(50) NOT NULL,
     discord_user_id VARCHAR(50) NOT NULL,
@@ -30,29 +33,47 @@ CREATE TABLE IF NOT EXISTS user_credits (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_credits_project ON user_credits(project_id);
+
+-- Table d'historique des transactions
+CREATE TABLE IF NOT EXISTS credit_transactions (
+    id SERIAL PRIMARY KEY,
+    project_id VARCHAR(50) NOT NULL,
+    discord_user_id VARCHAR(50) NOT NULL,
+    operation VARCHAR(20) NOT NULL,  -- 'debit', 'credit', 'set'
+    amount INTEGER NOT NULL,
+    reason VARCHAR(100),
+    credits_before INTEGER,
+    credits_after INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_user
+    ON credit_transactions(project_id, discord_user_id);
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_date
+    ON credit_transactions(created_at);
 ```
 
 ### 2.2 Endpoints a exposer
 
 | Endpoint | Methode | Description |
 |----------|---------|-------------|
-| `/webhook/credits-get` | GET | Recupere les credits d'un utilisateur |
-| `/webhook/credits-debit` | POST | Debite des credits |
-| `/webhook/credits-credit` | POST | Credite des credits |
-| `/webhook/credits-set` | POST | Definit les credits (admin/webhook) |
+| `/api/webhook/account` | GET | Recupere les credits d'un utilisateur |
+| `/api/webhook/account/debit` | POST | Debite des credits |
+| `/api/webhook/account/credit` | POST | Credite des credits |
+| `/api/webhook/account/set` | POST | Definit les credits (admin/webhook) |
 
 ---
 
 ## 3. Specifications des endpoints
 
-### 3.1 GET /webhook/credits-get
+### 3.1 GET /api/webhook/account
 
 **Description:** Recupere les credits d'un utilisateur
 
 **Input:**
 ```http
-GET /webhook/credits-get?project_id=torah&discord_user_id=123456789 HTTP/1.1
-Host: pi6.local:5678
+GET /api/webhook/account?project_id=torah&discord_user_id=123456789 HTTP/1.1
+Host: pi6.local:3031
 X-Project-ID: torah
 ```
 
@@ -84,14 +105,14 @@ X-Project-ID: torah
 
 ---
 
-### 3.2 POST /webhook/credits-debit
+### 3.2 POST /api/webhook/account/debit
 
 **Description:** Debite des credits (utilisation)
 
 **Input:**
 ```http
-POST /webhook/credits-debit HTTP/1.1
-Host: pi6.local:5678
+POST /api/webhook/account/debit HTTP/1.1
+Host: pi6.local:3031
 Content-Type: application/json
 X-Project-ID: torah
 
@@ -129,6 +150,7 @@ X-Project-ID: torah
 
 **Logique SQL:**
 ```sql
+-- 1. Verifier et debiter
 UPDATE user_credits
 SET credits_remaining = credits_remaining - :amount,
     updated_at = CURRENT_TIMESTAMP
@@ -136,18 +158,24 @@ WHERE project_id = :project_id
   AND discord_user_id = :discord_user_id
   AND credits_remaining >= :amount
 RETURNING credits_remaining, credits_total;
+
+-- 2. Logger la transaction
+INSERT INTO credit_transactions
+    (project_id, discord_user_id, operation, amount, reason, credits_before, credits_after)
+VALUES
+    (:project_id, :discord_user_id, 'debit', :amount, :reason, :before, :after);
 ```
 
 ---
 
-### 3.3 POST /webhook/credits-credit
+### 3.3 POST /api/webhook/account/credit
 
 **Description:** Credite des credits (renouvellement, achat)
 
 **Input:**
 ```http
-POST /webhook/credits-credit HTTP/1.1
-Host: pi6.local:5678
+POST /api/webhook/account/credit HTTP/1.1
+Host: pi6.local:3031
 Content-Type: application/json
 X-Project-ID: torah
 
@@ -172,6 +200,7 @@ X-Project-ID: torah
 
 **Logique SQL:**
 ```sql
+-- 1. Crediter (upsert)
 INSERT INTO user_credits (project_id, discord_user_id, credits_remaining, credits_total)
 VALUES (:project_id, :discord_user_id, :amount, :amount)
 ON CONFLICT (project_id, discord_user_id)
@@ -180,18 +209,24 @@ DO UPDATE SET
     credits_total = user_credits.credits_total + :amount,
     updated_at = CURRENT_TIMESTAMP
 RETURNING credits_remaining, credits_total;
+
+-- 2. Logger la transaction
+INSERT INTO credit_transactions
+    (project_id, discord_user_id, operation, amount, reason, credits_before, credits_after)
+VALUES
+    (:project_id, :discord_user_id, 'credit', :amount, :reason, :before, :after);
 ```
 
 ---
 
-### 3.4 POST /webhook/credits-set
+### 3.4 POST /api/webhook/account/set
 
 **Description:** Definit les credits (admin, initialisation)
 
 **Input:**
 ```http
-POST /webhook/credits-set HTTP/1.1
-Host: pi6.local:5678
+POST /api/webhook/account/set HTTP/1.1
+Host: pi6.local:3031
 Content-Type: application/json
 X-Project-ID: torah
 
@@ -215,6 +250,7 @@ X-Project-ID: torah
 
 **Logique SQL:**
 ```sql
+-- 1. Set (upsert)
 INSERT INTO user_credits (project_id, discord_user_id, credits_remaining, credits_total)
 VALUES (:project_id, :discord_user_id, :credits_remaining, :credits_total)
 ON CONFLICT (project_id, discord_user_id)
@@ -223,6 +259,12 @@ DO UPDATE SET
     credits_total = :credits_total,
     updated_at = CURRENT_TIMESTAMP
 RETURNING credits_remaining, credits_total;
+
+-- 2. Logger la transaction
+INSERT INTO credit_transactions
+    (project_id, discord_user_id, operation, amount, reason, credits_before, credits_after)
+VALUES
+    (:project_id, :discord_user_id, 'set', :credits_remaining, 'admin_set', :before, :after);
 ```
 
 ---
@@ -233,9 +275,9 @@ Les webhooks Stripe (geres par n8n) appelleront vos endpoints:
 
 | Event Stripe | Action | Endpoint appele |
 |--------------|--------|-----------------|
-| `checkout.session.completed` | Nouvel abonnement | `POST /credits-set` |
-| `invoice.paid` | Renouvellement mensuel | `POST /credits-credit` |
-| `customer.subscription.deleted` | Annulation | `POST /credits-set` (credits=0) |
+| `checkout.session.completed` | Nouvel abonnement | `POST /api/webhook/account/set` |
+| `invoice.paid` | Renouvellement mensuel | `POST /api/webhook/account/credit` |
+| `customer.subscription.deleted` | Annulation | `POST /api/webhook/account/set` (credits=0) |
 
 **Exemple d'appel depuis n8n:**
 ```javascript
@@ -244,7 +286,7 @@ const credits = plan.metadata.credits_per_month || 1000;
 
 await $http.request({
     method: 'POST',
-    url: 'http://localhost:5678/webhook/credits-set',
+    url: 'http://pi6.local:3031/api/webhook/account/set',
     headers: { 'X-Project-ID': projectId },
     body: {
         discord_user_id: metadata.discord_user_id,
@@ -275,30 +317,33 @@ await $http.request({
 | Authentification | Header `X-Project-ID` requis |
 | Validation | Verifier que `amount > 0` |
 | Atomicite | Utiliser transactions SQL |
-| Logs | Logger toutes les operations de credits |
+| Logs | Table `credit_transactions` pour audit |
 
 ---
 
 ## 7. Tests recommandes
 
 ```bash
+# Base URL
+API_URL="http://pi6.local:3031"
+
 # Creer un utilisateur
-curl -X POST http://pi6.local:5678/webhook/credits-set \
+curl -X POST "$API_URL/api/webhook/account/set" \
   -H "Content-Type: application/json" \
   -H "X-Project-ID: torah" \
   -d '{"discord_user_id": "test123", "credits_remaining": 100, "credits_total": 100}'
 
 # Recuperer credits
-curl "http://pi6.local:5678/webhook/credits-get?project_id=torah&discord_user_id=test123"
+curl "$API_URL/api/webhook/account?project_id=torah&discord_user_id=test123"
 
 # Debiter
-curl -X POST http://pi6.local:5678/webhook/credits-debit \
+curl -X POST "$API_URL/api/webhook/account/debit" \
   -H "Content-Type: application/json" \
   -H "X-Project-ID: torah" \
   -d '{"discord_user_id": "test123", "amount": 10, "reason": "test"}'
 
 # Crediter
-curl -X POST http://pi6.local:5678/webhook/credits-credit \
+curl -X POST "$API_URL/api/webhook/account/credit" \
   -H "Content-Type: application/json" \
   -H "X-Project-ID: torah" \
   -d '{"discord_user_id": "test123", "amount": 50, "reason": "bonus"}'

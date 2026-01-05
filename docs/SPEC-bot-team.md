@@ -1,7 +1,7 @@
 # Specifications pour l'equipe Bot
 
 **Date:** 2025-01-05
-**Statut:** FINAL
+**Statut:** FINAL v2
 **Destinataire:** Equipe Bot / Framework Discord
 
 ---
@@ -25,6 +25,10 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
+**URLs des services:**
+- **n8n:** `http://pi6.local:5678`
+- **API:** `http://pi6.local:3031`
+
 ---
 
 ## 2. Decisions techniques
@@ -38,13 +42,36 @@
 
 ---
 
-## 3. Ce que le Bot/Plugin doit faire
+## 3. Endpoints disponibles
 
-### 3.1 Au demarrage du plugin
+### 3.1 Endpoints n8n (pi6.local:5678)
+
+| Endpoint | Methode | Description | Statut |
+|----------|---------|-------------|--------|
+| `/webhook/stripe-register-project` | POST | Enregistre secrets Stripe dans Redis | OK |
+| `/webhook/discord-get-plans` | GET | Liste les plans Stripe | OK |
+| `/webhook/discord-subscribe` | POST | Cree une session checkout | A creer |
+
+### 3.2 Endpoints API (pi6.local:3031)
+
+| Endpoint | Methode | Description |
+|----------|---------|-------------|
+| `/api/webhook/account` | GET | Recupere les credits d'un utilisateur |
+| `/api/webhook/account/debit` | POST | Debite des credits |
+| `/api/webhook/account/credit` | POST | Credite des credits |
+| `/api/webhook/account/set` | POST | Definit les credits (admin) |
+
+---
+
+## 4. Ce que le Bot/Plugin doit faire
+
+### 4.1 Au demarrage du plugin
 
 ```python
+N8N_URL = "http://pi6.local:5678"
+
 # Enregistrer les secrets dans Redis via n8n
-await n8n_client.post("/webhook/stripe-register-project", json={
+await http_client.post(f"{N8N_URL}/webhook/stripe-register-project", json={
     "project_id": "torah",
     "stripe_key": os.getenv("STRIPE_SECRET_KEY"),
     "webhook_secret": os.getenv("STRIPE_WEBHOOK_SECRET"),
@@ -52,46 +79,52 @@ await n8n_client.post("/webhook/stripe-register-project", json={
 })
 ```
 
-### 3.2 Commandes Discord
+### 4.2 Commandes Discord
 
-| Commande | Endpoint n8n | Header | Body/Params |
-|----------|--------------|--------|-------------|
-| `/plans` | `GET /webhook/discord-get-plans` | `X-Project-ID: torah` | - |
-| `/credits` | `GET /webhook/credits-get` | `X-Project-ID: torah` | `?discord_user_id=123` |
-| `/subscribe` | `POST /webhook/discord-subscribe` | `X-Project-ID: torah` | `{discord_user_id, plan_id}` |
+| Commande | Service | Endpoint | Header | Body/Params |
+|----------|---------|----------|--------|-------------|
+| `/plans` | n8n | `GET /webhook/discord-get-plans` | `X-Project-ID: torah` | `?project_id=torah` |
+| `/credits` | API | `GET /api/webhook/account` | `X-Project-ID: torah` | `?project_id=torah&discord_user_id=123` |
+| `/subscribe` | n8n | `POST /webhook/discord-subscribe` | `X-Project-ID: torah` | `{discord_user_id, plan_id}` |
 
-### 3.3 Consommation de credits
+### 4.3 Consommation de credits
 
 ```python
+API_URL = "http://pi6.local:3031"
+
 # 1. Verifier credits disponibles
-response = await n8n_client.get(
-    "/webhook/credits-get",
+response = await http_client.get(
+    f"{API_URL}/api/webhook/account",
     headers={"X-Project-ID": project_id},
-    params={"discord_user_id": user_id}
+    params={"project_id": project_id, "discord_user_id": user_id}
 )
-credits = response.json()["credits_remaining"]
+data = response.json()
+credits = data.get("credits", {}).get("credits_remaining", 0)
 
 # 2. Si credits > 0, effectuer l'action
 if credits > 0:
     result = await do_action(...)
 
     # 3. Debiter les credits
-    await n8n_client.post(
-        "/webhook/credits-debit",
+    await http_client.post(
+        f"{API_URL}/api/webhook/account/debit",
         headers={"X-Project-ID": project_id},
         json={
             "discord_user_id": user_id,
             "amount": 1,
-            "reason": "action_name"
+            "reason": "translation"
         }
     )
+else:
+    # Afficher message "credits epuises"
+    await send_message("Vous n'avez plus de credits. Utilisez /subscribe")
 ```
 
 ---
 
-## 4. Format des requetes
+## 5. Format des requetes
 
-### 4.1 Enregistrement projet (demarrage)
+### 5.1 Enregistrement projet (demarrage)
 
 ```http
 POST /webhook/stripe-register-project HTTP/1.1
@@ -108,22 +141,30 @@ Content-Type: application/json
 
 **Reponse:**
 ```json
-{"success": true, "message": "Project registered"}
+{"success": true, "message": "Project registered successfully"}
 ```
 
-### 4.2 Requetes avec X-Project-ID
+### 5.2 Recuperer les plans
 
 ```http
-GET /webhook/discord-get-plans HTTP/1.1
+GET /webhook/discord-get-plans?project_id=torah HTTP/1.1
 Host: pi6.local:5678
 X-Project-ID: torah
 ```
 
 **Note:** Plus besoin de passer `stripe_key` - n8n le lit depuis Redis.
 
+### 5.3 Recuperer les credits
+
+```http
+GET /api/webhook/account?project_id=torah&discord_user_id=123456789 HTTP/1.1
+Host: pi6.local:3031
+X-Project-ID: torah
+```
+
 ---
 
-## 5. Configuration .env du plugin
+## 6. Configuration .env du plugin
 
 ```env
 # Identifiant projet (unique)
@@ -137,8 +178,9 @@ DISCORD_GUILD_ID=xxx
 STRIPE_SECRET_KEY=sk_live_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 
-# n8n
+# Services
 N8N_BASE_URL=http://pi6.local:5678
+API_BASE_URL=http://pi6.local:3031
 
 # Redis (optionnel - si acces direct necessaire)
 REDIS_HOST=host3.local
@@ -148,7 +190,7 @@ REDIS_DB=2
 
 ---
 
-## 6. Responsabilites
+## 7. Responsabilites
 
 | Composant | Responsabilite |
 |-----------|----------------|
@@ -162,7 +204,7 @@ REDIS_DB=2
 
 ---
 
-## 7. Gestion des erreurs
+## 8. Gestion des erreurs
 
 | Erreur | Code | Action Bot |
 |--------|------|------------|
@@ -173,7 +215,7 @@ REDIS_DB=2
 
 ---
 
-## 8. Questions resolues
+## 9. Questions resolues
 
 | Question | Reponse |
 |----------|---------|
@@ -181,10 +223,11 @@ REDIS_DB=2
 | Cle en transit? | NON - juste X-Project-ID |
 | Qui gere les credits? | Equipe API (PostgreSQL) |
 | Format Redis? | JSON (GET/SET) car HGET/HSET pas supporte nativement |
+| URL API credits? | `http://pi6.local:3031/api/webhook/account/*` |
 
 ---
 
-## 9. Contact
+## 10. Contact
 
 - **n8n/workflows:** @claude (ce repo)
 - **API/PostgreSQL:** Equipe API (voir SPEC-api-team.md)
