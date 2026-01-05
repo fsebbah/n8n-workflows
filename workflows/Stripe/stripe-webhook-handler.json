@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## STRIPE - Webhook Handler\n\n**Endpoint:** POST /webhook/stripe-webhook/{project_id}\n\n**Events geres (Phase 1):**\n- checkout.session.completed\n- invoice.paid\n- customer.subscription.deleted\n\n**Signature:** Verified by nginx (auth_request)",
+        "content": "## STRIPE - Webhook Handler\n\n**Endpoint:** POST /webhook/stripe-webhook/{project_id}\n\n**Events geres (Phase 1):**\n- checkout.session.completed\n- invoice.paid\n- customer.subscription.deleted\n\n**Signature:** Verified via Torah API (event_id lookup)",
         "height": 300,
         "width": 300,
         "color": 5
@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\n\n// Extraire project_id\nconst projectId = input.params?.project_id;\nif (!projectId) {\n  return [{ json: { success: false, error: { code: 400, message: 'project_id manquant' } } }];\n}\n\n// Verifier que nginx a valide la signature\nconst verified = input.headers?.['x-stripe-verified'] === 'true';\nif (!verified) {\n  return [{ json: { success: false, error: { code: 401, message: 'Signature non verifiee par nginx' } } }];\n}\n\n// Parser event\nconst event = input.body;\nif (!event || !event.type) {\n  return [{ json: { success: false, error: { code: 400, message: 'Event Stripe invalide' } } }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    project_id: projectId,\n    event_id: event.id,\n    event_type: event.type,\n    event_data: event.data?.object || {}\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\n\n// Extraire project_id\nconst projectId = input.params?.project_id;\nif (!projectId) {\n  return [{ json: { success: false, error: { code: 400, message: 'project_id manquant' } } }];\n}\n\n// Parser event\nconst event = input.body;\nif (!event || !event.type || !event.id) {\n  return [{ json: { success: false, error: { code: 400, message: 'Event Stripe invalide (id ou type manquant)' } } }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    project_id: projectId,\n    event_id: event.id,\n    event_type: event.type,\n    event_data: event.data?.object || {}\n  }\n}];"
       },
       "id": "extract-data",
       "name": "Extract & Validate",
@@ -55,13 +55,52 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst eventType = input.event_type;\nconst data = input.event_data;\nconst metadata = data.metadata || {};\n\nlet action = null;\nlet payload = { project_id: input.project_id };\n\nif (eventType === 'checkout.session.completed') {\n  const credits = parseInt(metadata.credits_per_month || '1000');\n  action = 'set';\n  payload.discord_user_id = metadata.discord_user_id;\n  payload.credits_remaining = credits;\n  payload.credits_total = credits;\n  payload.reason = 'checkout_completed';\n}\nelse if (eventType === 'invoice.paid') {\n  if (data.billing_reason === 'subscription_create') {\n    return [{ json: { action: 'skip', reason: 'First invoice' } }];\n  }\n  const subMeta = data.subscription_details?.metadata || metadata;\n  action = 'credit';\n  payload.discord_user_id = subMeta.discord_user_id;\n  payload.amount = parseInt(subMeta.credits_per_month || '1000');\n  payload.reason = 'renewal';\n}\nelse if (eventType === 'customer.subscription.deleted') {\n  action = 'set';\n  payload.discord_user_id = metadata.discord_user_id;\n  payload.credits_remaining = 0;\n  payload.credits_total = 0;\n  payload.reason = 'subscription_deleted';\n}\nelse {\n  return [{ json: { action: 'skip', reason: `Event ${eventType} not handled` } }];\n}\n\nif (!payload.discord_user_id) {\n  return [{ json: { action: 'error', reason: 'discord_user_id missing' } }];\n}\n\nreturn [{ json: { action, ...payload } }];"
+        "method": "POST",
+        "url": "=http://pi6.local:3031/api/stripe/verify/{{ $json.project_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ event_id: $json.event_id }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } }
+        }
+      },
+      "id": "verify-signature",
+      "name": "Verify Signature",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "sig-valid", "leftValue": "={{ $json.body?.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-signature",
+      "name": "Signature Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1180, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recuperer les donnees originales de Extract & Validate\nconst extractData = $('Extract & Validate').first().json;\nconst eventType = extractData.event_type;\nconst data = extractData.event_data;\nconst metadata = data.metadata || {};\n\nlet action = null;\nlet payload = { project_id: extractData.project_id };\n\nif (eventType === 'checkout.session.completed') {\n  const credits = parseInt(metadata.credits_per_month || '1000');\n  action = 'set';\n  payload.discord_user_id = metadata.discord_user_id;\n  payload.credits_remaining = credits;\n  payload.credits_total = credits;\n  payload.reason = 'checkout_completed';\n}\nelse if (eventType === 'invoice.paid') {\n  if (data.billing_reason === 'subscription_create') {\n    return [{ json: { action: 'skip', reason: 'First invoice' } }];\n  }\n  const subMeta = data.subscription_details?.metadata || metadata;\n  action = 'credit';\n  payload.discord_user_id = subMeta.discord_user_id;\n  payload.amount = parseInt(subMeta.credits_per_month || '1000');\n  payload.reason = 'renewal';\n}\nelse if (eventType === 'customer.subscription.deleted') {\n  action = 'set';\n  payload.discord_user_id = metadata.discord_user_id;\n  payload.credits_remaining = 0;\n  payload.credits_total = 0;\n  payload.reason = 'subscription_deleted';\n}\nelse {\n  return [{ json: { action: 'skip', reason: `Event ${eventType} not handled` } }];\n}\n\nif (!payload.discord_user_id) {\n  return [{ json: { action: 'error', reason: 'discord_user_id missing' } }];\n}\n\nreturn [{ json: { action, ...payload } }];"
       },
       "id": "process-event",
       "name": "Process Event",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [960, 200]
+      "position": [1400, 200]
     },
     {
       "parameters": {
@@ -79,7 +118,7 @@
       "name": "Call API?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1180, 200]
+      "position": [1620, 200]
     },
     {
       "parameters": {
@@ -103,7 +142,7 @@
       "name": "Call Credits API",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1400, 100],
+      "position": [1840, 100],
       "onError": "continueRegularOutput"
     },
     {
@@ -116,7 +155,7 @@
       "name": "200 OK",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1620, 200]
+      "position": [2060, 200]
     },
     {
       "parameters": {
@@ -129,12 +168,26 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [960, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: { code: 401, message: 'Invalid signature' } }) }}",
+        "options": { "responseCode": 401 }
+      },
+      "id": "respond-sig-error",
+      "name": "401 Invalid Signature",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1400, 420]
     }
   ],
   "connections": {
     "Webhook Trigger": { "main": [[{ "node": "Extract & Validate", "type": "main", "index": 0 }]] },
     "Extract & Validate": { "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]] },
-    "Valid?": { "main": [[{ "node": "Process Event", "type": "main", "index": 0 }], [{ "node": "Error Response", "type": "main", "index": 0 }]] },
+    "Valid?": { "main": [[{ "node": "Verify Signature", "type": "main", "index": 0 }], [{ "node": "Error Response", "type": "main", "index": 0 }]] },
+    "Verify Signature": { "main": [[{ "node": "Signature Valid?", "type": "main", "index": 0 }]] },
+    "Signature Valid?": { "main": [[{ "node": "Process Event", "type": "main", "index": 0 }], [{ "node": "401 Invalid Signature", "type": "main", "index": 0 }]] },
     "Process Event": { "main": [[{ "node": "Call API?", "type": "main", "index": 0 }]] },
     "Call API?": { "main": [[{ "node": "Call Credits API", "type": "main", "index": 0 }], [{ "node": "200 OK", "type": "main", "index": 0 }]] },
     "Call Credits API": { "main": [[{ "node": "200 OK", "type": "main", "index": 0 }]] }
