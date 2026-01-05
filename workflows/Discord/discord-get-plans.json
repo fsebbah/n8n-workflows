@@ -1,0 +1,339 @@
+{
+  "name": "DISCORD - Get Plans",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## DISCORD - Get Plans\n\n**Endpoint:** GET /webhook/discord-get-plans\n\n**Query Parameters:**\n- `project_id` (required): ID du projet (ex: torah, mcp)\n\n**Source:** Stripe API (temps reel)\n\n**Flow:**\n1. Valider project_id\n2. Recuperer stripe_secret_key depuis PostgreSQL (table projects)\n3. Appeler Stripe API /v1/prices\n4. Formater et retourner les plans\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"project_id\": \"torah\",\n  \"plans\": [\n    {\n      \"id\": \"price_xxx\",\n      \"product_id\": \"prod_xxx\",\n      \"name\": \"Premium\",\n      \"price\": 9.99,\n      \"currency\": \"eur\",\n      \"interval\": \"month\",\n      \"features\": [...]\n    }\n  ]\n}\n```",
+        "height": 480,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "discord-get-plans",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "webhookId": "discord-get-plans"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valider les parametres\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst projectId = query.project_id || null;\n\nif (!projectId) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Le parametre \"project_id\" est requis',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT project_id, stripe_secret_key as secret_key, display_name FROM projects WHERE project_id = '{{ $json.project_id }}' AND active = true",
+        "options": {}
+      },
+      "id": "get-stripe-config",
+      "name": "Get Stripe Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1100, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-subscribers",
+          "name": "PostgreSQL Subscribers"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verifier que le projet existe\nconst dbResults = $('Get Stripe Config').all();\nconst inputData = $('Validate Input').first().json;\n\nif (!dbResults || dbResults.length === 0 || !dbResults[0].json.secret_key) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Projet '${inputData.project_id}' non trouve ou inactif`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nconst project = dbResults[0].json;\n\nreturn [{\n  json: {\n    found: true,\n    project_id: project.project_id,\n    display_name: project.display_name,\n    secret_key: project.secret_key\n  }\n}];"
+      },
+      "id": "check-project",
+      "name": "Check Project",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "project-found",
+      "name": "Project Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1540, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/prices?active=true&expand[]=data.product",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.secret_key }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "get-stripe-prices",
+      "name": "Get Stripe Prices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater les plans depuis la reponse Stripe\nconst input = $input.first().json;\nconst projectData = $('Check Project').first().json;\n\nconst statusCode = input.statusCode || 200;\nconst data = input.body || input;\n\n// Verifier les erreurs Stripe\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || 'Erreur Stripe API',\n        status: 'STRIPE_ERROR'\n      }\n    }\n  }];\n}\n\nconst prices = data.data || [];\n\n// Formater les plans\nconst plans = prices.map(price => {\n  const product = price.product || {};\n  \n  // Extraire les features depuis les metadata du produit\n  let features = [];\n  if (product.metadata?.features) {\n    try {\n      features = JSON.parse(product.metadata.features);\n    } catch (e) {\n      features = product.metadata.features.split(',').map(f => f.trim());\n    }\n  }\n  \n  // Extraire credits_per_month depuis metadata\n  const creditsPerMonth = parseInt(product.metadata?.credits_per_month || price.metadata?.credits_per_month || '0');\n  \n  return {\n    id: price.id,\n    product_id: product.id || price.product,\n    name: product.name || 'Plan',\n    description: product.description || null,\n    price: (price.unit_amount || 0) / 100,\n    currency: price.currency || 'eur',\n    interval: price.recurring?.interval || 'month',\n    interval_count: price.recurring?.interval_count || 1,\n    credits_per_month: creditsPerMonth,\n    features: features,\n    metadata: {\n      ...product.metadata,\n      ...price.metadata\n    }\n  };\n});\n\n// Trier par prix\nplans.sort((a, b) => a.price - b.price);\n\nreturn [{\n  json: {\n    success: true,\n    project_id: projectData.project_id,\n    project_name: projectData.display_name,\n    plans_count: plans.length,\n    plans: plans\n  }\n}];"
+      },
+      "id": "format-plans",
+      "name": "Format Plans",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2200, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 404 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-not-found",
+      "name": "Respond Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1760, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Stripe Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Stripe Config": {
+      "main": [
+        [
+          {
+            "node": "Check Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Project": {
+      "main": [
+        [
+          {
+            "node": "Project Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Found?": {
+      "main": [
+        [
+          {
+            "node": "Get Stripe Prices",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Stripe Prices": {
+      "main": [
+        [
+          {
+            "node": "Format Plans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Plans": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
