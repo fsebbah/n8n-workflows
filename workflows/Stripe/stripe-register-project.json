@@ -1,0 +1,211 @@
+{
+  "name": "STRIPE - Register Project",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## STRIPE - Register Project\n\n**Endpoint:** POST /webhook/stripe-register-project\n\n**Description:** Enregistre les secrets Stripe d'un projet dans Redis.\nAppele par le plugin au demarrage.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah\",\n  \"stripe_key\": \"sk_live_xxx\",\n  \"webhook_secret\": \"whsec_xxx\",\n  \"display_name\": \"Torah App\"\n}\n```\n\n**Redis:**\n```\nHSET project:torah stripe_key \"sk_xxx\"\nHSET project:torah webhook_secret \"whsec_xxx\"\n```\n\n**Response:**\n```json\n{\"success\": true, \"message\": \"Project registered\"}\n```",
+        "height": 420,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stripe-register-project",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "webhookId": "stripe-register-project"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valider les parametres requis\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst projectId = body.project_id || null;\nconst stripeKey = body.stripe_key || null;\nconst webhookSecret = body.webhook_secret || null;\nconst displayName = body.display_name || projectId;\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!stripeKey) errors.push('stripe_key');\nif (!webhookSecret) errors.push('webhook_secret');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Valider le format des cles\nif (!stripeKey.startsWith('sk_')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'stripe_key doit commencer par sk_',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nif (!webhookSecret.startsWith('whsec_')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'webhook_secret doit commencer par whsec_',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    stripe_key: stripeKey,\n    webhook_secret: webhookSecret,\n    display_name: displayName,\n    redis_key: `project:${projectId}`\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "={{ $json.redis_key }}",
+        "value": "={{ JSON.stringify({ stripe_key: $json.stripe_key, webhook_secret: $json.webhook_secret, display_name: $json.display_name, registered_at: new Date().toISOString() }) }}",
+        "expire": false
+      },
+      "id": "redis-set",
+      "name": "Redis SET",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1100, 200],
+      "credentials": {
+        "redis": {
+          "id": "redis-secrets",
+          "name": "Redis Secrets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparer la reponse de succes\nconst inputData = $('Validate Input').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Project registered successfully',\n    project: {\n      project_id: inputData.project_id,\n      display_name: inputData.display_name,\n      redis_key: inputData.redis_key\n    }\n  }\n}];"
+      },
+      "id": "format-success",
+      "name": "Format Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1540, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 420]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Redis SET",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis SET": {
+      "main": [
+        [
+          {
+            "node": "Format Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
