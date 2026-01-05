@@ -1,0 +1,121 @@
+{
+  "name": "DISCORD - Registry",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## DISCORD Registry\n\n**Endpoint:** GET /webhook/discord-registry\n\n**Description:** Liste tous les workflows Discord disponibles avec leurs metadonnees.\n\n**Response:**\n```json\n{\n  \"version\": \"1.0\",\n  \"updated_at\": \"2025-01-05T...\",\n  \"n8n\": {\n    \"host\": \"pi6.local\",\n    \"port\": 5678,\n    \"webhook_base\": \"http://pi6.local:5678/webhook\"\n  },\n  \"total_tools\": 5,\n  \"tools\": { ... }\n}\n```",
+        "height": 340,
+        "width": 320,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "discord-registry",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-registry",
+      "name": "Webhook Registry",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [300, 300],
+      "webhookId": "discord-registry"
+    },
+    {
+      "parameters": {
+        "url": "http://pi6.local:5678/api/v1/workflows?active=true&limit=250",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-get-workflows",
+      "name": "Get Active Workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "aHxvULwe4es6Gnmh",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// DISCORD REGISTRY - Build Registry with Metadata\n// ============================================================================\n\n// Discord Workflow Metadata\nconst discordMetadata = {\n  \"discord-registry\": {\n    \"label\": \"Registry\",\n    \"icon\": \"📋\",\n    \"description\": \"Liste tous les workflows Discord disponibles\",\n    \"tags\": [\"discord\", \"registry\", \"discovery\"],\n    \"scope\": \"system\"\n  },\n  \"discord-get-plans\": {\n    \"label\": \"Get Plans\",\n    \"icon\": \"📊\",\n    \"description\": \"Recupere la liste des plans disponibles pour un projet\",\n    \"tags\": [\"discord\", \"plans\", \"subscription\"],\n    \"scope\": \"user\",\n    \"command\": \"/plans\"\n  },\n  \"discord-get-subscriber\": {\n    \"label\": \"Get Subscriber\",\n    \"icon\": \"👤\",\n    \"description\": \"Recupere les informations d'un abonne (plan, credits)\",\n    \"tags\": [\"discord\", \"subscriber\", \"credits\"],\n    \"scope\": \"user\",\n    \"command\": \"/plan, /credits\"\n  },\n  \"discord-get-balance\": {\n    \"label\": \"Get Balance\",\n    \"icon\": \"💰\",\n    \"description\": \"Recupere le solde et les transactions recentes\",\n    \"tags\": [\"discord\", \"balance\", \"transactions\"],\n    \"scope\": \"user\",\n    \"command\": \"/solde\"\n  },\n  \"discord-get-transactions\": {\n    \"label\": \"Get Transactions\",\n    \"icon\": \"📜\",\n    \"description\": \"Recupere l'historique des transactions\",\n    \"tags\": [\"discord\", \"transactions\", \"history\"],\n    \"scope\": \"user\",\n    \"command\": \"/account\"\n  }\n};\n\n// ============================================================================\n// BUILD REGISTRY\n// ============================================================================\n\nconst workflows = $input.first().json.data || [];\n\n// Filter active Discord workflows\nconst discordWorkflows = workflows.filter(w => \n  w.active && \n  w.name.startsWith('DISCORD')\n);\n\n// Build tools object\nconst tools = {};\n\nfor (const workflow of discordWorkflows) {\n  // Find all webhook nodes in the workflow\n  const webhookNodes = workflow.nodes?.filter(n => n.type === 'n8n-nodes-base.webhook') || [];\n  \n  for (const webhookNode of webhookNodes) {\n    const webhookPath = webhookNode.parameters?.path || webhookNode.webhookId;\n    const toolName = webhookPath;\n    \n    // Get metadata\n    const meta = discordMetadata[toolName] || {};\n    \n    tools[toolName] = {\n      name: workflow.name,\n      label: meta.label || workflow.name.replace('DISCORD - ', ''),\n      icon: meta.icon || '🤖',\n      description: meta.description || `Discord Tool: ${workflow.name}`,\n      tags: meta.tags || ['discord'],\n      scope: meta.scope || 'user',\n      command: meta.command || null,\n      workflow_id: workflow.id,\n      endpoint: `/webhook/${webhookPath}`,\n      webhook_url: `http://pi6.local:5678/webhook/${webhookPath}`,\n      method: webhookNode.parameters?.httpMethod || 'GET',\n      active: workflow.active\n    };\n  }\n}\n\n// Build final registry response\nconst registry = {\n  version: \"1.0\",\n  updated_at: new Date().toISOString(),\n  n8n: {\n    host: \"pi6.local\",\n    port: 5678,\n    protocol: \"http\",\n    webhook_base: \"http://pi6.local:5678/webhook\"\n  },\n  scopes: {\n    user: \"Endpoint accessible par le bot Discord\",\n    system: \"Endpoint interne pour orchestration\"\n  },\n  total_tools: Object.keys(tools).length,\n  tools: tools\n};\n\nreturn { json: registry };"
+      },
+      "id": "code-registry",
+      "name": "Build Registry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [740, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-registry",
+      "name": "Respond Registry",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Registry": {
+      "main": [
+        [
+          {
+            "node": "Get Active Workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Workflows": {
+      "main": [
+        [
+          {
+            "node": "Build Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Registry": {
+      "main": [
+        [
+          {
+            "node": "Respond Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

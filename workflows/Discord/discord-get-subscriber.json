@@ -1,0 +1,279 @@
+{
+  "name": "DISCORD - Get Subscriber",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## DISCORD - Get Subscriber\n\n**Endpoint:** GET /webhook/discord-get-subscriber\n\n**Query Parameters:**\n- `project_id` (required): ID du projet\n- `discord_user_id` (required): ID Discord de l'utilisateur\n\n**Source:** PostgreSQL `subscribers`\n\n**Commandes bot:** `/plan`, `/credits`\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"subscriber\": {\n    \"id\": 123,\n    \"discord_user_id\": \"123456789\",\n    \"email\": \"user@example.com\",\n    \"plan_id\": \"price_xxx\",\n    \"credits_remaining\": 850,\n    \"credits_total\": 1000,\n    \"subscription_status\": \"active\"\n  }\n}\n```",
+        "height": 400,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "discord-get-subscriber",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "webhookId": "discord-get-subscriber"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valider les parametres\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst projectId = query.project_id || null;\nconst discordUserId = query.discord_user_id || null;\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!discordUserId) errors.push('discord_user_id');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    discord_user_id: discordUserId\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, project_id, discord_user_id, email, plan_id, stripe_customer_id, stripe_subscription_id, credits_remaining, credits_total, subscription_status, current_period_start, current_period_end, created_at, updated_at FROM subscribers WHERE project_id = '{{ $json.project_id }}' AND discord_user_id = '{{ $json.discord_user_id }}' LIMIT 1",
+        "options": {}
+      },
+      "id": "get-subscriber",
+      "name": "Get Subscriber",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1100, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-subscribers",
+          "name": "PostgreSQL Subscribers"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verifier si le subscriber existe et formater la reponse\nconst dbResults = $input.all();\nconst inputData = $('Validate Input').first().json;\n\nif (!dbResults || dbResults.length === 0 || !dbResults[0].json.id) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Aucun abonnement trouve pour discord_user_id '${inputData.discord_user_id}' dans le projet '${inputData.project_id}'`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nconst subscriber = dbResults[0].json;\n\n// Calculer le pourcentage d'utilisation\nconst creditsUsed = (subscriber.credits_total || 0) - (subscriber.credits_remaining || 0);\nconst usagePercent = subscriber.credits_total > 0 \n  ? Math.round((creditsUsed / subscriber.credits_total) * 100) \n  : 0;\n\nreturn [{\n  json: {\n    found: true,\n    subscriber: {\n      id: subscriber.id,\n      project_id: subscriber.project_id,\n      discord_user_id: subscriber.discord_user_id,\n      email: subscriber.email,\n      plan_id: subscriber.plan_id,\n      stripe_customer_id: subscriber.stripe_customer_id,\n      stripe_subscription_id: subscriber.stripe_subscription_id,\n      credits_remaining: subscriber.credits_remaining || 0,\n      credits_total: subscriber.credits_total || 0,\n      credits_used: creditsUsed,\n      usage_percent: usagePercent,\n      subscription_status: subscriber.subscription_status || 'unknown',\n      current_period_start: subscriber.current_period_start,\n      current_period_end: subscriber.current_period_end,\n      created_at: subscriber.created_at,\n      updated_at: subscriber.updated_at\n    }\n  }\n}];"
+      },
+      "id": "format-subscriber",
+      "name": "Format Subscriber",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "subscriber-found",
+      "name": "Subscriber Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1540, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, subscriber: $json.subscriber }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1760, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 404 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-not-found",
+      "name": "Respond Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1760, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Subscriber",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Subscriber": {
+      "main": [
+        [
+          {
+            "node": "Format Subscriber",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Subscriber": {
+      "main": [
+        [
+          {
+            "node": "Subscriber Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscriber Found?": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
