@@ -2,8 +2,239 @@
 
 **Date:** 2025-01-05
 **Mise a jour:** 2025-01-05
-**Statut:** DECISION PRISE - Option F (Redis)
+**Statut:** DECISION FINALE - Architecture hybride Redis + PostgreSQL + Stripe
 **Equipes concernees:** Framework Bot Discord, Plugins, Backend n8n
+
+---
+
+## 0. Resume executif (TL;DR)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   ARCHITECTURE FINALE                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  REDIS (secrets projet)                                     │
+│  └── project:{id} → stripe_key, webhook_secret              │
+│                                                              │
+│  POSTGRESQL (credits utilisateurs uniquement)               │
+│  └── user_credits → project_id, discord_user_id, credits    │
+│                                                              │
+│  STRIPE API (source de verite pour tout le reste)           │
+│  └── Customers, Subscriptions, Prices, Invoices             │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Principe :** Minimiser la duplication. Stripe est la source de verite.
+
+### APIs a creer
+
+| Endpoint | Methode | Description | Appelant |
+|----------|---------|-------------|----------|
+| `/webhook/stripe-register-project` | POST | Enregistre stripe_key et webhook_secret dans Redis | Plugin (demarrage) |
+| `/webhook/stripe-events` | POST | Recoit les webhooks Stripe, valide signature | Stripe |
+| `/webhook/credits-get` | GET | Recupere credits d'un utilisateur | Bot |
+| `/webhook/credits-debit` | POST | Debite des credits | Bot/Workflow interne |
+| `/webhook/credits-credit` | POST | Credite des credits (renouvellement) | Webhook Stripe |
+| `/webhook/credits-set` | POST | Definit les credits (admin) | Admin/Webhook |
+
+### Schema PostgreSQL
+
+```sql
+CREATE TABLE IF NOT EXISTS user_credits (
+    project_id VARCHAR(50) NOT NULL,
+    discord_user_id VARCHAR(50) NOT NULL,
+    credits_remaining INTEGER DEFAULT 0,
+    credits_total INTEGER DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (project_id, discord_user_id)
+);
+
+CREATE INDEX idx_user_credits_project ON user_credits(project_id);
+```
+
+### Schema Redis
+
+```redis
+HSET project:torah stripe_key "sk_live_xxx" webhook_secret "whsec_xxx"
+HSET project:mcp stripe_key "sk_live_yyy" webhook_secret "whsec_yyy"
+```
+
+### Qui fait quoi ?
+
+#### Plugin (au demarrage)
+
+```python
+# 1. Plugin demarre et enregistre ses secrets dans Redis via n8n
+await n8n_client.post("/webhook/stripe-register-project", {
+    "project_id": "torah",
+    "stripe_key": os.getenv("STRIPE_SECRET_KEY"),
+    "webhook_secret": os.getenv("STRIPE_WEBHOOK_SECRET"),
+    "display_name": "Torah App"
+})
+```
+
+#### Bot (commandes Discord)
+
+```python
+# /plans - Recuperer les plans disponibles
+response = await n8n_client.get("/webhook/discord-get-plans",
+    headers={"X-Project-ID": "torah"})
+# n8n lit stripe_key depuis Redis, appelle Stripe API
+
+# /credits - Voir ses credits
+response = await n8n_client.get("/webhook/credits-get",
+    params={"project_id": "torah", "discord_user_id": "123456789"})
+# n8n lit depuis PostgreSQL user_credits
+
+# /translate (ou autre action qui consomme des credits)
+# 1. Bot verifie credits disponibles
+credits = await n8n_client.get("/webhook/credits-get", ...)
+if credits["credits_remaining"] > 0:
+    # 2. Bot effectue l'action
+    result = await do_translation(...)
+    # 3. Bot debite les credits
+    await n8n_client.post("/webhook/credits-debit", {
+        "project_id": "torah",
+        "discord_user_id": "123456789",
+        "amount": 1,
+        "reason": "translation"
+    })
+```
+
+#### Stripe (webhooks automatiques)
+
+```
+Stripe envoie webhook → n8n /webhook/stripe-events
+
+Events geres:
+- checkout.session.completed → Creer/crediter user dans user_credits
+- invoice.paid → Renouveler credits mensuels
+- customer.subscription.deleted → Mettre credits a 0
+```
+
+### Flux detailles
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ FLUX 1: Enregistrement projet (plugin demarrage)                    │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Plugin                    n8n                         Redis         │
+│    │                        │                            │           │
+│    │ POST /stripe-register  │                            │           │
+│    │ {project_id,           │                            │           │
+│    │  stripe_key,           │                            │           │
+│    │  webhook_secret}       │                            │           │
+│    │───────────────────────►│                            │           │
+│    │                        │ HSET project:torah ...     │           │
+│    │                        │───────────────────────────►│           │
+│    │                        │                            │           │
+│    │◄───────────────────────│ {success: true}            │           │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ FLUX 2: Commande Discord (ex: /plans)                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  User    Bot              n8n                Redis       Stripe      │
+│   │       │                │                   │           │         │
+│   │/plans │                │                   │           │         │
+│   │──────►│                │                   │           │         │
+│   │       │ GET /discord-  │                   │           │         │
+│   │       │ get-plans      │                   │           │         │
+│   │       │ X-Project-ID:  │                   │           │         │
+│   │       │ torah          │                   │           │         │
+│   │       │───────────────►│                   │           │         │
+│   │       │                │ HGET project:     │           │         │
+│   │       │                │ torah stripe_key  │           │         │
+│   │       │                │──────────────────►│           │         │
+│   │       │                │◄──────────────────│           │         │
+│   │       │                │ sk_live_xxx       │           │         │
+│   │       │                │                   │           │         │
+│   │       │                │ GET /v1/prices    │           │         │
+│   │       │                │───────────────────────────────►         │
+│   │       │                │◄───────────────────────────────         │
+│   │       │                │ {plans: [...]}    │           │         │
+│   │       │◄───────────────│                   │           │         │
+│   │◄──────│ Affiche plans  │                   │           │         │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ FLUX 3: Webhook Stripe (nouvel abonnement)                          │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Stripe              n8n                   Redis       PostgreSQL    │
+│    │                  │                      │              │        │
+│    │ POST /stripe-    │                      │              │        │
+│    │ events           │                      │              │        │
+│    │ {type: checkout. │                      │              │        │
+│    │  session.complete│                      │              │        │
+│    │  metadata: {     │                      │              │        │
+│    │   project_id,    │                      │              │        │
+│    │   discord_user}} │                      │              │        │
+│    │─────────────────►│                      │              │        │
+│    │                  │ HGET project:torah   │              │        │
+│    │                  │ webhook_secret       │              │        │
+│    │                  │─────────────────────►│              │        │
+│    │                  │◄─────────────────────│              │        │
+│    │                  │ Valide signature     │              │        │
+│    │                  │                      │              │        │
+│    │                  │ INSERT user_credits  │              │        │
+│    │                  │ (project, user,      │              │        │
+│    │                  │  credits=1000)       │              │        │
+│    │                  │─────────────────────────────────────►        │
+│    │◄─────────────────│ 200 OK               │              │        │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ FLUX 4: Consommation credits                                        │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  User    Bot              n8n                         PostgreSQL     │
+│   │       │                │                               │         │
+│   │/use   │                │                               │         │
+│   │──────►│                │                               │         │
+│   │       │ GET /credits-  │                               │         │
+│   │       │ get?user=123   │                               │         │
+│   │       │───────────────►│                               │         │
+│   │       │                │ SELECT credits_remaining      │         │
+│   │       │                │ FROM user_credits             │         │
+│   │       │                │ WHERE discord_user_id='123'   │         │
+│   │       │                │──────────────────────────────►│         │
+│   │       │                │◄──────────────────────────────│         │
+│   │       │◄───────────────│ {credits: 850}                │         │
+│   │       │                │                               │         │
+│   │       │ [Bot fait action]                              │         │
+│   │       │                │                               │         │
+│   │       │ POST /credits- │                               │         │
+│   │       │ debit          │                               │         │
+│   │       │ {user, amt: 1} │                               │         │
+│   │       │───────────────►│                               │         │
+│   │       │                │ UPDATE user_credits           │         │
+│   │       │                │ SET credits = credits - 1     │         │
+│   │       │                │──────────────────────────────►│         │
+│   │       │◄───────────────│ {credits: 849}                │         │
+│   │◄──────│ Action OK      │                               │         │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Donnees echangees par endpoint
+
+| Endpoint | Input | Output |
+|----------|-------|--------|
+| `POST /stripe-register-project` | `{project_id, stripe_key, webhook_secret, display_name}` | `{success: true}` |
+| `GET /discord-get-plans` | Header: `X-Project-ID` | `{plans: [{id, name, price, credits}]}` |
+| `GET /credits-get` | `?project_id=torah&discord_user_id=123` | `{credits_remaining: 850, credits_total: 1000}` |
+| `POST /credits-debit` | `{project_id, discord_user_id, amount, reason}` | `{credits_remaining: 849}` |
+| `POST /credits-credit` | `{project_id, discord_user_id, amount, reason}` | `{credits_remaining: 1850}` |
+| `POST /credits-set` | `{project_id, discord_user_id, credits_remaining, credits_total}` | `{success: true}` |
+| `POST /stripe-events` | Stripe webhook payload | `200 OK` |
 
 ---
 
@@ -453,11 +684,15 @@ Apres analyse, **Option F (Redis)** retenue car:
 
 - [x] Review par equipe Bot
 - [x] Review par equipe n8n
-- [x] Decision: Option F (Redis)
-- [ ] Implementation `RedisSecretsClient` dans framework
-- [ ] Implementation lecture Redis dans n8n
-- [ ] Tests integration
-- [ ] Documentation plugin
+- [x] Decision architecture finale (Redis + PostgreSQL + Stripe)
+- [ ] **Framework Bot:** Implementer `RedisSecretsClient`
+- [ ] **n8n:** Creer workflow `stripe-register-project`
+- [ ] **n8n:** Creer workflow `stripe-events` (webhooks)
+- [ ] **n8n:** Creer workflows credits (`credits-get`, `credits-debit`, `credits-credit`, `credits-set`)
+- [ ] **n8n:** Mettre a jour workflows Discord existants pour lire Redis
+- [ ] **PostgreSQL:** Creer table `user_credits`
+- [ ] **Tests:** Integration complete
+- [ ] **Documentation:** Mise a jour guides plugin
 
 ---
 
