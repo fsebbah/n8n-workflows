@@ -2,7 +2,7 @@
 
 **Date:** 2025-01-05
 **Mise a jour:** 2025-01-05
-**Statut:** En discussion
+**Statut:** DECISION PRISE - Option F (Redis)
 **Equipes concernees:** Framework Bot Discord, Plugins, Backend n8n
 
 ---
@@ -32,20 +32,25 @@ Le framework bot-discord est une **dependance pip** installee par chaque plugin.
                └──────────────┬───────────────────┘
                               ▼
                     ┌───────────────────┐
+                    │   Redis (vault)   │◄──── Secrets centralises
+                    │  host3.local:6381 │
+                    └─────────┬─────────┘
+                              │
+                              ▼
+                    ┌───────────────────┐
                     │        n8n        │
-                    │   (workflows      │
-                    │    partages)      │
+                    │   (workflows)     │
                     └───────────────────┘
 ```
 
 ### 1.2 Principe fondamental: Source unique de verite
 
-**Comme OAuth2:** La cle est stockee a UN SEUL endroit - la configuration du plugin.
+**Redis comme vault de secrets:**
 
-- Le plugin possede sa cle Stripe dans son `.env`
-- La cle est passee a n8n a chaque requete (comme un Bearer token)
-- n8n n'a **pas** de stockage de cles
-- Pas de duplication, pas de synchronisation
+- Le plugin possede ses cles Stripe dans son `.env`
+- Au demarrage, le plugin **pousse** ses secrets dans Redis
+- n8n **lit** les secrets depuis Redis (jamais en transit HTTP)
+- Redis = source unique partagee entre plugin et n8n
 
 ---
 
@@ -54,172 +59,94 @@ Le framework bot-discord est une **dependance pip** installee par chaque plugin.
 ### 2.1 Flux Bot → n8n (commandes Discord)
 
 ```
-User ──► Bot ──► n8n ──► Stripe API
+User ──► Bot ──► n8n ──► Redis (lookup) ──► Stripe API
               │
-              └─► Le bot PEUT passer la cle
+              └─► Bot passe UNIQUEMENT project_id
 ```
 
 **Exemple:** `/plans`, `/subscribe`, `/account`
 
-Le bot connait la cle (depuis sa config) et peut la transmettre a n8n.
-
-**Implementation proposee:**
-```
-POST /webhook/discord-get-plans
-Headers:
-  X-Project-ID: torah
-  X-Stripe-Secret-Key: sk_live_xxx    ← Header (pas dans le body)
-```
+Le bot passe seulement `X-Project-ID`. n8n recupere la cle depuis Redis.
 
 ### 2.2 Flux Stripe → n8n (webhooks)
 
 ```
-Stripe ──────────────────────► n8n /webhook/stripe-events
-                                    │
-                                    └─► Le bot N'EST PAS dans la boucle
+Stripe ──► n8n /webhook/stripe-events
+               │
+               └─► n8n extrait project_id des metadata
+               └─► n8n recupere webhook_secret depuis Redis
+               └─► n8n valide la signature
 ```
 
-**Probleme:** n8n recoit un webhook Stripe mais:
-- Ne sait pas quel projet est concerne
-- N'a pas le `webhook_secret` pour valider la signature
-- Le bot ne peut pas aider (pas dans la boucle)
-
-**C'est le probleme principal de ce RFC.**
+**Avec Redis, les deux flux sont resolus de la meme maniere.**
 
 ---
 
-## 3. Options pour le flux Stripe → n8n
+## 3. Options evaluees
 
 ### Option A: Un endpoint webhook par projet
-
-```
-Stripe Torah ──► n8n /webhook/stripe-events-torah
-Stripe MCP   ──► n8n /webhook/stripe-events-mcp
-```
-
-n8n stocke le `webhook_secret` par endpoint (credential ou env var).
-
-| Avantages | Inconvenients |
-|-----------|---------------|
-| Isolation totale | 1 workflow par projet |
-| Simple a debugger | Ne scale pas (5+ projets) |
-| webhook_secret par endpoint | Duplication de code |
+_(Ne scale pas - rejetee)_
 
 ### Option B: project_id dans metadata Stripe
+_(Bonne idee, integree dans Option F)_
 
-Configurer Stripe pour inclure `project_id` dans les metadata:
+### Option C: Stockage PostgreSQL
+_(Remplacee par Redis - plus performant)_
 
-```javascript
-// Lors de la creation du checkout (cote bot → n8n)
-metadata: {
-  project_id: "torah",
-  discord_user_id: "123456789"
-}
-```
+### Option D: Credentials n8n manuelles
+_(Rejetee par equipe n8n - erreurs humaines)_
 
-Stripe renvoie ces metadata dans les webhooks:
+### Option E: Stripe Connect
+_(Overkill pour 5 projets - a reevaluer si >10)_
 
-```json
-{
-  "type": "checkout.session.completed",
-  "data": {
-    "object": {
-      "metadata": {
-        "project_id": "torah"
-      }
-    }
-  }
-}
-```
-
-n8n peut alors router vers le bon projet.
-
-| Avantages | Inconvenients |
-|-----------|---------------|
-| 1 seul endpoint webhook | webhook_secret toujours necessaire |
-| Metadata inclus par Stripe | Dependance config Stripe correcte |
-| Scale bien | Pas de validation signature multi-projet |
-
-### Option C: Stockage des webhook_secrets dans n8n
-
-Contradiction avec "source unique", mais pragmatique:
+### Option F: Redis comme vault de secrets (RETENUE)
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    n8n                               │
-│  ┌───────────────────────────────────────────────┐  │
-│  │ SQLite: stripe_webhook_secrets                │  │
-│  │ ┌────────────┬─────────────────────────────┐  │  │
-│  │ │ project_id │ webhook_secret              │  │  │
-│  │ ├────────────┼─────────────────────────────┤  │  │
-│  │ │ torah      │ whsec_xxx                   │  │  │
-│  │ │ mcp        │ whsec_yyy                   │  │  │
-│  │ └────────────┴─────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    OPTION F - ARCHITECTURE REDIS                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  INITIALISATION (demarrage plugin):                             │
+│  ──────────────────────────────────                             │
+│  Plugin → Redis (host3.local:6381/2):                           │
+│    HSET project:torah stripe_key "sk_live_xxx"                  │
+│    HSET project:torah webhook_secret "whsec_xxx"                │
+│    HSET project:torah display_name "Torah App"                  │
+│    HSET project:torah active "true"                             │
+│                                                                  │
+│  FLUX 1: Bot → n8n                                              │
+│  ─────────────────                                              │
+│  Bot: POST /webhook/discord-get-plans                           │
+│       Header: X-Project-ID: torah                               │
+│       (PAS de cle dans le header!)                              │
+│  n8n: HGET project:torah stripe_key                             │
+│  n8n: appelle Stripe API avec la cle                            │
+│                                                                  │
+│  FLUX 2: Stripe → n8n                                           │
+│  ─────────────────────                                          │
+│  Stripe: POST /webhook/stripe-events                            │
+│          Body contient metadata.project_id                      │
+│  n8n: HGET project:torah webhook_secret                         │
+│  n8n: valide la signature Stripe                                │
+│  n8n: traite le webhook                                         │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
-
-Le plugin enregistre son `webhook_secret` au demarrage:
-```
-Plugin ──► n8n POST /admin/register-webhook-secret
-           { project_id, webhook_secret }
-```
-
-| Avantages | Inconvenients |
-|-----------|---------------|
-| Validation signature OK | Stockage de secrets cote n8n |
-| Scale bien | Sync necessaire si rotation |
-| 1 seul endpoint | Deux sources de verite |
-
-### Option D: Credentials n8n par projet (manuel)
-
-Creer manuellement une credential n8n par projet:
-- `stripe-webhook-torah`
-- `stripe-webhook-mcp`
-
-| Avantages | Inconvenients |
-|-----------|---------------|
-| Natif n8n, chiffre | Gestion manuelle |
-| Pas de code custom | Ne scale pas |
-| Securise | Ajout projet = config n8n |
-
-### Option E: Stripe Connect (architecture alternative)
-
-Une seule cle Stripe "platform", chaque projet est un "connected account":
-
-```
-┌─────────────────────────────────┐
-│    Compte Platform (vous)       │  ← 1 seule cle API
-│    sk_platform_xxx              │
-└───────────────┬─────────────────┘
-                │
-    ┌───────────┼───────────┐
-    ▼           ▼           ▼
-┌───────┐  ┌───────┐  ┌───────┐
-│ Torah │  │  MCP  │  │ Proj X│   ← Connected Accounts
-│ acct_ │  │ acct_ │  │ acct_ │      (pas de cles separees)
-└───────┘  └───────┘  └───────┘
-```
-
-| Avantages | Inconvenients |
-|-----------|---------------|
-| 1 seule cle a gerer | Setup Stripe Connect |
-| Isolation native | Frais Stripe supplementaires |
-| Webhooks simplifies | Complexite onboarding |
-| Scale infiniment | Overkill pour 5 projets? |
 
 ---
 
 ## 4. Matrice de decision
 
-| Critere | Option A | Option B | Option C | Option D | Option E |
-|---------|----------|----------|----------|----------|----------|
-| **Securite** | Bonne | Moyenne | Bonne | Excellente | Excellente |
-| **Scalabilite** | Faible | Bonne | Bonne | Faible | Excellente |
-| **Source unique** | Oui | Oui | Non | Non | Oui |
-| **Validation webhook** | Oui | Non | Oui | Oui | Oui |
-| **Effort n8n** | Eleve | Faible | Moyen | Faible | Moyen |
-| **Effort plugin** | Faible | Moyen | Moyen | Faible | Eleve |
+| Critere | Option B+C | Option D | Option E | **Option F (Redis)** |
+|---------|------------|----------|----------|----------------------|
+| **Securite** | Bonne | Excellente | Excellente | **Excellente** |
+| **Cle en transit** | Oui (header) | Non | Non | **Non** |
+| **Scalabilite** | Bonne | Faible | Excellente | **Excellente** |
+| **Source unique** | Non (2 endroits) | Non | Oui | **Oui (Redis)** |
+| **Performance lookup** | ~5-10ms | ~1ms | N/A | **~1ms** |
+| **Effort n8n** | Moyen | Faible | Moyen | **Faible** |
+| **Effort plugin** | Moyen | Faible | Eleve | **Faible** |
+| **Infra existante** | Oui (PG) | Oui | Non | **Oui (Redis)** |
 
 ---
 
@@ -230,312 +157,451 @@ Une seule cle Stripe "platform", chaque projet est un "connected account":
 | Responsabilite | Description |
 |----------------|-------------|
 | Fournir `N8nClient` | Client HTTP pour appeler n8n |
-| Passer `project_id` | Identifiant du projet |
-| Passer `stripe_secret_key` | Via header HTTP securise |
-| Gerer les erreurs n8n | Retry, timeout, fallback |
-| **NE PAS** stocker de cles | Juste transmettre depuis config |
+| Fournir `RedisSecretsClient` | Client pour pousser secrets dans Redis |
+| Passer `X-Project-ID` | Seul header necessaire (plus de cle!) |
+| Enregistrer secrets au demarrage | `HSET project:{id} ...` |
+| Gerer les erreurs | Retry, timeout, fallback |
 
 ### 5.2 Plugin (utilisateur du framework)
 
 | Responsabilite | Description |
 |----------------|-------------|
 | Configurer `.env` | `PROJECT_ID`, `STRIPE_SECRET_KEY`, etc. |
-| Instancier le bot | Avec la config appropriee |
-| Posseder les cles Stripe | Source unique de verite |
-| Enregistrer webhook_secret? | Si Option C choisie |
+| Configurer Redis | `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB` |
+| Appeler `register_secrets()` | Au demarrage du bot |
+| Posseder les cles Stripe | Dans son `.env` local |
 
 ### 5.3 n8n (workflows)
 
 | Responsabilite | Description |
 |----------------|-------------|
-| Definir les endpoints | `/discord-get-plans`, etc. |
-| Recevoir les webhooks Stripe | `/stripe-events` |
-| Appeler l'API Stripe | Avec la cle recue |
-| Valider les signatures webhook | Avec le secret approprie |
-| Mettre a jour PostgreSQL | Subscribers, transactions |
-| **Definir le contrat API** | Ce RFC devrait etre cote n8n |
+| Lire secrets depuis Redis | `HGET project:{id} stripe_key` |
+| Valider webhooks Stripe | Avec `webhook_secret` de Redis |
+| Appeler l'API Stripe | Avec la cle lue depuis Redis |
+| **Ne plus attendre de cle en header** | Juste `X-Project-ID` |
+
+### 5.4 Redis (vault)
+
+| Responsabilite | Description |
+|----------------|-------------|
+| Stocker les secrets | Hash par projet |
+| Haute disponibilite | Deja en place sur host3.local |
+| Acces rapide | ~1ms lookup |
 
 ---
 
-## 6. Recommandation
+## 6. Recommandation finale
 
-### Court terme (5 projets)
+### DECISION: Option F (Redis)
 
-**Option D (Credentials n8n manuelles)** pour les `webhook_secret`:
-- Simple, natif n8n
-- Securise (chiffrement integre)
-- Acceptable pour 5 projets
+**Pourquoi Redis plutot que B+C (PostgreSQL)?**
 
-**Option "Transmission directe"** pour les `stripe_secret_key`:
-- Le bot passe la cle via header a chaque requete
-- n8n ne stocke pas les cles API
-- Source unique dans le plugin
+| Critere | PostgreSQL (B+C) | Redis (F) |
+|---------|------------------|-----------|
+| Cle en transit | Oui (chaque requete) | **Non** |
+| Latence | ~5-10ms | **~1ms** |
+| Infrastructure | Deja la | **Deja la** |
+| Complexite | 2 systemes (header + PG) | **1 systeme (Redis)** |
 
-### Long terme (10+ projets)
+**Avantages decisifs de Redis:**
 
-**Option E (Stripe Connect)** a evaluer:
-- Elimine la gestion multi-cles
-- Scale naturellement
-- Webhooks centralises
-
----
-
-## 7. Questions pour l'equipe n8n
-
-1. **Validation webhook:** Comment validez-vous actuellement les signatures Stripe?
-
-2. **Stockage:** Acceptez-vous de stocker les `webhook_secret` dans n8n (Option C)?
-
-3. **Credentials manuelles:** Est-ce acceptable de creer 5 credentials Stripe manuellement?
-
-4. **Header vs Body:** Preferez-vous recevoir `stripe_secret_key` en header ou dans le body JSON?
-
-5. **Stripe Connect:** Avez-vous de l'experience avec Stripe Connect?
-
-6. **Ce RFC:** Souhaitez-vous reprendre ce document cote n8n puisque vous definissez l'API?
+1. **Cle JAMAIS en transit** - Meme pas en header HTTPS
+2. **Performance** - Redis est concu pour ca
+3. **Simplicite** - Un seul systeme pour tous les secrets
+4. **Infrastructure existante** - `host3.local:6381` deja disponible
+5. **Source unique** - Redis devient le vault partage
 
 ---
 
-## 8. Questions ouvertes
+## 7. Configuration Redis
 
-1. **Rotation des cles:**
-   - Procedure si une cle est compromise?
-   - Comment synchroniser si Option C?
+### 7.1 Acces Redis existant
 
-2. **Environnement test/prod:**
-   - `sk_test_` vs `sk_live_` par projet?
-   - Endpoints n8n separes ou meme endpoint?
+```env
+REDIS_HOST=host3.local
+REDIS_PORT=6381
+REDIS_DB=2
+REDIS_PASSWORD=
+```
 
-3. **Audit:**
-   - Logger les appels avec `stripe_secret_key`?
-   - Masquer les cles dans les logs n8n?
+### 7.2 Schema Redis
 
-4. **TLS:**
-   - Communication bot ↔ n8n en HTTPS obligatoire?
-   - Certificats auto-signes acceptes (meme serveur)?
+```redis
+# Hash par projet - toutes les infos regroupees
+HSET project:torah stripe_key "sk_live_xxxxxxxxxxxx"
+HSET project:torah webhook_secret "whsec_xxxxxxxxxxxx"
+HSET project:torah display_name "Torah App"
+HSET project:torah active "true"
+HSET project:torah registered_at "2025-01-05T10:00:00Z"
+
+# Commandes de lecture
+HGET project:torah stripe_key          # → "sk_live_xxx"
+HGET project:torah webhook_secret      # → "whsec_xxx"
+HGETALL project:torah                  # → toutes les infos
+
+# Liste des projets actifs
+KEYS project:*                         # → ["project:torah", "project:mcp", ...]
+```
+
+### 7.3 TTL optionnel (rotation forcee)
+
+```redis
+# Forcer re-enregistrement toutes les 24h
+EXPIRE project:torah 86400
+```
 
 ---
 
-## 9. Prochaines etapes
+## 8. Implementation cote Bot
 
-- [x] Review par equipe Bot (ce document)
-- [ ] Review par equipe n8n
-- [ ] Decision sur Option webhook (A/B/C/D)
-- [ ] Decision sur transmission stripe_key (Header vs Body)
-- [ ] Implementation
+### 8.1 Nouveau client Redis
 
-**Deadline pour feedback n8n:** [A definir]
+```python
+# framework/services/redis_secrets.py
+
+import redis.asyncio as redis
+from dataclasses import dataclass
+
+@dataclass
+class RedisConfig:
+    host: str = "host3.local"
+    port: int = 6381
+    db: int = 2
+    password: str | None = None
+
+class RedisSecretsClient:
+    """Client pour gerer les secrets Stripe dans Redis."""
+
+    def __init__(self, config: RedisConfig):
+        self.config = config
+        self._client: redis.Redis | None = None
+
+    async def connect(self):
+        self._client = redis.Redis(
+            host=self.config.host,
+            port=self.config.port,
+            db=self.config.db,
+            password=self.config.password,
+            decode_responses=True
+        )
+
+    async def register_project(
+        self,
+        project_id: str,
+        stripe_key: str,
+        webhook_secret: str,
+        display_name: str | None = None
+    ):
+        """Enregistre les secrets d'un projet dans Redis."""
+        key = f"project:{project_id}"
+        await self._client.hset(key, mapping={
+            "stripe_key": stripe_key,
+            "webhook_secret": webhook_secret,
+            "display_name": display_name or project_id,
+            "active": "true",
+            "registered_at": datetime.utcnow().isoformat()
+        })
+
+    async def unregister_project(self, project_id: str):
+        """Supprime un projet de Redis."""
+        await self._client.delete(f"project:{project_id}")
+```
+
+### 8.2 Utilisation au demarrage du plugin
+
+```python
+# Plugin main.py
+
+from framework import N8nClient, RedisSecretsClient, RedisConfig
+
+async def main():
+    # Configuration
+    config = load_config()
+
+    # Enregistrer secrets dans Redis
+    redis_client = RedisSecretsClient(RedisConfig(
+        host=config.redis_host,
+        port=config.redis_port,
+        db=config.redis_db
+    ))
+    await redis_client.connect()
+    await redis_client.register_project(
+        project_id=config.project_id,
+        stripe_key=config.stripe_secret_key,
+        webhook_secret=config.stripe_webhook_secret,
+        display_name="Torah App"
+    )
+
+    # Initialiser le bot (plus besoin de passer stripe_key!)
+    n8n_client = N8nClient(
+        base_url=config.n8n_base_url,
+        project_id=config.project_id  # Plus de stripe_key ici
+    )
+
+    # Demarrer le bot...
+```
+
+### 8.3 N8nClient simplifie
+
+```python
+# Plus besoin de X-Stripe-Secret-Key!
+headers = {
+    "X-Project-ID": self.project_id,
+    "Content-Type": "application/json"
+}
+# n8n lira la cle depuis Redis
+```
 
 ---
 
-## 10. Historique
+## 9. Implementation cote n8n
+
+### 9.1 Lecture Redis dans workflow
+
+```javascript
+// Node "Code" dans n8n
+const Redis = require('ioredis');
+
+const redis = new Redis({
+  host: 'host3.local',
+  port: 6381,
+  db: 2
+});
+
+const projectId = $input.first().headers['x-project-id'];
+const stripeKey = await redis.hget(`project:${projectId}`, 'stripe_key');
+
+if (!stripeKey) {
+  throw new Error(`Project ${projectId} not found in Redis`);
+}
+
+// Utiliser stripeKey pour appeler Stripe API
+return { stripeKey, projectId };
+```
+
+### 9.2 Validation webhook Stripe
+
+```javascript
+const projectId = $input.first().json.data.object.metadata.project_id;
+const webhookSecret = await redis.hget(`project:${projectId}`, 'webhook_secret');
+
+// Valider la signature
+const signature = $input.first().headers['stripe-signature'];
+const isValid = stripe.webhooks.constructEvent(
+  rawBody,
+  signature,
+  webhookSecret
+);
+```
+
+---
+
+## 10. Securite
+
+### 10.1 Acces Redis
+
+| Risque | Mitigation |
+|--------|------------|
+| Redis expose | Bind sur reseau prive uniquement |
+| Pas d'auth | `REDIS_PASSWORD` si necessaire |
+| Donnees en clair | Acceptable sur reseau interne |
+
+### 10.2 Audit
+
+| Element | Action |
+|---------|--------|
+| `stripe_key` | JAMAIS loggue |
+| `webhook_secret` | JAMAIS loggue |
+| `project_id` | Loggue pour audit |
+| Acces Redis | Logger les connexions |
+
+### 10.3 Rotation des cles
+
+| Scenario | Procedure |
+|----------|-----------|
+| Rotation planifiee | 1. Mettre a jour `.env` du plugin 2. Redemarrer le plugin (re-enregistre dans Redis) |
+| Cle compromise | 1. Revoquer dans Stripe 2. Generer nouvelle cle 3. Mettre a jour `.env` 4. Redemarrer plugin |
+
+---
+
+## 11. Historique des discussions
+
+### 11.1 Reponse equipe n8n (initiale)
+
+L'equipe n8n avait propose Option B+C (metadata + PostgreSQL).
+
+**Points d'accord conserves:**
+- Architecture 1 plugin = 1 bot = 1 cle
+- Metadata `project_id` dans webhooks Stripe
+- Header plutot que body pour identifiants
+
+**Point ameliore avec Redis:**
+- Plus besoin de passer `stripe_secret_key` en header
+- Un seul systeme (Redis) au lieu de deux (header + PostgreSQL)
+
+### 11.2 Decision finale
+
+Apres analyse, **Option F (Redis)** retenue car:
+1. Infrastructure Redis deja disponible
+2. Cle jamais en transit (meilleure securite)
+3. Plus simple (un seul systeme)
+4. Plus performant (~1ms vs ~5-10ms)
+
+---
+
+## 12. Prochaines etapes
+
+- [x] Review par equipe Bot
+- [x] Review par equipe n8n
+- [x] Decision: Option F (Redis)
+- [ ] Implementation `RedisSecretsClient` dans framework
+- [ ] Implementation lecture Redis dans n8n
+- [ ] Tests integration
+- [ ] Documentation plugin
+
+---
+
+## 13. Historique
 
 | Date | Modification |
 |------|--------------|
 | 2025-01-05 | Version initiale |
-| 2025-01-05 | Rewrite complet apres analyse equipe Bot |
+| 2025-01-05 | Rewrite apres analyse equipe Bot |
+| 2025-01-05 | Ajout reponse equipe n8n (Option B+C) |
+| 2025-01-05 | **Decision finale: Option F (Redis)** |
 
 ---
 
-## 11. Reponse equipe n8n (2025-01-05)
+## 14. Analyse n8n de l'Option F (Redis)
 
-### 11.1 Analyse du document
+### 14.1 Points d'accord
 
-**Points d'accord:**
-- Architecture 1 plugin = 1 bot = 1 cle : claire et maintenable
-- Principe de source unique pour `stripe_secret_key` : correct
-- Transmission via header plutot que body : bonne pratique
-- Le flux Stripe → n8n est bien le probleme principal
+| Point | Verdict |
+|-------|---------|
+| Cle jamais en transit HTTP | **Excellent** - meilleure securite |
+| Performance ~1ms | **Bon** - Redis est fait pour ca |
+| Infrastructure existante | **Bon** - pas de nouveau systeme a deployer |
+| Simplification headers | **Bon** - juste X-Project-ID |
 
-**Points de challenge:**
+### 14.2 Points de challenge
 
-| Affirmation | Challenge |
-|-------------|-----------|
-| "Le bot passe la cle a chaque requete" | Acceptable si HTTPS, mais augmente la surface d'attaque |
-| "n8n ne stocke pas de cles" | Contradiction avec Option C qui stocke webhook_secret |
-| "Option D pour court terme" | Gestion manuelle = source d'erreurs et oublis |
+| Concern | Question/Risque |
+|---------|-----------------|
+| **Integration n8n/Redis** | ioredis est-il disponible dans n8n? Faut-il installer un package npm? |
+| **Single Point of Failure** | Si Redis down → TOUS les projets KO. Pas de fallback. |
+| **Persistence Redis** | AOF/RDB active? Risque de perte au restart? |
+| **Authentification Redis** | `REDIS_PASSWORD` vide dans l'exemple. Redis est-il protege? |
+| **Audit/Logging** | PostgreSQL a meilleur outillage audit que Redis |
+| **Code node limitations** | Le Code node n8n peut-il faire `require('ioredis')`? |
 
-### 11.2 Reponses aux questions (Section 7)
+### 14.3 Questions techniques pour validation
 
-**Q1. Validation webhook - Comment validez-vous actuellement?**
+**Q1. ioredis dans n8n?**
 
-Actuellement, nous n'avons PAS de validation de signature Stripe.
-Les workflows Stripe existants font confiance a l'appelant.
-C'est un **risque de securite** a corriger.
+Le Code node n8n ne permet PAS `require()` de packages externes par defaut.
+Options:
+- a) Utiliser le node "Redis" natif de n8n (si disponible)
+- b) HTTP Request vers une API Redis (comme Redis REST)
+- c) Custom node n8n avec ioredis
+- d) Executer un script externe via Bash node
 
-**Q2. Stockage webhook_secret dans n8n (Option C)?**
+**Quelle approche est prevue?**
 
-**OUI, acceptable.** Justification:
-- Le `webhook_secret` n'est PAS la cle API (ne permet pas d'actions)
-- Il sert uniquement a valider l'origine des webhooks
-- Stocker ce secret cote n8n est coherent : c'est n8n qui recoit les webhooks
-- Ce n'est pas une "duplication" mais une delegation de responsabilite
+**Q2. Fallback si Redis indisponible?**
 
-**Q3. 5 credentials manuelles?**
+Scenario: Redis down pendant 5 minutes.
+- Webhooks Stripe arrives → echec validation → perte d'evenements?
+- Commandes Discord → echec → mauvaise UX?
 
-**NON recommande.** Problemes:
-- Erreur humaine lors de l'ajout d'un projet
-- Pas de visibilite sur la liste des projets configures
-- Difficile a auditer
-- Necessite acces admin n8n pour chaque nouveau projet
+**Proposition:** Implementer un circuit breaker ou cache local temporaire.
 
-**Q4. Header vs Body pour stripe_secret_key?**
+**Q3. Persistence Redis?**
 
-**HEADER obligatoire.** Raisons:
-- `X-Stripe-Secret-Key` en header
-- Plus facile a exclure des logs applicatifs
-- Separation claire donnees/authentification
-- Convention standard (comme `Authorization: Bearer`)
-
-**Q5. Experience Stripe Connect?**
-
-Non, mais pret a explorer pour le long terme si >10 projets.
-
-**Q6. Reprendre ce RFC cote n8n?**
-
-**OUI.** Ce document definit le contrat API n8n.
-Il devrait vivre dans le repo n8n-workflows (deja le cas).
-
-### 11.3 Recommandation n8n
-
-**Proposition : Option B + C combinee**
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         ARCHITECTURE                             │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  FLUX 1: Bot → n8n                                              │
-│  ─────────────────                                              │
-│  Bot passe: X-Project-ID + X-Stripe-Secret-Key (headers)        │
-│  n8n: utilise la cle recue, ne stocke rien                      │
-│                                                                  │
-│  FLUX 2: Stripe → n8n                                           │
-│  ─────────────────────                                          │
-│  Stripe envoie: webhook avec metadata.project_id (Option B)     │
-│  n8n: lookup webhook_secret dans PostgreSQL (Option C)          │
-│  n8n: valide signature, route vers le bon projet                │
-│                                                                  │
-│  INITIALISATION (une fois par projet):                          │
-│  ─────────────────────────────────────                          │
-│  Plugin → n8n: POST /admin/register-project                     │
-│  { project_id, webhook_secret, callback_url? }                  │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+```bash
+# Verifier la config Redis
+redis-cli -h host3.local -p 6381 CONFIG GET appendonly
+redis-cli -h host3.local -p 6381 CONFIG GET save
 ```
 
-**Avantages de cette approche:**
-1. `stripe_secret_key` jamais stockee cote n8n (source unique = plugin)
-2. `webhook_secret` stocke cote n8n (logique: c'est n8n qui valide)
-3. Un seul endpoint webhook Stripe (`/webhook/stripe-events`)
-4. Routing dynamique via `metadata.project_id`
-5. Scale bien (ajout projet = 1 appel API)
+Si `appendonly=no` et `save=""` → donnees perdues au restart!
 
-### 11.4 Reponses aux questions ouvertes (Section 8)
+**Q4. Securite Redis?**
 
-**Q1. Rotation des cles**
-
-| Scenario | Procedure |
-|----------|-----------|
-| Rotation planifiee `stripe_secret_key` | Plugin met a jour son .env, rien a faire cote n8n |
-| Rotation planifiee `webhook_secret` | Plugin appelle `/admin/register-project` avec nouveau secret |
-| Cle compromise | 1. Revoquer dans Stripe 2. Generer nouvelle cle 3. Mettre a jour config 4. Alerter les equipes |
-
-**Q2. Environnement test/prod**
-
-Proposition:
-```
-project_id = "torah"       → Production (sk_live_)
-project_id = "torah-test"  → Test (sk_test_)
+```env
+REDIS_PASSWORD=       # Vide = pas d'auth!
 ```
 
-Meme endpoint n8n, le plugin decide de son `project_id`.
-Permet de tester sans impacter la prod.
+Redis sur reseau prive uniquement? Firewall?
 
-**Q3. Audit et logs**
+### 14.4 Proposition d'implementation n8n
 
-| Element | Action |
-|---------|--------|
-| `stripe_secret_key` dans header | JAMAIS loggue (exclure X-Stripe-* des logs) |
-| `webhook_secret` | JAMAIS loggue |
-| `project_id` | Loggue (pour audit) |
-| Appels Stripe API | Loggue (sans la cle) |
-| Erreurs validation webhook | Loggue avec alerte |
+**Option A: HTTP Request vers Redis (si Redis REST disponible)**
 
-Implementation n8n: configurer les workflows pour masquer les headers sensibles.
-
-**Q4. TLS (HTTPS)**
-
-| Communication | Exigence |
-|---------------|----------|
-| Bot → n8n (meme serveur) | HTTP acceptable si localhost/reseau prive |
-| Bot → n8n (serveurs differents) | **HTTPS obligatoire** |
-| Plugin → n8n (init) | HTTPS recommande |
-| Stripe → n8n | HTTPS obligatoire (impose par Stripe) |
-
-Pour notre setup actuel (pi6.local, meme reseau):
-- HTTP acceptable en interne
-- Mais HTTPS recommande si le reseau n'est pas de confiance
-
-### 11.5 Schema de donnees PostgreSQL propose
-
-```sql
--- Table pour les secrets webhook (pas les cles API!)
-CREATE TABLE IF NOT EXISTS project_webhooks (
-    project_id VARCHAR(50) PRIMARY KEY,
-    webhook_secret VARCHAR(255) NOT NULL,  -- whsec_xxx
-    display_name VARCHAR(100),
-    callback_url VARCHAR(500),             -- URL pour notifier le bot
-    active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Index pour lookup rapide
-CREATE INDEX idx_project_webhooks_active ON project_webhooks(active);
-
--- Note: stripe_secret_key n'est PAS stocke ici
--- Elle est passee par le bot a chaque requete
+```javascript
+// Pas besoin de ioredis
+const response = await $http.request({
+  method: 'GET',
+  url: 'http://host3.local:6380/HGET/project:torah/stripe_key'
+});
 ```
 
-### 11.6 Endpoints n8n a implementer
+**Option B: Node Redis natif n8n**
 
-| Endpoint | Methode | Usage |
-|----------|---------|-------|
-| `/admin/register-project` | POST | Plugin enregistre son webhook_secret |
-| `/admin/unregister-project` | DELETE | Retirer un projet |
-| `/webhook/stripe-events` | POST | Reception webhooks Stripe (unique) |
-| `/webhook/discord-*` | GET/POST | Endpoints existants (deja OK) |
+Verifier si `n8n-nodes-base.redis` existe et supporte HGET.
 
-### 11.7 Decision demandee
+**Option C: Script externe**
 
-**Pour avancer, nous avons besoin de validation sur:**
+```javascript
+// Dans Code node - appeler redis-cli via exec
+const { execSync } = require('child_process');
+const key = execSync('redis-cli -h host3.local -p 6381 HGET project:torah stripe_key').toString().trim();
+```
 
-- [ ] Accord sur Option B+C (metadata + stockage webhook_secret)
-- [ ] Accord sur headers pour `stripe_secret_key`
-- [ ] Accord sur schema PostgreSQL `project_webhooks`
-- [ ] Accord sur HTTP interne / HTTPS externe
+### 14.5 Conditions d'acceptation
 
-**Deadline decision:** [A definir par le projet]
+**J'accepte Option F (Redis) SI:**
+
+- [ ] Confirmation que ioredis ou alternative fonctionne dans n8n
+- [ ] Redis a persistence activee (AOF ou RDB)
+- [ ] Redis est sur reseau prive OU a authentification
+- [ ] Plan de fallback documente si Redis down
+- [ ] Test d'integration valide le flux complet
+
+### 14.6 Alternative de repli
+
+Si l'integration Redis/n8n s'avere trop complexe:
+
+**Revenir a Option B+C avec header chiffre:**
+
+```http
+X-Stripe-Key-Encrypted: base64(encrypt(sk_live_xxx, shared_secret))
+```
+
+n8n dechiffre avec une cle partagee. Cle en transit mais chiffree.
 
 ---
 
-## Annexe: Format des headers proposes
+## Annexe: Format des requetes
+
+### Avant (Option B+C)
 
 ```http
 POST /webhook/discord-get-plans HTTP/1.1
 Host: pi6.local:5678
-Content-Type: application/json
 X-Project-ID: torah
-X-Stripe-Secret-Key: sk_live_xxxxxxxxxxxx
+X-Stripe-Secret-Key: sk_live_xxxxxxxxxxxx  ← Cle en transit
 
-{
-  "discord_user_id": "123456789"
-}
+{"discord_user_id": "123456789"}
 ```
 
-**Pourquoi des headers?**
-- Separation donnees/authentification
-- Plus facile a filtrer des logs
-- Convention standard (comme `Authorization`)
-- Pas de risque d'inclure dans les logs de body JSON
+### Apres (Option F - Redis)
+
+```http
+POST /webhook/discord-get-plans HTTP/1.1
+Host: pi6.local:5678
+X-Project-ID: torah
+                                            ← Plus de cle!
+{"discord_user_id": "123456789"}
+```
+
+n8n recupere la cle depuis Redis: `HGET project:torah stripe_key`
