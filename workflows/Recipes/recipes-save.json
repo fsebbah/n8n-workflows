@@ -1,0 +1,261 @@
+{
+  "name": "Recipes - Save",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recipes-save-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recipes-save",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\nif (!body.recipe) {\n  errors.push('Missing required parameter: recipe');\n}\n\nif (!body.user_id && !body.discord_user_id) {\n  errors.push('Missing required parameter: user_id or discord_user_id');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nconst recipe = body.recipe;\n\n// Build text for embedding\nconst embeddingText = [\n  recipe.title || '',\n  recipe.description || '',\n  (recipe.tags || []).join(' '),\n  (recipe.ingredients || []).map(i => i.name).join(' ')\n].join(' ').trim();\n\nreturn [{\n  json: {\n    valid: true,\n    recipe,\n    embedding_text: embeddingText,\n    user_id: body.user_id || body.discord_user_id,\n    store_embedding: body.store_embedding !== false,\n    llm_metadata: body.llm_metadata || {},\n    api_url: body.api_url || process.env.RECIPES_API_URL || 'http://localhost:8000',\n    qdrant_url: body.qdrant_url || process.env.QDRANT_URL || 'http://localhost:6333',\n    qdrant_api_key: body.qdrant_api_key || process.env.QDRANT_API_KEY,\n    openai_api_key: body.openai_api_key || process.env.OPENAI_API_KEY,\n    collection: 'recipes'\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'recipes-save' } } }}",
+        "options": { "responseCode": 400 }
+      }
+    },
+    {
+      "id": "generate-embedding",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $json.openai_api_key }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": \"{{ $json.embedding_text }}\"\n}",
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "prepare-qdrant",
+      "name": "Prepare Qdrant",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 200],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nif (input.error) {\n  return [{\n    json: {\n      ...prevData,\n      embedding: null,\n      embedding_error: input.error.message\n    }\n  }];\n}\n\nconst embedding = input.data?.[0]?.embedding;\n\nreturn [{\n  json: {\n    ...prevData,\n    embedding,\n    point_id: 'rec_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9)\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-store-embedding",
+      "name": "Store Embedding?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1380, 200],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.store_embedding && $json.embedding }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "store-qdrant",
+      "name": "Store in Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1620, 100],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.qdrant_url }}/collections/{{ $json.collection }}/points",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "api-key", "value": "={{ $json.qdrant_api_key }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [\n    {\n      \"id\": \"{{ $json.point_id }}\",\n      \"vector\": {{ JSON.stringify($json.embedding) }},\n      \"payload\": {{ JSON.stringify($json.recipe) }}\n    }\n  ]\n}",
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "skip-qdrant",
+      "name": "Skip Qdrant",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1620, 300]
+    },
+    {
+      "id": "merge-qdrant",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1860, 200],
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex"
+      }
+    },
+    {
+      "id": "save-to-api",
+      "name": "Save to API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2100, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate Input').first().json.api_url }}/api/recipes",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"discord_user_id\": \"{{ $('Validate Input').first().json.user_id }}\",\n  \"title\": {{ JSON.stringify($('Validate Input').first().json.recipe.title) }},\n  \"description\": {{ JSON.stringify($('Validate Input').first().json.recipe.description || '') }},\n  \"ingredients\": {{ JSON.stringify($('Validate Input').first().json.recipe.ingredients || []) }},\n  \"instructions\": {{ JSON.stringify($('Validate Input').first().json.recipe.steps || []) }},\n  \"prep_time\": {{ $('Validate Input').first().json.recipe.prep_time_minutes || 0 }},\n  \"cook_time\": {{ $('Validate Input').first().json.recipe.cook_time_minutes || 0 }},\n  \"servings\": {{ $('Validate Input').first().json.recipe.servings || 4 }},\n  \"difficulty\": {{ JSON.stringify($('Validate Input').first().json.recipe.difficulty || 'moyen') }},\n  \"tags\": {{ JSON.stringify($('Validate Input').first().json.recipe.tags || []) }},\n  \"nutrition\": {{ JSON.stringify($('Validate Input').first().json.recipe.nutrition || {}) }},\n  \"source\": \"llm_generated\",\n  \"qdrant_point_id\": {{ JSON.stringify($('Prepare Qdrant').first().json.point_id || null) }},\n  \"llm_metadata\": {{ JSON.stringify($('Validate Input').first().json.llm_metadata) }}\n}",
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2340, 200],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst qdrantData = $('Prepare Qdrant').first().json;\n\ntry {\n  if (input.error) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: input.error.status || 500,\n          message: input.error.message || 'API save failed',\n          status: 'API_ERROR'\n        },\n        meta: { provider: 'api' }\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      success: true,\n      data: {\n        recipe_id: input.data?.id || input.id,\n        stored_in_qdrant: !!qdrantData.embedding,\n        qdrant_point_id: qdrantData.point_id || null,\n        recipe: prevData.recipe\n      },\n      meta: {\n        provider: 'api+qdrant',\n        api_response: input\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to process save: ' + e.message,\n        status: 'PROCESS_ERROR'\n      },\n      meta: { provider: 'api' }\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2580, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 80],
+      "parameters": {
+        "color": 4,
+        "width": 550,
+        "height": 180,
+        "content": "## Recipes - Save\n\n**Endpoint:** POST /webhook/recipes-save\n\n**Parameters:**\n- `recipe` (required): Full recipe object\n- `user_id` or `discord_user_id` (required): User identifier\n- `store_embedding` (optional): Store in Qdrant (default: true)\n- `llm_metadata` (optional): Provider info for tracking\n\n**Actions:** Generates embedding → Stores in Qdrant → Saves to API"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+    },
+    "Valid?": {
+      "main": [
+        [{ "node": "Generate Embedding", "type": "main", "index": 0 }],
+        [{ "node": "Error: Validation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate Embedding": {
+      "main": [[{ "node": "Prepare Qdrant", "type": "main", "index": 0 }]]
+    },
+    "Prepare Qdrant": {
+      "main": [[{ "node": "Store Embedding?", "type": "main", "index": 0 }]]
+    },
+    "Store Embedding?": {
+      "main": [
+        [{ "node": "Store in Qdrant", "type": "main", "index": 0 }],
+        [{ "node": "Skip Qdrant", "type": "main", "index": 0 }]
+      ]
+    },
+    "Store in Qdrant": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 0 }]]
+    },
+    "Skip Qdrant": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 1 }]]
+    },
+    "Merge": {
+      "main": [[{ "node": "Save to API", "type": "main", "index": 0 }]]
+    },
+    "Save to API": {
+      "main": [[{ "node": "Format Output", "type": "main", "index": 0 }]]
+    },
+    "Format Output": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

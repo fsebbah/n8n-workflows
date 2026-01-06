@@ -1,0 +1,252 @@
+{
+  "name": "Recipes - YouTube",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recipes-youtube-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recipes-youtube",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\nif (!body.query) {\n  errors.push('Missing required parameter: query');\n}\n\nif (!body.google_api_key) {\n  errors.push('Missing required parameter: google_api_key');\n}\n\nif (!body.anthropic_api_key && !body.openai_api_key) {\n  errors.push('Missing API key: anthropic_api_key or openai_api_key required for recipe extraction');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nconst prefs = body.preferences || {};\n\nreturn [{\n  json: {\n    valid: true,\n    query: body.query,\n    google_api_key: body.google_api_key,\n    anthropic_api_key: body.anthropic_api_key,\n    openai_api_key: body.openai_api_key,\n    user_id: body.user_id,\n    language: prefs.language || 'fr',\n    max_videos: prefs.max_videos || 1,\n    prefer_short: prefs.prefer_short || false,\n    n8n_webhook_url: process.env.N8N_WEBHOOK_URL || 'http://localhost:5678'\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'youtube' } } }}",
+        "options": { "responseCode": 400 }
+      }
+    },
+    {
+      "id": "search-youtube",
+      "name": "Search YouTube",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "authentication": "none",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "key", "value": "={{ $json.google_api_key }}" },
+            { "name": "part", "value": "snippet" },
+            { "name": "q", "value": "={{ $json.query }} recette" },
+            { "name": "type", "value": "video" },
+            { "name": "maxResults", "value": "={{ $json.max_videos }}" },
+            { "name": "order", "value": "relevance" },
+            { "name": "videoDuration", "value": "={{ $json.prefer_short ? 'short' : 'any' }}" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "check-results",
+      "name": "Has Results?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1140, 200],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.items?.length > 0 }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-results",
+      "name": "Error: No Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1380, 360],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: { code: 404, message: 'No YouTube videos found for query', status: 'NOT_FOUND' }, meta: { provider: 'youtube', query: $('Validate Input').first().json.query } } }}",
+        "options": { "responseCode": 404 }
+      }
+    },
+    {
+      "id": "extract-video-info",
+      "name": "Extract Video Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1380, 100],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst video = input.items[0];\nconst videoId = video.id?.videoId;\n\nreturn [{\n  json: {\n    ...prevData,\n    video: {\n      id: videoId,\n      title: video.snippet?.title,\n      description: video.snippet?.description,\n      channel: video.snippet?.channelTitle,\n      thumbnail: video.snippet?.thumbnails?.high?.url || video.snippet?.thumbnails?.default?.url,\n      url: `https://www.youtube.com/watch?v=${videoId}`,\n      published_at: video.snippet?.publishedAt\n    },\n    video_url: `https://www.youtube.com/watch?v=${videoId}`\n  }\n}];"
+      }
+    },
+    {
+      "id": "transcribe-video",
+      "name": "Transcribe Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1620, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.n8n_webhook_url }}/webhook/video-transcription",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"videoUrl\": \"{{ $json.video_url }}\",\n  \"language\": \"{{ $json.language }}\",\n  \"operation\": \"transcribe\"\n}",
+        "options": { "timeout": 120000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "extract-recipe",
+      "name": "Extract Recipe (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1860, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $('Validate Input').first().json.anthropic_api_key }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Extract a structured recipe from this video transcript. Include timestamps for each step when mentioned.\\n\\nVideo title: {{ $('Extract Video Info').first().json.video.title }}\\n\\nTranscript:\\n{{ $json.data?.transcript || $json.transcript || 'No transcript available' }}\\n\\nRespond with a JSON object:\\n{\\n  \\\"title\\\": \\\"Recipe title\\\",\\n  \\\"description\\\": \\\"Brief description\\\",\\n  \\\"servings\\\": number,\\n  \\\"prep_time_minutes\\\": number,\\n  \\\"cook_time_minutes\\\": number,\\n  \\\"difficulty\\\": \\\"facile|moyen|difficile\\\",\\n  \\\"ingredients\\\": [{\\\"name\\\": \\\"\\\", \\\"quantity\\\": number, \\\"unit\\\": \\\"\\\"}],\\n  \\\"steps\\\": [{\\\"order\\\": number, \\\"instruction\\\": \\\"\\\", \\\"timestamp\\\": \\\"MM:SS\\\"}],\\n  \\\"tips\\\": [\\\"tip1\\\"],\\n  \\\"tags\\\": [\\\"tag1\\\"]\\n}\\n\\nRespond ONLY with valid JSON.\"\n    }\n  ]\n}",
+        "options": { "timeout": 60000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2100, 100],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Extract Video Info').first().json;\nconst transcriptData = $('Transcribe Video').first().json;\n\ntry {\n  if (input.error) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: input.error.message || 'LLM extraction failed',\n          status: 'EXTRACTION_ERROR'\n        },\n        meta: { provider: 'youtube+anthropic' }\n      }\n    }];\n  }\n\n  const content = input.content?.[0]?.text || '{}';\n  let recipe;\n  \n  try {\n    recipe = JSON.parse(content);\n  } catch (e) {\n    // Try to extract JSON from response\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    recipe = jsonMatch ? JSON.parse(jsonMatch[0]) : { title: 'Parse error', raw: content };\n  }\n\n  return [{\n    json: {\n      success: true,\n      data: {\n        source: 'youtube',\n        video: prevData.video,\n        recipe,\n        transcript_excerpt: (transcriptData.data?.transcript || '').substring(0, 500) + '...'\n      },\n      meta: {\n        provider: 'youtube+anthropic',\n        models_used: ['gemini-2.5-flash', 'claude-sonnet-4-20250514'],\n        tokens_used: {\n          transcription: 0,\n          extraction: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0)\n        }\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to process recipe: ' + e.message,\n        status: 'PROCESS_ERROR'\n      },\n      meta: { provider: 'youtube' }\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2340, 100],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 80],
+      "parameters": {
+        "color": 4,
+        "width": 600,
+        "height": 180,
+        "content": "## Recipes - YouTube\n\n**Endpoint:** POST /webhook/recipes-youtube\n\n**Parameters:**\n- `query` (required): Search query (e.g., \"recette tiramisu\")\n- `google_api_key` (required): YouTube Data API key\n- `anthropic_api_key` or `openai_api_key` (required): For recipe extraction\n- `preferences`: { language, max_videos, prefer_short }\n\n**Flow:** YouTube Search → Transcribe (Gemini) → Extract Recipe (Claude)"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+    },
+    "Valid?": {
+      "main": [
+        [{ "node": "Search YouTube", "type": "main", "index": 0 }],
+        [{ "node": "Error: Validation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Search YouTube": {
+      "main": [[{ "node": "Has Results?", "type": "main", "index": 0 }]]
+    },
+    "Has Results?": {
+      "main": [
+        [{ "node": "Extract Video Info", "type": "main", "index": 0 }],
+        [{ "node": "Error: No Results", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Video Info": {
+      "main": [[{ "node": "Transcribe Video", "type": "main", "index": 0 }]]
+    },
+    "Transcribe Video": {
+      "main": [[{ "node": "Extract Recipe (LLM)", "type": "main", "index": 0 }]]
+    },
+    "Extract Recipe (LLM)": {
+      "main": [[{ "node": "Format Output", "type": "main", "index": 0 }]]
+    },
+    "Format Output": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

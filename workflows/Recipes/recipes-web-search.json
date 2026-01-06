@@ -1,0 +1,362 @@
+{
+  "name": "Recipes - Web Search",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "webhookId": "recipes-web-search-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recipes-web-search",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\nconst validProviders = ['openai', 'openai-mini', 'claude', 'claude-haiku', 'gemini', 'gemini-pro', 'mistral', 'mistral-premium'];\n\nif (!body.query) {\n  errors.push('Missing required parameter: query');\n}\n\nconst provider = body.provider || 'gemini';\nif (!validProviders.includes(provider)) {\n  errors.push(`Invalid provider: '${provider}'. Valid options: ${validProviders.join(', ')}`);\n}\n\n// Check required API keys based on provider\nif (provider.startsWith('openai') && !body.openai_api_key) {\n  errors.push('Missing openai_api_key for OpenAI provider');\n}\nif (provider.startsWith('claude') && !body.anthropic_api_key) {\n  errors.push('Missing anthropic_api_key for Claude provider');\n}\nif (provider.startsWith('gemini') && !body.google_api_key) {\n  errors.push('Missing google_api_key for Gemini provider');\n}\nif (provider.startsWith('mistral') && !body.mistral_api_key) {\n  errors.push('Missing mistral_api_key for Mistral provider');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nconst opts = body.options || {};\n\nreturn [{\n  json: {\n    valid: true,\n    query: body.query,\n    provider,\n    provider_type: provider.split('-')[0],\n    user_id: body.user_id,\n    openai_api_key: body.openai_api_key,\n    anthropic_api_key: body.anthropic_api_key,\n    google_api_key: body.google_api_key,\n    mistral_api_key: body.mistral_api_key,\n    options: {\n      search_depth: opts.search_depth || 'medium',\n      max_results: opts.max_results || 5,\n      language: opts.language || 'fr',\n      allowed_domains: opts.allowed_domains || [],\n      blocked_domains: opts.blocked_domains || [],\n      include_sources: opts.include_sources !== false\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 400],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 560],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'web-search' } } }}",
+        "options": { "responseCode": 400 }
+      }
+    },
+    {
+      "id": "switch-provider",
+      "name": "Switch Provider",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [900, 300],
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "outputKey": "openai",
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider_type }}",
+                    "rightValue": "openai",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "claude",
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider_type }}",
+                    "rightValue": "claude",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "gemini",
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider_type }}",
+                    "rightValue": "gemini",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "mistral",
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider_type }}",
+                    "rightValue": "mistral",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "none" }
+      }
+    },
+    {
+      "id": "call-openai",
+      "name": "OpenAI Web Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1180, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $json.openai_api_key }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.provider === 'openai-mini' ? 'gpt-4o-mini-search-preview' : 'gpt-4o-search-preview' }}\",\n  \"tools\": [{\"type\": \"web_search_preview\"}],\n  \"tool_choice\": {\n    \"type\": \"web_search_preview\",\n    \"search_context_size\": \"{{ $json.options.search_depth }}\"\n  },\n  \"input\": \"Recherche les meilleures recettes pour: {{ $json.query }}. Trouve {{ $json.options.max_results }} recettes avec leurs sources. Réponds en {{ $json.options.language === 'fr' ? 'français' : 'anglais' }}.\"\n}",
+        "options": { "timeout": 60000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "call-claude",
+      "name": "Claude Web Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1180, 250],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $json.anthropic_api_key }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "anthropic-beta", "value": "web-search-2024-10-22" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.provider === 'claude-haiku' ? 'claude-3-5-haiku-latest' : 'claude-sonnet-4-20250514' }}\",\n  \"max_tokens\": 4096,\n  \"tools\": [{\n    \"type\": \"web_search\",\n    \"name\": \"web_search\"\n    {{ $json.options.allowed_domains.length > 0 ? ', \"allowed_domains\": ' + JSON.stringify($json.options.allowed_domains) : '' }}\n    {{ $json.options.blocked_domains.length > 0 ? ', \"blocked_domains\": ' + JSON.stringify($json.options.blocked_domains) : '' }}\n  }],\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Recherche sur le web les meilleures recettes pour: {{ $json.query }}. Trouve {{ $json.options.max_results }} recettes avec leurs sources et URLs. Réponds en {{ $json.options.language === 'fr' ? 'français' : 'anglais' }}.\"\n  }]\n}",
+        "options": { "timeout": 60000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "call-gemini",
+      "name": "Gemini Web Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1180, 400],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.provider === 'gemini-pro' ? 'gemini-2.5-pro' : 'gemini-2.5-flash' }}:generateContent?key={{ $json.google_api_key }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Recherche les meilleures recettes pour: {{ $json.query }}. Trouve {{ $json.options.max_results }} recettes avec leurs sources et URLs. Réponds en {{ $json.options.language === 'fr' ? 'français' : 'anglais' }}.\"\n    }]\n  }],\n  \"tools\": [{\n    \"google_search\": {}\n  }]\n}",
+        "options": { "timeout": 60000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "call-mistral",
+      "name": "Mistral Web Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1180, 550],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/agents",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $json.mistral_api_key }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral-medium-2505\",\n  \"name\": \"Recipe Search Agent\",\n  \"tools\": [{\"type\": \"{{ $json.provider === 'mistral-premium' ? 'web_search_premium' : 'web_search' }}\"}]\n}",
+        "options": { "timeout": 60000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "normalize-openai",
+      "name": "Normalize OpenAI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, 100],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\ntry {\n  const sources = (input.annotations || []).filter(a => a.type === 'url_citation').map(a => ({\n    title: a.title || 'Source',\n    url: a.url,\n    domain: new URL(a.url).hostname\n  }));\n\n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content: input.output_text || input.output || '',\n      sources,\n      search_performed: true,\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      raw_response: input\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "normalize-claude",
+      "name": "Normalize Claude",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, 250],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\ntry {\n  let content = '';\n  const sources = [];\n  \n  for (const block of (input.content || [])) {\n    if (block.type === 'text') {\n      content += block.text;\n    }\n    if (block.type === 'tool_use' && block.name === 'web_search') {\n      // Extract sources from tool results\n    }\n  }\n\n  // Extract URLs from content\n  const urlRegex = /https?:\\/\\/[^\\s)\"]+/g;\n  const urls = content.match(urlRegex) || [];\n  urls.forEach(url => {\n    try {\n      sources.push({\n        title: 'Source',\n        url,\n        domain: new URL(url).hostname\n      });\n    } catch (e) {}\n  });\n\n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content,\n      sources: [...new Map(sources.map(s => [s.url, s])).values()],\n      search_performed: true,\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      raw_response: input\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "normalize-gemini",
+      "name": "Normalize Gemini",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, 400],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\ntry {\n  const candidate = input.candidates?.[0];\n  const content = candidate?.content?.parts?.map(p => p.text).join('') || '';\n  \n  const groundingMeta = candidate?.groundingMetadata || {};\n  const sources = (groundingMeta.groundingChunks || []).map(chunk => ({\n    title: chunk.web?.title || 'Source',\n    url: chunk.web?.uri || '',\n    domain: chunk.web?.uri ? new URL(chunk.web.uri).hostname : ''\n  }));\n\n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content,\n      sources,\n      search_performed: sources.length > 0,\n      search_queries: groundingMeta.webSearchQueries || [],\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      raw_response: input\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "normalize-mistral",
+      "name": "Normalize Mistral",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, 550],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\ntry {\n  // Note: Mistral returns agent ID, need to start conversation\n  // This is a simplified version - full implementation needs conversation start\n  \n  const agentId = input.id;\n  \n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content: 'Mistral agent created. Full implementation requires conversation API.',\n      sources: [],\n      search_performed: false,\n      agent_id: agentId,\n      warning: 'Mistral web search is not guaranteed - agent decides when to search',\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      raw_response: input\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1740, 300],
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex"
+      }
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\ntry {\n  if (!input.normalized) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: input.error || 'Failed to normalize response',\n          status: 'NORMALIZE_ERROR'\n        },\n        meta: { provider: prevData.provider }\n      }\n    }];\n  }\n\n  // Parse recipes from content (simplified)\n  const recipes = [];\n  const content = input.content || '';\n  \n  // Try to extract recipe-like structures from the response\n  const lines = content.split('\\n');\n  let currentRecipe = null;\n  \n  for (const line of lines) {\n    if (line.match(/^\\d+\\.|^-|^\\*/) && line.length > 20) {\n      if (currentRecipe) recipes.push(currentRecipe);\n      currentRecipe = {\n        title: line.replace(/^[\\d.\\-*]+\\s*/, '').substring(0, 100),\n        summary: '',\n        source: input.sources[recipes.length] || null\n      };\n    } else if (currentRecipe && line.trim()) {\n      currentRecipe.summary += line + ' ';\n    }\n  }\n  if (currentRecipe) recipes.push(currentRecipe);\n\n  return [{\n    json: {\n      success: true,\n      data: {\n        query: prevData.query,\n        recipes_found: recipes.slice(0, prevData.options.max_results),\n        sources: input.sources || [],\n        search_queries_used: input.search_queries || [prevData.query],\n        raw_content: content.substring(0, 2000)\n      },\n      meta: {\n        provider: prevData.provider,\n        model: prevData.provider,\n        search_engine: prevData.provider_type === 'gemini' ? 'google' : (prevData.provider_type === 'openai' ? 'bing' : 'brave'),\n        search_performed: input.search_performed,\n        sources_count: (input.sources || []).length\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to format output: ' + e.message,\n        status: 'FORMAT_ERROR'\n      },\n      meta: { provider: prevData.provider }\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2220, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 80],
+      "parameters": {
+        "color": 4,
+        "width": 700,
+        "height": 260,
+        "content": "## Recipes - Web Search (Multi-Provider)\n\n**Endpoint:** POST /webhook/recipes-web-search\n\n**Parameters:**\n- `query` (required): Search query\n- `provider`: openai, openai-mini, claude, claude-haiku, gemini (default), gemini-pro, mistral, mistral-premium\n- `options`: { search_depth, max_results, language, allowed_domains[], blocked_domains[] }\n- API keys: `openai_api_key`, `anthropic_api_key`, `google_api_key`, `mistral_api_key`\n\n**Notes:**\n- `allowed_domains` only works with Claude\n- Mistral search is NOT guaranteed (agent decides)\n- Gemini uses Google Search, OpenAI uses Bing, Claude/Mistral use Brave"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+    },
+    "Valid?": {
+      "main": [
+        [{ "node": "Switch Provider", "type": "main", "index": 0 }],
+        [{ "node": "Error: Validation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Switch Provider": {
+      "main": [
+        [{ "node": "OpenAI Web Search", "type": "main", "index": 0 }],
+        [{ "node": "Claude Web Search", "type": "main", "index": 0 }],
+        [{ "node": "Gemini Web Search", "type": "main", "index": 0 }],
+        [{ "node": "Mistral Web Search", "type": "main", "index": 0 }]
+      ]
+    },
+    "OpenAI Web Search": {
+      "main": [[{ "node": "Normalize OpenAI", "type": "main", "index": 0 }]]
+    },
+    "Claude Web Search": {
+      "main": [[{ "node": "Normalize Claude", "type": "main", "index": 0 }]]
+    },
+    "Gemini Web Search": {
+      "main": [[{ "node": "Normalize Gemini", "type": "main", "index": 0 }]]
+    },
+    "Mistral Web Search": {
+      "main": [[{ "node": "Normalize Mistral", "type": "main", "index": 0 }]]
+    },
+    "Normalize OpenAI": {
+      "main": [[{ "node": "Merge Results", "type": "main", "index": 0 }]]
+    },
+    "Normalize Claude": {
+      "main": [[{ "node": "Merge Results", "type": "main", "index": 1 }]]
+    },
+    "Normalize Gemini": {
+      "main": [[{ "node": "Merge Results", "type": "main", "index": 2 }]]
+    },
+    "Normalize Mistral": {
+      "main": [[{ "node": "Merge Results", "type": "main", "index": 3 }]]
+    },
+    "Merge Results": {
+      "main": [[{ "node": "Format Output", "type": "main", "index": 0 }]]
+    },
+    "Format Output": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

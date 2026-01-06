@@ -1,0 +1,143 @@
+{
+  "name": "Recipes - Timer Notify",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recipes-timer-notify-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recipes-timer-notify",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\nif (!body.discord_user_id) {\n  errors.push('Missing required parameter: discord_user_id');\n}\n\nif (!body.discord_channel_id && !body.discord_webhook_url) {\n  errors.push('Missing required parameter: discord_channel_id or discord_webhook_url');\n}\n\nif (!body.label) {\n  errors.push('Missing required parameter: label');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    discord_user_id: body.discord_user_id,\n    discord_channel_id: body.discord_channel_id,\n    discord_webhook_url: body.discord_webhook_url || process.env.DISCORD_RECIPES_WEBHOOK_URL,\n    timer_id: body.timer_id,\n    recipe_id: body.recipe_id,\n    recipe_title: body.recipe_title || '',\n    label: body.label,\n    duration_minutes: body.duration_minutes || 0,\n    created_at: body.created_at,\n    expired_at: new Date().toISOString()\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'timer-notify' } } }}",
+        "options": { "responseCode": 400 }
+      }
+    },
+    {
+      "id": "send-discord",
+      "name": "Send Discord Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.discord_webhook_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": \"<@{{ $json.discord_user_id }}>\",\n  \"embeds\": [{\n    \"title\": \"Timer terminé !\",\n    \"description\": \"{{ $json.label }}\",\n    \"color\": 16744576,\n    \"fields\": [\n      {\n        \"name\": \"Recette\",\n        \"value\": \"{{ $json.recipe_title || 'Non spécifiée' }}\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"Durée\",\n        \"value\": \"{{ $json.duration_minutes }} minutes\",\n        \"inline\": true\n      }\n    ],\n    \"footer\": {\n      \"text\": \"Plugin Recipes\"\n    },\n    \"timestamp\": \"{{ $json.expired_at }}\"\n  }]\n}",
+        "options": { "timeout": 10000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 200],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\ntry {\n  if (input.error) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: input.error.status || 500,\n          message: input.error.message || 'Discord notification failed',\n          status: 'DISCORD_ERROR'\n        },\n        meta: { provider: 'discord' }\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      success: true,\n      data: {\n        notification_sent: true,\n        timer_id: prevData.timer_id,\n        discord_user_id: prevData.discord_user_id,\n        label: prevData.label,\n        sent_at: new Date().toISOString()\n      },\n      meta: {\n        provider: 'discord'\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to process notification: ' + e.message,\n        status: 'PROCESS_ERROR'\n      },\n      meta: { provider: 'discord' }\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1380, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 80],
+      "parameters": {
+        "color": 4,
+        "width": 550,
+        "height": 180,
+        "content": "## Recipes - Timer Notify\n\n**Endpoint:** POST /webhook/recipes-timer-notify\n\n**Called by:** Celery when timer expires\n\n**Parameters:**\n- `discord_user_id` (required): User to mention\n- `discord_channel_id` or `discord_webhook_url` (required): Where to send\n- `label` (required): Timer message (e.g., \"Sortir le gâteau du four\")\n- `recipe_id`, `recipe_title`, `duration_minutes` (optional): Context"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+    },
+    "Valid?": {
+      "main": [
+        [{ "node": "Send Discord Notification", "type": "main", "index": 0 }],
+        [{ "node": "Error: Validation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Discord Notification": {
+      "main": [[{ "node": "Format Output", "type": "main", "index": 0 }]]
+    },
+    "Format Output": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
