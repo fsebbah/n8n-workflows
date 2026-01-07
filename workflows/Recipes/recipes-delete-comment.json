@@ -1,0 +1,127 @@
+{
+  "name": "RECIPES - Delete Comment",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## RECIPES - Delete Comment\n\n**Endpoint:** DELETE /webhook/recipes-delete-comment\n\n**Parameters:**\n- `recipe_id` (required): ID de la recette\n- `comment_id` (required): ID du commentaire\n- `discord_user_id` (required): ID Discord (verification ownership)\n\n**Regles:**\n- Seul l'auteur du commentaire peut le supprimer",
+        "height": 260,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "DELETE",
+        "path": "recipes-delete-comment",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [300, 300],
+      "webhookId": "recipes-delete-comment"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\nconst query = input.query || {};\n\n// Accept from body or query\nconst recipeId = body.recipe_id || query.recipe_id;\nconst commentId = body.comment_id || query.comment_id;\nconst discordUserId = body.discord_user_id || query.discord_user_id;\n\nconst errors = [];\nif (!recipeId) errors.push('recipe_id');\nif (!commentId) errors.push('comment_id');\nif (!discordUserId) errors.push('discord_user_id');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    recipe_id: recipeId,\n    comment_id: commentId,\n    discord_user_id: discordUserId\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "valid", "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [740, 300]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.TORAH_API_URL }}/api/recipes/{{ $json.recipe_id }}/comments/{{ $json.comment_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-Discord-User-ID", "value": "={{ $json.discord_user_id }}" }
+          ]
+        },
+        "options": {
+          "response": { "response": { "fullResponse": true } }
+        }
+      },
+      "id": "delete-comment",
+      "name": "Delete Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const apiResponse = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\nconst statusCode = apiResponse.statusCode || 200;\nconst body = apiResponse.body || apiResponse;\n\nif (statusCode === 403) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 403,\n        message: 'Non autorise: vous ne pouvez supprimer que vos propres commentaires',\n        status: 'FORBIDDEN'\n      }\n    }\n  }];\n}\n\nif (statusCode === 404) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: `Commentaire '${inputData.comment_id}' non trouve`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: body.detail || 'Erreur lors de la suppression du commentaire',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Commentaire supprime',\n    deleted: {\n      recipe_id: inputData.recipe_id,\n      comment_id: inputData.comment_id\n    }\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1180, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 400) }}",
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1400, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 420]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": { "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]] },
+    "Validate Input": { "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]] },
+    "Valid?": { "main": [[{ "node": "Delete Comment", "type": "main", "index": 0 }], [{ "node": "Respond Error", "type": "main", "index": 0 }]] },
+    "Delete Comment": { "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]] },
+    "Format Response": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
