@@ -6,31 +6,100 @@
 
 ---
 
+## Decisions V1
+
+| Point | Decision | Notes |
+|-------|----------|-------|
+| **Moderation** | Auteur seul peut supprimer | Pas de role admin en V1 |
+| **Signalement** | Non | A considerer en V2 |
+| **Limite commentaires** | Illimite | Par user par recette |
+| **Longueur max commentaire** | 500 caracteres | Validation API |
+| **Notifications** | Oui, DM Discord | Via Plugin (Option A) |
+| **Anonymat** | Non | Pseudo Discord toujours visible |
+| **Champ createur** | `recipes.discord_user_id` | A confirmer avec equipe API |
+
+---
+
 ## Statut Implementation API (2026-01-07)
 
 | Endpoint | Status | Notes |
 |----------|--------|-------|
 | **COMMENTS** | | |
 | `POST /api/recipes/{id}/comments` | :white_check_mark: Existe | OK |
-| `GET /api/recipes/{id}/comments` | :white_check_mark: Existe | Pagination `offset/limit` au lieu de `page/limit` |
+| `GET /api/recipes/{id}/comments` | :white_check_mark: Existe | Pagination `offset/limit` |
 | `DELETE /api/recipes/{id}/comments/{id}` | :x: Manquant | A implementer |
 | **RATINGS** | | |
 | `POST /api/recipes/{id}/rating` | :white_check_mark: Existe | Upsert OK |
-| `GET /api/recipes/{id}/ratings` | :x: Manquant | Stats + distribution demandes |
-
-### Differences de format
-
-| Demande (spec) | Implemente |
-|----------------|------------|
-| `{"success": true, "comment": {...}}` | Retourne directement l'objet |
-| `discord_username` dans comments | Non stocke (optionnel) |
-| Colonnes cache `avg_rating`, `rating_count` | Calcule a la volee (OK) |
+| `GET /api/recipes/{id}/ratings` | :x: Manquant | Stats + distribution |
 
 ### Reste a faire (Equipe API)
 
 1. :x: Ajouter `DELETE /api/recipes/{id}/comments/{comment_id}`
 2. :x: Ajouter `GET /api/recipes/{id}/ratings` avec distribution
-3. :grey_question: Optionnel: ajouter `discord_username` au schema comments
+3. :grey_question: Confirmer que `recipes.discord_user_id` existe et est retourne par GET
+4. :grey_question: Optionnel: ajouter `discord_username` au schema comments
+
+---
+
+## Architecture Notifications
+
+**Decision:** Option A - Le Plugin envoie les DM (bot deja connecte cote plugin)
+
+```
+┌─────────────┐  POST /webhook/recipes-add-comment   ┌─────────┐
+│   Plugin    │ ─────────────────────────────────────▶│  n8n    │
+│   Discord   │                                       │         │
+│     Bot     │◀───────────────────────────────────── │         │
+└─────────────┘  Response: {success, comment, notify} └─────────┘
+      │                                                    │
+      │  Si notify present:                                │
+      │  Plugin envoie DM au createur                      ▼
+      ▼                                               ┌─────────┐
+  Discord DM                                          │   API   │
+                                                      └─────────┘
+```
+
+### Response n8n enrichie
+
+```json
+{
+  "success": true,
+  "comment": {
+    "id": 123,
+    "recipe_id": 45,
+    "discord_user_id": "636639897767378954",
+    "content": "Super recette!",
+    "created_at": "2026-01-07T14:30:00Z"
+  },
+  "notify": {
+    "type": "new_comment",
+    "to_discord_user_id": "999888777",
+    "recipe_id": 45,
+    "recipe_name": "Cookies au chocolat",
+    "from_username": "fsebbah63",
+    "preview": "Super recette!"
+  }
+}
+```
+
+### Logique Plugin (exemple)
+
+```javascript
+const response = await fetch('/webhook/recipes-add-comment', {...});
+const data = await response.json();
+
+// Envoyer DM si notify present et different de l'auteur
+if (data.notify?.to_discord_user_id &&
+    data.notify.to_discord_user_id !== currentUserId) {
+  const user = await client.users.fetch(data.notify.to_discord_user_id);
+  await user.send(
+    `💬 **${data.notify.from_username}** a commenté votre recette ` +
+    `"${data.notify.recipe_name}":\n> ${data.notify.preview}`
+  );
+}
+```
+
+**Note:** Pas de notification si on commente sa propre recette.
 
 ---
 
@@ -52,7 +121,7 @@ CREATE TABLE recipe_comments (
     recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
     discord_user_id VARCHAR(50) NOT NULL,
     discord_username VARCHAR(100),  -- Optionnel
-    content TEXT NOT NULL,
+    content VARCHAR(500) NOT NULL,  -- Max 500 caracteres
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -77,21 +146,18 @@ CREATE TABLE recipe_ratings (
 CREATE INDEX idx_ratings_recipe ON recipe_ratings(recipe_id);
 ```
 
-### Modifications table `recipes` (Optionnel - cache)
+### Verification table `recipes`
 
 ```sql
--- Colonnes de cache pour eviter les calculs a chaque requete
--- Note: l'API calcule actuellement a la volee, ce qui est acceptable
-ALTER TABLE recipes ADD COLUMN avg_rating DECIMAL(2,1) DEFAULT 0;
-ALTER TABLE recipes ADD COLUMN rating_count INTEGER DEFAULT 0;
-ALTER TABLE recipes ADD COLUMN comment_count INTEGER DEFAULT 0;
+-- Confirmer que cette colonne existe (createur de la recette)
+recipes.discord_user_id VARCHAR(50) NOT NULL
 ```
 
 ---
 
 ## 2. Endpoints API Backend
 
-**Base URL:** `$env.TORAH_API_URL` (actuellement `http://pi6.local:3031`)
+**Base URL:** `$env.TORAH_API_URL`
 
 ### Comments
 
@@ -106,7 +172,7 @@ ALTER TABLE recipes ADD COLUMN comment_count INTEGER DEFAULT 0;
 | Methode | Endpoint | Status | Description |
 |---------|----------|--------|-------------|
 | `POST` | `/api/recipes/{recipe_id}/rating` | :white_check_mark: | Ajouter ou modifier sa note |
-| `GET` | `/api/recipes/{recipe_id}/ratings` | :x: | Obtenir les statistiques de notation |
+| `GET` | `/api/recipes/{recipe_id}/ratings` | :x: | Obtenir les statistiques |
 
 ---
 
@@ -118,34 +184,34 @@ ALTER TABLE recipes ADD COLUMN comment_count INTEGER DEFAULT 0;
 ```json
 {
   "discord_user_id": "636639897767378954",
-  "content": "Excellente recette, je recommande!"
+  "discord_username": "fsebbah63",
+  "content": "Excellente recette!"
 }
 ```
 
-**Response actuelle (201):** *(retourne directement l'objet)*
+**Validation:**
+- `content`: requis, max 500 caracteres
+
+**Response (201):**
 ```json
 {
   "id": 123,
   "recipe_id": 45,
   "discord_user_id": "636639897767378954",
-  "content": "Excellente recette, je recommande!",
+  "content": "Excellente recette!",
   "created_at": "2026-01-07T14:30:00Z"
 }
 ```
-
-**Errors:**
-- `400` - Contenu vide ou invalide
-- `404` - Recette non trouvee
 
 ---
 
 ### GET /api/recipes/{recipe_id}/comments :white_check_mark:
 
 **Query Parameters:**
-- `offset` (optional, default: 0)
-- `limit` (optional, default: 10, max: 50)
+- `offset` (default: 0)
+- `limit` (default: 10, max: 50)
 
-**Response actuelle (200):**
+**Response (200):**
 ```json
 [
   {
@@ -154,13 +220,6 @@ ALTER TABLE recipes ADD COLUMN comment_count INTEGER DEFAULT 0;
     "discord_user_id": "636639897767378954",
     "content": "Excellente recette!",
     "created_at": "2026-01-07T14:30:00Z"
-  },
-  {
-    "id": 122,
-    "recipe_id": 45,
-    "discord_user_id": "123456789",
-    "content": "J'ai ajoute un peu de citron, c'etait parfait.",
-    "created_at": "2026-01-07T12:00:00Z"
   }
 ]
 ```
@@ -170,9 +229,13 @@ ALTER TABLE recipes ADD COLUMN comment_count INTEGER DEFAULT 0;
 ### DELETE /api/recipes/{recipe_id}/comments/{comment_id} :x: A IMPLEMENTER
 
 **Headers:**
-- `X-Discord-User-ID`: ID de l'utilisateur (pour verifier ownership)
+- `X-Discord-User-ID`: ID de l'utilisateur (verification ownership)
 
-**Response attendue (200):**
+**Regles:**
+- Seul l'auteur du commentaire peut le supprimer
+- Retourner 403 si autre utilisateur
+
+**Response (200):**
 ```json
 {
   "success": true,
@@ -181,7 +244,7 @@ ALTER TABLE recipes ADD COLUMN comment_count INTEGER DEFAULT 0;
 ```
 
 **Errors:**
-- `403` - Non autorise (pas le proprietaire du commentaire)
+- `403` - Non autorise (pas l'auteur)
 - `404` - Commentaire non trouve
 
 ---
@@ -196,7 +259,7 @@ ALTER TABLE recipes ADD COLUMN comment_count INTEGER DEFAULT 0;
 }
 ```
 
-**Response actuelle (200):** *(retourne directement l'objet, upsert OK)*
+**Response (200):**
 ```json
 {
   "id": 456,
@@ -208,13 +271,6 @@ ALTER TABLE recipes ADD COLUMN comment_count INTEGER DEFAULT 0;
 }
 ```
 
-**Notes:**
-- Si l'utilisateur a deja note, sa note est mise a jour (UPSERT) :white_check_mark:
-
-**Errors:**
-- `400` - Rating invalide (doit etre entre 1 et 5)
-- `404` - Recette non trouvee
-
 ---
 
 ### GET /api/recipes/{recipe_id}/ratings :x: A IMPLEMENTER
@@ -222,7 +278,7 @@ ALTER TABLE recipes ADD COLUMN comment_count INTEGER DEFAULT 0;
 **Query Parameters:**
 - `discord_user_id` (optional) - Pour inclure la note de l'utilisateur
 
-**Response attendue (200):**
+**Response (200):**
 ```json
 {
   "recipe_id": 45,
@@ -239,64 +295,56 @@ ALTER TABLE recipes ADD COLUMN comment_count INTEGER DEFAULT 0;
 }
 ```
 
-**Notes:**
-- `user_rating` n'est inclus que si `discord_user_id` est fourni
-- `user_rating` est `null` si l'utilisateur n'a pas encore note
-
 ---
 
 ## 4. Workflows n8n
 
 | Workflow | Webhook | API Backend | Status |
 |----------|---------|-------------|--------|
-| `recipes-add-comment.json` | `POST /webhook/recipes-add-comment` | :white_check_mark: Pret | A creer |
-| `recipes-get-comments.json` | `GET /webhook/recipes-get-comments` | :white_check_mark: Pret | A creer |
-| `recipes-delete-comment.json` | `DELETE /webhook/recipes-delete-comment` | :x: Attente API | Bloque |
-| `recipes-add-rating.json` | `POST /webhook/recipes-add-rating` | :white_check_mark: Pret | A creer |
-| `recipes-get-ratings.json` | `GET /webhook/recipes-get-ratings` | :x: Attente API | Bloque |
+| `recipes-add-comment.json` | `POST /webhook/recipes-add-comment` | :white_check_mark: | A creer |
+| `recipes-get-comments.json` | `GET /webhook/recipes-get-comments` | :white_check_mark: | A creer |
+| `recipes-delete-comment.json` | `DELETE /webhook/recipes-delete-comment` | :x: Attente | Bloque |
+| `recipes-add-rating.json` | `POST /webhook/recipes-add-rating` | :white_check_mark: | A creer |
+| `recipes-get-ratings.json` | `GET /webhook/recipes-get-ratings` | :x: Attente | Bloque |
 
-**Note:** Les workflows pour les endpoints existants peuvent etre crees maintenant.
+### Workflow `recipes-add-comment` - Detail
+
+Le workflow doit:
+1. Valider les parametres (recipe_id, discord_user_id, content <= 500 chars)
+2. Recuperer la recette via API pour obtenir `creator_discord_user_id` et `title`
+3. Appeler `POST /api/recipes/{id}/comments`
+4. Construire la reponse avec `notify` si createur != commentateur
 
 ---
 
 ## 5. Plan d'Implementation
 
 ### Phase 1 - Backend (Equipe API)
-- [x] Creer les tables `recipe_comments` et `recipe_ratings`
-- [x] Implementer `POST /api/recipes/{id}/comments`
-- [x] Implementer `GET /api/recipes/{id}/comments`
-- [x] Implementer `POST /api/recipes/{id}/rating` (upsert)
-- [ ] **Implementer `DELETE /api/recipes/{id}/comments/{id}`**
-- [ ] **Implementer `GET /api/recipes/{id}/ratings` avec distribution**
-- [ ] Optionnel: ajouter `discord_username` au schema
+- [x] Tables `recipe_comments` et `recipe_ratings`
+- [x] `POST /api/recipes/{id}/comments`
+- [x] `GET /api/recipes/{id}/comments`
+- [x] `POST /api/recipes/{id}/rating` (upsert)
+- [ ] **`DELETE /api/recipes/{id}/comments/{id}`**
+- [ ] **`GET /api/recipes/{id}/ratings`**
+- [ ] Confirmer `recipes.discord_user_id` accessible via GET
 
 ### Phase 2 - Workflows (Equipe n8n)
-- [ ] Creer `recipes-add-comment.json` (pret)
-- [ ] Creer `recipes-get-comments.json` (pret)
-- [ ] Creer `recipes-add-rating.json` (pret)
-- [ ] Creer `recipes-delete-comment.json` (attente API)
-- [ ] Creer `recipes-get-ratings.json` (attente API)
-- [ ] Importer et activer dans n8n
-- [ ] Tests d'integration
+- [ ] `recipes-add-comment.json` avec notify
+- [ ] `recipes-get-comments.json`
+- [ ] `recipes-add-rating.json` avec notify
+- [ ] `recipes-delete-comment.json` (attente API)
+- [ ] `recipes-get-ratings.json` (attente API)
+- [ ] Import et activation n8n
 
 ### Phase 3 - Plugin (Equipe Plugin)
 - [ ] UI Modal commentaires
-- [ ] UI Systeme d'etoiles
-- [ ] Integration avec webhooks n8n
+- [ ] UI Systeme d'etoiles (1-5)
+- [ ] Integration webhooks n8n
+- [ ] Envoi DM sur notify
 
 ---
 
-## 6. Questions Ouvertes
-
-1. **Moderation des commentaires** - Faut-il un systeme de signalement/moderation?
-2. **Limites** - Nombre max de commentaires par user par recette?
-3. **Notifications** - Notifier le createur quand sa recette recoit un commentaire/note?
-4. **Anonymat** - Peut-on commenter/noter anonymement?
-5. **discord_username** - Doit-on le stocker ou le recuperer a l'affichage?
-
----
-
-## 7. Contacts
+## 6. Contacts
 
 | Equipe | Responsable |
 |--------|-------------|
