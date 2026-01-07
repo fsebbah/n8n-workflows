@@ -10,9 +10,9 @@ Cette spec definit l'integration entre le plugin Discord et les workflows n8n po
 ┌────────────────────────────────────────────────────────────────────┐
 │                        PLUGIN DISCORD                               │
 │                                                                     │
-│  !recette gateau ──────────────────────┐                           │
-│  !timer 15 sortir gateau ──────────────┼───▶ n8n Webhooks          │
-│  !liste add chocolat ──────────────────┘                           │
+│  /recette gateau ──────────────────────┐                           │
+│  /timer 15 sortir gateau ──────────────┼───▶ n8n Webhooks          │
+│  /liste add chocolat ──────────────────┘                           │
 │                                                                     │
 └────────────────────────────────────────────────────────────────────┘
                                 │
@@ -113,11 +113,11 @@ Toutes les reponses suivent ce format :
 
 ## 1. Generer une recette
 
-### Commande Discord
+### Commande Discord (Slash Command)
 ```
-!recette gateau au chocolat
-!recette random
-!recette avec poulet, tomates, basilic
+/recette gateau au chocolat
+/recette random
+/recette avec poulet, tomates, basilic
 ```
 
 ### Implementation Python
@@ -203,9 +203,9 @@ POST /webhook/recipes-generate
 
 ## 2. Recherche semantique
 
-### Commande Discord
+### Commande Discord (Slash Command)
 ```
-!chercher tarte aux pommes grand-mere
+/chercher tarte aux pommes grand-mere
 ```
 
 ### Implementation Python
@@ -232,9 +232,9 @@ async def search_recipes(query: str, user_id: str, limit: int = 5):
 
 ## 3. Sauvegarder une recette
 
-### Commande Discord
+### Commande Discord (Slash Command)
 ```
-!sauvegarder
+/sauvegarder
 ```
 
 ### Implementation Python
@@ -261,10 +261,10 @@ async def save_recipe(recipe: dict, user_id: str):
 
 ## 4. Recette depuis YouTube
 
-### Commande Discord
+### Commande Discord (Slash Command)
 ```
-!youtube recette carbonara
-!youtube https://youtube.com/watch?v=xxx
+/youtube recette carbonara
+/youtube https://youtube.com/watch?v=xxx
 ```
 
 ### Implementation Python
@@ -296,9 +296,9 @@ async def extract_from_youtube(query_or_url: str, user_id: str):
 
 ## 5. Recherche Web
 
-### Commande Discord
+### Commande Discord (Slash Command)
 ```
-!web meilleur risotto milano
+/web meilleur risotto milano
 ```
 
 ### Implementation Python
@@ -334,7 +334,7 @@ async def web_search(query: str, user_id: str, provider: str = "gemini"):
 ```
 Plugin                n8n                 API/Celery              Discord
   │                    │                      │                      │
-  │  !timer 15 gateau  │                      │                      │
+  │  /timer 15 gateau  │                      │                      │
   │───────────────────▶│  POST /api/timer     │                      │
   │                    │─────────────────────▶│                      │
   │                    │                      │  schedule(15min)     │
@@ -661,7 +661,7 @@ QDRANT_API_KEY=...
 ## Stockage cote Plugin (Redis)
 
 ```python
-# Session utilisateur pour !sauvegarder et !similaire
+# Session utilisateur pour /sauvegarder et /similaire
 REDIS_KEY = f"recipes:session:{user_id}"
 TTL = 3600  # 1 heure
 
@@ -678,25 +678,25 @@ session = {
 
 | Commande | Endpoint n8n | Status |
 |----------|--------------|--------|
-| `!recette <query>` | recipes-generate | ✅ |
-| `!recette random` | recipes-generate | ✅ |
-| `!recette avec <ingredients>` | recipes-generate | ✅ |
-| `!chercher <query>` | recipes-search | ✅ |
-| `!similaire [id]` | recipes-similar | ✅ |
-| `!sauvegarder` | recipes-save | ✅ |
-| `!youtube <query\|url>` | recipes-youtube | ✅ |
-| `!web <query>` | recipes-web-search | ✅ |
-| `!timer <min> <label>` | recipes-timer | ✅ |
-| `!timers` | recipes-timer (action=list) | ✅ |
-| `!timer-stop <id>` | recipes-timer (action=cancel) | ✅ |
-| `!liste add <item>` | recipes-shopping (action=add) | ✅ |
-| `!liste show` | recipes-shopping (action=get) | ✅ |
-| `!liste check <id>` | recipes-shopping (action=check) | ✅ |
-| `!liste clear` | recipes-shopping (action=clear) | ✅ |
-| `!liste recette <id>` | recipes-shopping (action=add_from_recipe) | ✅ |
-| `!mes-recettes` | recipes-list (action=list) | ✅ |
-| `!recette-detail <id>` | recipes-list (action=get) | ✅ |
-| `!supprimer-recette <id>` | recipes-list (action=delete) | ✅ |
+| `/recette <query>` | recipes-generate | ✅ |
+| `/recette random` | recipes-generate | ✅ |
+| `/recette avec <ingredients>` | recipes-generate | ✅ |
+| `/chercher <query>` | recipes-search | ✅ |
+| `/similaire [id]` | recipes-similar | ✅ |
+| `/sauvegarder` | recipes-save | ✅ |
+| `/youtube <query\|url>` | recipes-youtube | ✅ |
+| `/web <query>` | recipes-web-search | ✅ |
+| `/timer <min> <label>` | recipes-timer | ✅ |
+| `/timers` | recipes-timer (action=list) | ✅ |
+| `/timer-stop <id>` | recipes-timer (action=cancel) | ✅ |
+| `/liste add <item>` | recipes-shopping (action=add) | ✅ |
+| `/liste show` | recipes-shopping (action=get) | ✅ |
+| `/liste check <id>` | recipes-shopping (action=check) | ✅ |
+| `/liste clear` | recipes-shopping (action=clear) | ✅ |
+| `/liste recette <id>` | recipes-shopping (action=add_from_recipe) | ✅ |
+| `/mes-recettes` | recipes-list (action=list) | ✅ |
+| `/recette-detail <id>` | recipes-list (action=get) | ✅ |
+| `/supprimer-recette <id>` | recipes-list (action=delete) | ✅ |
 
 ---
 
