@@ -375,12 +375,12 @@ Flow n8n (recipes-timer-notify) :
 
 ```python
 async def create_timer(user_id: str, label: str, duration_minutes: int,
-                       discord_channel_id: str, recipe_id: str = None):
+                       discord_channel_id: str = None, recipe_id: str = None):
     """Creer un timer de cuisson"""
     payload = {
         "action": "create",
         "user_id": user_id,
-        "discord_channel_id": discord_channel_id,  # REQUIS pour l'API
+        "discord_channel_id": discord_channel_id,  # Optionnel (tracking uniquement)
         "label": label,
         "duration_minutes": duration_minutes,  # 1-1440 (24h max)
         "recipe_id": recipe_id,
@@ -446,6 +446,16 @@ Le workflow `recipes-timer-notify` utilise ce token pour envoyer les DM.
 ---
 
 ## 7. Shopping List
+
+### Architecture
+
+```
+/liste (Discord)  →  recipes-shopping (n8n)  →  API Backend (PostgreSQL)
+     ^                      ^                           ^
+   Slash command        Webhook n8n              Persistance
+```
+
+**Note:** L'ancienne implementation Redis est remplacee par l'appel n8n pour une persistance long terme dans PostgreSQL.
 
 ### Implementation Python
 
