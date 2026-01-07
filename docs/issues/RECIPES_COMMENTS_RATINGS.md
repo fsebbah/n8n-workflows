@@ -27,16 +27,16 @@
 | **COMMENTS** | | |
 | `POST /api/recipes/{id}/comments` | :white_check_mark: Existe | OK |
 | `GET /api/recipes/{id}/comments` | :white_check_mark: Existe | Pagination `offset/limit` |
-| `DELETE /api/recipes/{id}/comments/{id}` | :x: Manquant | A implementer |
+| `DELETE /api/recipes/{id}/comments/{id}` | :white_check_mark: Existe | Ownership check |
 | **RATINGS** | | |
 | `POST /api/recipes/{id}/rating` | :white_check_mark: Existe | Upsert OK |
-| `GET /api/recipes/{id}/ratings` | :x: Manquant | Stats + distribution |
+| `GET /api/recipes/{id}/ratings` | :white_check_mark: Existe | Stats + distribution |
 
-### Reste a faire (Equipe API)
+### Reste a faire (Equipe API) :white_check_mark: COMPLETE
 
-1. :x: Ajouter `DELETE /api/recipes/{id}/comments/{comment_id}`
-2. :x: Ajouter `GET /api/recipes/{id}/ratings` avec distribution
-3. :grey_question: Confirmer que `recipes.discord_user_id` existe et est retourne par GET
+1. :white_check_mark: `DELETE /api/recipes/{id}/comments/{comment_id}`
+2. :white_check_mark: `GET /api/recipes/{id}/ratings` avec distribution
+3. :white_check_mark: Confirmer que `recipes.discord_user_id` existe et est retourne par GET
 4. :grey_question: Optionnel: ajouter `discord_username` au schema comments
 
 ---
@@ -303,9 +303,9 @@ recipes.discord_user_id VARCHAR(50) NOT NULL
 |----------|---------|-------------|--------|
 | `recipes-add-comment.json` | `POST /webhook/recipes-add-comment` | :white_check_mark: | :white_check_mark: Actif |
 | `recipes-get-comments.json` | `GET /webhook/recipes-get-comments` | :white_check_mark: | :white_check_mark: Actif |
-| `recipes-delete-comment.json` | `DELETE /webhook/recipes-delete-comment` | :x: Attente | Bloque |
+| `recipes-delete-comment.json` | `DELETE /webhook/recipes-delete-comment` | :white_check_mark: | :white_check_mark: Actif |
 | `recipes-add-rating.json` | `POST /webhook/recipes-add-rating` | :white_check_mark: | :white_check_mark: Actif |
-| `recipes-get-ratings.json` | `GET /webhook/recipes-get-ratings` | :x: Attente | Bloque |
+| `recipes-get-ratings.json` | `GET /webhook/recipes-get-ratings` | :white_check_mark: | :white_check_mark: Actif |
 
 ### Workflow `recipes-add-comment` - Detail
 
@@ -319,22 +319,22 @@ Le workflow doit:
 
 ## 5. Plan d'Implementation
 
-### Phase 1 - Backend (Equipe API)
+### Phase 1 - Backend (Equipe API) :white_check_mark: COMPLETE
 - [x] Tables `recipe_comments` et `recipe_ratings`
 - [x] `POST /api/recipes/{id}/comments`
 - [x] `GET /api/recipes/{id}/comments`
 - [x] `POST /api/recipes/{id}/rating` (upsert)
-- [ ] **`DELETE /api/recipes/{id}/comments/{id}`**
-- [ ] **`GET /api/recipes/{id}/ratings`**
+- [x] `DELETE /api/recipes/{id}/comments/{id}`
+- [x] `GET /api/recipes/{id}/ratings`
 - [x] Confirmer `recipes.discord_user_id` accessible via GET
 
-### Phase 2 - Workflows (Equipe n8n)
+### Phase 2 - Workflows (Equipe n8n) :white_check_mark: COMPLETE
 - [x] `recipes-add-comment.json` avec notify
 - [x] `recipes-get-comments.json`
 - [x] `recipes-add-rating.json` avec notify
-- [ ] `recipes-delete-comment.json` (attente API)
-- [ ] `recipes-get-ratings.json` (attente API)
-- [x] Import et activation n8n (3/5 workflows)
+- [x] `recipes-delete-comment.json`
+- [x] `recipes-get-ratings.json`
+- [x] Import et activation n8n (5/5 workflows)
 
 ### Phase 3 - Plugin (Equipe Plugin)
 - [ ] UI Modal commentaires
