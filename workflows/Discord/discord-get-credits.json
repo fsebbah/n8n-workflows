@@ -1,9 +1,9 @@
 {
-  "name": "DISCORD - Get Subscriber",
+  "name": "DISCORD - Get Credits",
   "nodes": [
     {
       "parameters": {
-        "content": "## DISCORD - Get Subscriber\n\n**Endpoint:** GET /webhook/discord-get-subscriber\n\n**Query Parameters:**\n- `project_id` (required): ID du projet\n- `discord_user_id` (required): ID Discord de l'utilisateur\n\n**Source:** API Backend `/api/subscription/status/{discord_user_id}`\n\n**Commandes bot:** `/plan`, `/credits`\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"subscriber\": {\n    \"discord_user_id\": \"123456789\",\n    \"discord_username\": \"user#1234\",\n    \"credits\": 850,\n    \"subscription_plan\": \"premium\",\n    \"subscription_status\": \"active\",\n    \"is_active\": true\n  }\n}\n```",
+        "content": "## DISCORD - Get Credits\n\n**Endpoint:** GET /webhook/discord-get-credits\n\n**Query Parameters:**\n- `project_id` (required): ID du projet\n- `discord_user_id` (required): ID Discord de l'utilisateur\n\n**Alias de:** discord-get-balance\n\n**Commande bot:** `/credits`",
         "height": 400,
         "width": 340,
         "color": 5
@@ -12,12 +12,15 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [60, 60]
+      "position": [
+        60,
+        60
+      ]
     },
     {
       "parameters": {
         "httpMethod": "GET",
-        "path": "discord-get-subscriber",
+        "path": "discord-get-credits",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -25,8 +28,11 @@
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [440, 300],
-      "webhookId": "discord-get-subscriber"
+      "position": [
+        440,
+        300
+      ],
+      "webhookId": "discord-get-credits"
     },
     {
       "parameters": {
@@ -36,7 +42,10 @@
       "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 300]
+      "position": [
+        660,
+        300
+      ]
     },
     {
       "parameters": {
@@ -65,49 +74,44 @@
       "name": "Input Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [880, 300]
+      "position": [
+        880,
+        300
+      ]
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "={{ $env.TORAH_API_URL }}/api/subscription/status/{{ $json.discord_user_id }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Project-ID",
-              "value": "={{ $json.project_id }}"
-            }
-          ]
-        },
-        "options": {
-          "response": {
-            "response": {
-              "fullResponse": true
-            }
-          }
-        }
+        "operation": "executeQuery",
+        "query": "SELECT id, credits_remaining, credits_total, subscription_status, current_period_end FROM subscribers WHERE project_id = '{{ $json.project_id }}' AND discord_user_id = '{{ $json.discord_user_id }}' LIMIT 1",
+        "options": {}
       },
       "id": "get-subscriber",
-      "name": "Get Subscriber (API)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1100, 200],
-      "onError": "continueRegularOutput"
+      "name": "Get Subscriber",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1100,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-subscribers",
+          "name": "PostgreSQL Subscribers"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Traiter la reponse de l'API\nconst apiResponse = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\n// Verifier si l'API a retourne une erreur ou pas de donnees\nconst statusCode = apiResponse.statusCode || 200;\nconst body = apiResponse.body || apiResponse;\n\nif (statusCode >= 400 || !body || body.error) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: statusCode >= 400 ? statusCode : 404,\n        message: body?.error?.message || `Aucun abonnement trouve pour discord_user_id '${inputData.discord_user_id}'`,\n        status: statusCode >= 400 ? 'API_ERROR' : 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Mapper la reponse API vers le format attendu par le plugin\nconst subscriber = body;\n\n// Calculer credits_remaining et credits_total a partir de credits\nconst credits = subscriber.credits || 0;\nconst creditsTotal = subscriber.credits_total || credits;\nconst creditsRemaining = subscriber.credits_remaining || credits;\nconst creditsUsed = creditsTotal - creditsRemaining;\nconst usagePercent = creditsTotal > 0 \n  ? Math.round((creditsUsed / creditsTotal) * 100) \n  : 0;\n\nreturn [{\n  json: {\n    found: true,\n    subscriber: {\n      discord_user_id: subscriber.discord_user_id,\n      discord_username: subscriber.discord_username,\n      email: subscriber.email || null,\n      plan_id: subscriber.subscription_plan,\n      stripe_customer_id: subscriber.stripe_customer_id,\n      credits_remaining: creditsRemaining,\n      credits_total: creditsTotal,\n      credits_used: creditsUsed,\n      usage_percent: usagePercent,\n      subscription_status: subscriber.subscription_status || 'unknown',\n      subscription_plan: subscriber.subscription_plan,\n      current_period_end: subscriber.current_period_end,\n      is_active: subscriber.is_active || false\n    }\n  }\n}];"
+        "jsCode": "// Verifier si le subscriber existe\nconst dbResults = $input.all();\nconst inputData = $('Validate Input').first().json;\n\nif (!dbResults || dbResults.length === 0 || !dbResults[0].json.id) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Aucun abonnement trouve pour discord_user_id '${inputData.discord_user_id}' dans le projet '${inputData.project_id}'`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nconst subscriber = dbResults[0].json;\n\nreturn [{\n  json: {\n    found: true,\n    subscriber_id: subscriber.id,\n    project_id: inputData.project_id,\n    discord_user_id: inputData.discord_user_id,\n    credits_remaining: subscriber.credits_remaining || 0,\n    credits_total: subscriber.credits_total || 0,\n    subscription_status: subscriber.subscription_status,\n    current_period_end: subscriber.current_period_end\n  }\n}];"
       },
-      "id": "format-subscriber",
-      "name": "Format Subscriber",
+      "id": "check-subscriber",
+      "name": "Check Subscriber",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, 200]
+      "position": [
+        1320,
+        200
+      ]
     },
     {
       "parameters": {
@@ -136,12 +140,49 @@
       "name": "Subscriber Found?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1540, 200]
+      "position": [
+        1540,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, type, amount, description, created_at FROM transactions WHERE subscriber_id = {{ $json.subscriber_id }} ORDER BY created_at DESC LIMIT 5",
+        "options": {}
+      },
+      "id": "get-transactions",
+      "name": "Get Recent Transactions",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1760,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-subscribers",
+          "name": "PostgreSQL Subscribers"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la reponse balance\nconst subscriberData = $('Check Subscriber').first().json;\nconst transactionsResults = $input.all();\n\n// Calculer les stats\nconst creditsRemaining = subscriberData.credits_remaining || 0;\nconst creditsTotal = subscriberData.credits_total || 0;\nconst creditsUsed = creditsTotal - creditsRemaining;\nconst usagePercent = creditsTotal > 0 \n  ? Math.round((creditsUsed / creditsTotal) * 100) \n  : 0;\n\n// Formater les transactions recentes\nconst recentTransactions = transactionsResults\n  .filter(t => t.json && t.json.id)\n  .map(t => ({\n    id: t.json.id,\n    type: t.json.type,\n    amount: t.json.amount,\n    description: t.json.description,\n    created_at: t.json.created_at\n  }));\n\nreturn [{\n  json: {\n    success: true,\n    balance: {\n      credits_remaining: creditsRemaining,\n      credits_total: creditsTotal,\n      credits_used: creditsUsed,\n      usage_percent: usagePercent,\n      subscription_status: subscriberData.subscription_status,\n      renewal_date: subscriberData.current_period_end,\n      recent_transactions: recentTransactions\n    }\n  }\n}];"
+      },
+      "id": "format-balance",
+      "name": "Format Balance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        100
+      ]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: true, subscriber: $json.subscriber }) }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
           "responseCode": 200,
           "responseHeaders": {
@@ -158,7 +199,10 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1760, 100]
+      "position": [
+        2200,
+        100
+      ]
     },
     {
       "parameters": {
@@ -180,7 +224,10 @@
       "name": "Respond Validation Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1100, 420]
+      "position": [
+        1100,
+        420
+      ]
     },
     {
       "parameters": {
@@ -202,7 +249,10 @@
       "name": "Respond Not Found",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1760, 300]
+      "position": [
+        1760,
+        300
+      ]
     }
   ],
   "connections": {
@@ -232,7 +282,7 @@
       "main": [
         [
           {
-            "node": "Get Subscriber (API)",
+            "node": "Get Subscriber",
             "type": "main",
             "index": 0
           }
@@ -246,18 +296,18 @@
         ]
       ]
     },
-    "Get Subscriber (API)": {
+    "Get Subscriber": {
       "main": [
         [
           {
-            "node": "Format Subscriber",
+            "node": "Check Subscriber",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Subscriber": {
+    "Check Subscriber": {
       "main": [
         [
           {
@@ -272,7 +322,7 @@
       "main": [
         [
           {
-            "node": "Respond Success",
+            "node": "Get Recent Transactions",
             "type": "main",
             "index": 0
           }
@@ -280,6 +330,28 @@
         [
           {
             "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Recent Transactions": {
+      "main": [
+        [
+          {
+            "node": "Format Balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Balance": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
             "type": "main",
             "index": 0
           }

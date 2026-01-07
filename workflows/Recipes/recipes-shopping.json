@@ -1,0 +1,369 @@
+{
+  "name": "Recipes - Shopping",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recipes-shopping-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recipes-shopping",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\nconst action = body.action || 'get';\n\n// Common validation\nif (!body.user_id) {\n  errors.push('Missing required parameter: user_id');\n}\n\n// Action-specific validation\nif (action === 'add') {\n  if (!body.name) {\n    errors.push('Missing required parameter: name');\n  }\n} else if (action === 'add_from_recipe') {\n  if (!body.recipe_id) {\n    errors.push('Missing required parameter: recipe_id');\n  }\n} else if (action === 'check' || action === 'remove') {\n  if (!body.item_id) {\n    errors.push('Missing required parameter: item_id');\n  }\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    action: action,\n    user_id: body.user_id,\n    item_id: body.item_id,\n    recipe_id: body.recipe_id,\n    // Item data\n    name: body.name,\n    quantity: body.quantity,\n    unit: body.unit,\n    category: body.category,\n    is_checked: body.is_checked,\n    // Clear options\n    checked_only: body.checked_only || false,\n    api_base_url: body.api_base_url || process.env.API_BASE_URL || 'http://api.torah.solutions/api'\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 520],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'api' } } }}",
+        "options": { "responseCode": 400 }
+      }
+    },
+    {
+      "id": "action-switch",
+      "name": "Action Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [900, 260],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "get",
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "get",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "add",
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "add",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "add_from_recipe",
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "add_from_recipe",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "check",
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "check",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "remove",
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "remove",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "clear",
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "clear",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "api-get-list",
+      "name": "API: Get List",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 60],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/{{ $('Validate Input').first().json.user_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "api-add-item",
+      "name": "API: Add Item",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 160],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/{{ $('Validate Input').first().json.user_id }}/items",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": {{ JSON.stringify($('Validate Input').first().json.name) }},\n  \"quantity\": {{ $('Validate Input').first().json.quantity || 'null' }},\n  \"unit\": {{ JSON.stringify($('Validate Input').first().json.unit || null) }},\n  \"category\": {{ JSON.stringify($('Validate Input').first().json.category || null) }},\n  \"recipe_id\": {{ JSON.stringify($('Validate Input').first().json.recipe_id || null) }}\n}",
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "api-add-from-recipe",
+      "name": "API: From Recipe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 260],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/{{ $('Validate Input').first().json.user_id }}/from-recipe/{{ $('Validate Input').first().json.recipe_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "api-check-item",
+      "name": "API: Check Item",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 360],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/item/{{ $('Validate Input').first().json.item_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"is_checked\": {{ $('Validate Input').first().json.is_checked !== undefined ? $('Validate Input').first().json.is_checked : true }}\n}",
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "api-remove-item",
+      "name": "API: Remove Item",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 460],
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/item/{{ $('Validate Input').first().json.item_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "api-clear-list",
+      "name": "API: Clear List",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 560],
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/{{ $('Validate Input').first().json.user_id }}/clear?checked_only={{ $('Validate Input').first().json.checked_only }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1380, 260],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\ntry {\n  // Check for API error\n  if (input.detail) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 404,\n          message: input.detail,\n          status: 'NOT_FOUND'\n        },\n        meta: { provider: 'api', action: prevData.action }\n      }\n    }];\n  }\n\n  // Format based on action\n  if (prevData.action === 'get') {\n    const items = (input.items || []).map(i => ({\n      id: i.id,\n      name: i.name,\n      quantity: i.quantity,\n      unit: i.unit,\n      is_checked: i.is_checked,\n      category: i.category,\n      recipe_id: i.recipe_id\n    }));\n    return [{\n      json: {\n        success: true,\n        data: {\n          list_id: input.id,\n          name: input.name,\n          items: items,\n          total_items: items.length,\n          checked_items: items.filter(i => i.is_checked).length\n        },\n        meta: { provider: 'api', action: 'get' }\n      }\n    }];\n  } else if (prevData.action === 'add') {\n    return [{\n      json: {\n        success: true,\n        data: {\n          item_id: input.id,\n          name: input.name,\n          message: 'Item added to shopping list'\n        },\n        meta: { provider: 'api', action: 'add' }\n      }\n    }];\n  } else if (prevData.action === 'add_from_recipe') {\n    return [{\n      json: {\n        success: true,\n        data: {\n          items_added: input.items_added || 0,\n          message: input.message || 'Ingredients added'\n        },\n        meta: { provider: 'api', action: 'add_from_recipe' }\n      }\n    }];\n  } else if (prevData.action === 'check') {\n    return [{\n      json: {\n        success: true,\n        data: {\n          item_id: input.id,\n          is_checked: input.is_checked,\n          message: input.is_checked ? 'Item checked' : 'Item unchecked'\n        },\n        meta: { provider: 'api', action: 'check' }\n      }\n    }];\n  } else if (prevData.action === 'remove') {\n    return [{\n      json: {\n        success: true,\n        data: {\n          message: input.message || 'Item removed'\n        },\n        meta: { provider: 'api', action: 'remove' }\n      }\n    }];\n  } else if (prevData.action === 'clear') {\n    return [{\n      json: {\n        success: true,\n        data: {\n          items_removed: input.items_removed || 0,\n          message: input.message || 'List cleared'\n        },\n        meta: { provider: 'api', action: 'clear' }\n      }\n    }];\n  }\n\n  return [{ json: { success: true, data: input, meta: { provider: 'api' } } }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to process API response: ' + e.message,\n        status: 'PROCESS_ERROR'\n      },\n      meta: { provider: 'api' }\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1620, 260],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 4,
+        "width": 560,
+        "height": 200,
+        "content": "## Recipes - Shopping List\n\n**Endpoint:** POST /webhook/recipes-shopping\n\n**Actions:**\n- `get`: Get shopping list\n- `add`: Add single item (name, quantity, unit, category)\n- `add_from_recipe`: Add all ingredients from recipe (recipe_id)\n- `check`: Check/uncheck item (item_id, is_checked)\n- `remove`: Remove item (item_id)\n- `clear`: Clear list (checked_only: true/false)\n\n**Required:** user_id for all actions"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+    },
+    "Valid?": {
+      "main": [
+        [{ "node": "Action Switch", "type": "main", "index": 0 }],
+        [{ "node": "Error: Validation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Action Switch": {
+      "main": [
+        [{ "node": "API: Get List", "type": "main", "index": 0 }],
+        [{ "node": "API: Add Item", "type": "main", "index": 0 }],
+        [{ "node": "API: From Recipe", "type": "main", "index": 0 }],
+        [{ "node": "API: Check Item", "type": "main", "index": 0 }],
+        [{ "node": "API: Remove Item", "type": "main", "index": 0 }],
+        [{ "node": "API: Clear List", "type": "main", "index": 0 }]
+      ]
+    },
+    "API: Get List": {
+      "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]]
+    },
+    "API: Add Item": {
+      "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]]
+    },
+    "API: From Recipe": {
+      "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]]
+    },
+    "API: Check Item": {
+      "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]]
+    },
+    "API: Remove Item": {
+      "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]]
+    },
+    "API: Clear List": {
+      "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]]
+    },
+    "Format Response": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
