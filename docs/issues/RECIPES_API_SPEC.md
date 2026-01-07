@@ -55,19 +55,18 @@ Creer/sauvegarder une recette.
 {
   "title": "Gateau au chocolat",
   "description": "Un delicieux gateau moelleux",
-  "user_id": "discord_user_id",
+  "discord_user_id": "123456789",
   "servings": 8,
-  "prep_time_minutes": 15,
-  "cook_time_minutes": 25,
+  "prep_time": 15,
+  "cook_time": 25,
   "difficulty": "facile",
   "ingredients": [
     {"name": "chocolat noir", "quantity": 200, "unit": "g"},
     {"name": "beurre", "quantity": 100, "unit": "g"}
   ],
-  "steps": [
+  "instructions": [
     {"order": 1, "instruction": "Prechauffer le four a 180C"}
   ],
-  "tips": ["Utiliser du chocolat de qualite"],
   "tags": ["dessert", "chocolat"],
   "nutrition": {
     "calories_per_serving": 350,
@@ -76,7 +75,7 @@ Creer/sauvegarder une recette.
     "fat_g": 18
   },
   "source": "llm_generated",
-  "qdrant_id": "qdrant_vector_id"
+  "qdrant_point_id": "qdrant_vector_id"
 }
 ```
 
@@ -106,11 +105,13 @@ Recuperer une recette par ID.
 }
 ```
 
-### GET /api/recipes
+### GET /api/recipes/user/{discord_user_id}
 Lister les recettes d'un utilisateur.
 
+**Path params:**
+- `discord_user_id` (required)
+
 **Query params:**
-- `user_id` (required)
 - `limit` (default: 20)
 - `offset` (default: 0)
 - `tags` (optional, comma-separated)
@@ -122,11 +123,11 @@ Supprimer une recette.
 
 ## 2. Shopping List
 
-### GET /api/shopping-list
+### GET /api/shopping-list/{discord_user_id}
 Recuperer la liste de courses.
 
-**Query params:**
-- `user_id` (required)
+**Path params:**
+- `discord_user_id` (required)
 
 **Response:**
 ```json
@@ -150,13 +151,15 @@ Recuperer la liste de courses.
 }
 ```
 
-### POST /api/shopping-list
+### POST /api/shopping-list/{discord_user_id}/items
 Ajouter des items a la liste.
+
+**Path params:**
+- `discord_user_id` (required)
 
 **Request:**
 ```json
 {
-  "user_id": "discord_user_id",
   "items": [
     {"name": "chocolat noir", "quantity": 200, "unit": "g"},
     {"name": "beurre", "quantity": 100, "unit": "g"}
@@ -165,18 +168,14 @@ Ajouter des items a la liste.
 }
 ```
 
-### POST /api/shopping-list/from-recipe
+### POST /api/shopping-list/{discord_user_id}/from-recipe/{recipe_id}
 Ajouter tous les ingredients d'une recette.
 
-**Request:**
-```json
-{
-  "user_id": "discord_user_id",
-  "recipe_id": "recipe_123"
-}
-```
+**Path params:**
+- `discord_user_id` (required)
+- `recipe_id` (required)
 
-### PATCH /api/shopping-list/{item_id}
+### PUT /api/shopping-list/item/{item_id}
 Modifier un item (cocher/decocher).
 
 **Request:**
@@ -186,27 +185,29 @@ Modifier un item (cocher/decocher).
 }
 ```
 
-### DELETE /api/shopping-list/{item_id}
+### DELETE /api/shopping-list/item/{item_id}
 Supprimer un item.
 
-### DELETE /api/shopping-list
+### DELETE /api/shopping-list/{discord_user_id}/clear
 Vider la liste.
 
+**Path params:**
+- `discord_user_id` (required)
+
 **Query params:**
-- `user_id` (required)
 - `checked_only` (optional, default: false)
 
 ---
 
 ## 3. Timers
 
-### POST /api/timers
+### POST /api/recipes/timer
 Creer un timer de cuisson.
 
 **Request:**
 ```json
 {
-  "user_id": "discord_user_id",
+  "discord_user_id": "123456789",
   "discord_channel_id": "channel_123",
   "discord_webhook_url": "https://discord.com/api/webhooks/...",
   "label": "Sortir le gateau du four",
@@ -232,11 +233,11 @@ Creer un timer de cuisson.
 1. Stocker en PostgreSQL
 2. Scheduler une tache Celery avec le delai
 
-### GET /api/timers
+### GET /api/recipes/timers/{discord_user_id}
 Lister les timers actifs.
 
-**Query params:**
-- `user_id` (required)
+**Path params:**
+- `discord_user_id` (required)
 
 **Response:**
 ```json
@@ -257,7 +258,7 @@ Lister les timers actifs.
 }
 ```
 
-### DELETE /api/timers/{timer_id}
+### DELETE /api/recipes/timer/{timer_id}
 Annuler un timer.
 
 **Backend action:**
@@ -300,33 +301,34 @@ Mettre a jour les preferences.
 ```sql
 CREATE TABLE recipes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id VARCHAR(100) NOT NULL,
+    discord_user_id VARCHAR(100) NOT NULL,
     title VARCHAR(255) NOT NULL,
     description TEXT,
     servings INTEGER,
-    prep_time_minutes INTEGER,
-    cook_time_minutes INTEGER,
+    prep_time INTEGER,
+    cook_time INTEGER,
     difficulty VARCHAR(20),
     ingredients JSONB NOT NULL,
-    steps JSONB NOT NULL,
-    tips JSONB,
+    instructions JSONB NOT NULL,
     tags VARCHAR(50)[],
     nutrition JSONB,
     source VARCHAR(50),
-    qdrant_id VARCHAR(100),
+    qdrant_point_id VARCHAR(100),
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_recipes_user_id ON recipes(user_id);
+CREATE INDEX idx_recipes_discord_user_id ON recipes(discord_user_id);
 CREATE INDEX idx_recipes_tags ON recipes USING GIN(tags);
 ```
+
+> **Note:** Le champ `tips` n'est pas implemente dans l'API actuelle.
 
 ### Table: shopping_list_items
 ```sql
 CREATE TABLE shopping_list_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id VARCHAR(100) NOT NULL,
+    discord_user_id VARCHAR(100) NOT NULL,
     name VARCHAR(255) NOT NULL,
     quantity DECIMAL,
     unit VARCHAR(20),
@@ -335,14 +337,14 @@ CREATE TABLE shopping_list_items (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_shopping_list_user_id ON shopping_list_items(user_id);
+CREATE INDEX idx_shopping_list_discord_user_id ON shopping_list_items(discord_user_id);
 ```
 
 ### Table: timers
 ```sql
 CREATE TABLE timers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id VARCHAR(100) NOT NULL,
+    discord_user_id VARCHAR(100) NOT NULL,
     discord_channel_id VARCHAR(100),
     discord_webhook_url TEXT,
     label VARCHAR(255) NOT NULL,
@@ -355,7 +357,7 @@ CREATE TABLE timers (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_timers_user_id ON timers(user_id);
+CREATE INDEX idx_timers_discord_user_id ON timers(discord_user_id);
 CREATE INDEX idx_timers_status ON timers(status);
 CREATE INDEX idx_timers_expires_at ON timers(expires_at);
 ```
@@ -424,7 +426,7 @@ def send_timer_notification(self, timer_id: str):
         "http://pi6.local:5678/webhook/recipes-timer-notify",
         json={
             "timer_id": str(timer.id),
-            "discord_user_id": timer.user_id,
+            "discord_user_id": timer.discord_user_id,
             "discord_webhook_url": timer.discord_webhook_url,
             "discord_channel_id": timer.discord_channel_id,
             "label": timer.label,
@@ -450,10 +452,10 @@ def send_timer_notification(self, timer_id: str):
 from celery import current_app
 from datetime import timedelta
 
-def create_timer(user_id, label, duration_minutes, ...):
+def create_timer(discord_user_id, label, duration_minutes, ...):
     # 1. Creer en base
     timer = Timer(
-        user_id=user_id,
+        discord_user_id=discord_user_id,
         label=label,
         duration_minutes=duration_minutes,
         expires_at=datetime.utcnow() + timedelta(minutes=duration_minutes),
@@ -598,14 +600,25 @@ Toutes les reponses API doivent suivre ce format:
 ### Endpoints a tester
 ```bash
 # Creer une recette
-curl -X POST http://api.example.com/api/v1/recipes \
+curl -X POST http://api.example.com/api/recipes \
   -H "Content-Type: application/json" \
   -d '{"title": "Test", "user_id": "test_user", ...}'
 
+# Lister les recettes d'un utilisateur
+curl http://api.example.com/api/recipes/user/discord_user_123
+
 # Creer un timer
-curl -X POST http://api.example.com/api/v1/timers \
+curl -X POST http://api.example.com/api/recipes/timer \
   -H "Content-Type: application/json" \
   -d '{"user_id": "test", "label": "Test timer", "duration_minutes": 1, ...}'
+
+# Lister les timers
+curl http://api.example.com/api/recipes/timers/discord_user_123
+
+# Ajouter a la shopping list
+curl -X POST http://api.example.com/api/shopping-list/discord_user_123/items \
+  -H "Content-Type: application/json" \
+  -d '{"items": [{"name": "chocolat", "quantity": 200, "unit": "g"}]}'
 
 # Verifier que le timer expire et appelle n8n
 # (attendre 1 minute, verifier les logs n8n)

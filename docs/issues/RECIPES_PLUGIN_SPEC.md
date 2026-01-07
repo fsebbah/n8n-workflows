@@ -6,7 +6,7 @@ Cette spec definit l'integration entre le plugin Discord et les workflows n8n po
 
 ## Endpoints n8n disponibles
 
-Base URL: `http://pi6.local:5678/webhook/`
+Base URL n8n: `http://pi6.local:5678/webhook/`
 
 | Endpoint | Methode | Description |
 |----------|---------|-------------|
@@ -17,6 +17,42 @@ Base URL: `http://pi6.local:5678/webhook/`
 | `/webhook/recipes-youtube` | POST | Extraire recette depuis YouTube |
 | `/webhook/recipes-web-search` | POST | Recherche web multi-provider |
 | `/webhook/recipes-timer-notify` | POST | Notification timer (appele par Celery) |
+
+## Endpoints API directs
+
+Base URL API: `http://api.example.com/api/`
+
+| Endpoint | Methode | Description |
+|----------|---------|-------------|
+| `/api/recipes` | POST | Creer une recette |
+| `/api/recipes/{id}` | GET | Recuperer une recette |
+| `/api/recipes/user/{discord_user_id}` | GET | Lister recettes utilisateur |
+| `/api/recipes/{id}` | DELETE | Supprimer une recette |
+| `/api/shopping-list/{discord_user_id}` | GET | Recuperer liste de courses |
+| `/api/shopping-list/{discord_user_id}/items` | POST | Ajouter items |
+| `/api/shopping-list/{discord_user_id}/from-recipe/{recipe_id}` | POST | Ajouter depuis recette |
+| `/api/shopping-list/item/{item_id}` | PUT | Modifier item |
+| `/api/shopping-list/item/{item_id}` | DELETE | Supprimer item |
+| `/api/shopping-list/{discord_user_id}/clear` | DELETE | Vider liste |
+| `/api/recipes/timer` | POST | Creer timer |
+| `/api/recipes/timers/{discord_user_id}` | GET | Lister timers |
+| `/api/recipes/timer/{timer_id}` | DELETE | Annuler timer |
+
+---
+
+## Mapping des champs (n8n -> API)
+
+Les workflows n8n transforment automatiquement les champs avant d'appeler l'API:
+
+| Champ n8n (entree) | Champ API (sortie) |
+|--------------------|-------------------|
+| `user_id` | `discord_user_id` |
+| `prep_time_minutes` | `prep_time` |
+| `cook_time_minutes` | `cook_time` |
+| `steps` | `instructions` |
+| `qdrant_id` | `qdrant_point_id` |
+
+> **Note:** Le champ `tips` n'est pas supporte par l'API actuelle.
 
 ---
 
@@ -328,11 +364,37 @@ Content-Type: application/json
 ```
 
 ### Flow
-1. Plugin -> API backend: `POST /api/timers`
+1. Plugin -> API backend: `POST /api/recipes/timer`
 2. API stocke en PostgreSQL + schedule Celery
 3. Celery attend le delai
 4. Celery -> n8n: `POST /webhook/recipes-timer-notify`
 5. n8n -> Discord webhook
+
+### Creer un timer (API directe)
+```bash
+POST /api/recipes/timer
+Content-Type: application/json
+
+{
+  "discord_user_id": "123456789",
+  "discord_channel_id": "channel_123",
+  "discord_webhook_url": "https://discord.com/api/webhooks/...",
+  "label": "Sortir le gateau du four",
+  "duration_minutes": 15,
+  "recipe_id": "recipe_123",
+  "recipe_title": "Gateau au chocolat"
+}
+```
+
+### Lister les timers actifs
+```bash
+GET /api/recipes/timers/{discord_user_id}
+```
+
+### Annuler un timer
+```bash
+DELETE /api/recipes/timer/{timer_id}
+```
 
 ### Notification recue par n8n
 ```bash
@@ -417,20 +479,25 @@ Cela permet:
 
 ## Commandes Discord suggerees
 
-| Commande | Description | Endpoint n8n |
-|----------|-------------|--------------|
-| `!recette <query>` | Generer une recette | recipes-generate |
-| `!recette random` | Recette aleatoire | recipes-generate |
-| `!recette avec <ingredients>` | Par ingredients | recipes-generate |
-| `!chercher <query>` | Recherche semantique | recipes-search |
-| `!similaire [id]` | Recettes similaires | recipes-similar |
-| `!sauvegarder` | Sauvegarder la recette | recipes-save |
-| `!youtube <query\|url>` | Depuis YouTube | recipes-youtube |
-| `!web <query>` | Recherche web | recipes-web-search |
-| `!timer <min> <label>` | Timer cuisson | API -> Celery |
-| `!liste add <item>` | Ajouter a la liste | API direct |
-| `!liste show` | Afficher la liste | API direct |
-| `!liste clear` | Vider la liste | API direct |
+| Commande | Description | Endpoint |
+|----------|-------------|----------|
+| `!recette <query>` | Generer une recette | n8n: recipes-generate |
+| `!recette random` | Recette aleatoire | n8n: recipes-generate |
+| `!recette avec <ingredients>` | Par ingredients | n8n: recipes-generate |
+| `!chercher <query>` | Recherche semantique | n8n: recipes-search |
+| `!similaire [id]` | Recettes similaires | n8n: recipes-similar |
+| `!sauvegarder` | Sauvegarder la recette | n8n: recipes-save |
+| `!youtube <query\|url>` | Depuis YouTube | n8n: recipes-youtube |
+| `!web <query>` | Recherche web | n8n: recipes-web-search |
+| `!timer <min> <label>` | Timer cuisson | API: POST /api/recipes/timer |
+| `!timers` | Lister timers | API: GET /api/recipes/timers/{user} |
+| `!timer-stop <id>` | Annuler timer | API: DELETE /api/recipes/timer/{id} |
+| `!liste add <item>` | Ajouter a la liste | API: POST /api/shopping-list/{user}/items |
+| `!liste show` | Afficher la liste | API: GET /api/shopping-list/{user} |
+| `!liste check <id>` | Cocher item | API: PUT /api/shopping-list/item/{id} |
+| `!liste remove <id>` | Supprimer item | API: DELETE /api/shopping-list/item/{id} |
+| `!liste clear` | Vider la liste | API: DELETE /api/shopping-list/{user}/clear |
+| `!mes-recettes` | Mes recettes | API: GET /api/recipes/user/{user} |
 
 ---
 
