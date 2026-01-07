@@ -301,10 +301,10 @@ recipes.discord_user_id VARCHAR(50) NOT NULL
 
 | Workflow | Webhook | API Backend | Status |
 |----------|---------|-------------|--------|
-| `recipes-add-comment.json` | `POST /webhook/recipes-add-comment` | :white_check_mark: | A creer |
-| `recipes-get-comments.json` | `GET /webhook/recipes-get-comments` | :white_check_mark: | A creer |
+| `recipes-add-comment.json` | `POST /webhook/recipes-add-comment` | :white_check_mark: | :white_check_mark: Actif |
+| `recipes-get-comments.json` | `GET /webhook/recipes-get-comments` | :white_check_mark: | :white_check_mark: Actif |
 | `recipes-delete-comment.json` | `DELETE /webhook/recipes-delete-comment` | :x: Attente | Bloque |
-| `recipes-add-rating.json` | `POST /webhook/recipes-add-rating` | :white_check_mark: | A creer |
+| `recipes-add-rating.json` | `POST /webhook/recipes-add-rating` | :white_check_mark: | :white_check_mark: Actif |
 | `recipes-get-ratings.json` | `GET /webhook/recipes-get-ratings` | :x: Attente | Bloque |
 
 ### Workflow `recipes-add-comment` - Detail
@@ -326,15 +326,15 @@ Le workflow doit:
 - [x] `POST /api/recipes/{id}/rating` (upsert)
 - [ ] **`DELETE /api/recipes/{id}/comments/{id}`**
 - [ ] **`GET /api/recipes/{id}/ratings`**
-- [ ] Confirmer `recipes.discord_user_id` accessible via GET
+- [x] Confirmer `recipes.discord_user_id` accessible via GET
 
 ### Phase 2 - Workflows (Equipe n8n)
-- [ ] `recipes-add-comment.json` avec notify
-- [ ] `recipes-get-comments.json`
-- [ ] `recipes-add-rating.json` avec notify
+- [x] `recipes-add-comment.json` avec notify
+- [x] `recipes-get-comments.json`
+- [x] `recipes-add-rating.json` avec notify
 - [ ] `recipes-delete-comment.json` (attente API)
 - [ ] `recipes-get-ratings.json` (attente API)
-- [ ] Import et activation n8n
+- [x] Import et activation n8n (3/5 workflows)
 
 ### Phase 3 - Plugin (Equipe Plugin)
 - [ ] UI Modal commentaires

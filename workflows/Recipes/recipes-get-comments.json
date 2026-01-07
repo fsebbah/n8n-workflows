@@ -1,0 +1,124 @@
+{
+  "name": "RECIPES - Get Comments",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## RECIPES - Get Comments\n\n**Endpoint:** GET /webhook/recipes-get-comments\n\n**Query Parameters:**\n- `recipe_id` (required): ID de la recette\n- `offset` (optional, default: 0)\n- `limit` (optional, default: 10, max: 50)\n\n**Response:** Liste des commentaires",
+        "height": 250,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "recipes-get-comments",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [300, 300],
+      "webhookId": "recipes-get-comments"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst query = input.query || {};\n\nconst recipeId = query.recipe_id || null;\n\nif (!recipeId) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Parametre requis manquant: recipe_id',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Parse pagination\nlet offset = parseInt(query.offset) || 0;\nlet limit = parseInt(query.limit) || 10;\n\n// Validate limits\nif (offset < 0) offset = 0;\nif (limit < 1) limit = 1;\nif (limit > 50) limit = 50;\n\nreturn [{\n  json: {\n    valid: true,\n    recipe_id: recipeId,\n    offset: offset,\n    limit: limit\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "valid", "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [740, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TORAH_API_URL }}/api/recipes/{{ $json.recipe_id }}/comments?offset={{ $json.offset }}&limit={{ $json.limit }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/json" }]
+        },
+        "options": {
+          "response": { "response": { "fullResponse": true } }
+        }
+      },
+      "id": "get-comments",
+      "name": "Get Comments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const apiResponse = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\nconst statusCode = apiResponse.statusCode || 200;\nconst body = apiResponse.body || apiResponse;\n\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: body.detail || 'Erreur lors de la recuperation des commentaires',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Body is an array of comments\nconst comments = Array.isArray(body) ? body : [];\n\nreturn [{\n  json: {\n    success: true,\n    recipe_id: inputData.recipe_id,\n    comments: comments,\n    pagination: {\n      offset: inputData.offset,\n      limit: inputData.limit,\n      count: comments.length\n    }\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1180, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1400, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 420]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": { "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]] },
+    "Validate Input": { "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]] },
+    "Valid?": { "main": [[{ "node": "Get Comments", "type": "main", "index": 0 }], [{ "node": "Respond Error", "type": "main", "index": 0 }]] },
+    "Get Comments": { "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]] },
+    "Format Response": { "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
