@@ -127,7 +127,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "https://api.stripe.com/v1/prices?active=true&expand[]=data.product",
+        "url": "https://api.stripe.com/v1/products?active=true&limit=100&expand[]=data.default_price",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -145,8 +145,8 @@
           }
         }
       },
-      "id": "get-stripe-prices",
-      "name": "Get Stripe Prices",
+      "id": "get-stripe-products",
+      "name": "Get Stripe Products",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1760, 100],
@@ -154,7 +154,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Formater les plans depuis la reponse Stripe\nconst input = $input.first().json;\nconst projectData = $('Check Project').first().json;\n\nconst statusCode = input.statusCode || 200;\nconst data = input.body || input;\n\n// Verifier les erreurs Stripe\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || 'Erreur Stripe API',\n        status: 'STRIPE_ERROR'\n      }\n    }\n  }];\n}\n\nconst prices = data.data || [];\n\n// Formater les plans\nconst plans = prices.map(price => {\n  const product = price.product || {};\n  \n  // Extraire les features depuis les metadata du produit\n  let features = [];\n  if (product.metadata?.features) {\n    try {\n      features = JSON.parse(product.metadata.features);\n    } catch (e) {\n      features = product.metadata.features.split(',').map(f => f.trim());\n    }\n  }\n  \n  // Extraire credits_per_month depuis metadata\n  const creditsPerMonth = parseInt(product.metadata?.credits_per_month || price.metadata?.credits_per_month || '0');\n  \n  return {\n    id: price.id,\n    product_id: product.id || price.product,\n    name: product.name || 'Plan',\n    description: product.description || null,\n    price: (price.unit_amount || 0) / 100,\n    currency: price.currency || 'eur',\n    interval: price.recurring?.interval || 'month',\n    interval_count: price.recurring?.interval_count || 1,\n    credits_per_month: creditsPerMonth,\n    features: features,\n    metadata: {\n      ...product.metadata,\n      ...price.metadata\n    }\n  };\n});\n\n// Trier par prix\nplans.sort((a, b) => a.price - b.price);\n\nreturn [{\n  json: {\n    success: true,\n    project_id: projectData.project_id,\n    project_name: projectData.display_name,\n    plans_count: plans.length,\n    plans: plans\n  }\n}];"
+        "jsCode": "// Formater les plans depuis la reponse Stripe (products avec default_price)\nconst input = $input.first().json;\nconst projectData = $('Check Project').first().json;\n\nconst statusCode = input.statusCode || 200;\nconst data = input.body || input;\n\n// Verifier les erreurs Stripe\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || 'Erreur Stripe API',\n        status: 'STRIPE_ERROR'\n      }\n    }\n  }];\n}\n\nconst products = data.data || [];\n\n// Formater les plans depuis les produits actifs\nconst plans = products\n  .filter(product => product.default_price) // Exclure produits sans prix\n  .map(product => {\n    const price = product.default_price || {};\n    \n    // Extraire les features depuis les metadata du produit\n    let features = [];\n    if (product.metadata?.features) {\n      try {\n        features = JSON.parse(product.metadata.features);\n      } catch (e) {\n        features = product.metadata.features.split(',').map(f => f.trim());\n      }\n    }\n    \n    // Extraire credits_per_month depuis metadata\n    const creditsPerMonth = parseInt(product.metadata?.credits_per_month || price.metadata?.credits_per_month || '0');\n    \n    return {\n      id: price.id,\n      product_id: product.id,\n      name: product.name || 'Plan',\n      description: product.description || null,\n      price: (price.unit_amount || 0) / 100,\n      currency: price.currency || 'eur',\n      interval: price.recurring?.interval || 'month',\n      interval_count: price.recurring?.interval_count || 1,\n      credits_per_month: creditsPerMonth,\n      features: features,\n      metadata: {\n        ...product.metadata,\n        ...price.metadata\n      }\n    };\n  });\n\n// Trier par prix\nplans.sort((a, b) => a.price - b.price);\n\nreturn [{\n  json: {\n    success: true,\n    project_id: projectData.project_id,\n    project_name: projectData.display_name,\n    plans_count: plans.length,\n    plans: plans\n  }\n}];"
       },
       "id": "format-plans",
       "name": "Format Plans",
@@ -296,7 +296,7 @@
       "main": [
         [
           {
-            "node": "Get Stripe Prices",
+            "node": "Get Stripe Products",
             "type": "main",
             "index": 0
           }
@@ -310,7 +310,7 @@
         ]
       ]
     },
-    "Get Stripe Prices": {
+    "Get Stripe Products": {
       "main": [
         [
           {
