@@ -360,7 +360,11 @@ POST /api/recipes/timer
 }
 ```
 
-**Champs obligatoires:** `discord_user_id`, `discord_channel_id`, `label`, `duration_minutes`
+**Champs obligatoires:** `discord_user_id`, `label`, `duration_minutes`
+
+**Champs optionnels:** `discord_channel_id` (pour tracking), `discord_webhook_url` (obsolete avec DM), `recipe_id`, `recipe_title`
+
+> **Note:** `discord_channel_id` etait requis pour les notifications webhook. Avec le passage aux DM, il devient optionnel (utile uniquement pour tracking/logs).
 
 **Limites:** `duration_minutes` entre 1 et 1440 (24h max)
 
@@ -579,10 +583,12 @@ Quand un timer expire, l'API appelle votre webhook n8n.
 }
 ```
 
-**Workflow n8n suggere:**
-1. Recevoir le webhook
-2. Utiliser `discord_webhook_url` si fourni pour envoyer directement
-3. Sinon, utiliser `discord_channel_id` pour poster via bot
+**Workflow n8n (DM prive):**
+1. Recevoir le webhook de Celery
+2. Creer un channel DM avec l'utilisateur (`POST /users/@me/channels`)
+3. Envoyer le message dans le DM (`POST /channels/{id}/messages`)
+
+> **Note:** L'ancien flow webhook/channel est remplace par DM prive. `discord_webhook_url` et `discord_channel_id` ne sont plus utilises pour les notifications.
 
 ---
 
