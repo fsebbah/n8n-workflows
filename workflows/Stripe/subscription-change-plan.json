@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Stripe Subscription Change Plan\n\n**Endpoint:** POST /webhook/subscription-change-plan\n\n**Purpose:** Upgrade or downgrade a subscription to a new plan/price.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah\",\n  \"stripe_subscription_id\": \"sub_xxx\",\n  \"new_price_id\": \"price_xxx\",\n  \"proration_behavior\": \"create_prorations\"\n}\n```\n\n**Proration behaviors:**\n- `create_prorations` (default): Charge/credit prorated amount\n- `none`: No proration, change takes effect at next billing\n- `always_invoice`: Create invoice immediately\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"subscription_id\": \"sub_xxx\",\n  \"status\": \"active\",\n  \"new_price_id\": \"price_xxx\",\n  \"current_period_end\": 1234567890\n}\n```\n\n**Setup:** Create SQLite credential named 'Stripe Config DB'",
+        "content": "## Stripe Subscription Change Plan\n\n**Endpoint:** POST /webhook/subscription-change-plan\n\n**Purpose:** Upgrade or downgrade a subscription to a new plan/price.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah\",\n  \"stripe_subscription_id\": \"sub_xxx\",\n  \"new_price_id\": \"price_xxx\",\n  \"proration_behavior\": \"create_prorations\"\n}\n```\n\n**Proration behaviors:**\n- `create_prorations` (default): Charge/credit prorated amount\n- `none`: No proration, change takes effect at next billing\n- `always_invoice`: Create invoice immediately\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"subscription_id\": \"sub_xxx\",\n  \"status\": \"active\",\n  \"new_price_id\": \"price_xxx\",\n  \"current_period_end\": 1234567890\n}\n```\n\n**Setup:** Utilise Redis pour la config projet (cle: project:{project_id})",
         "height": 500,
         "width": 360,
         "color": 5
@@ -29,7 +29,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Validate input\nconst input = $input.first().json;\nconst body = input.body || {};\n\nconst requiredFields = ['project_id', 'stripe_subscription_id', 'new_price_id'];\nconst missing = requiredFields.filter(f => !body[f]);\n\nif (missing.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required fields: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Validate proration_behavior if provided\nconst validProrations = ['create_prorations', 'none', 'always_invoice'];\nconst proration = body.proration_behavior || 'create_prorations';\n\nif (!validProrations.includes(proration)) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Invalid proration_behavior. Must be one of: ${validProrations.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: body.project_id,\n    subscription_id: body.stripe_subscription_id,\n    new_price_id: body.new_price_id,\n    proration_behavior: proration\n  }\n}];"
+        "jsCode": "// Validate input\nconst input = $input.first().json;\nconst body = input.body || {};\n\nconst requiredFields = ['project_id', 'stripe_subscription_id', 'new_price_id'];\nconst missing = requiredFields.filter(f => !body[f]);\n\nif (missing.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required fields: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Validate proration_behavior if provided\nconst validProrations = ['create_prorations', 'none', 'always_invoice'];\nconst proration = body.proration_behavior || 'create_prorations';\n\nif (!validProrations.includes(proration)) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Invalid proration_behavior. Must be one of: ${validProrations.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: body.project_id,\n    subscription_id: body.stripe_subscription_id,\n    new_price_id: body.new_price_id,\n    proration_behavior: proration,\n    redis_key: `project:${body.project_id}`\n  }\n}];"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -68,19 +68,24 @@
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT project_id, secret_key FROM stripe_projects WHERE project_id = '{{ $json.project_id }}' AND active = 1",
-        "options": {}
+        "operation": "get",
+        "key": "={{ $json.redis_key }}"
       },
       "id": "get-project-config",
-      "name": "Get Project Config",
-      "type": "n8n-nodes-base.sqlite",
+      "name": "Get Stripe Config (Redis)",
+      "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
-      "position": [1100, 200]
+      "position": [1100, 200],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Check project and prepare API call\nconst dbResults = $('Get Project Config').all();\nconst inputData = $('Validate Input').first().json;\n\nif (!dbResults || dbResults.length === 0 || !dbResults[0].json.secret_key) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Project '${inputData.project_id}' not found or inactive`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nconst secretKey = dbResults[0].json.secret_key;\n\nreturn [{\n  json: {\n    found: true,\n    authHeader: `Bearer ${secretKey}`,\n    subscription_id: inputData.subscription_id,\n    new_price_id: inputData.new_price_id,\n    proration_behavior: inputData.proration_behavior\n  }\n}];"
+        "jsCode": "// Check project config from Redis and prepare API call\nconst redisResult = $('Get Stripe Config (Redis)').first();\nconst inputData = $('Validate Input').first().json;\n\n// Redis retourne la valeur dans propertyName, value, ou directement\nconst redisJson = redisResult?.json || {};\nconst rawValue = redisJson.propertyName || redisJson.value || redisJson;\n\nif (!rawValue || rawValue === null) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Project '${inputData.project_id}' not found. Call /stripe-register-project first.`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Parser le JSON stocke dans Redis\nlet project;\ntry {\n  project = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;\n} catch (e) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 500,\n        message: `Error parsing Redis data: ${e.message}`,\n        status: 'INTERNAL_ERROR'\n      }\n    }\n  }];\n}\n\nif (!project.stripe_key) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Project '${inputData.project_id}' has no Stripe key configured`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    found: true,\n    authHeader: `Bearer ${project.stripe_key}`,\n    subscription_id: inputData.subscription_id,\n    new_price_id: inputData.new_price_id,\n    proration_behavior: inputData.proration_behavior\n  }\n}];"
       },
       "id": "prepare-request",
       "name": "Prepare Request",
@@ -146,7 +151,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract subscription item ID and prepare update\nconst response = $input.first().json;\nconst prevData = $('Prepare Request').first().json;\n\nif (response.statusCode !== 200 || !response.body) {\n  const error = response.body?.error || {};\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: response.statusCode || 404,\n        message: error.message || 'Subscription not found',\n        type: error.type || 'api_error'\n      }\n    }\n  }];\n}\n\nconst subscription = response.body;\nconst items = subscription.items?.data || [];\n\nif (items.length === 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Subscription has no items',\n        type: 'invalid_request'\n      }\n    }\n  }];\n}\n\n// Get the first item (most subscriptions have one item)\nconst itemId = items[0].id;\n\n// Build form body\nconst params = new URLSearchParams();\nparams.append('items[0][id]', itemId);\nparams.append('items[0][price]', prevData.new_price_id);\nparams.append('proration_behavior', prevData.proration_behavior);\n\nreturn [{\n  json: {\n    valid: true,\n    authHeader: prevData.authHeader,\n    subscription_id: prevData.subscription_id,\n    bodyString: params.toString()\n  }\n}];"
+        "jsCode": "// Extract subscription item ID and prepare update\nconst response = $input.first().json;\nconst prevData = $('Prepare Request').first().json;\n\nif (response.statusCode !== 200 || !response.body) {\n  const error = response.body?.error || {};\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: response.statusCode || 404,\n        message: error.message || 'Subscription not found',\n        type: error.type || 'api_error'\n      }\n    }\n  }];\n}\n\nconst subscription = response.body;\nconst items = subscription.items?.data || [];\n\nif (items.length === 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Subscription has no items',\n        type: 'invalid_request'\n      }\n    }\n  }];\n}\n\n// Get the first item (most subscriptions have one item)\nconst itemId = items[0].id;\n\n// Build form body using manual encoding (URLSearchParams not available in n8n sandbox)\nconst encode = (str) => encodeURIComponent(String(str));\nconst parts = [];\nparts.push(`items[0][id]=${encode(itemId)}`);\nparts.push(`items[0][price]=${encode(prevData.new_price_id)}`);\nparts.push(`proration_behavior=${encode(prevData.proration_behavior)}`);\n\nreturn [{\n  json: {\n    valid: true,\n    authHeader: prevData.authHeader,\n    subscription_id: prevData.subscription_id,\n    bodyString: parts.join('&')\n  }\n}];"
       },
       "id": "extract-item-id",
       "name": "Prepare Update",
@@ -311,7 +316,7 @@
       "main": [
         [
           {
-            "node": "Get Project Config",
+            "node": "Get Stripe Config (Redis)",
             "type": "main",
             "index": 0
           }
@@ -325,7 +330,7 @@
         ]
       ]
     },
-    "Get Project Config": {
+    "Get Stripe Config (Redis)": {
       "main": [
         [
           {
