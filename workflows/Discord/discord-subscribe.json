@@ -125,16 +125,6 @@
     },
     {
       "parameters": {
-        "jsCode": "// Prepare Stripe API call\nconst data = $input.first().json;\n\n// Build form-urlencoded body as string\nconst params = new URLSearchParams();\nparams.append('mode', 'subscription');\nparams.append('line_items[0][price]', data.plan_id);\nparams.append('line_items[0][quantity]', '1');\nparams.append('success_url', `https://${data.project_id}.solutions/subscription/success?session_id={CHECKOUT_SESSION_ID}`);\nparams.append('cancel_url', `https://${data.project_id}.solutions/subscription/cancel`);\nparams.append('metadata[project_id]', data.project_id);\nparams.append('metadata[discord_user_id]', data.discord_user_id);\nparams.append('subscription_data[metadata][project_id]', data.project_id);\nparams.append('subscription_data[metadata][discord_user_id]', data.discord_user_id);\n\n// Add customer_email if provided\nif (data.customer_email) {\n  params.append('customer_email', data.customer_email);\n}\n\nreturn [{\n  json: {\n    authHeader: `Bearer ${data.stripe_key}`,\n    bodyString: params.toString(),\n    project_id: data.project_id,\n    discord_user_id: data.discord_user_id,\n    plan_id: data.plan_id\n  }\n}];"
-      },
-      "id": "prepare-stripe-request",
-      "name": "Prepare Stripe Request",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1760, 100]
-    },
-    {
-      "parameters": {
         "method": "POST",
         "url": "https://api.stripe.com/v1/checkout/sessions",
         "sendHeaders": true,
@@ -142,17 +132,56 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "={{ $json.authHeader }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/x-www-form-urlencoded"
+              "value": "=Bearer {{ $json.stripe_key }}"
             }
           ]
         },
         "sendBody": true,
-        "contentType": "raw",
-        "body": "={{ $json.bodyString }}",
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "mode",
+              "value": "subscription"
+            },
+            {
+              "name": "line_items[0][price]",
+              "value": "={{ $json.plan_id }}"
+            },
+            {
+              "name": "line_items[0][quantity]",
+              "value": "1"
+            },
+            {
+              "name": "success_url",
+              "value": "=https://{{ $json.project_id }}.solutions/subscription/success?session_id={CHECKOUT_SESSION_ID}"
+            },
+            {
+              "name": "cancel_url",
+              "value": "=https://{{ $json.project_id }}.solutions/subscription/cancel"
+            },
+            {
+              "name": "metadata[project_id]",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "metadata[discord_user_id]",
+              "value": "={{ $json.discord_user_id }}"
+            },
+            {
+              "name": "subscription_data[metadata][project_id]",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "subscription_data[metadata][discord_user_id]",
+              "value": "={{ $json.discord_user_id }}"
+            },
+            {
+              "name": "customer_email",
+              "value": "={{ $json.customer_email || '' }}"
+            }
+          ]
+        },
         "options": {
           "response": {
             "response": {
@@ -165,12 +194,12 @@
       "name": "Create Stripe Checkout",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1980, 100],
+      "position": [1760, 100],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Formater la reponse Stripe\nconst input = $input.first().json;\nconst requestData = $('Prepare Stripe Request').first().json;\n\nconst statusCode = input.statusCode || 200;\nconst data = input.body || input;\n\n// Verifier les erreurs Stripe\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || 'Erreur Stripe API',\n        status: 'STRIPE_ERROR',\n        type: data.error?.type || 'api_error'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    checkout_url: data.url,\n    session_id: data.id,\n    project_id: requestData.project_id,\n    discord_user_id: requestData.discord_user_id,\n    plan_id: requestData.plan_id,\n    expires_at: new Date(data.expires_at * 1000).toISOString()\n  }\n}];"
+        "jsCode": "// Formater la reponse Stripe\nconst input = $input.first().json;\nconst projectData = $('Check Project').first().json;\n\nconst statusCode = input.statusCode || 200;\nconst data = input.body || input;\n\n// Verifier les erreurs Stripe\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || 'Erreur Stripe API',\n        status: 'STRIPE_ERROR',\n        type: data.error?.type || 'api_error'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    checkout_url: data.url,\n    session_id: data.id,\n    project_id: projectData.project_id,\n    discord_user_id: projectData.discord_user_id,\n    plan_id: projectData.plan_id,\n    expires_at: new Date(data.expires_at * 1000).toISOString()\n  }\n}];"
       },
       "id": "format-response",
       "name": "Format Response",
@@ -312,7 +341,7 @@
       "main": [
         [
           {
-            "node": "Prepare Stripe Request",
+            "node": "Create Stripe Checkout",
             "type": "main",
             "index": 0
           }
@@ -320,17 +349,6 @@
         [
           {
             "node": "Respond Not Found",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Stripe Request": {
-      "main": [
-        [
-          {
-            "node": "Create Stripe Checkout",
             "type": "main",
             "index": 0
           }
