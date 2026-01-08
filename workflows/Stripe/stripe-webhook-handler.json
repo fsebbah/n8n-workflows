@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## STRIPE - Webhook Handler\n\n**Endpoint:** POST /webhook/stripe-webhook/{project_id}\n\n**Events geres (Phase 1):**\n- checkout.session.completed\n- invoice.paid\n- customer.subscription.deleted\n\n**Signature:** Verified via Torah API (event_id lookup)",
+        "content": "## STRIPE - Webhook Handler\n\n**Endpoint:** POST /webhook/stripe-webhook\n\n**Note:** Le project_id est extrait des metadata de l'evenement Stripe.\n\n**Events geres:**\n- checkout.session.completed\n- invoice.paid\n- customer.subscription.deleted\n\n**Signature:** Verified via Torah API (event_id lookup)",
         "height": 300,
         "width": 300,
         "color": 5
@@ -17,7 +17,7 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": ":project_id",
+        "path": "stripe-webhook",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\n\n// Extraire project_id\nconst projectId = input.params?.project_id;\nif (!projectId) {\n  return [{ json: { success: false, error: { code: 400, message: 'project_id manquant' } } }];\n}\n\n// Parser event\nconst event = input.body;\nif (!event || !event.type || !event.id) {\n  return [{ json: { success: false, error: { code: 400, message: 'Event Stripe invalide (id ou type manquant)' } } }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    project_id: projectId,\n    event_id: event.id,\n    event_type: event.type,\n    event_data: event.data?.object || {}\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\n\n// Parser event\nconst event = input.body;\nif (!event || !event.type || !event.id) {\n  return [{ json: { success: false, error: { code: 400, message: 'Event Stripe invalide (id ou type manquant)' } } }];\n}\n\nconst eventData = event.data?.object || {};\nconst metadata = eventData.metadata || {};\n\n// Extraire project_id depuis metadata ou subscription_details\nlet projectId = metadata.project_id;\nif (!projectId && eventData.subscription_details?.metadata) {\n  projectId = eventData.subscription_details.metadata.project_id;\n}\n\nif (!projectId) {\n  return [{ json: { success: false, error: { code: 400, message: 'project_id manquant dans les metadata Stripe' } } }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    project_id: projectId,\n    event_id: event.id,\n    event_type: event.type,\n    event_data: eventData\n  }\n}];"
       },
       "id": "extract-data",
       "name": "Extract & Validate",
