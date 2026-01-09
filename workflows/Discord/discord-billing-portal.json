@@ -12,7 +12,10 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [60, 60]
+      "position": [
+        64,
+        64
+      ]
     },
     {
       "parameters": {
@@ -25,7 +28,10 @@
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [440, 300],
+      "position": [
+        448,
+        304
+      ],
       "webhookId": "discord-billing-portal"
     },
     {
@@ -36,7 +42,10 @@
       "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 300]
+      "position": [
+        672,
+        304
+      ]
     },
     {
       "parameters": {
@@ -65,12 +74,23 @@
       "name": "Input Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [880, 300]
+      "position": [
+        880,
+        304
+      ]
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "={{ $env.TORAH_API_URL }}/api/subscription/status/{{ $json.discord_user_id }}",
+        "url": "={{ $env.TORAH_API_URL }}/api/webhook/account",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "discord_user_id",
+              "value": "={{ $json.discord_user_id }}"
+            }
+          ]
+        },
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -96,18 +116,24 @@
       "name": "Get Subscriber (API)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1100, 200],
+      "position": [
+        1104,
+        208
+      ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Extraire le stripe_customer_id de la reponse API\nconst apiResponse = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\nconst statusCode = apiResponse.statusCode || 200;\nconst body = apiResponse.body || apiResponse;\n\n// Verifier si l'utilisateur existe\nif (statusCode === 404 || !body || body.error) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: 'Utilisateur non trouve. Vous devez d\\'abord souscrire a un plan.',\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Verifier si l'utilisateur a un stripe_customer_id\nconst stripeCustomerId = body.stripe_customer_id;\n\nif (!stripeCustomerId) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 400,\n        message: 'Aucun abonnement Stripe trouve. Utilisez /subscribe pour souscrire.',\n        status: 'NO_SUBSCRIPTION'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    found: true,\n    project_id: inputData.project_id,\n    discord_user_id: inputData.discord_user_id,\n    stripe_customer_id: stripeCustomerId,\n    redis_key: inputData.redis_key\n  }\n}];"
+        "jsCode": "  // Extraire le stripe_customer_id de la reponse API /webhook/account\n  const apiResponse = $input.first().json;\n  const inputData = $('Validate Input').first().json;\n\n  const statusCode = apiResponse.statusCode || 200;\n  const body = apiResponse.body || apiResponse;\n\n  // Verifier si l'utilisateur existe (404)\n  const errorStr = JSON.stringify(apiResponse);\n  const is404 = statusCode === 404 ||\n                errorStr.includes('404') ||\n                errorStr.includes('NOT_FOUND');\n\n  if (is404 || !body || body.error) {\n    return [{\n      json: {\n        found: false,\n        error: {\n          code: 404,\n          message: 'Utilisateur non trouve. Vous devez d\\'abord souscrire a un plan.',\n          status: 'NOT_FOUND'\n        }\n      }\n    }];\n  }\n\n  // Extraire stripe_customer_id depuis body ou metadata\n  const stripeCustomerId = body.stripe_customer_id ||\n                           body.metadata?.stripe_customer_id ||\n                           null;\n\n  if (!stripeCustomerId) {\n    return [{\n      json: {\n        found: false,\n        error: {\n          code: 400,\n          message: 'Aucun abonnement Stripe trouve. Utilisez /subscribe pour souscrire.',\n          status: 'NO_SUBSCRIPTION'\n        }\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      found: true,\n      project_id: inputData.project_id,\n      discord_user_id: inputData.discord_user_id,\n      stripe_customer_id: stripeCustomerId,\n      redis_key: inputData.redis_key\n    }\n  }];"
       },
       "id": "check-subscriber",
       "name": "Check Subscriber",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, 200]
+      "position": [
+        1328,
+        208
+      ]
     },
     {
       "parameters": {
@@ -136,18 +162,25 @@
       "name": "Subscriber Found?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1540, 200]
+      "position": [
+        1552,
+        208
+      ]
     },
     {
       "parameters": {
         "operation": "get",
-        "key": "={{ $json.redis_key }}"
+        "key": "={{ $json.redis_key }}",
+        "options": {}
       },
       "id": "get-stripe-config",
       "name": "Get Stripe Config (Redis)",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
-      "position": [1760, 100],
+      "position": [
+        1760,
+        112
+      ],
       "credentials": {
         "redis": {
           "id": "2idv3VKZ91q5gOnz",
@@ -158,13 +191,16 @@
     },
     {
       "parameters": {
-        "jsCode": "// Verifier que le projet existe dans Redis et extraire stripe_key\nconst redisResult = $('Get Stripe Config (Redis)').first();\nconst inputData = $('Check Subscriber').first().json;\n\n// Verifier si Redis a retourne une erreur\nconst redisJson = redisResult?.json || {};\nif (redisJson.error || redisJson.message?.includes('ECONNREFUSED')) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 503,\n        message: 'Service Redis indisponible',\n        status: 'SERVICE_UNAVAILABLE'\n      }\n    }\n  }];\n}\n\n// Redis retourne la valeur dans propertyName, value, ou directement\nconst rawValue = redisJson.propertyName || redisJson.value || redisJson;\n\nif (!rawValue || rawValue === null || rawValue === 'null') {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Projet '${inputData.project_id}' non enregistre.`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Parser le JSON stocke dans Redis\nlet project;\ntry {\n  project = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;\n} catch (e) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 500,\n        message: `Erreur parsing Redis: ${e.message}`,\n        status: 'INTERNAL_ERROR'\n      }\n    }\n  }];\n}\n\nif (!project.stripe_key) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Projet '${inputData.project_id}' n'a pas de cle Stripe configuree`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    found: true,\n    project_id: inputData.project_id,\n    discord_user_id: inputData.discord_user_id,\n    stripe_customer_id: inputData.stripe_customer_id,\n    stripe_key: project.stripe_key,\n    return_url: `${$env.STRIPE_WEBHOOK_URL}/webhook/${inputData.project_id}/subscription/portal`\n  }\n}];"
+        "jsCode": "// Verifier que le projet existe dans Redis et extraire stripe_key\nconst redisResult = $('Get Stripe Config (Redis)').first();\nconst inputData = $('Check Subscriber').first().json;\n\n// Verifier si Redis a retourne une erreur\nconst redisJson = redisResult?.json || {};\nif (redisJson.error || redisJson.message?.includes('ECONNREFUSED')) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 503,\n        message: 'Service Redis indisponible',\n        status: 'SERVICE_UNAVAILABLE'\n      }\n    }\n  }];\n}\n\n// Redis retourne la valeur dans propertyName, value, ou directement\nconst rawValue = redisJson.propertyName || redisJson.value || redisJson;\n\nif (!rawValue || rawValue === null || rawValue === 'null') {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Projet '${inputData.project_id}' non enregistre.`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Parser le JSON stocke dans Redis\nlet project;\ntry {\n  project = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;\n} catch (e) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 500,\n        message: `Erreur parsing Redis: ${e.message}`,\n        status: 'INTERNAL_ERROR'\n      }\n    }\n  }];\n}\n\nif (!project.stripe_key) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Projet '${inputData.project_id}' n'a pas de cle Stripe configuree`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    found: true,\n    project_id: inputData.project_id,\n    discord_user_id: inputData.discord_user_id,\n    stripe_customer_id: inputData.stripe_customer_id,\n    stripe_key: project.stripe_key,\n    return_url: `${$env.STRIPE_WEBHOOK_URL}/webhook/subscription-result?project_id=${inputData.project_id}&action=portal`\n  }\n}];"
       },
       "id": "check-project",
       "name": "Check Project",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1980, 100]
+      "position": [
+        1984,
+        112
+      ]
     },
     {
       "parameters": {
@@ -193,7 +229,10 @@
       "name": "Project Found?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2200, 100]
+      "position": [
+        2208,
+        112
+      ]
     },
     {
       "parameters": {
@@ -238,7 +277,10 @@
       "name": "Create Portal Session",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2420, 0],
+      "position": [
+        2432,
+        0
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -249,7 +291,10 @@
       "name": "Format Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2640, 0]
+      "position": [
+        2640,
+        0
+      ]
     },
     {
       "parameters": {
@@ -271,7 +316,10 @@
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [2860, 0]
+      "position": [
+        2864,
+        0
+      ]
     },
     {
       "parameters": {
@@ -293,7 +341,10 @@
       "name": "Respond Validation Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1100, 420]
+      "position": [
+        1104,
+        432
+      ]
     },
     {
       "parameters": {
@@ -315,7 +366,10 @@
       "name": "Respond Not Found",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1760, 300]
+      "position": [
+        1760,
+        304
+      ]
     },
     {
       "parameters": {
@@ -337,7 +391,10 @@
       "name": "Respond Project Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [2420, 200]
+      "position": [
+        2432,
+        208
+      ]
     }
   ],
   "connections": {
@@ -485,6 +542,8 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   }
 }
