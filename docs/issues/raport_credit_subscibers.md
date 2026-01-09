@@ -338,6 +338,235 @@ Résultat attendu :
 ```
 
 ---
-*Document mis à jour le 2026-01-09*
+## 13. Résumé exécutif et décisions finales
+
+### 13.1 Problèmes identifiés
+
+| # | Problème | Impact | Criticité |
+|---|----------|--------|-----------|
+| 1 | `subscription_status` jamais mis à jour après paiement | Users affichés comme "free" même après paiement | 🔴 Haute |
+| 2 | Deux systèmes parallèles : `user_credits` (écrit) vs `subscribers` (lu) | Données obsolètes pour commandes `/plan`, `/credits` | 🔴 Haute |
+| 3 | Table `subscribers` jamais alimentée par Stripe webhook | Bug en production | 🔴 Haute |
+| 4 | Table `credit_transactions` jamais utilisée | Dette technique | 🟡 Moyenne |
+
+### 13.2 Décision architecture
+
+**Problème central :** Les workflows n8n utilisent deux endpoints différents :
+
+```
+ÉCRITURE (Stripe webhook)          LECTURE (Bot Discord)
+─────────────────────────          ─────────────────────
+POST /webhook/account/set    vs    GET /subscription/status/{id}
+        │                                    │
+        ▼                                    ▼
+   user_credits ✅                    subscribers ❌
+   (à jour)                           (obsolète)
+```
+
+**Solution retenue :** Unifier sur `user_credits` en migrant la lecture.
+
+### 13.3 Plan d'action final par équipe
+
+---
+
+## 🔴 ÉQUIPE API - Actions requises
+
+### A1. Modifier endpoint `/webhook/account/set` (Priorité HAUTE)
+
+Ajouter les champs optionnels :
+
+```python
+class SetCreditsRequest(BaseModel):
+    discord_user_id: str
+    credits_remaining: int
+    credits_total: int
+    subscription_status: Optional[str] = None  # AJOUTER
+    plan_id: Optional[str] = None              # AJOUTER
+```
+
+Mettre à jour la colonne `subscription_status` en DB si fournie.
+
+### A2. Modifier endpoint `/webhook/account` GET (Priorité HAUTE)
+
+S'assurer que la réponse inclut :
+- `subscription_status`
+- `plan_id` (si stocké)
+
+Format de réponse attendu par n8n :
+```json
+{
+  "success": true,
+  "credits": {
+    "project_id": "torah-fun",
+    "discord_user_id": "636639897767378954",
+    "credits_remaining": 1000,
+    "credits_total": 1000,
+    "subscription_status": "active",
+    "plan_id": "premium"
+  }
+}
+```
+
+### A3. Déprécier endpoints `subscribers` (Priorité MOYENNE)
+
+Une fois n8n migré, marquer comme dépréciés :
+- `GET /subscription/status/{discord_user_id}`
+- `GET /subscription/credits/{discord_user_id}`
+
+### A4. Nettoyage tables (Priorité BASSE)
+
+Après validation complète :
+- Supprimer table `credit_transactions` (jamais utilisée)
+- Supprimer table `subscribers` (obsolète)
+
+---
+
+## 🔵 ÉQUIPE N8N - Actions requises
+
+### N1. Modifier workflow `STRIPE - Webhook Handler` (Priorité HAUTE)
+
+**Node "Process Event"** - Ajouter `subscription_status` :
+
+```javascript
+// Mapping event → status
+if (eventType === 'checkout.session.completed') {
+  payload.subscription_status = 'active';
+}
+else if (eventType === 'invoice.paid') {
+  payload.subscription_status = 'active';
+}
+else if (eventType === 'customer.subscription.deleted') {
+  payload.subscription_status = 'canceled';
+}
+```
+
+**Node "Call Credits API"** - Envoyer les nouveaux champs :
+
+```json
+{
+  "discord_user_id": "{{ $json.discord_user_id }}",
+  "credits_remaining": {{ $json.credits_remaining }},
+  "credits_total": {{ $json.credits_total }},
+  "subscription_status": "{{ $json.subscription_status }}",
+  "plan_id": "{{ $json.plan_id }}"
+}
+```
+
+### N2. Modifier workflow `DISCORD - Get Subscriber` (Priorité HAUTE)
+
+**Changement d'endpoint :**
+
+| Avant | Après |
+|-------|-------|
+| `GET /subscription/status/{discord_user_id}` | `GET /webhook/account?project_id={pid}&discord_user_id={uid}` |
+
+**Raison :** L'ancien endpoint lit `subscribers` (obsolète), le nouveau lit `user_credits` (à jour).
+
+### N3. Modifier workflow `DISCORD - Billing Portal` (Priorité HAUTE)
+
+Même changement que N2 - remplacer l'appel `/subscription/status` par `/webhook/account`.
+
+### N4. Adapter le format de réponse (si nécessaire)
+
+Si le format de `/webhook/account` diffère, adapter le node de traitement pour mapper :
+
+| Ancien champ | Nouveau champ |
+|--------------|---------------|
+| `credits` | `credits_remaining` |
+| `subscription_plan` | `plan_id` |
+| `is_active` | `subscription_status == 'active'` |
+
+---
+
+## 📋 SÉQUENCE D'EXÉCUTION
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ÉTAPE 1 - API : Modifier /webhook/account/set                          │
+│  Responsable: Équipe API                                                │
+│  Livrable: Endpoint accepte subscription_status et plan_id              │
+│  ✅ Notifier n8n quand terminé                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ÉTAPE 2 - N8N : Modifier STRIPE - Webhook Handler                      │
+│  Responsable: Équipe n8n                                                │
+│  Livrable: Workflow envoie subscription_status et plan_id               │
+│  ✅ Tester avec paiement Stripe test                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ÉTAPE 3 - N8N : Migrer DISCORD - Get Subscriber                        │
+│  Responsable: Équipe n8n                                                │
+│  Changement: /subscription/status → /webhook/account                    │
+│  ✅ Tester commandes /plan et /credits                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ÉTAPE 4 - N8N : Migrer DISCORD - Billing Portal                        │
+│  Responsable: Équipe n8n                                                │
+│  Même changement que étape 3                                            │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ÉTAPE 5 - API : Déprécier /subscription/*                              │
+│  Responsable: Équipe API                                                │
+│  Action: Marquer endpoints comme dépréciés, puis supprimer              │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  ÉTAPE 6 - API : Nettoyage tables                                       │
+│  Responsable: Équipe API                                                │
+│  Action: Supprimer subscribers et credit_transactions                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 14. Checklist de validation
+
+### Après Étape 1 (API)
+```bash
+curl -X POST "http://pi6.local:3031/api/webhook/account/set" \
+  -H "Content-Type: application/json" \
+  -H "X-Project-ID: torah-fun" \
+  -d '{"discord_user_id":"TEST123","credits_remaining":100,"credits_total":100,"subscription_status":"active","plan_id":"premium"}'
+# Attendu: 200 OK
+```
+
+### Après Étape 2 (n8n - Stripe webhook)
+- [ ] Faire un paiement Stripe test
+- [ ] Vérifier que `subscription_status = "active"` en DB
+
+### Après Étape 3 (n8n - Get Subscriber)
+- [ ] Tester commande `/plan` sur Discord
+- [ ] Vérifier que les crédits affichés sont corrects
+- [ ] Vérifier que le statut affiché est "active" (pas "free")
+
+### Après Étape 4 (n8n - Billing Portal)
+- [ ] Tester accès au portail de facturation
+- [ ] Vérifier que l'utilisateur est reconnu
+
+---
+
+## 15. Questions résolues
+
+| Question | Réponse |
+|----------|---------|
+| Pourquoi `subscription_status` reste à "free" ? | Endpoint `/set` ne reçoit pas ce champ |
+| Table `subscribers` orpheline ou bug ? | **BUG** - Utilisée en lecture mais jamais écrite |
+| Qui appelle `/subscription/status` ? | Workflows `DISCORD - Get Subscriber` et `Billing Portal` |
+| Faut-il `/webhook/account/create` ? | Non, le UPSERT de `/set` suffit |
+| Garder `credit_transactions` ? | Non, jamais utilisée - supprimer |
+
+---
+
+*Document finalisé le 2026-01-09*
 *Équipe API + Équipe n8n*
+*En attente de validation équipe API*
 
