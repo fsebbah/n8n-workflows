@@ -110,7 +110,7 @@ body = {
 |------------------|--------|------------------|--------------|
 | `discord-registry` | OUI | DISCORD - Registry | `GET /webhook/discord-registry` |
 | `subscription-change-plan` | OUI | Stripe - Subscription Change Plan | `POST /webhook/subscription-change-plan` |
-| `subscription-cancel` | OUI | Torah - Subscription Cancel | `POST /webhook/torah-sub-cancel` |
+| `subscription-cancel` | OUI | Stripe - Subscription Cancel | `POST /webhook/stripe-subscription-cancel` |
 | `stripe-register-project` | OUI | STRIPE - Register Project | `POST /webhook/stripe-register-project` |
 
 ### 4.1 discord-registry
@@ -136,10 +136,10 @@ Content-Type: application/json
 
 **Usage:** Changer le plan d'un abonnement existant.
 
-### 4.3 subscription-cancel (torah-sub-cancel)
+### 4.3 subscription-cancel
 
 ```http
-POST /webhook/torah-sub-cancel
+POST /webhook/stripe-subscription-cancel
 Content-Type: application/json
 
 {
@@ -149,8 +149,6 @@ Content-Type: application/json
 ```
 
 **Usage:** Annuler un abonnement.
-
-**ATTENTION:** Le path est `torah-sub-cancel`, pas `subscription-cancel`.
 
 ### 4.4 stripe-register-project
 
@@ -177,10 +175,10 @@ Content-Type: application/json
 
 | Callback attendu | Workflow n8n | Webhook path | Statut |
 |------------------|--------------|--------------|--------|
-| `discord-sub-success` | Torah - Subscription Success | `POST /webhook/torah-sub-success` | ACTIF |
-| `discord-sub-renewal` | Torah - Subscription Renewal | `POST /webhook/torah-sub-renewal` | ACTIF |
-| `discord-sub-failure` | Torah - Subscription Payment Failure | (internal) | ACTIF |
-| `discord-sub-cancel` | Torah - Subscription Cancel | `POST /webhook/torah-sub-cancel` | ACTIF |
+| `subscription-success` | Stripe - Subscription Success | `POST /webhook/stripe-subscription-success` | ACTIF |
+| `subscription-renewal` | Stripe - Subscription Renewal | `POST /webhook/stripe-subscription-renewal` | ACTIF |
+| `subscription-failure` | Stripe - Subscription Payment Failure | `POST /webhook/stripe-subscription-failure` | ACTIF |
+| `subscription-cancel` | Stripe - Subscription Cancel | `POST /webhook/stripe-subscription-cancel` | ACTIF |
 
 **IMPORTANT:** Ces callbacks sont appeles par le workflow `STRIPE - Webhook Handler` apres un evenement Stripe, PAS directement par le bot.
 
@@ -196,7 +194,7 @@ STRIPE - Webhook Handler (n8n)
      | Met a jour les credits via API
      |
      v
-Torah - Subscription Success (n8n)
+Stripe - Subscription Success (n8n)
      |
      | Envoie DM Discord
      | Notifie dans le channel
@@ -222,15 +220,16 @@ Utilisateur Discord recoit confirmation
 | Souscrire | POST | `/webhook/discord-subscribe` |
 | Gerer abonnement | POST | `/webhook/discord-billing-portal` |
 | Changer plan | POST | `/webhook/subscription-change-plan` |
-| Annuler | POST | `/webhook/torah-sub-cancel` |
+| Annuler | POST | `/webhook/stripe-subscription-cancel` |
 | Config projet | GET | `/webhook/discord-registry` |
 
 ### Endpoints que le bot NE DOIT PAS appeler:
 
 | Endpoint | Raison |
 |----------|--------|
-| `/webhook/torah-sub-success` | Appele par Stripe webhook |
-| `/webhook/torah-sub-renewal` | Appele par Stripe webhook |
+| `/webhook/stripe-subscription-success` | Appele par Stripe webhook |
+| `/webhook/stripe-subscription-renewal` | Appele par Stripe webhook |
+| `/webhook/stripe-subscription-failure` | Appele par Stripe webhook |
 | `/webhook/subscription-checkout-create` | Legacy, utiliser discord-subscribe |
 | `/webhook/stripe-webhook` | Appele par Stripe directement |
 
@@ -242,6 +241,10 @@ Utilisateur Discord recoit confirmation
 |----------|--------|------------|
 | `subscription-checkout-create` | DEPRECIE | `discord-subscribe` |
 | `account` | N'EXISTE PAS | `discord-get-subscriber` |
+| `torah-sub-cancel` | RENOMME | `stripe-subscription-cancel` |
+| `torah-sub-success` | RENOMME | `stripe-subscription-success` |
+| `torah-sub-renewal` | RENOMME | `stripe-subscription-renewal` |
+| `torah-sub-failure` | RENOMME | `stripe-subscription-failure` |
 
 **ERREUR ACTUELLE:**
 ```
@@ -256,8 +259,8 @@ The requested webhook "GET account" is not registered.
 
 1. **Corriger l'appel `/webhook/account`** → utiliser `/webhook/discord-get-subscriber`
 2. **Utiliser `discord-subscribe`** au lieu de `subscription-checkout-create`
-3. **Utiliser `torah-sub-cancel`** pour les annulations (pas `subscription-cancel`)
-4. **Ne pas appeler les callbacks** (torah-sub-success, etc.) - ils sont automatiques
+3. **Utiliser `stripe-subscription-cancel`** pour les annulations
+4. **Ne pas appeler les callbacks** (stripe-subscription-success, etc.) - ils sont automatiques
 
 ---
 
