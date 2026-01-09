@@ -12,11 +12,13 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [60, 60]
+      "position": [
+        64,
+        64
+      ]
     },
     {
       "parameters": {
-        "httpMethod": "GET",
         "path": "discord-get-subscriber",
         "responseMode": "responseNode",
         "options": {}
@@ -25,7 +27,10 @@
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [440, 300],
+      "position": [
+        448,
+        304
+      ],
       "webhookId": "discord-get-subscriber"
     },
     {
@@ -36,7 +41,10 @@
       "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 300]
+      "position": [
+        672,
+        304
+      ]
     },
     {
       "parameters": {
@@ -65,12 +73,23 @@
       "name": "Input Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [880, 300]
+      "position": [
+        880,
+        304
+      ]
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "={{ $env.TORAH_API_URL }}/api/subscription/status/{{ $json.discord_user_id }}",
+        "url": "={{ $env.TORAH_API_URL }}/api/webhook/account",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "discord_user_id",
+              "value": "={{ $json.discord_user_id }}"
+            }
+          ]
+        },
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -96,18 +115,24 @@
       "name": "Get Subscriber (API)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1100, 200],
+      "position": [
+        1104,
+        208
+      ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Traiter la reponse de l'API\nconst apiResponse = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\n// Verifier si l'API a retourne une erreur ou pas de donnees\nconst statusCode = apiResponse.statusCode || 200;\nconst body = apiResponse.body || apiResponse;\n\n// Detecter 404 de plusieurs facons (n8n peut wrapper differemment)\nconst errorStr = JSON.stringify(apiResponse);\nconst is404 = statusCode === 404 || \n              errorStr.includes('404') ||\n              errorStr.includes('NOT_FOUND');\n\n// CAS SPECIAL: 404 = nouvel utilisateur sans abonnement\n// Retourner un profil 'free' par defaut au lieu d'une erreur\nif (is404) {\n  return [{\n    json: {\n      found: true,\n      subscriber: {\n        discord_user_id: inputData.discord_user_id,\n        discord_username: null,\n        email: null,\n        plan_id: 'free',\n        stripe_customer_id: null,\n        credits_remaining: 0,\n        credits_total: 0,\n        credits_used: 0,\n        usage_percent: 0,\n        subscription_status: 'none',\n        subscription_plan: 'free',\n        current_period_end: null,\n        is_active: false\n      }\n    }\n  }];\n}\n\n// Autres erreurs API (500, etc.)\nif (statusCode >= 400 || !body || body.error) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: statusCode >= 400 ? statusCode : 500,\n        message: body?.error?.message || 'Erreur lors de la recuperation de l\\'abonnement',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Mapper la reponse API vers le format attendu par le plugin\nconst subscriber = body;\n\n// Calculer credits_remaining et credits_total a partir de credits\nconst credits = subscriber.credits || 0;\nconst creditsTotal = subscriber.credits_total || credits;\nconst creditsRemaining = subscriber.credits_remaining || credits;\nconst creditsUsed = creditsTotal - creditsRemaining;\nconst usagePercent = creditsTotal > 0 \n  ? Math.round((creditsUsed / creditsTotal) * 100) \n  : 0;\n\nreturn [{\n  json: {\n    found: true,\n    subscriber: {\n      discord_user_id: subscriber.discord_user_id,\n      discord_username: subscriber.discord_username,\n      email: subscriber.email || null,\n      plan_id: subscriber.subscription_plan,\n      stripe_customer_id: subscriber.stripe_customer_id,\n      credits_remaining: creditsRemaining,\n      credits_total: creditsTotal,\n      credits_used: creditsUsed,\n      usage_percent: usagePercent,\n      subscription_status: subscriber.subscription_status || 'unknown',\n      subscription_plan: subscriber.subscription_plan,\n      current_period_end: subscriber.current_period_end,\n      is_active: subscriber.is_active || false\n    }\n  }\n}];"
+        "jsCode": "  // Traiter la reponse de l'API /webhook/account\n  const apiResponse = $input.first().json;\n  const inputData = $('Validate Input').first().json;\n\n  // Verifier si l'API a retourne une erreur ou pas de donnees\n  const statusCode = apiResponse.statusCode || 200;\n  const body = apiResponse.body || apiResponse;\n\n  // Detecter 404 de plusieurs facons (n8n peut wrapper differemment)\n  const errorStr = JSON.stringify(apiResponse);\n  const is404 = statusCode === 404 ||\n                errorStr.includes('404') ||\n                errorStr.includes('NOT_FOUND');\n\n  // CAS SPECIAL: 404 = nouvel utilisateur sans abonnement\n  // Retourner un profil 'free' par defaut au lieu d'une erreur\n  if (is404) {\n    return [{\n      json: {\n        found: true,\n        subscriber: {\n          discord_user_id: inputData.discord_user_id,\n          discord_username: null,\n          email: null,\n          plan_id: 'free',\n          stripe_customer_id: null,\n          credits_remaining: 0,\n          credits_total: 0,\n          credits_used: 0,\n          usage_percent: 0,\n          subscription_status: 'none',\n          subscription_plan: 'free',\n          current_period_end: null,\n          is_active: false\n        }\n      }\n    }];\n  }\n\n  // Autres erreurs API (500, etc.)\n  if (statusCode >= 400 || !body || body.error) {\n    return [{\n      json: {\n        found: false,\n        error: {\n          code: statusCode >= 400 ? statusCode : 500,\n          message: body?.error?.message || 'Erreur lors de la recuperation de l\\'abonnement',\n          status: 'API_ERROR'\n        }\n      }\n    }];\n  }\n\n  // Mapper la reponse API /webhook/account vers le format attendu par le plugin\n  // Nouveau format: credits_remaining, credits_total, plan_id, subscription_status, current_period_end\n  const creditsRemaining = body.credits_remaining || 0;\n  const creditsTotal = body.credits_total || creditsRemaining;\n  const creditsUsed = creditsTotal - creditsRemaining;\n  const usagePercent = creditsTotal > 0\n    ? Math.round((creditsUsed / creditsTotal) * 100)\n    : 0;\n\n  const planId = body.plan_id || 'free';\n  const subscriptionStatus = body.subscription_status || 'free';\n  const isActive = subscriptionStatus === 'active';\n\n  return [{\n    json: {\n      found: true,\n      subscriber: {\n        discord_user_id: body.discord_user_id || inputData.discord_user_id,\n        discord_username: body.discord_username || null,\n        email: body.email || null,\n        plan_id: planId,\n        stripe_customer_id: body.stripe_customer_id || null,\n        credits_remaining: creditsRemaining,\n        credits_total: creditsTotal,\n        credits_used: creditsUsed,\n        usage_percent: usagePercent,\n        subscription_status: subscriptionStatus,\n        subscription_plan: planId,\n        current_period_end: body.current_period_end || null,\n        is_active: isActive\n      }\n    }\n  }];"
       },
       "id": "format-subscriber",
       "name": "Format Subscriber",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, 200]
+      "position": [
+        1328,
+        208
+      ]
     },
     {
       "parameters": {
@@ -136,7 +161,10 @@
       "name": "Subscriber Found?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1540, 200]
+      "position": [
+        1552,
+        208
+      ]
     },
     {
       "parameters": {
@@ -158,7 +186,10 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1760, 100]
+      "position": [
+        1760,
+        112
+      ]
     },
     {
       "parameters": {
@@ -180,7 +211,10 @@
       "name": "Respond Validation Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1100, 420]
+      "position": [
+        1104,
+        432
+      ]
     },
     {
       "parameters": {
@@ -202,7 +236,10 @@
       "name": "Respond Not Found",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1760, 300]
+      "position": [
+        1760,
+        304
+      ]
     }
   ],
   "connections": {
@@ -288,6 +325,8 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   }
 }
