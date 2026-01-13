@@ -1,0 +1,423 @@
+{
+  "name": "DISCORD - Get Transactions",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## DISCORD - Get Transactions\n\n**Endpoint:** GET /webhook/discord-get-transactions\n\n**Query Parameters:**\n- `project_id` (required): ID du projet\n- `discord_user_id` (required): ID Discord\n- `limit` (optional): Max resultats (defaut: 20)\n- `offset` (optional): Pagination (defaut: 0)\n\n**Source:** PostgreSQL `transactions`\n\n**Commande bot:** `/account`\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"transactions\": [...],\n  \"pagination\": {\n    \"total\": 45,\n    \"limit\": 20,\n    \"offset\": 0,\n    \"has_more\": true\n  }\n}\n```",
+        "height": 400,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        60,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "discord-get-transactions",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "webhookId": "discord-get-transactions"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valider les parametres\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst projectId = query.project_id || null;\nconst discordUserId = query.discord_user_id || null;\nconst limit = Math.min(Math.max(parseInt(query.limit) || 20, 1), 100); // Entre 1 et 100\nconst offset = Math.max(parseInt(query.offset) || 0, 0);\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!discordUserId) errors.push('discord_user_id');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    discord_user_id: discordUserId,\n    limit: limit,\n    offset: offset\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM subscribers WHERE project_id = '{{ $json.project_id }}' AND discord_user_id = '{{ $json.discord_user_id }}' LIMIT 1",
+        "options": {}
+      },
+      "id": "get-subscriber",
+      "name": "Get Subscriber",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1100,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-subscribers",
+          "name": "PostgreSQL Subscribers"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verifier si le subscriber existe\nconst dbResults = $input.all();\nconst inputData = $('Validate Input').first().json;\n\nif (!dbResults || dbResults.length === 0 || !dbResults[0].json.id) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Aucun abonnement trouve pour discord_user_id '${inputData.discord_user_id}' dans le projet '${inputData.project_id}'`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    found: true,\n    subscriber_id: dbResults[0].json.id,\n    limit: inputData.limit,\n    offset: inputData.offset\n  }\n}];"
+      },
+      "id": "check-subscriber",
+      "name": "Check Subscriber",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "subscriber-found",
+      "name": "Subscriber Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as total FROM transactions WHERE subscriber_id = {{ $json.subscriber_id }}",
+        "options": {}
+      },
+      "id": "count-transactions",
+      "name": "Count Transactions",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1760,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-subscribers",
+          "name": "PostgreSQL Subscribers"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stocker le total et preparer la requete des transactions\nconst countResult = $input.first().json;\nconst subscriberData = $('Check Subscriber').first().json;\n\nreturn [{\n  json: {\n    subscriber_id: subscriberData.subscriber_id,\n    limit: subscriberData.limit,\n    offset: subscriberData.offset,\n    total: parseInt(countResult.total) || 0\n  }\n}];"
+      },
+      "id": "prepare-query",
+      "name": "Prepare Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, type, amount, description, reference, created_at FROM transactions WHERE subscriber_id = {{ $json.subscriber_id }} ORDER BY created_at DESC LIMIT {{ $json.limit }} OFFSET {{ $json.offset }}",
+        "options": {}
+      },
+      "id": "get-transactions",
+      "name": "Get Transactions",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2200,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-subscribers",
+          "name": "PostgreSQL Subscribers"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la reponse avec pagination\nconst paginationData = $('Prepare Query').first().json;\nconst transactionsResults = $input.all();\n\n// Formater les transactions\nconst transactions = transactionsResults\n  .filter(t => t.json && t.json.id)\n  .map(t => ({\n    id: t.json.id,\n    type: t.json.type,\n    amount: t.json.amount,\n    description: t.json.description,\n    reference: t.json.reference || null,\n    created_at: t.json.created_at\n  }));\n\nconst total = paginationData.total;\nconst limit = paginationData.limit;\nconst offset = paginationData.offset;\nconst hasMore = (offset + transactions.length) < total;\n\nreturn [{\n  json: {\n    success: true,\n    transactions: transactions,\n    pagination: {\n      total: total,\n      limit: limit,\n      offset: offset,\n      count: transactions.length,\n      has_more: hasMore\n    }\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 404 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-not-found",
+      "name": "Respond Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Subscriber",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Subscriber": {
+      "main": [
+        [
+          {
+            "node": "Check Subscriber",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Subscriber": {
+      "main": [
+        [
+          {
+            "node": "Subscriber Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscriber Found?": {
+      "main": [
+        [
+          {
+            "node": "Count Transactions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Transactions": {
+      "main": [
+        [
+          {
+            "node": "Prepare Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Query": {
+      "main": [
+        [
+          {
+            "node": "Get Transactions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Transactions": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

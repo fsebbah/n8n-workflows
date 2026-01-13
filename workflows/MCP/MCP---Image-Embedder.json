@@ -1,0 +1,254 @@
+{
+  "name": "MCP - Image Embedder",
+  "nodes": [
+    {
+      "id": "webhook-img-embed",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "image-embedder-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "image-embedder",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-image",
+              "leftValue": "={{ $json.body.image_url || $json.body.image_base64 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-image",
+      "name": "Error: No Image",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: image_url or image_base64\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"model\": \"clip\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "openai-vision",
+      "name": "OpenAI Vision Embed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an image analysis expert. Generate a detailed semantic description of the image that can be used for similarity search and embedding. Return JSON with:\\n- description: Detailed description (2-3 sentences)\\n- objects: Array of detected objects\\n- scene: Overall scene type (indoor, outdoor, abstract, etc.)\\n- colors: Dominant colors\\n- mood: Image mood/atmosphere\\n- tags: Array of relevant tags for search\\n- style: Image style (photo, illustration, diagram, etc.)\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Analyze this image and generate semantic metadata for embedding:\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"{{ $json.body.image_url || ('data:image/jpeg;base64,' + $json.body.image_base64) }}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"max_tokens\": 500\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "generate-embedding",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Webhook').first().json.body.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": {{ JSON.stringify($json.choices?.[0]?.message?.content || 'image') }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-response",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst visionData = $('OpenAI Vision Embed').first().json;\n\nconst results = items.map(item => {\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: 'gpt-4o-mini + text-embedding-3-small'\n        }\n      }\n    };\n  }\n\n  try {\n    // Parse vision analysis\n    let analysis = {};\n    try {\n      analysis = JSON.parse(visionData.choices?.[0]?.message?.content || '{}');\n    } catch (e) {\n      analysis = { description: visionData.choices?.[0]?.message?.content || '' };\n    }\n    \n    // Get embedding\n    const embedding = item.json.data?.[0]?.embedding || [];\n    \n    return {\n      json: {\n        success: true,\n        data: {\n          embedding: embedding,\n          dimensions: embedding.length,\n          analysis: {\n            description: analysis.description || '',\n            objects: analysis.objects || [],\n            scene: analysis.scene || '',\n            colors: analysis.colors || [],\n            mood: analysis.mood || '',\n            tags: analysis.tags || [],\n            style: analysis.style || ''\n          }\n        },\n        meta: {\n          provider: 'openai',\n          vision_model: 'gpt-4o-mini',\n          embedding_model: 'text-embedding-3-small'\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to process image: ' + e.message,\n          status: 'PROCESS_ERROR'\n        },\n        meta: {\n          provider: 'openai'\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 650,
+        "height": 300,
+        "content": "## MCP - Image Embedder\n\n**Endpoint:** POST /webhook/image-embedder\n\n**Parameters:**\n- `image_url` (required*): URL of image to embed\n- `image_base64` (required*): Base64-encoded image\n- `openai_api_key` (required): OpenAI API key\n\n*One of image_url or image_base64 is required\n\n**Process:**\n1. GPT-4o-mini analyzes image → semantic description\n2. Description embedded via text-embedding-3-small\n\n**Returns:**\n- `embedding`: Vector embedding (1536 dimensions)\n- `analysis`: description, objects, scene, colors, mood, tags, style\n\n**Use case:** Image similarity search, visual search"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Vision Embed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Vision Embed": {
+      "main": [
+        [
+          {
+            "node": "Generate Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embedding": {
+      "main": [
+        [
+          {
+            "node": "Parse Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

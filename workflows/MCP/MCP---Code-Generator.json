@@ -1,0 +1,210 @@
+{
+  "name": "MCP - Code Generator",
+  "nodes": [
+    {
+      "id": "webhook-codegen",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "code-generator-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "code-generator",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.prompt }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-prompt",
+      "name": "Error: No Prompt",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: prompt\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "openai-code",
+      "name": "OpenAI Generate Code",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "resource": "chat",
+        "operation": "message",
+        "model": "={{ $json.body.model || 'gpt-4o' }}",
+        "messages": {
+          "values": [
+            {
+              "content": "={{ 'You are an expert software developer. Generate clean, well-documented, production-ready code.' + ($json.body.language ? ' Use ' + $json.body.language + ' programming language.' : '') + ($json.body.framework ? ' Use ' + $json.body.framework + ' framework.' : '') + ' Include comments explaining key parts of the code. Follow best practices and design patterns.' }}",
+              "role": "system"
+            },
+            {
+              "content": "={{ $json.body.prompt + ($json.body.context ? '\\n\\nContext:\\n' + $json.body.context : '') }}",
+              "role": "user"
+            }
+          ]
+        },
+        "options": {
+          "temperature": "={{ $json.body.temperature || 0.2 }}",
+          "maxTokens": "={{ $json.body.max_tokens || 4096 }}"
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        920,
+        200
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ { \"success\": true, \"data\": { \"code\": $json.message.content, \"language\": $('Webhook').first().json.body.language || 'auto-detected', \"framework\": $('Webhook').first().json.body.framework || null }, \"meta\": { \"provider\": \"openai\", \"model\": $json.model || $('Webhook').first().json.body.model || 'gpt-4o', \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"usage\": { \"prompt_tokens\": $json.usage?.prompt_tokens || 0, \"completion_tokens\": $json.usage?.completion_tokens || 0, \"total_tokens\": $json.usage?.total_tokens || 0 } } } }}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 550,
+        "height": 240,
+        "content": "## MCP - Code Generator\n\n**Endpoint:** POST /webhook/code-generator\n\n**Parameters:**\n- `prompt` (required): Code generation request\n- `language` (optional): Programming language (python, javascript, etc.)\n- `framework` (optional): Framework to use (react, fastapi, etc.)\n- `context` (optional): Additional context or existing code\n- `model` (optional): gpt-4o, gpt-4o-mini (default: gpt-4o)\n- `temperature` (optional): 0-2 (default: 0.2 for deterministic code)\n- `max_tokens` (optional): Max tokens (default: 4096)\n\n**Returns:** Generated code with metadata"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Generate Code",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Generate Code": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}
