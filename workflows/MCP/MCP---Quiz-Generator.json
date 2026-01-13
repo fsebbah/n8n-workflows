@@ -1,0 +1,207 @@
+{
+  "name": "MCP - Quiz Generator",
+  "nodes": [
+    {
+      "id": "webhook-quiz",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "quiz-generator-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "quiz-generator",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.data }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-data",
+      "name": "Error: No Data",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: data (text, topic or URL)\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "openai-quiz",
+      "name": "OpenAI Generate Quiz",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.body.model || 'gpt-4o' }}\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Tu es un expert en création de quiz éducatifs. Génère un quiz basé sur le contenu fourni.\\n\\nRègles:\\n1. Chaque question doit être claire et non ambiguë\\n2. Les options de réponse doivent être plausibles\\n3. Les explications doivent être pédagogiques\\n4. Respecte la distribution de difficulté demandée\\n5. Réponds UNIQUEMENT en JSON valide selon le schéma fourni\\n\\nSchéma JSON attendu:\\n{\\n  \\\"quiz\\\": {\\n    \\\"title\\\": \\\"string\\\",\\n    \\\"description\\\": \\\"string\\\",\\n    \\\"questions\\\": [\\n      {\\n        \\\"id\\\": number,\\n        \\\"type\\\": \\\"multiple_choice\\\" | \\\"true_false\\\" | \\\"fill_blank\\\",\\n        \\\"question\\\": \\\"string\\\",\\n        \\\"options\\\": [{\\\"id\\\": \\\"A\\\", \\\"text\\\": \\\"string\\\"}, ...] (pour multiple_choice),\\n        \\\"correct_answer\\\": \\\"string\\\" | boolean,\\n        \\\"explanation\\\": \\\"string\\\" (si include_explanations=true),\\n        \\\"difficulty\\\": \\\"easy\\\" | \\\"medium\\\" | \\\"hard\\\"\\n      }\\n    ],\\n    \\\"metadata\\\": {\\n      \\\"total_questions\\\": number,\\n      \\\"difficulty_distribution\\\": {\\\"easy\\\": n, \\\"medium\\\": n, \\\"hard\\\": n}\\n    }\\n  }\\n}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Génère un quiz avec les paramètres suivants:\\n\\nSource ({{ $json.body.source || 'text' }}): {{ $json.body.data }}\\n\\nNombre de questions: {{ $json.body.options?.num_questions || 10 }}\\nTypes de questions: {{ JSON.stringify($json.body.options?.question_types || ['multiple_choice', 'true_false']) }}\\nDifficulté: {{ $json.body.options?.difficulty || 'medium' }}\\nLangue: {{ $json.body.options?.language || 'fr' }}\\nInclure explications: {{ $json.body.options?.include_explanations !== false ? 'oui' : 'non' }}\"\n    }\n  ],\n  \"temperature\": 0.7,\n  \"max_tokens\": 4096\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-response",
+      "name": "Parse Quiz Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst results = items.map(item => {\n  try {\n    const content = item.json.choices?.[0]?.message?.content || '{}';\n    const parsed = JSON.parse(content);\n    \n    return {\n      json: {\n        success: true,\n        data: parsed,\n        meta: {\n          provider: 'openai',\n          model: item.json.model || webhookData.body.model || 'gpt-4o',\n          execution_mode: webhookData.body.execution_mode || 'online',\n          tokens_used: item.json.usage?.total_tokens || 0\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to parse quiz response: ' + e.message,\n          status: 'INTERNAL_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 600,
+        "height": 260,
+        "content": "## MCP - Quiz Generator\n\n**Endpoint:** POST /webhook/quiz-generator\n\n**Parameters:**\n- `data` (required): Text, topic or URL to generate quiz from\n- `source` (optional): text | topic | url (default: text)\n- `openai_api_key` (required): OpenAI API key\n- `model` (optional): gpt-4o, gpt-4o-mini (default: gpt-4o)\n- `options.num_questions` (optional): Number of questions (default: 10)\n- `options.question_types` (optional): [multiple_choice, true_false, fill_blank]\n- `options.difficulty` (optional): easy | medium | hard (default: medium)\n- `options.language` (optional): fr | en (default: fr)\n- `options.include_explanations` (optional): boolean (default: true)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Quiz with questions, answers, and explanations"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Generate Quiz",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Generate Quiz": {
+      "main": [
+        [
+          {
+            "node": "Parse Quiz Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Quiz Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

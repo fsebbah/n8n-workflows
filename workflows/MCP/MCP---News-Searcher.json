@@ -1,0 +1,228 @@
+{
+  "name": "MCP - News Searcher",
+  "nodes": [
+    {
+      "id": "webhook-news",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "news-searcher-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "news-searcher",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.query }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-query",
+      "name": "Error: No Query",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: query\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"gnews\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "gnews-search",
+      "name": "GNews Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://gnews.io/api/v4/search",
+        "authentication": "none",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $json.body.gnews_api_key }}"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.body.query }}"
+            },
+            {
+              "name": "lang",
+              "value": "={{ $json.body.options?.language || 'fr' }}"
+            },
+            {
+              "name": "country",
+              "value": "={{ $json.body.options?.country || 'fr' }}"
+            },
+            {
+              "name": "max",
+              "value": "={{ $json.body.options?.max_results || 10 }}"
+            },
+            {
+              "name": "from",
+              "value": "={{ $json.body.options?.from_date || '' }}"
+            },
+            {
+              "name": "to",
+              "value": "={{ $json.body.options?.to_date || '' }}"
+            },
+            {
+              "name": "sortby",
+              "value": "={{ $json.body.options?.sort_by || 'publishedAt' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst startTime = Date.now();\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.errors || item.json.error) {\n    const errorMsg = item.json.errors?.[0] || item.json.error?.message || 'Unknown GNews API error';\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: errorMsg,\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'gnews',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n\n  const articles = (item.json.articles || []).map((article, idx) => ({\n    id: `gnews-${Date.now()}-${idx}`,\n    title: article.title || '',\n    description: article.description || '',\n    content: article.content || '',\n    url: article.url || '',\n    image: article.image || null,\n    published_at: article.publishedAt || null,\n    source: {\n      name: article.source?.name || 'Unknown',\n      url: article.source?.url || null\n    },\n    found_in: ['gnews']\n  }));\n\n  return {\n    json: {\n      success: true,\n      data: {\n        articles: articles,\n        meta: {\n          query: webhookData.body.query,\n          total_results: item.json.totalArticles || articles.length,\n          sources_queried: ['gnews'],\n          language: webhookData.body.options?.language || 'fr',\n          country: webhookData.body.options?.country || 'fr'\n        }\n      },\n      meta: {\n        provider: 'gnews',\n        execution_mode: webhookData.body.execution_mode || 'online',\n        processing_time_ms: Date.now() - startTime\n      }\n    }\n  };\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 600,
+        "height": 280,
+        "content": "## MCP - News Searcher (GNews)\n\n**Endpoint:** POST /webhook/news-searcher\n\n**Parameters:**\n- `query` (required): Search query\n- `gnews_api_key` (required): GNews API key\n- `options.language` (optional): fr | en | de | es... (default: fr)\n- `options.country` (optional): fr | us | gb... (default: fr)\n- `options.max_results` (optional): 1-100 (default: 10)\n- `options.from_date` (optional): ISO date (YYYY-MM-DD)\n- `options.to_date` (optional): ISO date (YYYY-MM-DD)\n- `options.sort_by` (optional): publishedAt | relevance (default: publishedAt)\n- `execution_mode` (optional): online | offline\n\n**Returns:** List of news articles with title, description, content, source\n\n**Note:** GNews free tier: 100 requests/day"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "GNews Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GNews Search": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

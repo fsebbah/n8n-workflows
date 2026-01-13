@@ -1,0 +1,376 @@
+{
+  "name": "Credits - Get",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Credits - Get\n\n**Endpoint:** GET /webhook/credits-get\n\n**Query Parameters:**\n- `project_id` (required): ID du projet\n- `discord_user_id` (required): ID Discord de l'utilisateur\n\n**Backend APIs:**\n- GET /api/webhook/account (credits)\n- GET /api/webhook/account/logs (transactions)\n\n**Commande bot:** `/credits`",
+        "height": 320,
+        "width": 300,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        60,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "credits-get",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        380,
+        300
+      ],
+      "webhookId": "credits-get"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst query = input.query || {};\n\nconst projectId = query.project_id || null;\nconst discordUserId = query.discord_user_id || null;\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!discordUserId) errors.push('discord_user_id');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    discord_user_id: discordUserId\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        580,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://pi6.local:3031/api/webhook/account?project_id={{ $json.project_id }}&discord_user_id={{ $json.discord_user_id }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "get-credits",
+      "name": "Get Credits (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://pi6.local:3031/api/webhook/account/logs?project_id={{ $json.project_id }}&discord_user_id={{ $json.discord_user_id }}&limit=5",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "get-logs",
+      "name": "Get Logs (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1220,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst inputData = $('Validate Input').first().json;\n\n// Trouver les reponses des 2 APIs\nlet creditsResponse = null;\nlet logsResponse = null;\n\nfor (const item of items) {\n  const data = item.json;\n  if (data.credits !== undefined) {\n    creditsResponse = data;\n  } else if (data.logs !== undefined) {\n    logsResponse = data;\n  }\n}\n\n// Verifier si les credits existent\nif (!creditsResponse || !creditsResponse.success) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: `Aucun compte trouve pour discord_user_id '${inputData.discord_user_id}' dans le projet '${inputData.project_id}'`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nconst credits = creditsResponse.credits || {};\nconst logs = logsResponse?.logs || [];\n\n// Calculer les stats\nconst creditsRemaining = credits.credits_remaining || 0;\nconst creditsTotal = credits.credits_total || 0;\nconst creditsUsed = creditsTotal - creditsRemaining;\nconst usagePercent = creditsTotal > 0 \n  ? Math.round((creditsUsed / creditsTotal) * 100) \n  : 0;\n\n// Formater les transactions\nconst recentTransactions = logs.map(log => ({\n  id: log.id,\n  type: log.operation,\n  amount: log.amount,\n  description: log.reason,\n  created_at: log.created_at\n}));\n\nreturn [{\n  json: {\n    success: true,\n    balance: {\n      project_id: credits.project_id || inputData.project_id,\n      discord_user_id: credits.discord_user_id || inputData.discord_user_id,\n      credits_remaining: creditsRemaining,\n      credits_total: creditsTotal,\n      credits_used: creditsUsed,\n      usage_percent: usagePercent,\n      subscription_status: credits.subscription_status || null,\n      renewal_date: credits.current_period_end || null,\n      recent_transactions: recentTransactions,\n      updated_at: credits.updated_at || null\n    }\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-success",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1660,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1880,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 404 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-not-found",
+      "name": "Respond Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1880,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Credits (API)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Logs (API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Credits (API)": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Logs (API)": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

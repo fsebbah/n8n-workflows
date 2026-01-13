@@ -1,0 +1,374 @@
+{
+  "name": "Torah Translation Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-translate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        250,
+        300
+      ],
+      "webhookId": "torah-translate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-source-texts",
+              "leftValue": "={{ $json.source_text_ids }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-params",
+      "name": "Validate Parameters",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        470,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Traduction demarree\",\n    \"description\": \"Pipeline de traduction lance pour {{ $json.book || 'Textes selectionnes' }}\",\n    \"color\": 3447003,\n    \"fields\": [\n      {\"name\": \"Textes\", \"value\": \"{{ $json.source_text_ids.length }}\", \"inline\": true},\n      {\"name\": \"Langue cible\", \"value\": \"{{ $json.config.target_language || 'fr' }}\", \"inline\": true},\n      {\"name\": \"Provider\", \"value\": \"{{ $json.config.translator.provider || 'claude' }}\", \"inline\": true}\n    ],\n    \"footer\": {\"text\": \"Torah Translator Bot\"},\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-start",
+      "name": "Discord - Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        690,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Erreur de validation\",\n    \"description\": \"Les parametres de la requete sont invalides.\",\n    \"color\": 15548997,\n    \"footer\": {\"text\": \"Torah Translator Bot\"}\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-error-validation",
+      "name": "Discord - Validation Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        690,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst config = input.config || {\n  target_language: 'fr',\n  translator: { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022' },\n  reviewer: { provider: 'openai', model: 'gpt-4o' }\n};\n\nconst items = input.source_text_ids.map((id, index) => ({\n  json: {\n    source_text_id: id,\n    index: index + 1,\n    total: input.source_text_ids.length,\n    config: config,\n    book: input.book || 'Unknown'\n  }\n}));\n\nreturn items;"
+      },
+      "id": "prepare-batch",
+      "name": "Prepare Batch Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        910,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-batches",
+      "name": "Process One by One",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1130,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.TORAH_API_URL }}/api/translate-with-comments",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"reference\": {\n    \"table\": \"source_texts\",\n    \"uuid\": \"{{ $json.source_text_id }}\"\n  },\n  \"target_language\": \"{{ $json.config.target_language }}\",\n  \"translator\": {{ JSON.stringify($json.config.translator) }},\n  \"reviewer\": {{ JSON.stringify($json.config.reviewer) }},\n  \"apply_grammalecte\": true\n}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "translate-api",
+      "name": "API - Translate with Comments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1350,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": \"Page {{ $('Process One by One').item.json.index }}/{{ $('Process One by One').item.json.total }} traduite - {{ $json.comments_count || 0 }} commentaires\"\n}",
+        "options": {}
+      },
+      "id": "discord-progress",
+      "name": "Discord - Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1570,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1790,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.first().json.data || [];\n\nconst stats = {\n  total_texts: results.length,\n  successful: results.filter(r => r.success).length,\n  failed: results.filter(r => !r.success).length,\n  total_comments: results.reduce((sum, r) => sum + (r.comments_count || 0), 0)\n};\n\nreturn [{ json: { stats, results } }];"
+      },
+      "id": "calculate-stats",
+      "name": "Calculate Statistics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2010,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Traduction terminee\",\n    \"description\": \"Pipeline complete avec succes\",\n    \"color\": 5763719,\n    \"fields\": [\n      {\"name\": \"Textes\", \"value\": \"{{ $json.stats.successful }}/{{ $json.stats.total_texts }}\", \"inline\": true},\n      {\"name\": \"Commentaires\", \"value\": \"{{ $json.stats.total_comments }}\", \"inline\": true}\n    ],\n    \"footer\": {\"text\": \"Torah Translator Bot\"}\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-complete",
+      "name": "Discord - Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2230,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, stats: $json.stats } }}",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2450,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: 'Invalid parameters' } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        910,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Parameters": {
+      "main": [
+        [
+          {
+            "node": "Discord - Start",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Discord - Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - Start": {
+      "main": [
+        [
+          {
+            "node": "Prepare Batch Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Batch Items": {
+      "main": [
+        [
+          {
+            "node": "Process One by One",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process One by One": {
+      "main": [
+        [
+          {
+            "node": "API - Translate with Comments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API - Translate with Comments": {
+      "main": [
+        [
+          {
+            "node": "Discord - Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - Progress": {
+      "main": [
+        [
+          {
+            "node": "Process One by One",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "Calculate Statistics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Statistics": {
+      "main": [
+        [
+          {
+            "node": "Discord - Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - Complete": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}
