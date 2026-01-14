@@ -54,6 +54,56 @@ Par :
 
 ---
 
+## Pattern correct pour les HTTP Request
+
+### A FAIRE (correct)
+
+Directement dans le champ URL du node HTTP Request :
+
+```
+={{ $env.TORAH_API_URL }}/api/cart/webhook/{{ $json.data.discord_user_id }}
+```
+
+**n8n accède aux variables d'environnement via `$env.VARIABLE_NAME` dans les expressions.**
+
+### A NE PAS FAIRE (incorrect)
+
+Ne pas passer par un Code node pour récupérer la variable :
+
+```javascript
+// MAUVAIS - Ne pas faire ça !
+const apiBaseUrl = process.env.TORAH_API_URL || 'http://localhost:3031';
+return {
+  data: {
+    api_base_url: apiBaseUrl,
+    // ...
+  }
+};
+```
+
+Puis dans HTTP Request :
+```
+={{ $json.data.api_base_url }}/api/...
+```
+
+### Exemples de patterns valides
+
+| Cas | URL |
+|-----|-----|
+| Simple | `={{ $env.TORAH_API_URL }}/api/products` |
+| Avec paramètre | `={{ $env.TORAH_API_URL }}/api/cart/{{ $json.user_id }}` |
+| Avec query string | `={{ $env.TORAH_API_URL }}/api/search?q={{ $json.query }}` |
+| Référence autre node | `={{ $env.TORAH_API_URL }}/api/user/{{ $('Validate Input').first().json.user_id }}` |
+
+### Pourquoi ce pattern ?
+
+1. **Simplicité** - Pas de code JavaScript supplémentaire
+2. **Cohérence** - Même pattern que les autres workflows (Torah, Discord, Stripe)
+3. **Lisibilité** - L'URL est visible directement dans le node
+4. **Performance** - Pas d'étape intermédiaire
+
+---
+
 ## Workflows à mettre à jour
 
 ### Torah Discord Translation
