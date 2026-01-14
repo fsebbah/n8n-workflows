@@ -355,12 +355,32 @@ Phase 3 - Plugin (après Phase 1)
 
 ---
 
-## Questions ouvertes
+## Décisions techniques
 
-1. **Validation logo_url:** Faut-il valider que l'URL pointe vers une image valide ?
-2. **Taille logo:** Doit-on imposer des dimensions max/min ?
-3. **Couleur:** Accepter uniquement hex ou aussi noms CSS (red, blue) ?
-4. **Droits admin:** Quel rôle Discord minimum pour `/config branding` ?
+| Question | Décision |
+|----------|----------|
+| **Validation logo_url** | Format URL valide uniquement (pas de check image) |
+| **Taille logo** | Pas de contrainte côté API, CSS `max-width: 120px` côté HTML |
+| **Format couleur** | Hex uniquement: `/^#[0-9A-Fa-f]{6}$/` |
+| **Droits admin** | Rôle `Administrator` ou permission `Manage Server` |
+
+## Source du guild_id
+
+Le `guild_id` est passé par le plugin lors de la création du checkout:
+
+```
+Plugin → n8n (POST /cart-checkout)
+    Body: { discord_user_id, guild_id }
+              ↓
+n8n → Stripe (Create session)
+    metadata: { guild_id, project_id }
+              ↓
+Stripe → n8n (Redirect /checkout-success?session_id=xxx)
+              ↓
+n8n → API (POST /api/checkout/confirm)
+    → API récupère metadata depuis Stripe session
+    → Retourne guild_id + branding résolu
+```
 
 ---
 
