@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## RFC-007: Process Question\n\n**Sub-workflow** appelé par On-Mention-Handler\n\n**Intents:**\n- greeting → réponse prédéfinie\n- help → liste commandes\n- empty → guide\n- question → POST /api/ai/chat\n- unknown → fallback\n\n**Output:**\n- success, response, intent\n- tokens_used, credits_consumed",
+        "content": "## RFC-007: Process Question\n\n**Sub-workflow** appelé par On-Mention-Handler\n\n**Intents:**\n- greeting → réponse prédéfinie\n- help → liste commandes\n- empty → guide\n- question → POST /api/ai/chat\n- unknown → fallback\n\n**Output:**\n- success, response, intent\n- tokens_used, credits_consumed\n- guild_id, request_content",
         "width": 280,
         "height": 260,
         "color": 6
@@ -63,7 +63,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PREDEFINED RESPONSES (RFC-007)\n// ============================================\n\nconst input = $input.first().json;\nconst intent = input.detected_intent;\nconst displayName = input.data?.display_name || 'ami';\n\nconst RESPONSES = {\n  greeting: {\n    response: `Bonjour ${displayName} ! Comment puis-je t'aider ?`,\n    intent: 'greeting',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  },\n  help: {\n    response: `Voici ce que je peux faire :\\n• Répondre à tes questions culinaires\\n• /recette [nom] - Chercher une recette\\n• /liste - Voir ta liste de courses`,\n    intent: 'help',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  },\n  empty: {\n    response: `Tu m'as mentionné mais sans message ! Pose-moi une question.`,\n    intent: 'empty',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  }\n};\n\nconst result = RESPONSES[intent] || RESPONSES.empty;\n\nreturn {\n  success: true,\n  ...result,\n  project_id: input.project_id,\n  user_id: input.data?.user_id\n};"
+        "jsCode": "// ============================================\n// PREDEFINED RESPONSES (RFC-007)\n// ============================================\n\nconst input = $input.first().json;\nconst intent = input.detected_intent;\nconst displayName = input.data?.display_name || 'ami';\n\nconst RESPONSES = {\n  greeting: {\n    response: `Bonjour ${displayName} ! Comment puis-je t'aider ?`,\n    intent: 'greeting',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  },\n  help: {\n    response: `Voici ce que je peux faire :\\n• Répondre à tes questions culinaires\\n• /recette [nom] - Chercher une recette\\n• /liste - Voir ta liste de courses`,\n    intent: 'help',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  },\n  empty: {\n    response: `Tu m'as mentionné mais sans message ! Pose-moi une question.`,\n    intent: 'empty',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  }\n};\n\nconst result = RESPONSES[intent] || RESPONSES.empty;\n\nreturn {\n  success: true,\n  ...result,\n  project_id: input.project_id,\n  user_id: input.data?.user_id,\n  guild_id: input.data?.guild_id,\n  request_content: input.data?.content || ''\n};"
       },
       "id": "process-question-0004",
       "name": "Predefined Response",
@@ -133,7 +133,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT LLM SUCCESS RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst validationData = $('Detect Intent').first().json;\n\nconst tokensUsed = input.tokens_used || 0;\nconst intent = input.intent || 'question';\n\nconst COSTS = {\n  recette: { base: 3, rate: 1.0, max: 10 },\n  question: { base: 1, rate: 0.5, max: 5 },\n  default: { base: 1, rate: 0.5, max: 5 }\n};\n\nconst cost = COSTS[intent] || COSTS.default;\nconst creditsConsumed = Math.min(cost.base + (tokensUsed / 1000) * cost.rate, cost.max);\n\nreturn {\n  success: true,\n  response: input.response,\n  intent: intent,\n  confidence: input.confidence || 0.9,\n  tokens_used: tokensUsed,\n  credits_consumed: Math.ceil(creditsConsumed),\n  project_id: validationData.project_id,\n  user_id: validationData.data?.user_id\n};"
+        "jsCode": "// ============================================\n// FORMAT LLM SUCCESS RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst validationData = $('Detect Intent').first().json;\n\nconst tokensUsed = input.tokens_used || 0;\nconst intent = input.intent || 'question';\n\nconst COSTS = {\n  recette: { base: 3, rate: 1.0, max: 10 },\n  question: { base: 1, rate: 0.5, max: 5 },\n  default: { base: 1, rate: 0.5, max: 5 }\n};\n\nconst cost = COSTS[intent] || COSTS.default;\nconst creditsConsumed = Math.min(cost.base + (tokensUsed / 1000) * cost.rate, cost.max);\n\nreturn {\n  success: true,\n  response: input.response,\n  intent: intent,\n  confidence: input.confidence || 0.9,\n  tokens_used: tokensUsed,\n  credits_consumed: Math.ceil(creditsConsumed),\n  project_id: validationData.project_id,\n  user_id: validationData.data?.user_id,\n  guild_id: validationData.data?.guild_id,\n  request_content: validationData.data?.content || ''\n};"
       },
       "id": "process-question-0007",
       "name": "Format LLM Success",
@@ -143,7 +143,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT ERROR / FALLBACK\n// ============================================\n\nconst input = $input.first().json;\nconst validationData = $('Detect Intent').first().json;\n\nlet response = \"Je n'ai pas bien compris. Peux-tu reformuler ?\";\nlet intent = 'unknown';\n\nif (input.intent === 'out_of_scope') {\n  response = \"Je suis spécialisé en cuisine ! Cette question est hors de mon domaine.\";\n  intent = 'out_of_scope';\n}\n\nreturn {\n  success: true,\n  response: response,\n  intent: intent,\n  confidence: 0.5,\n  tokens_used: 0,\n  credits_consumed: 0,\n  project_id: validationData.project_id,\n  user_id: validationData.data?.user_id\n};"
+        "jsCode": "// ============================================\n// FORMAT ERROR / FALLBACK\n// ============================================\n\nconst input = $input.first().json;\nconst validationData = $('Detect Intent').first().json;\n\nlet response = \"Je n'ai pas bien compris. Peux-tu reformuler ?\";\nlet intent = 'unknown';\n\nif (input.intent === 'out_of_scope') {\n  response = \"Je suis spécialisé en cuisine ! Cette question est hors de mon domaine.\";\n  intent = 'out_of_scope';\n}\n\nreturn {\n  success: true,\n  response: response,\n  intent: intent,\n  confidence: 0.5,\n  tokens_used: 0,\n  credits_consumed: 0,\n  project_id: validationData.project_id,\n  user_id: validationData.data?.user_id,\n  guild_id: validationData.data?.guild_id,\n  request_content: validationData.data?.content || ''\n};"
       },
       "id": "process-question-0008",
       "name": "Format Error/Fallback",
