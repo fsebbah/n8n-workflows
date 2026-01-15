@@ -1,4 +1,4 @@
-# RFC-005: Attribution automatique de crédits à l'arrivée d'un membre
+# RFC-006: Attribution automatique de crédits à l'arrivée d'un membre
 
 **Status:** Draft
 **Date:** 2026-01-15
@@ -145,7 +145,8 @@ X-Project-ID: bot-appetit  (optionnel si guild_id fourni)
 
 **Logique :**
 ```python
-@router.post("/webhook/account/init")
+# Note: Le router a déjà le prefix "/webhook/account"
+@router.post("/init")
 async def init_member_credits(request: InitMemberRequest, db: Session):
     """
     Initialise les crédits d'un nouveau membre.
@@ -211,14 +212,13 @@ async def init_member_credits(request: InitMemberRequest, db: Session):
 **Mapping guild_id → project_id :**
 
 ```python
-# Table ou config à créer
-GUILD_PROJECT_MAPPING = {
-    "987654321": "bot-appetit",
-    "123456789": "autre-projet",
-}
+# Utiliser la table guild_branding existante (RFC-003)
+from models import GuildBranding
 
-def get_project_for_guild(guild_id: str) -> str | None:
-    return GUILD_PROJECT_MAPPING.get(guild_id)
+def get_project_for_guild(db: Session, guild_id: str) -> str | None:
+    """Récupère le project_id depuis guild_branding."""
+    branding = db.query(GuildBranding).filter_by(guild_id=guild_id).first()
+    return branding.project_id if branding else None
 ```
 
 **Configuration par projet :**
@@ -252,7 +252,7 @@ logger = logging.getLogger(__name__)
 class MemberJoinService:
     """
     Service qui appelle n8n lors de l'arrivée d'un nouveau membre.
-    Utilisé pour l'attribution automatique de crédits (RFC-005).
+    Utilisé pour l'attribution automatique de crédits (RFC-006).
     """
 
     def __init__(
@@ -536,8 +536,9 @@ curl -X POST http://pi6.local:5678/webhook/member-join \
 
 ## Références
 
-- [RFC-004: Private Channels](../issues/RFC-004-PRIVATE-CHANNELS.md) - Pattern callback similaire
+- [RFC-004: Private Channels](./RFC-004-PRIVATE-CHANNELS.md) - Pattern callback similaire
 - [RFC-003: Branding](../guides/RFC-003-checkout-branding-multi-tenant.md) - Multi-tenant
+- [RFC-005: User Data Model](./RFC-005-USER-DATA-MODEL.md) - Modèle de données utilisateur
 
 ---
 
@@ -546,3 +547,4 @@ curl -X POST http://pi6.local:5678/webhook/member-join \
 | Date | Auteur | Modification |
 |------|--------|--------------|
 | 2026-01-15 | Équipe n8n | Création du RFC |
+| 2026-01-15 | Équipe API | Renumérotation RFC-005 → RFC-006, corrections route et mapping guild_branding |
