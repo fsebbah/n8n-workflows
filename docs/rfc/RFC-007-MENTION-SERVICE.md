@@ -472,6 +472,30 @@ class RateLimiter:
 }
 ```
 
+### Request (n8n → API) - Avec mapping multi-tenant
+
+> **Important:** n8n est responsable du mapping `guild_id → project_id` avant d'appeler l'API.
+> Ce mapping existe déjà pour RFC-006 (Member Join Credits).
+
+```json
+{
+  "project_id": "bot-appetit",
+  "content": "c'est quoi une béchamel ?",
+  "user_id": "444555666",
+  "username": "john_doe",
+  "display_name": "John Doe",
+  "guild_id": "111222333",
+  "channel_id": "987654321"
+}
+```
+
+| Champ | Source | Responsable |
+|-------|--------|-------------|
+| `project_id` | Mapping `guild_id → project_id` | n8n |
+| `guild_id` | Payload chatbot-core | chatbot-core |
+| `content` | Message extrait | chatbot-core |
+| `user_id` | Discord member ID | chatbot-core |
+
 ### Response (n8n → chatbot-core)
 
 ```json
@@ -522,9 +546,12 @@ class RateLimiter:
 
 | Workflow | Responsabilité |
 |----------|----------------|
-| `MENTION---On-Mention-Handler` | Recevoir webhook, router vers traitement |
-| `MENTION---Process-Question` | Détecter intent, appeler API/LLM |
+| `MENTION---On-Mention-Handler` | Recevoir webhook, **mapper guild_id → project_id**, router vers traitement |
+| `MENTION---Process-Question` | Détecter intent, appeler API/LLM avec `project_id` |
 | `MENTION---Format-Response` | Formatter réponse Discord |
+
+> **Multi-tenant:** n8n maintient le mapping `guild_id → project_id` (réutilisé depuis RFC-006).
+> L'API reçoit toujours un `project_id` et ne connaît pas les `guild_id` Discord.
 
 ### 3. API (Backend)
 
@@ -608,16 +635,24 @@ class RateLimiter:
 
 ---
 
-## Intents supportés
+## Intents supportés (v1)
 
-| Intent | Description | Traitement |
-|--------|-------------|------------|
-| `question` | Question sur le domaine du bot | API/LLM |
-| `greeting` | Salutation (bonjour, salut, etc.) | Réponse prédéfinie |
-| `help` | Demande d'aide | Liste commandes |
-| `empty` | Mention sans contenu | Réponse guide |
-| `unknown` | Non reconnu | Fallback générique |
-| `out_of_scope` | Hors domaine du bot | Réponse de redirection |
+| Intent | Description | Traitement | Crédits |
+|--------|-------------|------------|---------|
+| `question` | Question sur le domaine du bot | LLM + débit crédits | Hybride (1-5) |
+| `greeting` | Salutation (bonjour, salut, etc.) | Réponse prédéfinie | 0 |
+| `help` | Demande d'aide | Liste commandes | 0 |
+| `empty` | Mention sans contenu | Réponse guide | 0 |
+| `unknown` | Non reconnu | Fallback générique | 0 |
+| `out_of_scope` | Hors domaine du bot | Réponse de redirection polite | 0 |
+
+### Exemples de détection `out_of_scope`
+
+| Message | Intent | Réponse |
+|---------|--------|---------|
+| `@Bot quel temps fait-il ?` | `out_of_scope` | "Je suis spécialisé en cuisine ! Pour la météo, essaie un autre service." |
+| `@Bot raconte-moi une blague` | `out_of_scope` | "Je préfère te parler de recettes ! Pose-moi une question culinaire." |
+| `@Bot quelle est la capitale de la France ?` | `out_of_scope` | "Je suis Bot Appetit, ton assistant cuisine. Cette question est hors de mon domaine." |
 
 ---
 
@@ -814,27 +849,205 @@ from chatbot_core.services.mention import (
 
 ---
 
-## Questions ouvertes
+## Décisions validées
 
-1. **Persistance rate limit ?** Redis pour multi-instance ou mémoire suffit pour v1 ?
-   → **Proposition:** Mémoire pour v1, Redis optionnel v2
+### 1. Intent Detection : LLM externe (Option B)
 
-2. **Contexte conversationnel ?** Supporter les conversations multi-tours ?
-   → **Proposition:** Non pour v1, prévoir interface pour v2
+**Décision :** Utiliser un LLM (GPT/Claude) pour la classification des intents.
 
-3. **Embed vs texte ?** n8n retourne-t-il des embeds ou juste du texte ?
-   → **Proposition:** Supporter les deux (response OU embed)
+**Justification :**
+- Précision supérieure aux patterns regex
+- Flexibilité pour ajouter de nouveaux intents
+- Compréhension du contexte et des nuances
 
-4. **Intent detection côté framework ?** Détecter localement ou déléguer à n8n ?
-   → **Proposition:** Déléguer à n8n (flexibilité LLM)
+**Logging obligatoire :** Toutes les demandes et réponses doivent être loggées par `discord_user_id` pour amélioration continue du système.
 
-5. **DM support ?** Gérer aussi les DM au bot ?
-   → **Proposition:** Non pour v1 (différent use case)
+### 2. Consommation crédits : Hybride (Option C)
+
+**Décision :** Modèle hybride avec base fixe + variable tokens + plafond.
+
+| Opération | Base | Per 1k tokens | Max |
+|-----------|------|---------------|-----|
+| `recette` | 3 | 1.0 | 10 |
+| `question` | 1 | 0.5 | 5 |
+| `liste_ingredients` | 2 | 0.5 | 5 |
+| `greeting` | 0 | 0.0 | 0 |
+| `help` | 0 | 0.0 | 0 |
+| `out_of_scope` | 0 | 0.0 | 0 |
+
+**Formule :** `credits = min(base + (tokens / 1000) * rate, max)`
+
+### 3. Workflows n8n : 3 workflows séparés
+
+**Décision :** Architecture modulaire avec 3 workflows distincts.
+
+| Workflow | Responsabilité |
+|----------|----------------|
+| `MENTION---On-Mention-Handler` | Recevoir webhook, mapper `guild_id → project_id`, router |
+| `MENTION---Process-Question` | Appeler LLM pour intent detection + réponse |
+| `MENTION---Format-Response` | Formatter réponse Discord (texte ou embed) |
+
+### 4. Scope v1 : Tous les intents
+
+**Décision :** Implémenter TOUS les intents dès la v1, incluant `out_of_scope`.
+
+| Intent | Description | Traitement |
+|--------|-------------|------------|
+| `greeting` | Salutation | Réponse prédéfinie |
+| `help` | Demande d'aide | Liste commandes |
+| `empty` | Mention sans contenu | Guide utilisation |
+| `question` | Question domaine | LLM + débit crédits |
+| `unknown` | Non reconnu | Fallback générique |
+| `out_of_scope` | Hors domaine du bot | Réponse de redirection polite |
+
+---
+
+## Logging des interactions (À COMPLÉTER)
+
+> **Question pour les équipes :** Comment implémenter le logging des demandes/réponses ?
+
+### Objectif
+
+Logger chaque interaction `@Bot` pour :
+1. **Amélioration continue** - Analyser les questions mal comprises
+2. **Analytics** - Statistiques d'usage par user/guild
+3. **Fine-tuning futur** - Dataset pour améliorer le modèle
+
+### Données à logger
+
+```json
+{
+  "id": "uuid",
+  "timestamp": "2026-01-15T14:30:00Z",
+  "project_id": "bot-appetit",
+  "guild_id": "111222333",
+  "discord_user_id": "444555666",
+
+  "request": {
+    "content": "quelle liste d'ingrédient pour une pizza ?",
+    "channel_id": "987654321",
+    "message_id": "123456789"
+  },
+
+  "response": {
+    "intent": "question",
+    "confidence": 0.95,
+    "response_text": "Pour une pizza Margherita...",
+    "tokens_used": 250,
+    "credits_consumed": 2,
+    "response_time_ms": 1500
+  },
+
+  "metadata": {
+    "model": "gpt-4",
+    "success": true,
+    "error": null
+  }
+}
+```
+
+### Options de stockage
+
+| Option | Description | Avantages | Inconvénients |
+|--------|-------------|-----------|---------------|
+| **A. Table PostgreSQL** | `mention_logs` dans API | Requêtable, intégré | Volume données |
+| **B. Service externe** | Elasticsearch, BigQuery | Scalable, analytics | Complexité, coût |
+| **C. Fichiers JSON** | Logs rotatifs | Simple | Pas requêtable |
+
+**Question équipe API :** Quelle option recommandez-vous ?
+
+### Endpoint proposé
+
+```http
+POST /api/mention/log
+Content-Type: application/json
+X-Project-ID: bot-appetit
+
+{
+  "discord_user_id": "444555666",
+  "guild_id": "111222333",
+  "request_content": "quelle liste d'ingrédient pour une pizza ?",
+  "response_intent": "question",
+  "response_text": "Pour une pizza Margherita...",
+  "tokens_used": 250,
+  "credits_consumed": 2,
+  "response_time_ms": 1500,
+  "model": "gpt-4",
+  "success": true
+}
+```
+
+### Table proposée (Option A)
+
+```sql
+CREATE TABLE mention_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id VARCHAR(50) NOT NULL,
+    guild_id VARCHAR(50) NOT NULL,
+    discord_user_id VARCHAR(50) NOT NULL,
+
+    -- Request
+    request_content TEXT NOT NULL,
+    channel_id VARCHAR(50),
+    message_id VARCHAR(50),
+
+    -- Response
+    intent VARCHAR(30) NOT NULL,
+    confidence FLOAT,
+    response_text TEXT,
+    tokens_used INTEGER,
+    credits_consumed INTEGER,
+    response_time_ms INTEGER,
+
+    -- Metadata
+    model VARCHAR(50),
+    success BOOLEAN DEFAULT TRUE,
+    error TEXT,
+
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    -- Index pour analytics
+    CONSTRAINT idx_mention_logs_project_user
+        CREATE INDEX ON mention_logs(project_id, discord_user_id)
+);
+
+-- Index pour analytics par période
+CREATE INDEX idx_mention_logs_created ON mention_logs(project_id, created_at);
+
+-- Index pour recherche par intent
+CREATE INDEX idx_mention_logs_intent ON mention_logs(project_id, intent);
+```
+
+### Qui appelle le logging ?
+
+| Option | Appelant | Moment |
+|--------|----------|--------|
+| **A** | n8n | Après réponse LLM, avant retour à chatbot-core |
+| **B** | API | Dans `/api/ai/chat` directement |
+| **C** | chatbot-core | Après réception réponse n8n |
+
+**Recommandation :** Option A (n8n) - centralise l'orchestration.
+
+---
+
+## Questions ouvertes restantes
+
+1. **Stockage logs ?** PostgreSQL, Elasticsearch, ou autre ?
+   → **En attente réponse équipe API**
+
+2. **Rétention logs ?** Combien de temps conserver les logs ?
+   → **Proposition:** 90 jours, puis archivage
+
+3. **RGPD ?** Anonymisation des données après X jours ?
+   → **Proposition:** Hasher `discord_user_id` après 30 jours
+
+4. **Rate limit pour logging ?** Logger 100% ou échantillonner ?
+   → **Proposition:** 100% pour v1 (volume faible)
 
 ---
 
 ## Références
 
-- [RFC-005: Welcome Message System](./RFC-005-WELCOME-MESSAGE.md) - Pattern provider
+- [RFC-004b: Welcome Service](./RFC-004b-WELCOME-SERVICE.md) - Pattern provider
 - [RFC-006: Member Join Credits](./RFC-006-MEMBER-JOIN-CREDITS.md) - Pattern callback n8n
-- [Guide Welcome & Member Join](../guides/GUIDE-WELCOME-MEMBER-JOIN.md) - Guide plugin
+- [Guide Welcome & Member Join](../guides/GUIDE-WELCOME-MEMBER-JOIN.md) - Guide plugin (WelcomeService + MemberJoinService)

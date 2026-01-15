@@ -1,0 +1,195 @@
+{
+  "name": "MENTION---Format-Response",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "format-response-0001",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT MENTION RESULT (RFC-007)\n// Formate la réponse pour chatbot-core\n// ============================================\n\nconst input = $input.first().json;\n\n// --- Build MentionResult ---\nconst result = {\n  success: input.success !== false,\n  response: input.response || null,\n  embed: input.embed || null,\n  error: input.error || null,\n  intent: input.intent || 'unknown',\n  confidence: input.confidence || 0.5\n};\n\n// --- Add metadata for logging ---\nconst metadata = {\n  tokens_used: input.tokens_used || 0,\n  credits_consumed: input.credits_consumed || 0,\n  project_id: input.project_id,\n  user_id: input.user_id\n};\n\nreturn {\n  ...result,\n  _metadata: metadata\n};"
+      },
+      "id": "format-response-0002",
+      "name": "Build MentionResult",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-should-log",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "format-response-0003",
+      "name": "Should Log?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TORAH_API_URL }}/api/mention/log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json._metadata.project_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"discord_user_id\": {{ JSON.stringify($json._metadata.user_id) }},\n  \"response_intent\": {{ JSON.stringify($json.intent) }},\n  \"tokens_used\": {{ $json._metadata.tokens_used }},\n  \"credits_consumed\": {{ $json._metadata.credits_consumed }},\n  \"success\": {{ $json.success }}\n}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "format-response-0004",
+      "name": "Log to API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CLEAN OUTPUT (remove internal metadata)\n// ============================================\n\nconst input = $input.first().json;\n\n// Remove internal _metadata before returning to chatbot-core\nconst { _metadata, ...result } = input;\n\nreturn result;"
+      },
+      "id": "format-response-0005",
+      "name": "Clean Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CLEAN OUTPUT (skip logging path)\n// ============================================\n\nconst input = $input.first().json;\n\n// Remove internal _metadata before returning to chatbot-core\nconst { _metadata, ...result } = input;\n\nreturn result;"
+      },
+      "id": "format-response-0006",
+      "name": "Clean Output (No Log)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 400]
+    },
+    {
+      "parameters": {},
+      "id": "format-response-0007",
+      "name": "Merge Final",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1100, 300]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build MentionResult",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build MentionResult": {
+      "main": [
+        [
+          {
+            "node": "Should Log?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Log?": {
+      "main": [
+        [
+          {
+            "node": "Clean Output (No Log)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log to API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to API": {
+      "main": [
+        [
+          {
+            "node": "Clean Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Output": {
+      "main": [
+        [
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Output (No Log)": {
+      "main": [
+        [
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "tags": []
+}
