@@ -1,0 +1,303 @@
+{
+  "name": "CONFIG---Get-Branding",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## RFC-008: Get Branding\n\n**Webhook:** GET /config/branding\n\n**Query params:**\n- guild_id (requis)\n\n**Flow:**\n1. Validate guild_id\n2. Map guild_id → project_id\n3. GET /api/config/branding\n4. Return BrandingConfig",
+        "width": 280,
+        "height": 220,
+        "color": 6
+      },
+      "id": "get-branding-note",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-280, 180]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "config/branding",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "get-branding-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "config-get-branding"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE INPUT (RFC-008)\n// ============================================\n\nconst input = $input.first().json;\nconst query = input.query || {};\n\nif (!query.guild_id) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: 'guild_id requis',\n      http_status: 400\n    }\n  };\n}\n\nreturn {\n  valid: true,\n  guild_id: query.guild_id\n};"
+      },
+      "id": "get-branding-0002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "get-branding-0003",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TORAH_API_URL }}/api/branding/guild/{{ $json.guild_id }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "get-branding-0004",
+      "name": "Get Project Mapping",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 200],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-project",
+              "leftValue": "={{ $json.project_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "get-branding-0005",
+      "name": "Has Project?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TORAH_API_URL }}/api/config/branding",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "guild_id",
+              "value": "={{ $('Validate Input').item.json.guild_id }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "get-branding-0006",
+      "name": "Get Branding from API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 100],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "get-branding-0007",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.http_status || 400 }}"
+        }
+      },
+      "id": "get-branding-0008",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'UNKNOWN_GUILD', message: 'Guild non configuré', http_status: 400 } }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "get-branding-0009",
+      "name": "Respond Unknown Guild",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'API_ERROR', message: 'Erreur API branding', http_status: 500 } }) }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "get-branding-0010",
+      "name": "Respond API Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Project Mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Mapping": {
+      "main": [
+        [
+          {
+            "node": "Has Project?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unknown Guild",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Project?": {
+      "main": [
+        [
+          {
+            "node": "Respond Unknown Guild",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Branding from API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Branding from API": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond API Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
