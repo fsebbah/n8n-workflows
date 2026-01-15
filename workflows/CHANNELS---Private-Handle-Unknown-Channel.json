@@ -1,6 +1,9 @@
 {
+  "updatedAt": "2026-01-15T12:29:58.000Z",
+  "createdAt": "2026-01-15T12:04:09.792Z",
+  "id": "X4ofmCCIZRQSiMzV",
   "name": "CHANNELS---Private-Handle-Unknown-Channel",
-  "description": "RFC-004 Phase 2: Gère le cas où un channel Discord a été supprimé manuellement. Supprime la liaison obsolète et recrée un nouveau channel.",
+  "description": null,
   "active": true,
   "isArchived": false,
   "nodes": [
@@ -16,7 +19,7 @@
       "typeVersion": 2,
       "position": [
         0,
-        300
+        304
       ],
       "webhookId": "private-channel-unknown-webhook"
     },
@@ -29,8 +32,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
-        300
+        224,
+        304
       ]
     },
     {
@@ -61,8 +64,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        440,
-        300
+        448,
+        304
       ]
     },
     {
@@ -100,44 +103,35 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        660,
-        200
+        672,
+        208
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PREPARE REDIS STREAM MESSAGE FOR NEW CHANNEL\n// ============================================\n\nconst validationData = $('Validate Input').first().json.data;\nconst deleteResult = $input.first().json;\n\n// Callback URL for chatbot-core\nconst n8nBaseUrl = $env.N8N_WEBHOOK_URL || $env.WEBHOOK_URL || 'https://n8n.bot-appetit.fr';\nconst callbackUrl = `${n8nBaseUrl}/webhook/private-channel-callback`;\n\n// Generate request ID\nconst requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\nreturn {\n  redis_message: {\n    type: 'notification',\n    actions: {\n      create_private_channel: true\n    },\n    discord_user_id: validationData.discord_user_id,\n    guild_id: validationData.guild_id,\n    channel_type: validationData.channel_type,\n    callback_url: callbackUrl,\n    metadata: {\n      request_id: requestId,\n      project_id: validationData.project_id,\n      recreated_from: validationData.old_channel_id,\n      reason: 'unknown_channel_error',\n      ...validationData.metadata\n    }\n  },\n  request_id: requestId,\n  validation_data: validationData,\n  delete_result: deleteResult\n};"
+        "jsCode": "// ============================================\n// PREPARE REDIS STREAM MESSAGE FOR NEW CHANNEL\n// ============================================\n\nconst validationData = $('Validate Input').first().json.data;\nconst deleteResult = $input.first().json;\n\n// Callback URL for chatbot-core\nconst callbackUrl = $json.callback_url;\n\n// Generate request ID\nconst requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\nreturn {\n  redis_message: {\n    type: 'notification',\n    actions: {\n      create_private_channel: true\n    },\n    discord_user_id: validationData.discord_user_id,\n    guild_id: validationData.guild_id,\n    channel_type: validationData.channel_type,\n    callback_url: callbackUrl,\n    metadata: {\n      request_id: requestId,\n      project_id: validationData.project_id,\n      recreated_from: validationData.old_channel_id,\n      reason: 'unknown_channel_error',\n      ...validationData.metadata\n    }\n  },\n  request_id: requestId,\n  validation_data: validationData,\n  delete_result: deleteResult\n};"
       },
       "id": "channel-unknown-0005",
       "name": "Prepare Redis Message",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
-        200
+        1056,
+        208
       ]
     },
     {
       "parameters": {
-        "operation": "xAdd",
-        "key": "={{ 'discord:dm:' + $json.validation_data.project_id }}",
-        "fieldsUi": {
-          "fieldValues": [
-            {
-              "field": "data",
-              "value": "={{ JSON.stringify($json.redis_message) }}"
-            }
-          ]
-        }
+        "operation": "xAdd"
       },
       "id": "channel-unknown-0006",
       "name": "Publish Redis Stream",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
       "position": [
-        1100,
-        200
+        1280,
+        208
       ],
       "credentials": {
         "redis": {
@@ -155,8 +149,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1320,
-        200
+        1504,
+        208
       ]
     },
     {
@@ -168,7 +162,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        660,
+        672,
         400
       ]
     },
@@ -185,8 +179,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1540,
-        200
+        1728,
+        208
       ]
     },
     {
@@ -205,6 +199,29 @@
         880,
         400
       ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7b0066bf-6f40-4173-8a75-c8eab03c4470",
+              "name": "callback_url",
+              "value": "={{ $env.N8N_WEBHOOK_BASE_URL }}/private-channel-callback",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        864,
+        208
+      ],
+      "id": "1ef78f43-90cc-4769-9d5a-658d29156e7d",
+      "name": "Set Callback URL"
     }
   ],
   "connections": {
@@ -252,7 +269,7 @@
       "main": [
         [
           {
-            "node": "Prepare Redis Message",
+            "node": "Set Callback URL",
             "type": "main",
             "index": 0
           }
@@ -302,6 +319,17 @@
           }
         ]
       ]
+    },
+    "Set Callback URL": {
+      "main": [
+        [
+          {
+            "node": "Prepare Redis Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -311,6 +339,28 @@
   },
   "staticData": null,
   "meta": null,
-  "pinData": null,
-  "tags": []
+  "pinData": {},
+  "versionId": "ad2e60f0-18f5-4d9b-93e9-23c1d83e4632",
+  "activeVersionId": "ad2e60f0-18f5-4d9b-93e9-23c1d83e4632",
+  "versionCounter": 7,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-15T12:04:09.794Z",
+      "createdAt": "2026-01-15T12:04:09.794Z",
+      "role": "workflow:owner",
+      "workflowId": "X4ofmCCIZRQSiMzV",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
 }
