@@ -1,6 +1,9 @@
 {
+  "updatedAt": "2026-01-15T12:31:15.000Z",
+  "createdAt": "2026-01-15T12:03:14.760Z",
+  "id": "T3YzHk3G0bu56Kfz",
   "name": "CHANNELS---Private-Check-Or-Create",
-  "description": "RFC-004: Vérifie si un channel privé existe, sinon déclenche sa création via Redis Stream",
+  "description": null,
   "active": true,
   "isArchived": false,
   "nodes": [
@@ -16,7 +19,7 @@
       "typeVersion": 2,
       "position": [
         0,
-        300
+        304
       ],
       "webhookId": "private-channel-request-webhook"
     },
@@ -29,8 +32,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
-        300
+        224,
+        304
       ]
     },
     {
@@ -61,8 +64,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        440,
-        300
+        448,
+        304
       ]
     },
     {
@@ -99,8 +102,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        660,
-        200
+        672,
+        208
       ],
       "onError": "continueErrorOutput"
     },
@@ -133,7 +136,7 @@
       "typeVersion": 2,
       "position": [
         880,
-        200
+        208
       ]
     },
     {
@@ -145,43 +148,34 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1100,
-        100
+        1104,
+        112
       ]
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PREPARE REDIS STREAM MESSAGE (RFC-004)\n// ============================================\n\nconst validationData = $('Validate Input').first().json.data;\n\n// Callback URL for chatbot-core to call back\nconst n8nBaseUrl = $env.N8N_WEBHOOK_URL || $env.WEBHOOK_URL || 'https://n8n.bot-appetit.fr';\nconst callbackUrl = `${n8nBaseUrl}/webhook/private-channel-callback`;\n\n// Generate request ID for tracking\nconst requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\nreturn {\n  redis_message: {\n    type: 'notification',\n    actions: {\n      create_private_channel: true\n    },\n    discord_user_id: validationData.discord_user_id,\n    guild_id: validationData.guild_id,\n    channel_type: validationData.channel_type,\n    callback_url: callbackUrl,\n    metadata: {\n      request_id: requestId,\n      project_id: validationData.project_id,\n      ...validationData.metadata\n    }\n  },\n  request_id: requestId,\n  validation_data: validationData\n};"
+        "jsCode": "  // ============================================\n  // PREPARE REDIS STREAM MESSAGE (RFC-004)\n  // ============================================\n\n  const input = $input.first().json;\n  const validationData = $('Validate Input').first().json.data;\n\n  // Callback URL from previous Set node\n  const callbackUrl = input.callback_url;\n\n  // Generate request ID for tracking\n  const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\n  return {\n    redis_message: {\n      type: 'notification',\n      actions: {\n        create_private_channel: true\n      },\n      discord_user_id: validationData.discord_user_id,\n      guild_id: validationData.guild_id,\n      channel_type: validationData.channel_type,\n      callback_url: callbackUrl,\n      metadata: {\n        request_id: requestId,\n        project_id: validationData.project_id,\n        ...validationData.metadata\n      }\n    },\n    request_id: requestId,\n    validation_data: validationData\n  };"
       },
       "id": "channel-check-0007",
       "name": "Prepare Redis Message",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1100,
-        300
+        1216,
+        304
       ]
     },
     {
       "parameters": {
-        "operation": "xAdd",
-        "key": "={{ 'discord:dm:' + $json.validation_data.project_id }}",
-        "fieldsUi": {
-          "fieldValues": [
-            {
-              "field": "data",
-              "value": "={{ JSON.stringify($json.redis_message) }}"
-            }
-          ]
-        }
+        "operation": "xAdd"
       },
       "id": "channel-check-0008",
       "name": "Publish Redis Stream",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
       "position": [
-        1320,
-        300
+        1408,
+        304
       ],
       "credentials": {
         "redis": {
@@ -199,8 +193,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
-        300
+        1632,
+        304
       ]
     },
     {
@@ -212,7 +206,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        660,
+        672,
         400
       ]
     },
@@ -230,7 +224,7 @@
       "typeVersion": 1.1,
       "position": [
         1760,
-        200
+        208
       ]
     },
     {
@@ -249,6 +243,29 @@
         880,
         400
       ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0d2573b0-ab19-4251-b3f8-19ce0c613e99",
+              "name": "callback_url",
+              "value": "={{ $env.N8N_WEBHOOK_BASE_URL }}/private-channel-callback",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1040,
+        304
+      ],
+      "id": "8bb9eeff-4131-4eb3-baaf-fbf7dae9359a",
+      "name": "Set Callback URL"
     }
   ],
   "connections": {
@@ -307,7 +324,7 @@
       "main": [
         [
           {
-            "node": "Prepare Redis Message",
+            "node": "Set Callback URL",
             "type": "main",
             "index": 0
           }
@@ -384,6 +401,28 @@
   },
   "staticData": null,
   "meta": null,
-  "pinData": null,
-  "tags": []
+  "pinData": {},
+  "versionId": "d5191213-3621-462f-b92a-744ca2227511",
+  "activeVersionId": "d5191213-3621-462f-b92a-744ca2227511",
+  "versionCounter": 9,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-15T12:03:14.765Z",
+      "createdAt": "2026-01-15T12:03:14.765Z",
+      "role": "workflow:owner",
+      "workflowId": "T3YzHk3G0bu56Kfz",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
 }
