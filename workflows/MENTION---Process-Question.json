@@ -1,0 +1,270 @@
+{
+  "name": "MENTION---Process-Question",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "process-question-0001",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// DETECT INTENT (RFC-007)\n// Utilise des patterns pour pré-classification\n// Le LLM affine ensuite pour 'question'\n// ============================================\n\nconst input = $input.first().json;\nconst content = (input.data?.content || '').trim().toLowerCase();\n\n// --- Patterns de détection ---\nconst PATTERNS = {\n  greeting: /^(bonjour|salut|hello|hey|coucou|bonsoir|yo|hi|bjr|slt)\\b/i,\n  help: /^(aide|help|commandes?|comment (ça marche|utiliser|faire)|\\?\\?\\?)$/i,\n  empty: /^\\s*$/\n};\n\n// --- Détection par patterns ---\nlet intent = 'question';  // Default: envoyer au LLM\nlet confidence = 0.5;\nlet skip_llm = false;\n\nif (PATTERNS.empty.test(content)) {\n  intent = 'empty';\n  confidence = 1.0;\n  skip_llm = true;\n} else if (PATTERNS.greeting.test(content)) {\n  intent = 'greeting';\n  confidence = 0.95;\n  skip_llm = true;\n} else if (PATTERNS.help.test(content)) {\n  intent = 'help';\n  confidence = 0.95;\n  skip_llm = true;\n}\n\nreturn {\n  project_id: input.project_id,\n  data: input.data,\n  detected_intent: intent,\n  confidence: confidence,\n  skip_llm: skip_llm\n};"
+      },
+      "id": "process-question-0002",
+      "name": "Detect Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-skip-llm",
+              "leftValue": "={{ $json.skip_llm }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "process-question-0003",
+      "name": "Skip LLM?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREDEFINED RESPONSES (RFC-007)\n// Pour greeting, help, empty\n// ============================================\n\nconst input = $input.first().json;\nconst intent = input.detected_intent;\nconst displayName = input.data?.display_name || 'ami';\n\nconst RESPONSES = {\n  greeting: {\n    response: `Bonjour ${displayName} ! Comment puis-je t'aider ? Pose-moi une question culinaire ou tape /help pour voir les commandes.`,\n    intent: 'greeting',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  },\n  help: {\n    response: `Voici ce que je peux faire :\\n• Répondre à tes questions culinaires\\n• \\`/recette [nom]\\` - Chercher une recette\\n• \\`/liste\\` - Voir ta liste de courses\\n• \\`/panier\\` - Gérer ton panier\\n\\nMentionne-moi avec ta question !`,\n    intent: 'help',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  },\n  empty: {\n    response: `Tu m'as mentionné mais sans message ! Pose-moi une question culinaire ou tape /help pour voir ce que je peux faire.`,\n    intent: 'empty',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  }\n};\n\nconst result = RESPONSES[intent] || RESPONSES.empty;\n\nreturn {\n  success: true,\n  ...result,\n  project_id: input.project_id,\n  user_id: input.data?.user_id\n};"
+      },
+      "id": "process-question-0004",
+      "name": "Predefined Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TORAH_API_URL }}/api/ai/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"project_id\": {{ JSON.stringify($json.project_id) }},\n  \"content\": {{ JSON.stringify($json.data.content) }},\n  \"user_id\": {{ JSON.stringify($json.data.user_id) }},\n  \"username\": {{ JSON.stringify($json.data.username) }},\n  \"display_name\": {{ JSON.stringify($json.data.display_name) }},\n  \"guild_id\": {{ JSON.stringify($json.data.guild_id) }},\n  \"channel_id\": {{ JSON.stringify($json.data.channel_id) }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "process-question-0005",
+      "name": "Call AI Chat API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 400],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-api-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "process-question-0006",
+      "name": "API Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT LLM SUCCESS RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst validationData = $('Detect Intent').first().json;\n\n// Calcul crédits consommés (formule hybride RFC-007)\nconst tokensUsed = input.tokens_used || 0;\nconst intent = input.intent || 'question';\n\n// Table de coûts\nconst COSTS = {\n  recette: { base: 3, rate: 1.0, max: 10 },\n  question: { base: 1, rate: 0.5, max: 5 },\n  liste_ingredients: { base: 2, rate: 0.5, max: 5 },\n  default: { base: 1, rate: 0.5, max: 5 }\n};\n\nconst cost = COSTS[intent] || COSTS.default;\nconst creditsConsumed = Math.min(\n  cost.base + (tokensUsed / 1000) * cost.rate,\n  cost.max\n);\n\nreturn {\n  success: true,\n  response: input.response,\n  intent: intent,\n  confidence: input.confidence || 0.9,\n  tokens_used: tokensUsed,\n  credits_consumed: Math.ceil(creditsConsumed),\n  project_id: validationData.project_id,\n  user_id: validationData.data?.user_id\n};"
+      },
+      "id": "process-question-0007",
+      "name": "Format LLM Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT LLM ERROR / FALLBACK\n// ============================================\n\nconst input = $input.first().json;\nconst validationData = $('Detect Intent').first().json;\n\n// Vérifier si c'est out_of_scope ou erreur\nconst isOutOfScope = input.intent === 'out_of_scope';\nconst isUnknown = !input.response;\n\nlet response;\nlet intent;\n\nif (isOutOfScope) {\n  response = input.response || \"Je suis spécialisé en cuisine ! Cette question est hors de mon domaine. Pose-moi une question culinaire !\";\n  intent = 'out_of_scope';\n} else if (isUnknown) {\n  response = \"Je n'ai pas bien compris ta demande. Peux-tu reformuler ou taper /help ?\";\n  intent = 'unknown';\n} else {\n  response = \"Désolé, je n'ai pas pu traiter ta demande. Réessaie dans quelques instants.\";\n  intent = 'error';\n}\n\nreturn {\n  success: true,\n  response: response,\n  intent: intent,\n  confidence: 0.5,\n  tokens_used: 0,\n  credits_consumed: 0,\n  project_id: validationData.project_id,\n  user_id: validationData.data?.user_id\n};"
+      },
+      "id": "process-question-0008",
+      "name": "Format Error/Fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 500]
+    },
+    {
+      "parameters": {},
+      "id": "process-question-0009",
+      "name": "Merge Output",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1320, 300]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Detect Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Intent": {
+      "main": [
+        [
+          {
+            "node": "Skip LLM?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip LLM?": {
+      "main": [
+        [
+          {
+            "node": "Predefined Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call AI Chat API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call AI Chat API": {
+      "main": [
+        [
+          {
+            "node": "API Success?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Error/Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Success?": {
+      "main": [
+        [
+          {
+            "node": "Format Error/Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format LLM Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Predefined Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format LLM Success": {
+      "main": [
+        [
+          {
+            "node": "Merge Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error/Fallback": {
+      "main": [
+        [
+          {
+            "node": "Merge Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "tags": []
+}

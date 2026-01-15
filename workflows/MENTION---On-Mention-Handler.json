@@ -1,0 +1,319 @@
+{
+  "name": "MENTION---On-Mention-Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mention",
+        "options": {}
+      },
+      "id": "mention-handler-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "mention-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE INPUT (RFC-007)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// --- Validate required fields ---\nconst errors = [];\n\nif (!body.guild_id) errors.push('guild_id requis');\nif (!body.user_id) errors.push('user_id requis');\nif (body.content === undefined) errors.push('content requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: errors.join(', '),\n      http_status: 400\n    }\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  valid: true,\n  data: {\n    message_id: body.message_id || null,\n    channel_id: body.channel_id || null,\n    guild_id: body.guild_id,\n    user_id: body.user_id,\n    content: body.content || '',\n    username: body.username || 'unknown',\n    display_name: body.display_name || body.username || 'unknown',\n    is_reply: body.is_reply || false,\n    replied_to_bot: body.replied_to_bot || false,\n    conversation_id: body.conversation_id || null\n  }\n};"
+      },
+      "id": "mention-handler-0002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "mention-handler-0003",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TORAH_API_URL }}/api/branding/guild/{{ $json.data.guild_id }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "mention-handler-0004",
+      "name": "Get Project Mapping",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 200],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-project",
+              "leftValue": "={{ $json.project_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "mention-handler-0005",
+      "name": "Has Project?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, 200]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-project-id",
+              "name": "project_id",
+              "value": "={{ $json.project_id }}",
+              "type": "string"
+            },
+            {
+              "id": "set-data",
+              "name": "data",
+              "value": "={{ $('Validate Input').item.json.data }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "mention-handler-0006",
+      "name": "Merge Project + Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1100, 100]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "MENTION---Process-Question"
+        },
+        "options": {}
+      },
+      "id": "mention-handler-0007",
+      "name": "Call Process Question",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1320, 100]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "MENTION---Format-Response"
+        },
+        "options": {}
+      },
+      "id": "mention-handler-0008",
+      "name": "Call Format Response",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1540, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "mention-handler-0009",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1760, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.http_status || 400 }}"
+        }
+      },
+      "id": "mention-handler-0010",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'UNKNOWN_GUILD', message: 'Guild non configuré', http_status: 400 } }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "mention-handler-0011",
+      "name": "Respond Unknown Guild",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Project Mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Mapping": {
+      "main": [
+        [
+          {
+            "node": "Has Project?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unknown Guild",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Project?": {
+      "main": [
+        [
+          {
+            "node": "Respond Unknown Guild",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Project + Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Project + Data": {
+      "main": [
+        [
+          {
+            "node": "Call Process Question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Process Question": {
+      "main": [
+        [
+          {
+            "node": "Call Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "tags": []
+}
