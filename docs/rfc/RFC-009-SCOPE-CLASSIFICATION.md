@@ -153,20 +153,38 @@ WHERE project_id = 'bot-appetit';
 
 ### GET /api/branding/guild/{guild_id}
 
-**Réponse attendue (ajout):**
+**Réponse:**
 ```json
 {
+  "success": true,
   "project_id": "bot-appetit",
-  "name": "Bot Appetit",
-  "primary_color": "#E67E22",
-  "scope_prompt": "Tu es un assistant culinaire spécialisé...",
-  "out_of_scope_message": "Je suis spécialisé en cuisine..."
+  "branding": {
+    "name": "Bot Appetit",
+    "logo_url": "https://...",
+    "primary_color": "#E67E22",
+    "scope_prompt": "Tu es un assistant culinaire spécialisé...",
+    "out_of_scope_message": "Je suis spécialisé en cuisine..."
+  }
 }
 ```
 
 ### PUT /api/config/branding (RFC-008)
 
-Permettre la mise à jour des nouveaux champs via l'écran de configuration.
+**Requête:**
+```json
+{
+  "guild_id": "1458159736775119115",
+  "scope_prompt": "Tu es un assistant culinaire spécialisé...",
+  "out_of_scope_message": "Je suis spécialisé en cuisine..."
+}
+```
+
+**Validation:**
+
+| Champ | Min | Max |
+|-------|-----|-----|
+| `scope_prompt` | 20 | 2000 |
+| `out_of_scope_message` | - | 200 |
 
 ---
 
