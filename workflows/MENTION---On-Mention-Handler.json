@@ -3,9 +3,9 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## RFC-007: Mention Service Handler\n\n**Webhook:** POST /mention\n\n**Input:**\n- guild_id (requis)\n- user_id (requis)\n- content\n- username\n\n**Flow:**\n1. Validate input\n2. Map guild_id → project_id\n3. Call Process-Question\n4. Call Format-Response\n5. Return MentionResult",
+        "content": "## RFC-007: Mention Service Handler\n\n**Webhook:** POST /mention\n\n**Input:**\n- guild_id (requis)\n- user_id (requis)\n- content\n- username\n- llm_config (optionnel)\n\n**Flow:**\n1. Validate input\n2. Map guild_id → project_id + branding\n3. Call Process-Question\n4. Call Format-Response\n5. Return MentionResult",
         "width": 280,
-        "height": 280,
+        "height": 300,
         "color": 6
       },
       "id": "mention-handler-note",
@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATE INPUT (RFC-007)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// --- Validate required fields ---\nconst errors = [];\n\nif (!body.guild_id) errors.push('guild_id requis');\nif (!body.user_id) errors.push('user_id requis');\nif (body.content === undefined) errors.push('content requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: errors.join(', '),\n      http_status: 400\n    }\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  valid: true,\n  data: {\n    message_id: body.message_id || null,\n    channel_id: body.channel_id || null,\n    guild_id: body.guild_id,\n    user_id: body.user_id,\n    content: body.content || '',\n    username: body.username || 'unknown',\n    display_name: body.display_name || body.username || 'unknown',\n    is_reply: body.is_reply || false,\n    replied_to_bot: body.replied_to_bot || false,\n    conversation_id: body.conversation_id || null\n  }\n};"
+        "jsCode": "// ============================================\n// VALIDATE INPUT (RFC-007 + RFC-009)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// --- Validate required fields ---\nconst errors = [];\n\nif (!body.guild_id) errors.push('guild_id requis');\nif (!body.user_id) errors.push('user_id requis');\nif (body.content === undefined) errors.push('content requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: errors.join(', '),\n      http_status: 400\n    }\n  };\n}\n\n// --- Extract LLM config (RFC-009) ---\nconst llmConfig = body.llm_config || {};\n\n// --- Return validated data ---\nreturn {\n  valid: true,\n  data: {\n    message_id: body.message_id || null,\n    channel_id: body.channel_id || null,\n    guild_id: body.guild_id,\n    user_id: body.user_id,\n    content: body.content || '',\n    username: body.username || 'unknown',\n    display_name: body.display_name || body.username || 'unknown',\n    is_reply: body.is_reply || false,\n    replied_to_bot: body.replied_to_bot || false,\n    conversation_id: body.conversation_id || null\n  },\n  llm_config: {\n    provider: llmConfig.provider || null,\n    openai_api_key: llmConfig.openai_api_key || null,\n    anthropic_api_key: llmConfig.anthropic_api_key || null,\n    google_api_key: llmConfig.google_api_key || null,\n    mistral_api_key: llmConfig.mistral_api_key || null\n  }\n};"
       },
       "id": "mention-handler-0002",
       "name": "Validate Input",
@@ -113,28 +113,12 @@
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "set-project-id",
-              "name": "project_id",
-              "value": "={{ $json.project_id }}",
-              "type": "string"
-            },
-            {
-              "id": "set-data",
-              "name": "data",
-              "value": "={{ $('Validate Input').item.json.data }}",
-              "type": "object"
-            }
-          ]
-        },
-        "options": {}
+        "jsCode": "// ============================================\n// MERGE PROJECT + DATA + BRANDING (RFC-009)\n// ============================================\n\nconst branding = $input.first().json;\nconst validatedInput = $('Validate Input').first().json;\n\nreturn {\n  project_id: branding.project_id,\n  data: validatedInput.data,\n  llm_config: validatedInput.llm_config,\n  branding: {\n    name: branding.name || null,\n    scope: branding.scope || null,\n    scope_description: branding.scope_description || null\n  }\n};"
       },
       "id": "mention-handler-0006",
       "name": "Merge Project + Data",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [1100, 100]
     },
     {
@@ -237,14 +221,14 @@
       "main": [
         [
           {
-            "node": "Respond Validation Error",
+            "node": "Get Project Mapping",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Get Project Mapping",
+            "node": "Respond Validation Error",
             "type": "main",
             "index": 0
           }
@@ -273,14 +257,14 @@
       "main": [
         [
           {
-            "node": "Respond Unknown Guild",
+            "node": "Merge Project + Data",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Merge Project + Data",
+            "node": "Respond Unknown Guild",
             "type": "main",
             "index": 0
           }
