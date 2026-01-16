@@ -3,9 +3,9 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## RFC-007: Process Question\n\n**Sub-workflow** appelé par On-Mention-Handler\n\n**Intents:**\n- greeting → réponse prédéfinie\n- help → liste commandes\n- empty → guide\n- question → POST /api/ai/chat\n- unknown → fallback\n\n**Output:**\n- success, response, intent\n- tokens_used, credits_consumed\n- guild_id, request_content",
+        "content": "## RFC-007 + RFC-009: Process Question\n\n**Sub-workflow** appelé par On-Mention-Handler\n\n**Intents:**\n- greeting → réponse prédéfinie\n- help → liste commandes\n- empty → guide\n- question → LLM - Web Search\n- out_of_scope → message scope\n- unknown → fallback\n\n**Output:**\n- success, response, intent\n- tokens_used, credits_consumed",
         "width": 280,
-        "height": 260,
+        "height": 280,
         "color": 6
       },
       "id": "process-question-note",
@@ -26,7 +26,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// DETECT INTENT (RFC-007)\n// ============================================\n\nconst input = $input.first().json;\nconst content = (input.data?.content || '').trim().toLowerCase();\n\nconst PATTERNS = {\n  greeting: /^(bonjour|salut|hello|hey|coucou|bonsoir|yo|hi|bjr|slt)\\b/i,\n  help: /^(aide|help|commandes?|comment (ça marche|utiliser|faire)|\\?\\?\\?)$/i,\n  empty: /^\\s*$/\n};\n\nlet intent = 'question';\nlet confidence = 0.5;\nlet skip_llm = false;\n\nif (PATTERNS.empty.test(content)) {\n  intent = 'empty';\n  confidence = 1.0;\n  skip_llm = true;\n} else if (PATTERNS.greeting.test(content)) {\n  intent = 'greeting';\n  confidence = 0.95;\n  skip_llm = true;\n} else if (PATTERNS.help.test(content)) {\n  intent = 'help';\n  confidence = 0.95;\n  skip_llm = true;\n}\n\nreturn {\n  project_id: input.project_id,\n  data: input.data,\n  detected_intent: intent,\n  confidence: confidence,\n  skip_llm: skip_llm\n};"
+        "jsCode": "// ============================================\n// DETECT INTENT (RFC-007)\n// ============================================\n\nconst input = $input.first().json;\nconst content = (input.data?.content || '').trim().toLowerCase();\n\nconst PATTERNS = {\n  greeting: /^(bonjour|salut|hello|hey|coucou|bonsoir|yo|hi|bjr|slt)\\b/i,\n  help: /^(aide|help|commandes?|comment (ça marche|utiliser|faire)|\\?\\?\\?)$/i,\n  empty: /^\\s*$/\n};\n\nlet intent = 'question';\nlet confidence = 0.5;\nlet skip_llm = false;\n\nif (PATTERNS.empty.test(content)) {\n  intent = 'empty';\n  confidence = 1.0;\n  skip_llm = true;\n} else if (PATTERNS.greeting.test(content)) {\n  intent = 'greeting';\n  confidence = 0.95;\n  skip_llm = true;\n} else if (PATTERNS.help.test(content)) {\n  intent = 'help';\n  confidence = 0.95;\n  skip_llm = true;\n}\n\nreturn {\n  project_id: input.project_id,\n  data: input.data,\n  llm_config: input.llm_config,\n  branding: input.branding,\n  detected_intent: intent,\n  confidence: confidence,\n  skip_llm: skip_llm\n};"
       },
       "id": "process-question-0002",
       "name": "Detect Intent",
@@ -65,7 +65,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PREDEFINED RESPONSES (RFC-007)\n// ============================================\n\nconst input = $input.first().json;\nconst intent = input.detected_intent;\nconst displayName = input.data?.display_name || 'ami';\n\nconst RESPONSES = {\n  greeting: {\n    response: `Bonjour ${displayName} ! Comment puis-je t'aider ?`,\n    intent: 'greeting',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  },\n  help: {\n    response: `Voici ce que je peux faire :\\n• Répondre à tes questions culinaires\\n• /recette [nom] - Chercher une recette\\n• /liste - Voir ta liste de courses`,\n    intent: 'help',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  },\n  empty: {\n    response: `Tu m'as mentionné mais sans message ! Pose-moi une question.`,\n    intent: 'empty',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  }\n};\n\nconst result = RESPONSES[intent] || RESPONSES.empty;\n\nreturn {\n  success: true,\n  ...result,\n  project_id: input.project_id,\n  user_id: input.data?.user_id,\n  guild_id: input.data?.guild_id,\n  request_content: input.data?.content || ''\n};"
+        "jsCode": "// ============================================\n// PREDEFINED RESPONSES (RFC-007 + RFC-009)\n// ============================================\n\nconst input = $input.first().json;\nconst intent = input.detected_intent;\nconst displayName = input.data?.display_name || 'ami';\nconst scopeDescription = input.branding?.scope_description || 'assistant';\nconst scope = input.branding?.scope || '';\n\n// Build help response dynamically based on scope\nlet helpResponse = `Voici ce que je peux faire :\\n• Répondre à tes questions`;\nif (scope) {\n  helpResponse += ` sur: ${scope}`;\n}\n\nconst RESPONSES = {\n  greeting: {\n    response: `Bonjour ${displayName} ! Comment puis-je t'aider ?`,\n    intent: 'greeting',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  },\n  help: {\n    response: helpResponse,\n    intent: 'help',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  },\n  empty: {\n    response: `Tu m'as mentionné mais sans message ! Pose-moi une question.`,\n    intent: 'empty',\n    confidence: 1.0,\n    tokens_used: 0,\n    credits_consumed: 0\n  }\n};\n\nconst result = RESPONSES[intent] || RESPONSES.empty;\n\nreturn {\n  success: true,\n  ...result,\n  project_id: input.project_id,\n  user_id: input.data?.user_id,\n  guild_id: input.data?.guild_id,\n  request_content: input.data?.content || ''\n};"
       },
       "id": "process-question-0004",
       "name": "Predefined Response",
@@ -75,34 +75,40 @@
     },
     {
       "parameters": {
+        "jsCode": "// ============================================\n// BUILD LLM REQUEST (RFC-009)\n// ============================================\n\nconst input = $input.first().json;\nconst llmConfig = input.llm_config || {};\nconst branding = input.branding || {};\n\n// Determine provider (from llm_config or default to gemini)\nconst provider = llmConfig.provider || 'gemini';\n\n// Build the request for LLM - Web Search\nconst llmRequest = {\n  query: input.data.content,\n  provider: provider,\n  user_id: input.data.user_id\n};\n\n// Add API keys from llm_config\nif (llmConfig.openai_api_key) llmRequest.openai_api_key = llmConfig.openai_api_key;\nif (llmConfig.anthropic_api_key) llmRequest.anthropic_api_key = llmConfig.anthropic_api_key;\nif (llmConfig.google_api_key) llmRequest.google_api_key = llmConfig.google_api_key;\nif (llmConfig.mistral_api_key) llmRequest.mistral_api_key = llmConfig.mistral_api_key;\n\n// Add allowed_context for scope classification (RFC-009)\n// Only add if scope is defined\nif (branding.scope) {\n  llmRequest.allowed_context = {\n    description: branding.scope,\n    suggestion: branding.scope_description \n      ? `Je suis un ${branding.scope_description}. Pose-moi des questions sur: ${branding.scope}`\n      : `Ce bot est dédié à: ${branding.scope}`\n  };\n}\n\n// Store original data for later use\nreturn {\n  llm_request: llmRequest,\n  original: {\n    project_id: input.project_id,\n    data: input.data,\n    branding: branding\n  }\n};"
+      },
+      "id": "process-question-0005",
+      "name": "Build LLM Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 400]
+    },
+    {
+      "parameters": {
         "method": "POST",
-        "url": "={{ $env.TORAH_API_URL }}/api/ai/chat",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/llm-web-search",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "X-Project-ID",
-              "value": "={{ $('Detect Intent').item.json.project_id }}"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"project_id\": {{ JSON.stringify($('Detect Intent').item.json.project_id) }},\n  \"content\": {{ JSON.stringify($('Detect Intent').item.json.data.content) }},\n  \"user_id\": {{ JSON.stringify($('Detect Intent').item.json.data.user_id) }},\n  \"username\": {{ JSON.stringify($('Detect Intent').item.json.data.username) }},\n  \"guild_id\": {{ JSON.stringify($('Detect Intent').item.json.data.guild_id) }}\n}",
+        "jsonBody": "={{ $json.llm_request }}",
         "options": {
-          "timeout": 30000
+          "timeout": 60000
         }
       },
-      "id": "process-question-0005",
-      "name": "Call AI Chat API",
+      "id": "process-question-0006",
+      "name": "Call LLM Web Search",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [660, 400],
-      "onError": "continueErrorOutput"
+      "position": [880, 400],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -114,7 +120,7 @@
           },
           "conditions": [
             {
-              "id": "check-api-success",
+              "id": "check-success",
               "leftValue": "={{ $json.success }}",
               "rightValue": true,
               "operator": {
@@ -127,39 +133,39 @@
         },
         "options": {}
       },
-      "id": "process-question-0006",
-      "name": "API Success?",
+      "id": "process-question-0007",
+      "name": "LLM Success?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [880, 400]
+      "position": [1100, 400]
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT LLM SUCCESS RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst validationData = $('Detect Intent').first().json;\n\nconst tokensUsed = input.tokens_used || 0;\nconst intent = input.intent || 'question';\n\nconst COSTS = {\n  recette: { base: 3, rate: 1.0, max: 10 },\n  question: { base: 1, rate: 0.5, max: 5 },\n  default: { base: 1, rate: 0.5, max: 5 }\n};\n\nconst cost = COSTS[intent] || COSTS.default;\nconst creditsConsumed = Math.min(cost.base + (tokensUsed / 1000) * cost.rate, cost.max);\n\nreturn {\n  success: true,\n  response: input.response,\n  intent: intent,\n  confidence: input.confidence || 0.9,\n  tokens_used: tokensUsed,\n  credits_consumed: Math.ceil(creditsConsumed),\n  project_id: validationData.project_id,\n  user_id: validationData.data?.user_id,\n  guild_id: validationData.data?.guild_id,\n  request_content: validationData.data?.content || ''\n};"
+        "jsCode": "// ============================================\n// FORMAT LLM SUCCESS RESPONSE (RFC-009)\n// ============================================\n\nconst llmResponse = $input.first().json;\nconst originalData = $('Build LLM Request').first().json.original;\n\n// Extract content from LLM response\nconst content = llmResponse.data?.content || llmResponse.data?.query?.content || '';\nconst sources = llmResponse.data?.sources || [];\nconst usage = llmResponse.usage || {};\n\nconst tokensUsed = usage.total_tokens || 0;\n\n// Calculate credits (simple formula)\nconst creditsConsumed = Math.min(Math.ceil(1 + (tokensUsed / 1000) * 0.5), 10);\n\n// Format response with sources if available\nlet response = content;\nif (sources.length > 0) {\n  response += '\\n\\n**Sources:**';\n  sources.slice(0, 3).forEach(s => {\n    response += `\\n• [${s.title || s.domain}](${s.url})`;\n  });\n}\n\nreturn {\n  success: true,\n  response: response,\n  intent: 'question',\n  confidence: 0.9,\n  tokens_used: tokensUsed,\n  credits_consumed: creditsConsumed,\n  project_id: originalData.project_id,\n  user_id: originalData.data?.user_id,\n  guild_id: originalData.data?.guild_id,\n  request_content: originalData.data?.content || ''\n};"
       },
-      "id": "process-question-0007",
+      "id": "process-question-0008",
       "name": "Format LLM Success",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 300]
+      "position": [1320, 300]
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT ERROR / FALLBACK\n// ============================================\n\nconst input = $input.first().json;\nconst validationData = $('Detect Intent').first().json;\n\nlet response = \"Je n'ai pas bien compris. Peux-tu reformuler ?\";\nlet intent = 'unknown';\n\nif (input.intent === 'out_of_scope') {\n  response = \"Je suis spécialisé en cuisine ! Cette question est hors de mon domaine.\";\n  intent = 'out_of_scope';\n}\n\nreturn {\n  success: true,\n  response: response,\n  intent: intent,\n  confidence: 0.5,\n  tokens_used: 0,\n  credits_consumed: 0,\n  project_id: validationData.project_id,\n  user_id: validationData.data?.user_id,\n  guild_id: validationData.data?.guild_id,\n  request_content: validationData.data?.content || ''\n};"
+        "jsCode": "// ============================================\n// HANDLE LLM ERROR (RFC-009)\n// ============================================\n\nconst llmResponse = $input.first().json;\nconst originalData = $('Build LLM Request').first().json.original;\nconst branding = originalData.branding || {};\n\nlet response = \"Je n'ai pas bien compris. Peux-tu reformuler ?\";\nlet intent = 'unknown';\n\n// Check if it's a CONTEXT_VIOLATION (out of scope)\nconst errorStatus = llmResponse.error?.status || '';\nconst errorCode = llmResponse.error?.code || 0;\n\nif (errorStatus === 'CONTEXT_VIOLATION' || errorCode === 403) {\n  // Out of scope - use branding info for friendly message\n  const scopeDescription = branding.scope_description || 'assistant spécialisé';\n  const scope = branding.scope || '';\n  const suggestion = llmResponse.error?.details?.suggestion || '';\n  \n  if (suggestion) {\n    response = suggestion;\n  } else if (scope) {\n    response = `Je suis un ${scopeDescription}. Cette question est hors de mon domaine de compétence. Pose-moi des questions sur: ${scope}`;\n  } else {\n    response = `Cette question est hors de mon domaine de compétence.`;\n  }\n  intent = 'out_of_scope';\n} else if (errorStatus === 'BAD_REQUEST' || errorCode === 400) {\n  // Missing API key or invalid request\n  response = \"Désolé, je ne peux pas répondre pour le moment. Configuration manquante.\";\n  intent = 'error';\n} else {\n  // Generic error\n  response = \"Désolé, une erreur s'est produite. Réessaie dans quelques instants.\";\n  intent = 'error';\n}\n\nreturn {\n  success: true,\n  response: response,\n  intent: intent,\n  confidence: 0.8,\n  tokens_used: 0,\n  credits_consumed: 0,\n  project_id: originalData.project_id,\n  user_id: originalData.data?.user_id,\n  guild_id: originalData.data?.guild_id,\n  request_content: originalData.data?.content || ''\n};"
       },
-      "id": "process-question-0008",
-      "name": "Format Error/Fallback",
+      "id": "process-question-0009",
+      "name": "Handle LLM Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 500]
+      "position": [1320, 500]
     },
     {
       "parameters": {},
-      "id": "process-question-0009",
+      "id": "process-question-0010",
       "name": "Merge Output",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [1320, 300]
+      "position": [1540, 300]
     }
   ],
   "connections": {
@@ -196,43 +202,7 @@
         ],
         [
           {
-            "node": "Call AI Chat API",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call AI Chat API": {
-      "main": [
-        [
-          {
-            "node": "API Success?",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Format Error/Fallback",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "API Success?": {
-      "main": [
-        [
-          {
-            "node": "Format Error/Fallback",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Format LLM Success",
+            "node": "Build LLM Request",
             "type": "main",
             "index": 0
           }
@@ -250,24 +220,64 @@
         ]
       ]
     },
-    "Format LLM Success": {
+    "Build LLM Request": {
       "main": [
         [
           {
-            "node": "Merge Output",
+            "node": "Call LLM Web Search",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Error/Fallback": {
+    "Call LLM Web Search": {
+      "main": [
+        [
+          {
+            "node": "LLM Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Success?": {
+      "main": [
+        [
+          {
+            "node": "Format LLM Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle LLM Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format LLM Success": {
       "main": [
         [
           {
             "node": "Merge Output",
             "type": "main",
-            "index": 0
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Handle LLM Error": {
+      "main": [
+        [
+          {
+            "node": "Merge Output",
+            "type": "main",
+            "index": 2
           }
         ]
       ]
