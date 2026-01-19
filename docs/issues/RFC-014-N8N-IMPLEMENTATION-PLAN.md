@@ -55,8 +55,8 @@ Implémenter 4 webhooks permettant le traitement de documents (OCR, traduction, 
 
 | # | Tâche | Effort | Status |
 |---|-------|--------|--------|
-| 2.1 | Routage `custom_actions` vers webhooks plugins | M | TODO |
-| 2.2 | Support `ocr_thresholds` configurable | S | TODO |
+| 2.1 | Routage `custom_actions` vers webhooks plugins | M | ✅ DONE |
+| 2.2 | Support `ocr_thresholds` configurable | S | ✅ DONE |
 | 2.3 | Tests OCR hébreu (Mistral) | M | TODO |
 | 2.4 | Tests OCR araméen (Mistral) | M | TODO |
 | 2.5 | Documentation des résultats OCR | S | TODO |
