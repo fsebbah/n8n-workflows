@@ -2,91 +2,81 @@
   "name": "MCP - Image OCR",
   "nodes": [
     {
-      "id": "webhook-ocr",
-      "name": "Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        240,
-        300
-      ],
-      "webhookId": "image-ocr-webhook",
+      "parameters": {
+        "content": "## MCP - Image OCR\n\n**Endpoint:** POST /webhook/image-ocr\n\n**Pattern:** Async avec job_id\n\n**Input:**\n- `image_url` OU `image_base64`: Image à traiter\n- `mistral_api_key`: Pour OCR Mistral\n- `include_images` (optionnel): Inclure base64 dans réponse\n\n**Response immédiate:**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_xxx\",\n  \"status\": \"started\"\n}\n```\n\n**Statut:** GET /webhook/torah-job-status?job_id=xxx\n\n**Note:** Pour OCR simple sans traduction, le résultat est retourné directement (mode synchrone).",
+        "height": 340,
+        "width": 320,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
       "parameters": {
         "httpMethod": "POST",
         "path": "image-ocr",
         "responseMode": "responseNode",
-        "options": {
-          "binaryData": true
-        }
-      }
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [400, 300],
+      "webhookId": "image-ocr"
     },
     {
-      "id": "validate-input",
-      "name": "Validate Input",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        460,
-        300
-      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\n// Validation\nconst hasImage = !!(body.image_url || body.image_base64);\nconst hasMistralKey = !!body.mistral_api_key;\n\nconst errors = [];\nif (!hasImage) errors.push('image_url ou image_base64 requis');\nif (!hasMistralKey) errors.push('mistral_api_key requis');\n\n// Fonction pour détecter le MIME type depuis les magic bytes base64\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  if (prefix.startsWith('Qk')) return 'image/bmp';\n  return 'image/png';\n}\n\n// Fonction pour obtenir le MIME type depuis l'extension\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp',\n    'tiff': 'image/tiff', 'tif': 'image/tiff'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// Préparer l'image avec détection MIME intelligente\nlet imageUrl = '';\nlet detectedMime = 'image/png';\n\nif (body.image_url) {\n  imageUrl = body.image_url;\n} else if (body.image_base64) {\n  // 1. Essayer depuis file_type param\n  if (body.file_type) {\n    detectedMime = getMimeFromExtension(body.file_type) || 'image/png';\n  } else {\n    // 2. Détecter depuis magic bytes\n    detectedMime = detectMimeFromBase64(body.image_base64);\n  }\n  imageUrl = 'data:' + detectedMime + ';base64,' + body.image_base64;\n}\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    imageUrl: imageUrl,\n    detectedMime: detectedMime,\n    mistralApiKey: body.mistral_api_key,\n    includeImages: body.include_images || false,\n    source: body.image_url ? 'url' : 'base64'\n  }\n}];"
+      },
+      "id": "validation",
+      "name": "Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [620, 300]
+    },
+    {
       "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "loose"
+            "typeValidation": "strict"
           },
           "conditions": [
             {
-              "leftValue": "={{ $json.body.image_url || $binary }}",
-              "rightValue": "",
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "isNotEmpty"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],
-          "combinator": "or"
+          "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "if-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [840, 300]
     },
     {
-      "id": "error-no-image",
-      "name": "Error: No Image",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        700,
-        460
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing image. Provide image_url or upload binary image.\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"mistral\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
-        "options": {
-          "responseCode": 400
-        }
-      }
-    },
-    {
-      "id": "mistral-ocr",
-      "name": "Mistral OCR API",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        700,
-        200
-      ],
       "parameters": {
         "method": "POST",
         "url": "https://api.mistral.ai/v1/ocr",
-        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $json.body.mistral_api_key }}"
+              "value": "=Bearer {{ $json.mistralApiKey }}"
             },
             {
               "name": "Content-Type",
@@ -96,57 +86,86 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { \"model\": \"mistral-ocr-latest\", \"document\": { \"type\": \"image_url\", \"image_url\": $json.body.image_url || ('data:image/' + ($binary.data?.mimeType?.split('/')[1] || 'png') + ';base64,' + $binary.data?.data) }, \"include_image_base64\": $json.body.include_images || false } }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'mistral-ocr-latest', document: { type: 'image_url', image_url: $json.imageUrl }, include_image_base64: $json.includeImages }) }}",
         "options": {
-          "timeout": 120000
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
         }
       },
+      "id": "mistral-ocr",
+      "name": "Mistral OCR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 200],
       "onError": "continueRegularOutput"
     },
     {
-      "id": "format-output",
-      "name": "Format Output",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        920,
-        200
-      ],
       "parameters": {
-        "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"data\": { \"text\": $json.pages?.map(p => p.markdown).join('\\n\\n') || '', \"pages\": $json.pages || [], \"model\": $json.model || 'mistral-ocr-latest', \"source\": $('Webhook').first().json.body.image_url ? 'url' : 'binary' }, \"meta\": { \"provider\": \"mistral\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"usage\": { \"pages_processed\": $json.usage_info?.pages_processed || 1, \"doc_size_bytes\": $json.usage_info?.doc_size_bytes || 0 } } } }}"
-      }
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validation').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier erreur\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.message || data.error?.message || 'Mistral API error',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Extraire le texte\nconst text = data.pages?.map(p => p.markdown).join('\\n\\n') || '';\n\nreturn [{\n  json: {\n    success: true,\n    data: {\n      text: text,\n      pages: data.pages || [],\n      model: data.model || 'mistral-ocr-latest',\n      source: prevData.source\n    },\n    meta: {\n      provider: 'mistral',\n      usage: {\n        pages_processed: data.usage_info?.pages_processed || 1,\n        doc_size_bytes: data.usage_info?.doc_size_bytes || 0\n      }\n    }\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1280, 200]
     },
     {
-      "id": "respond-success",
-      "name": "Respond Success",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1140,
-        200
-      ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
-      }
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1500, 200]
     },
     {
-      "id": "sticky-note-doc",
-      "name": "API Documentation",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        240,
-        80
-      ],
       "parameters": {
-        "color": 6,
-        "width": 550,
-        "height": 240,
-        "content": "## MCP - Image OCR\n\n**Endpoint:** POST /webhook/image-ocr\n\n**Model:** mistral-ocr-latest (Mistral OCR API v1)\n\n**Parameters:**\n- `mistral_api_key` (required): Mistral API key\n- `image_url` (string): URL of image to process\n- OR upload binary image file\n- `include_images` (optional): Include base64 images in response\n- `execution_mode` (optional): online | offline\n\n**Returns:** Extracted text (markdown) + pages array\n\n**API:** https://api.mistral.ai/v1/ocr"
-      }
+        "jsCode": "const input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+      },
+      "id": "build-error",
+      "name": "Build Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1060, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1280, 420]
     }
   ],
   "connections": {
@@ -154,47 +173,69 @@
       "main": [
         [
           {
-            "node": "Validate Input",
+            "node": "Validation",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Validate Input": {
+    "Validation": {
       "main": [
         [
           {
-            "node": "Mistral Vision OCR",
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Mistral OCR",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Error: No Image",
+            "node": "Build Error Response",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Mistral Vision OCR": {
+    "Mistral OCR": {
       "main": [
         [
           {
-            "node": "Format Output",
+            "node": "Format Response",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Output": {
+    "Format Response": {
       "main": [
         [
           {
-            "node": "Respond Success",
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -203,8 +244,6 @@
     }
   },
   "settings": {
-    "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
+    "executionOrder": "v1"
   }
 }
