@@ -1,0 +1,81 @@
+{
+  "name": "MCP - Documents Validate",
+  "nodes": [
+    {
+      "id": "webhook-validate",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "documents-validate-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "documents/validate",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "check-params",
+      "name": "Validate and Check Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\n// Vérifier les champs requis\nconst hasFile = !!(body.file_url || body.file_base64);\nconst hasAction = !!body.action;\n\nif (!hasFile || !hasAction) {\n  return {\n    json: {\n      valid: false,\n      can_proceed: false,\n      missing: [\n        ...(!hasFile ? ['file'] : []),\n        ...(!hasAction ? ['action'] : [])\n      ],\n      errors: [\n        ...(!hasFile ? ['Document requis (file_url ou file_base64)'] : []),\n        ...(!hasAction ? ['Action requise (translate, summarize, etc.)'] : [])\n      ],\n      questions: []\n    }\n  };\n}\n\nconst action = body.action;\nconst params = body.params || {};\nconst pluginContext = body.plugin_context || {};\nconst availableActions = pluginContext.available_actions || ['translate', 'summarize'];\nconst requiredParams = pluginContext.required_params || {\n  translate: ['target_language'],\n  summarize: ['format']\n};\nconst customActions = pluginContext.custom_actions || {};\n\n// Vérifier si l'action est valide\nconst isStandardAction = availableActions.includes(action);\nconst isCustomAction = Object.keys(customActions).includes(action);\n\nif (!isStandardAction && !isCustomAction) {\n  return {\n    json: {\n      valid: false,\n      can_proceed: false,\n      missing: [],\n      errors: [`Action '${action}' non disponible. Actions valides: ${[...availableActions, ...Object.keys(customActions)].join(', ')}`],\n      questions: []\n    }\n  };\n}\n\n// Récupérer les params requis pour cette action\nconst finalRequiredParams = customActions[action]?.required_params || requiredParams[action] || [];\n\n// Questions prédéfinies par paramètre\nconst paramQuestions = {\n  target_language: {\n    question: 'Dans quelle langue veux-tu la traduction ?',\n    type: 'text',\n    examples: 'français, anglais, espagnol...'\n  },\n  format: {\n    question: 'Quel format de synthèse souhaites-tu ?',\n    type: 'choice',\n    options: [\n      { value: 'express', label: 'Résumé express (2-3 phrases)' },\n      { value: 'points', label: 'Points clés (liste à puces)' },\n      { value: 'structured', label: 'Résumé structuré (paragraphes)' },\n      { value: 'outline', label: 'Plan détaillé (hiérarchique)' },\n      { value: 'focused', label: 'Extraction ciblée (vous précisez)' }\n    ]\n  },\n  output_format: {\n    question: 'Quel format de sortie ?',\n    type: 'choice',\n    options: [\n      { value: 'json', label: 'JSON structuré' },\n      { value: 'list', label: 'Liste texte' }\n    ]\n  },\n  target_system: {\n    question: 'Vers quel système convertir les unités ?',\n    type: 'choice',\n    options: [\n      { value: 'metric', label: 'Métrique (g, ml, °C)' },\n      { value: 'imperial', label: 'Impérial (oz, cups, °F)' }\n    ]\n  },\n  servings: {\n    question: 'Pour combien de personnes ?',\n    type: 'number',\n    default: 4\n  }\n};\n\nconst missing = [];\nconst questions = [];\n\n// Vérifier chaque paramètre requis\nfor (const param of finalRequiredParams) {\n  if (!params[param] || params[param] === '') {\n    missing.push(param);\n    questions.push({\n      param: param,\n      ...(paramQuestions[param] || {\n        question: `Veuillez fournir: ${param}`,\n        type: 'text'\n      })\n    });\n  }\n}\n\nreturn {\n  json: {\n    valid: missing.length === 0,\n    can_proceed: missing.length === 0,\n    missing: missing,\n    errors: [],\n    questions: questions,\n    action: action,\n    params: params,\n    is_custom_action: isCustomAction,\n    custom_webhook_url: customActions[action]?.webhook_url || null\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-result",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [720, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 500,
+        "height": 220,
+        "content": "## MCP - Documents Validate (RFC-014)\n\n**Endpoint:** POST /webhook/documents/validate\n\n**Input:**\n- `file_url` or `file_base64`: Document\n- `action`: translate | summarize | custom\n- `params`: Action parameters\n- `plugin_context`: { available_actions, required_params, custom_actions }\n\n**Output:**\n- `valid`: boolean\n- `can_proceed`: boolean\n- `missing`: array of missing params\n- `questions`: array of questions to ask user"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate and Check Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and Check Params": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

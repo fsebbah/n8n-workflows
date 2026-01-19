@@ -1,0 +1,81 @@
+{
+  "name": "MCP - Documents Estimate",
+  "nodes": [
+    {
+      "id": "webhook-estimate",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "documents-estimate-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "documents/estimate",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "estimate-logic",
+      "name": "Estimate and Calculate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\n// Valider l'entrée\nconst hasFile = !!(body.file_url || body.file_base64);\nif (!hasFile) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'INVALID_FORMAT',\n        message: 'Missing file_url or file_base64'\n      }\n    }\n  };\n}\n\n// Détecter le type de fichier\nconst fileType = body.file_type || (body.file_url?.split('.').pop()?.toLowerCase()) || 'unknown';\nconst action = body.action || 'translate';\n\n// Pricing par défaut\nconst defaultPricing = {\n  translate: { base: 5, per_1k_tokens: 1.0, per_page: 2, ocr_bonus: 3, max: 50 },\n  summarize: { base: 3, per_1k_tokens: 0.5, per_page: 1, ocr_bonus: 3, max: 30 }\n};\nconst pricing = body.plugin_context?.pricing?.[action] || defaultPricing[action] || defaultPricing.translate;\n\n// Déterminer si OCR est requis\nconst imageTypes = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff'];\nconst isImage = imageTypes.includes(fileType?.toLowerCase());\nconst ocrRequired = isImage || fileType === 'pdf';\n\n// Estimation selon le type\nlet estimatedPages, estimatedTokens, ocrConfidencePreview;\n\nif (isImage) {\n  estimatedPages = 1;\n  estimatedTokens = 500;\n  ocrConfidencePreview = 0.85;\n} else if (fileType === 'pdf') {\n  estimatedPages = 5;\n  estimatedTokens = 2500;\n  ocrConfidencePreview = 0.90;\n} else {\n  estimatedPages = 3;\n  estimatedTokens = 1500;\n  ocrConfidencePreview = 1.0;\n}\n\n// Calcul des crédits: base + (tokens/1000 * rate) + (pages * page_rate) + ocr_bonus\nconst base = pricing.base || 5;\nconst tokenCost = (estimatedTokens / 1000) * (pricing.per_1k_tokens || 1.0);\nconst pageCost = estimatedPages * (pricing.per_page || 2);\nconst ocrCost = ocrRequired ? (pricing.ocr_bonus || 3) : 0;\n\nconst total = base + tokenCost + pageCost + ocrCost;\nconst maxCredits = pricing.max || 50;\nconst estimatedCredits = Math.min(Math.ceil(total), maxCredits);\n\n// Marge de sécurité de 10%\nconst tokensWithMargin = Math.ceil(estimatedTokens * 1.1);\n\n// Warnings\nconst warnings = [];\nif (ocrConfidencePreview < 0.8) {\n  warnings.push('OCR confidence may vary on full document');\n}\nif (estimatedPages > 10) {\n  warnings.push('Document exceeds recommended 10 pages limit');\n}\n\nreturn {\n  json: {\n    success: true,\n    estimation: {\n      tokens: tokensWithMargin,\n      pages: estimatedPages,\n      ocr_required: ocrRequired,\n      ocr_confidence_preview: ocrConfidencePreview,\n      detected_language: 'unknown'\n    },\n    credits: {\n      estimated: estimatedCredits,\n      breakdown: {\n        base: base,\n        tokens: Math.round(tokenCost * 100) / 100,\n        pages: pageCost,\n        ocr: ocrCost\n      },\n      max_possible: maxCredits\n    },\n    warnings: warnings\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-estimate",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [720, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 500,
+        "height": 220,
+        "content": "## MCP - Documents Estimate (RFC-014)\n\n**Endpoint:** POST /webhook/documents/estimate\n\n**Input:**\n- `file_url` or `file_base64`: Document\n- `file_type`: pdf | png | jpg | etc.\n- `action`: translate | summarize\n- `plugin_context.pricing`: Pricing config\n\n**Output:**\n- `estimation`: { tokens, pages, ocr_required }\n- `credits`: { estimated, breakdown, max_possible }\n- `warnings`: array"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Estimate and Calculate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Estimate and Calculate": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
