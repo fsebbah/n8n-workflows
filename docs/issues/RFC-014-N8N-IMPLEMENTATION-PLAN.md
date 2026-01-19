@@ -57,9 +57,9 @@ Implémenter 4 webhooks permettant le traitement de documents (OCR, traduction, 
 |---|-------|--------|--------|
 | 2.1 | Routage `custom_actions` vers webhooks plugins | M | ✅ DONE |
 | 2.2 | Support `ocr_thresholds` configurable | S | ✅ DONE |
-| 2.3 | Tests OCR hébreu (Mistral) | M | TODO |
-| 2.4 | Tests OCR araméen (Mistral) | M | TODO |
-| 2.5 | Documentation des résultats OCR | S | TODO |
+| 2.3 | Tests OCR hébreu (Mistral) | M | 🔄 EN COURS |
+| 2.4 | Tests OCR araméen (Mistral) | M | 🔄 EN COURS |
+| 2.5 | Documentation des résultats OCR | S | ✅ DONE |
 
 ### Phase 3 : V2 (après retours terrain)
 
@@ -231,5 +231,6 @@ Implémenter 4 webhooks permettant le traitement de documents (OCR, traduction, 
 ## Références
 
 - [RFC-014](../rfc/RFC-014-DOCUMENT-TRANSLATION-SYNTHESIS.md)
+- [Tests OCR Hébreu/Araméen](../tests/RFC-014-OCR-TESTS.md)
 - [MCP - Image OCR](../../workflows/MCP/MCP---Image-OCR.json)
 - [MCP - PDF Layout Translator](../../workflows/MCP/MCP---PDF-Layout-Translator.json)
