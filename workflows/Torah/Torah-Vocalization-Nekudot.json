@@ -36,7 +36,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Validation et préparation des données\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst startTime = Date.now();\n\n// Extraction des paramètres\nconst text = body.text || '';\nconst openaiApiKey = body.openai_api_key || '';\nconst sourceTextId = body.source_text_id || null;\nconst commentaryId = body.commentary_id || null;\nconst context = body.context || {};\n\n// Validation\nconst errors = [];\nif (!text || text.trim().length === 0) {\n  errors.push('Le champ \"text\" est requis');\n}\nif (!openaiApiKey || openaiApiKey.trim().length === 0) {\n  errors.push('Le champ \"openai_api_key\" est requis');\n}\n\n// Construire les paramètres de recherche cache\nlet cacheSearchParams = '';\nif (sourceTextId) {\n  cacheSearchParams = `source_text_id=${sourceTextId}`;\n} else if (commentaryId) {\n  cacheSearchParams = `commentary_id=${commentaryId}`;\n} else if (context.traite && context.page) {\n  cacheSearchParams = `traite=${encodeURIComponent(context.traite)}&page=${encodeURIComponent(context.page)}`;\n  if (context.commentator) {\n    cacheSearchParams += `&commentator=${encodeURIComponent(context.commentator)}`;\n  }\n}\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    text: text,\n    openaiApiKey: openaiApiKey,\n    sourceTextId: sourceTextId,\n    commentaryId: commentaryId,\n    context: context,\n    startTime: startTime,\n    cacheSearchParams: cacheSearchParams,\n    canSearchCache: !!(sourceTextId || commentaryId || (context.traite && context.page)),\n    isCommentary: !!commentaryId\n  }\n}];"
+        "jsCode": "// Validation et préparation des données (avec support batch)\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst startTime = Date.now();\n\n// Extraction des paramètres\nconst openaiApiKey = body.openai_api_key || '';\nconst context = body.context || {};\n\n// Détecter mode batch ou single\nconst isBatch = Array.isArray(body.items) && body.items.length > 0;\n\n// Validation\nconst errors = [];\n\nif (!openaiApiKey || openaiApiKey.trim().length === 0) {\n  errors.push('Le champ \"openai_api_key\" est requis');\n}\n\nif (isBatch) {\n  // Validation batch\n  for (let i = 0; i < body.items.length; i++) {\n    const item = body.items[i];\n    if (!item.text || item.text.trim().length === 0) {\n      errors.push(`Item ${i}: le champ \"text\" est requis`);\n    }\n  }\n} else {\n  // Validation single (existant)\n  const text = body.text || '';\n  if (!text || text.trim().length === 0) {\n    errors.push('Le champ \"text\" est requis');\n  }\n}\n\n// === MODE SINGLE (rétrocompatibilité) ===\nif (!isBatch) {\n  const text = body.text || '';\n  const sourceTextId = body.source_text_id || null;\n  const commentaryId = body.commentary_id || null;\n  \n  let cacheSearchParams = '';\n  if (sourceTextId) {\n    cacheSearchParams = `source_text_id=${sourceTextId}`;\n  } else if (commentaryId) {\n    cacheSearchParams = `commentary_id=${commentaryId}`;\n  } else if (context.traite && context.page) {\n    cacheSearchParams = `traite=${encodeURIComponent(context.traite)}&page=${encodeURIComponent(context.page)}`;\n    if (context.commentator) {\n      cacheSearchParams += `&commentator=${encodeURIComponent(context.commentator)}`;\n    }\n  }\n\n  return [{\n    json: {\n      valid: errors.length === 0,\n      errors: errors,\n      isBatch: false,\n      text: text,\n      openaiApiKey: openaiApiKey,\n      sourceTextId: sourceTextId,\n      commentaryId: commentaryId,\n      context: context,\n      startTime: startTime,\n      cacheSearchParams: cacheSearchParams,\n      canSearchCache: !!(sourceTextId || commentaryId || (context.traite && context.page)),\n      isCommentary: !!commentaryId\n    }\n  }];\n}\n\n// === MODE BATCH ===\nconst items = body.items.map((item, index) => ({\n  index,\n  text: item.text,\n  commentary_id: item.commentary_id || null,\n  source_text_id: item.source_text_id || null\n}));\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    isBatch: true,\n    items: items,\n    itemCount: items.length,\n    openaiApiKey: openaiApiKey,\n    context: context,\n    startTime: startTime\n  }\n}];"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -497,6 +497,237 @@
         1940,
         -100
       ]
+    },
+    {
+      "id": "is-batch",
+      "name": "Is Batch?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        -100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "batch-check",
+              "leftValue": "={{ $json.isBatch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare-batch-items",
+      "name": "Prepare Batch Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1210,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Préparer les items pour le traitement en boucle\nconst data = $input.first().json;\n\nreturn data.items.map(item => ({\n  json: {\n    index: item.index,\n    text: item.text,\n    commentary_id: item.commentary_id,\n    source_text_id: item.source_text_id,\n    openaiApiKey: data.openaiApiKey,\n    context: data.context,\n    startTime: data.startTime,\n    // Construire les paramètres de recherche cache\n    cacheSearchParams: item.commentary_id \n      ? `commentary_id=${item.commentary_id}` \n      : (item.source_text_id ? `source_text_id=${item.source_text_id}` : ''),\n    canSearchCache: !!(item.commentary_id || item.source_text_id),\n    isCommentary: !!item.commentary_id\n  }\n}));"
+      }
+    },
+    {
+      "id": "loop-items",
+      "name": "Loop Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1460,
+        -200
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "process-batch-item",
+      "name": "Process Batch Item",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1710,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Préparer l'item courant pour traitement (cache ou GPT)\nconst item = $input.first().json;\n\nreturn [{\n  json: {\n    valid: true,\n    text: item.text,\n    openaiApiKey: item.openaiApiKey,\n    sourceTextId: item.source_text_id,\n    commentaryId: item.commentary_id,\n    context: item.context,\n    startTime: item.startTime,\n    cacheSearchParams: item.cacheSearchParams,\n    canSearchCache: item.canSearchCache,\n    isCommentary: item.isCommentary,\n    // Garder l'index pour le merge\n    _batchIndex: item.index\n  }\n}];"
+      }
+    },
+    {
+      "id": "collect-batch-result",
+      "name": "Collect Batch Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Collecter le résultat pour cet item\nconst result = $input.first().json;\nconst batchIndex = $('Process Batch Item').first().json._batchIndex;\nconst itemData = $('Process Batch Item').first().json;\n\nreturn [{\n  json: {\n    index: batchIndex,\n    commentary_id: itemData.commentaryId,\n    source_text_id: itemData.sourceTextId,\n    vocalization: result.vocalization || null,\n    cached: result.cached || false,\n    success: result.success !== false,\n    error: result.error || null\n  }\n}];"
+      }
+    },
+    {
+      "id": "merge-batch-results",
+      "name": "Merge Batch Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2910,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Merger tous les résultats batch\nconst allResults = $input.all().map(item => item.json);\nconst startTime = $('Validate Input').first().json.startTime;\n\nconst endTime = Date.now();\nconst processingTime = endTime - startTime;\n\n// Trier par index\nallResults.sort((a, b) => a.index - b.index);\n\n// Calculer les stats\nconst total = allResults.length;\nconst cached = allResults.filter(r => r.cached).length;\nconst generated = allResults.filter(r => !r.cached && r.success).length;\nconst errorsCount = allResults.filter(r => !r.success).length;\n\n// Nettoyer les résultats (enlever l'index interne)\nconst cleanResults = allResults.map(r => ({\n  commentary_id: r.commentary_id,\n  source_text_id: r.source_text_id,\n  vocalization: r.vocalization,\n  cached: r.cached,\n  success: r.success,\n  error: r.error\n}));\n\nreturn [{\n  json: {\n    success: errorsCount < total,  // Au moins un succès\n    results: cleanResults,\n    summary: {\n      total: total,\n      cached: cached,\n      generated: generated,\n      errors: errorsCount,\n      processing_time_ms: processingTime\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "respond-batch-success",
+      "name": "Respond Batch Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3160,
+        -200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.summary.errors === 0 ? 200 : 207 }}"
+        }
+      }
+    },
+    {
+      "id": "batch-doc-note",
+      "name": "Batch Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1210,
+        -400
+      ],
+      "parameters": {
+        "content": "## Mode Batch (RFC-011)\n\n**Input:**\n```json\n{\n  \"items\": [\n    {\"commentary_id\": \"...\", \"text\": \"...\"},\n    ...\n  ],\n  \"openai_api_key\": \"...\"\n}\n```\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"results\": [...],\n  \"summary\": {\"total\": N, \"cached\": X, \"generated\": Y}\n}\n```",
+        "width": 350,
+        "height": 280,
+        "color": 6
+      }
+    },
+    {
+      "id": "batch-or-single-response",
+      "name": "Batch or Single?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3020,
+        150
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-batch-mode",
+              "leftValue": "={{ $('Validate Input').first().json.isBatch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "batch-or-single-cache",
+      "name": "Batch or Single? (Cache)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2140,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-batch-mode-cache",
+              "leftValue": "={{ $('Validate Input').first().json.isBatch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "batch-or-single-nekudot",
+      "name": "Batch or Single? (Nekudot)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2140,
+        -100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-batch-mode-nekudot",
+              "leftValue": "={{ $('Validate Input').first().json.isBatch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
     }
   ],
   "connections": {
@@ -526,7 +757,7 @@
       "main": [
         [
           {
-            "node": "Is Commentary?",
+            "node": "Is Batch?",
             "type": "main",
             "index": 0
           }
@@ -602,7 +833,7 @@
       "main": [
         [
           {
-            "node": "Respond Success",
+            "node": "Batch or Single? (Nekudot)",
             "type": "main",
             "index": 0
           }
@@ -671,7 +902,7 @@
       "main": [
         [
           {
-            "node": "Respond Success",
+            "node": "Batch or Single? (Cache)",
             "type": "main",
             "index": 0
           }
@@ -733,7 +964,7 @@
       "main": [
         [
           {
-            "node": "Respond Success",
+            "node": "Batch or Single?",
             "type": "main",
             "index": 0
           }
@@ -745,6 +976,140 @@
         [
           {
             "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Batch?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Batch Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Commentary?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Batch Items": {
+      "main": [
+        [
+          {
+            "node": "Loop Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Items": {
+      "main": [
+        [
+          {
+            "node": "Process Batch Item",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Batch Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Batch Item": {
+      "main": [
+        [
+          {
+            "node": "Is Commentary?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Batch Result": {
+      "main": [
+        [
+          {
+            "node": "Loop Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Batch Results": {
+      "main": [
+        [
+          {
+            "node": "Respond Batch Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch or Single?": {
+      "main": [
+        [
+          {
+            "node": "Collect Batch Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch or Single? (Cache)": {
+      "main": [
+        [
+          {
+            "node": "Collect Batch Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch or Single? (Nekudot)": {
+      "main": [
+        [
+          {
+            "node": "Collect Batch Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Success",
             "type": "main",
             "index": 0
           }
