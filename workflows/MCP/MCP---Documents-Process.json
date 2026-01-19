@@ -1,0 +1,474 @@
+{
+  "name": "MCP - Documents Process",
+  "nodes": [
+    {
+      "id": "webhook-process",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "documents-process-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "documents/process",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [460, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.file_url || $json.body.file_base64 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
+              "leftValue": "={{ $json.body.job_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-invalid-input",
+      "name": "Error: Invalid Input",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 500],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": \"INVALID_FORMAT\", \"message\": \"Missing required fields: file_url/file_base64 and job_id\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "ack-request",
+      "name": "Acknowledge Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"message\": \"Processing started\", \"job_id\": $json.body.job_id } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "extract-context",
+      "name": "Extract Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [920, 200],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ {\n  \"job_id\": $('Webhook').first().json.body.job_id,\n  \"conversation_id\": $('Webhook').first().json.body.conversation_id,\n  \"user_id\": $('Webhook').first().json.body.user_id,\n  \"guild_id\": $('Webhook').first().json.body.guild_id,\n  \"channel_id\": $('Webhook').first().json.body.channel_id,\n  \"file_url\": $('Webhook').first().json.body.file_url,\n  \"file_base64\": $('Webhook').first().json.body.file_base64,\n  \"file_type\": $('Webhook').first().json.body.file_type || 'pdf',\n  \"action\": $('Webhook').first().json.body.action || 'translate',\n  \"params\": $('Webhook').first().json.body.params || {},\n  \"plugin_context\": $('Webhook').first().json.body.plugin_context || {},\n  \"callback_url\": $('Webhook').first().json.body.callback_url,\n  \"start_time\": Date.now()\n} }}"
+      }
+    },
+    {
+      "id": "route-action",
+      "name": "Route by Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1140, 200],
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "outputKey": "translate",
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "translate",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "summarize",
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "summarize",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "fallbackOutput": "custom"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "process-translate",
+      "name": "Process Translate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678' }}/webhook/pdf-layout-translator",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"file_url\": $json.file_url,\n  \"file_base64\": $json.file_base64,\n  \"target_language\": $json.params.target_language || 'en',\n  \"mistral_api_key\": $json.plugin_context.api_keys?.mistral,\n  \"openai_api_key\": $json.plugin_context.api_keys?.openai\n} }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "process-summarize",
+      "name": "Process Summarize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 250],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678' }}/webhook/image-ocr",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"image_url\": $json.file_url,\n  \"mistral_api_key\": $json.plugin_context.api_keys?.mistral\n} }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "process-custom",
+      "name": "Process Custom Action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 400],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.plugin_context.custom_actions?.[$json.action]?.webhook_url || '' }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"file_url\": $json.file_url,\n  \"file_base64\": $json.file_base64,\n  \"params\": $json.params,\n  \"plugin_context\": $json.plugin_context\n} }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1580, 250],
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex",
+        "options": {}
+      }
+    },
+    {
+      "id": "format-callback",
+      "name": "Format Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 250],
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst context = $('Extract Context').first().json;\nconst startTime = context.start_time;\nconst processingTime = Date.now() - startTime;\n\n// Déterminer si succès ou erreur\nconst isSuccess = result.success !== false && !result.error;\nconst hasData = result.data || result.text || result.result;\n\nlet callback;\n\nif (isSuccess && hasData) {\n  // Succès\n  const text = result.data?.text || result.data?.translated_text || result.text || JSON.stringify(result.data || result);\n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: true,\n    result: {\n      text: text,\n      output_type: 'text',\n      word_count: text.split(/\\s+/).length\n    },\n    metrics: {\n      tokens_used: result.meta?.usage?.total_tokens || result.usage?.total_tokens || Math.ceil(text.length / 4),\n      processing_time_ms: processingTime,\n      ocr_confidence: result.meta?.ocr_confidence || result.data?.ocr_confidence || 0.9,\n      pages_processed: result.meta?.usage?.pages_processed || result.data?.page_count || 1\n    },\n    error: null\n  };\n} else {\n  // Erreur\n  const errorCode = result.error?.code || result.error?.status || 'INTERNAL_ERROR';\n  const errorMessage = result.error?.message || 'Processing failed';\n  \n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: false,\n    result: null,\n    metrics: {\n      tokens_used: 0,\n      processing_time_ms: processingTime,\n      ocr_confidence: 0,\n      pages_processed: 0\n    },\n    error: {\n      code: errorCode,\n      message: errorMessage,\n      retriable: ['LLM_RATE_LIMITED', 'TIMEOUT', 'INTERNAL_ERROR'].includes(errorCode),\n      refund: {\n        recommended: true,\n        percentage: errorCode === 'PARTIAL_SUCCESS' ? 50 : 100,\n        reason: `Processing failed: ${errorMessage}`\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    callback: callback,\n    callback_url: context.callback_url\n  }\n};"
+      }
+    },
+    {
+      "id": "check-callback-url",
+      "name": "Has Callback URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2020, 250],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "send-callback",
+      "name": "Send Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2240, 150],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.callback }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "no-callback",
+      "name": "No Callback (Log Only)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2240, 350]
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 650,
+        "height": 280,
+        "content": "## MCP - Documents Process (RFC-014)\n\n**Endpoint:** POST /webhook/documents/process\n\n**Purpose:** Process document (OCR + translate/summarize) with async callback\n\n**Input:**\n- `job_id`: UUID from chatbot-core\n- `conversation_id`: For DM context\n- `file_url` / `file_base64`: Document\n- `action`: translate | summarize | custom\n- `params`: { target_language, format, etc. }\n- `plugin_context`: { api_keys, pricing, custom_actions }\n- `callback_url`: URL to POST result\n\n**Flow:**\n1. ACK immediately (200 OK)\n2. Process async (OCR + LLM)\n3. POST callback with result\n\n**Callback includes:** job_id, conversation_id, success, result, metrics, error"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Invalid Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge Request": {
+      "main": [
+        [
+          {
+            "node": "Extract Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Context": {
+      "main": [
+        [
+          {
+            "node": "Route by Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Action": {
+      "main": [
+        [
+          {
+            "node": "Process Translate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Custom Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Translate": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Summarize": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Custom Action": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Format Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Callback": {
+      "main": [
+        [
+          {
+            "node": "Has Callback URL?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Callback URL?": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Callback (Log Only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
