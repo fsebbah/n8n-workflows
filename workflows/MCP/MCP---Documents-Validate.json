@@ -1,12 +1,16 @@
 {
   "name": "MCP - Documents Validate",
+  "active": true,
   "nodes": [
     {
       "id": "webhook-validate",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 300],
+      "position": [
+        240,
+        300
+      ],
       "webhookId": "documents-validate-webhook",
       "parameters": {
         "httpMethod": "POST",
@@ -16,21 +20,145 @@
       }
     },
     {
+      "id": "validate-required-fields",
+      "name": "Check Required Fields",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.context?.file_url || $json.body.context?.file_base64 || $json.body.file_url || $json.body.file_base64 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
+              "leftValue": "={{ $json.body.action || $json.body.context?.action }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-missing-required",
+      "name": "Error: Missing Required",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"valid\": false,\n  \"can_proceed\": false,\n  \"missing\": [\n    ...(!($json.body.context?.file_url || $json.body.context?.file_base64 || $json.body.file_url || $json.body.file_base64) ? [\"file\"] : []),\n    ...(!($json.body.action || $json.body.context?.action) ? [\"action\"] : [])\n  ],\n  \"errors\": [\n    ...(!($json.body.context?.file_url || $json.body.context?.file_base64 || $json.body.file_url || $json.body.file_base64) ? [\"Document requis (file_url ou file_base64)\"] : []),\n    ...(!($json.body.action || $json.body.context?.action) ? [\"Action requise (translate, summarize, etc.)\"] : [])\n  ],\n  \"questions\": []\n} }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "get-action-config",
+      "name": "Get Action Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ {\n  \"action\": $json.body.action || $json.body.context?.action,\n  \"params\": $json.body.params || $json.body.context?.params || {},\n  \"plugin_context\": $json.body.plugin_context || $json.body.context?.plugin_context || {},\n  \"available_actions\": ($json.body.plugin_context?.available_actions || $json.body.context?.plugin_context?.available_actions || [\"translate\", \"summarize\", \"ocr\"]),\n  \"required_params\": ($json.body.plugin_context?.required_params || $json.body.context?.plugin_context?.required_params || {\n    \"translate\": [\"target_language\"],\n    \"summarize\": [\"format\"],\n    \"ocr\": []\n  }),\n  \"custom_actions\": ($json.body.plugin_context?.custom_actions || $json.body.context?.plugin_context?.custom_actions || {}),\n  \"file_url\": $json.body.context?.file_url || $json.body.file_url,\n  \"file_base64\": $json.body.context?.file_base64 || $json.body.file_base64\n} }}"
+      }
+    },
+    {
+      "id": "check-action-valid",
+      "name": "Check Action Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        920,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.available_actions.includes($json.action) || Object.keys($json.custom_actions).includes($json.action) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-invalid-action",
+      "name": "Error: Invalid Action",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"valid\": false,\n  \"can_proceed\": false,\n  \"missing\": [],\n  \"errors\": [`Action '${$json.action}' non disponible. Actions valides: ${[...$json.available_actions, ...Object.keys($json.custom_actions)].join(', ')}`],\n  \"questions\": []\n} }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
       "id": "check-params",
-      "name": "Validate and Check Params",
+      "name": "Check Required Params",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300],
+      "position": [
+        1140,
+        100
+      ],
       "parameters": {
-        "jsCode": "const body = $input.first().json.body || {};\n\n// Vérifier les champs requis\nconst hasFile = !!(body.file_url || body.file_base64);\nconst hasAction = !!body.action;\n\nif (!hasFile || !hasAction) {\n  return {\n    json: {\n      valid: false,\n      can_proceed: false,\n      missing: [\n        ...(!hasFile ? ['file'] : []),\n        ...(!hasAction ? ['action'] : [])\n      ],\n      errors: [\n        ...(!hasFile ? ['Document requis (file_url ou file_base64)'] : []),\n        ...(!hasAction ? ['Action requise (translate, summarize, etc.)'] : [])\n      ],\n      questions: []\n    }\n  };\n}\n\nconst action = body.action;\nconst params = body.params || {};\nconst pluginContext = body.plugin_context || {};\nconst availableActions = pluginContext.available_actions || ['translate', 'summarize'];\nconst requiredParams = pluginContext.required_params || {\n  translate: ['target_language'],\n  summarize: ['format']\n};\nconst customActions = pluginContext.custom_actions || {};\n\n// Vérifier si l'action est valide\nconst isStandardAction = availableActions.includes(action);\nconst isCustomAction = Object.keys(customActions).includes(action);\n\nif (!isStandardAction && !isCustomAction) {\n  return {\n    json: {\n      valid: false,\n      can_proceed: false,\n      missing: [],\n      errors: [`Action '${action}' non disponible. Actions valides: ${[...availableActions, ...Object.keys(customActions)].join(', ')}`],\n      questions: []\n    }\n  };\n}\n\n// Récupérer les params requis pour cette action\nconst finalRequiredParams = customActions[action]?.required_params || requiredParams[action] || [];\n\n// Questions prédéfinies par paramètre\nconst paramQuestions = {\n  target_language: {\n    question: 'Dans quelle langue veux-tu la traduction ?',\n    type: 'text',\n    examples: 'français, anglais, espagnol...'\n  },\n  format: {\n    question: 'Quel format de synthèse souhaites-tu ?',\n    type: 'choice',\n    options: [\n      { value: 'express', label: 'Résumé express (2-3 phrases)' },\n      { value: 'points', label: 'Points clés (liste à puces)' },\n      { value: 'structured', label: 'Résumé structuré (paragraphes)' },\n      { value: 'outline', label: 'Plan détaillé (hiérarchique)' },\n      { value: 'focused', label: 'Extraction ciblée (vous précisez)' }\n    ]\n  },\n  output_format: {\n    question: 'Quel format de sortie ?',\n    type: 'choice',\n    options: [\n      { value: 'json', label: 'JSON structuré' },\n      { value: 'list', label: 'Liste texte' }\n    ]\n  },\n  target_system: {\n    question: 'Vers quel système convertir les unités ?',\n    type: 'choice',\n    options: [\n      { value: 'metric', label: 'Métrique (g, ml, °C)' },\n      { value: 'imperial', label: 'Impérial (oz, cups, °F)' }\n    ]\n  },\n  servings: {\n    question: 'Pour combien de personnes ?',\n    type: 'number',\n    default: 4\n  }\n};\n\nconst missing = [];\nconst questions = [];\n\n// Vérifier chaque paramètre requis\nfor (const param of finalRequiredParams) {\n  if (!params[param] || params[param] === '') {\n    missing.push(param);\n    questions.push({\n      param: param,\n      ...(paramQuestions[param] || {\n        question: `Veuillez fournir: ${param}`,\n        type: 'text'\n      })\n    });\n  }\n}\n\nreturn {\n  json: {\n    valid: missing.length === 0,\n    can_proceed: missing.length === 0,\n    missing: missing,\n    errors: [],\n    questions: questions,\n    action: action,\n    params: params,\n    is_custom_action: isCustomAction,\n    custom_webhook_url: customActions[action]?.webhook_url || null\n  }\n};"
+        "jsCode": "const input = $input.first().json;\nconst action = input.action;\nconst params = input.params;\nconst requiredParams = input.required_params[action] || [];\nconst customAction = input.custom_actions[action];\n\n// Si c'est une custom action, utiliser ses required_params\nconst finalRequiredParams = customAction?.required_params || requiredParams;\n\nconst missing = [];\nconst questions = [];\n\n// Questions prédéfinies par paramètre\nconst paramQuestions = {\n  \"target_language\": {\n    \"question\": \"Dans quelle langue veux-tu la traduction ?\",\n    \"type\": \"text\",\n    \"examples\": \"français, anglais, espagnol...\"\n  },\n  \"format\": {\n    \"question\": \"Quel format de synthèse souhaites-tu ?\",\n    \"type\": \"choice\",\n    \"options\": [\n      { \"value\": \"express\", \"label\": \"Résumé express (2-3 phrases)\" },\n      { \"value\": \"points\", \"label\": \"Points clés (liste à puces)\" },\n      { \"value\": \"structured\", \"label\": \"Résumé structuré (paragraphes)\" },\n      { \"value\": \"outline\", \"label\": \"Plan détaillé (hiérarchique)\" },\n      { \"value\": \"focused\", \"label\": \"Extraction ciblée (vous précisez)\" }\n    ]\n  },\n  \"focus\": {\n    \"question\": \"Sur quoi veux-tu te concentrer ?\",\n    \"type\": \"text\",\n    \"examples\": \"aspects juridiques, chiffres clés, recommandations...\"\n  },\n  \"output_format\": {\n    \"question\": \"Quel format de sortie ?\",\n    \"type\": \"choice\",\n    \"options\": [\n      { \"value\": \"json\", \"label\": \"JSON structuré\" },\n      { \"value\": \"list\", \"label\": \"Liste texte\" }\n    ]\n  },\n  \"target_system\": {\n    \"question\": \"Vers quel système convertir les unités ?\",\n    \"type\": \"choice\",\n    \"options\": [\n      { \"value\": \"metric\", \"label\": \"Métrique (g, ml, °C)\" },\n      { \"value\": \"imperial\", \"label\": \"Impérial (oz, cups, °F)\" }\n    ]\n  },\n  \"servings\": {\n    \"question\": \"Pour combien de personnes ?\",\n    \"type\": \"number\",\n    \"default\": 4\n  }\n};\n\n// Vérifier chaque paramètre requis\nfor (const param of finalRequiredParams) {\n  if (!params[param] || params[param] === '') {\n    missing.push(param);\n    questions.push({\n      \"param\": param,\n      ...paramQuestions[param] || {\n        \"question\": `Veuillez fournir: ${param}`,\n        \"type\": \"text\"\n      }\n    });\n  }\n}\n\nreturn {\n  json: {\n    valid: missing.length === 0,\n    can_proceed: missing.length === 0,\n    missing: missing,\n    errors: [],\n    questions: questions,\n    action: action,\n    params: params,\n    is_custom_action: !!customAction,\n    custom_webhook_url: customAction?.webhook_url || null\n  }\n};"
       }
     },
     {
       "id": "respond-result",
-      "name": "Respond",
+      "name": "Respond Result",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [720, 300],
+      "position": [
+        1360,
+        100
+      ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json }}",
@@ -42,12 +170,15 @@
       "name": "API Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [240, 60],
+      "position": [
+        240,
+        60
+      ],
       "parameters": {
         "color": 6,
-        "width": 500,
-        "height": 220,
-        "content": "## MCP - Documents Validate (RFC-014)\n\n**Endpoint:** POST /webhook/documents/validate\n\n**Input:**\n- `file_url` or `file_base64`: Document\n- `action`: translate | summarize | custom\n- `params`: Action parameters\n- `plugin_context`: { available_actions, required_params, custom_actions }\n\n**Output:**\n- `valid`: boolean\n- `can_proceed`: boolean\n- `missing`: array of missing params\n- `questions`: array of questions to ask user"
+        "width": 600,
+        "height": 260,
+        "content": "## MCP - Documents Validate (RFC-014)\n\n**Endpoint:** POST /webhook/documents/validate\n\n**Purpose:** Validate document processing parameters\n\n**Input (RFC-014 structure):**\n```json\n{\n  \"context\": {\n    \"file_url\": \"https://...\" OR \"file_base64\": \"...\",\n    \"action\": \"translate|summarize|ocr\",\n    \"params\": { ... }\n  },\n  \"plugin_context\": { ... }\n}\n```\n\n**Legacy Input (also supported):**\n```json\n{\n  \"file_url\": \"https://...\",\n  \"action\": \"translate\",\n  \"params\": { ... }\n}\n```\n\n**Output:**\n- `valid`: boolean\n- `can_proceed`: boolean  \n- `missing`: array of missing params\n- `questions`: array of questions to ask user"
       }
     }
   ],
@@ -56,18 +187,65 @@
       "main": [
         [
           {
-            "node": "Validate and Check Params",
+            "node": "Check Required Fields",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Validate and Check Params": {
+    "Check Required Fields": {
       "main": [
         [
           {
-            "node": "Respond",
+            "node": "Get Action Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Missing Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Action Config": {
+      "main": [
+        [
+          {
+            "node": "Check Action Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Action Valid": {
+      "main": [
+        [
+          {
+            "node": "Check Required Params",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Invalid Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Required Params": {
+      "main": [
+        [
+          {
+            "node": "Respond Result",
             "type": "main",
             "index": 0
           }
@@ -76,6 +254,9 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
-  }
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": []
 }
