@@ -1,64 +1,71 @@
 {
   "name": "MCP - Documents Process",
+  "active": true,
   "nodes": [
     {
-      "id": "webhook-process",
-      "name": "Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [240, 300],
-      "webhookId": "documents-process-webhook",
       "parameters": {
         "httpMethod": "POST",
         "path": "documents/process",
         "responseMode": "responseNode",
         "options": {}
-      }
+      },
+      "id": "webhook-process",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ],
+      "webhookId": "documents-process-webhook"
     },
     {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\n// Support RFC-014 structure: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\n// Valider l'entrée - check both structures\nconst hasFile = !!(ctx.file_url || ctx.file_base64 || body.file_url || body.file_base64);\nconst hasJobId = !!(body.job_id || ctx.job_id);\n\nif (!hasFile || !hasJobId) {\n  return {\n    json: {\n      valid: false,\n      response: {\n        success: false,\n        error: {\n          code: 'INVALID_FORMAT',\n          message: 'Missing required fields: file_url/file_base64 and job_id'\n        }\n      },\n      status_code: 400\n    }\n  };\n}\n\n// Extraire le contexte - prefer context.* over root level (RFC-014)\nconst context = {\n  job_id: body.job_id || ctx.job_id,\n  conversation_id: body.conversation_id || ctx.conversation_id,\n  user_id: body.user_id || ctx.user_id,\n  guild_id: body.guild_id || ctx.guild_id,\n  channel_id: body.channel_id || ctx.channel_id,\n  file_url: ctx.file_url || body.file_url,\n  file_base64: ctx.file_base64 || body.file_base64,\n  file_type: ctx.file_type || body.file_type || 'pdf',\n  action: body.action || ctx.action || 'translate',\n  params: body.params || ctx.params || {},\n  plugin_context: body.plugin_context || ctx.plugin_context || {},\n  callback_url: body.callback_url || ctx.callback_url,\n  start_time: Date.now()\n};\n\n// Vérifier si custom action et récupérer l'URL\nconst customActions = context.plugin_context?.custom_actions || {};\nconst isCustomAction = Object.keys(customActions).includes(context.action);\nconst customWebhookUrl = isCustomAction ? customActions[context.action]?.webhook_url : null;\n\n// Valider l'URL du webhook custom\nif (isCustomAction && !customWebhookUrl) {\n  return {\n    json: {\n      valid: false,\n      response: {\n        success: false,\n        error: {\n          code: 'INVALID_CONFIG',\n          message: `Custom action '${context.action}' has no webhook_url configured`\n        }\n      },\n      status_code: 400\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    response: {\n      success: true,\n      message: 'Processing started',\n      job_id: context.job_id\n    },\n    status_code: 200,\n    context: context,\n    is_custom_action: isCustomAction,\n    custom_webhook_url: customWebhookUrl\n  }\n};"
+      },
       "id": "validate-and-ack",
       "name": "Validate and Acknowledge",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300],
-      "parameters": {
-        "jsCode": "const body = $input.first().json.body || {};\n\n// Valider l'entrée\nconst hasFile = !!(body.file_url || body.file_base64);\nconst hasJobId = !!body.job_id;\n\nif (!hasFile || !hasJobId) {\n  return {\n    json: {\n      valid: false,\n      response: {\n        success: false,\n        error: {\n          code: 'INVALID_FORMAT',\n          message: 'Missing required fields: file_url/file_base64 and job_id'\n        }\n      },\n      status_code: 400\n    }\n  };\n}\n\n// Extraire le contexte\nconst context = {\n  job_id: body.job_id,\n  conversation_id: body.conversation_id,\n  user_id: body.user_id,\n  guild_id: body.guild_id,\n  channel_id: body.channel_id,\n  file_url: body.file_url,\n  file_base64: body.file_base64,\n  file_type: body.file_type || 'pdf',\n  action: body.action || 'translate',\n  params: body.params || {},\n  plugin_context: body.plugin_context || {},\n  callback_url: body.callback_url,\n  start_time: Date.now()\n};\n\n// Vérifier si custom action et récupérer l'URL\nconst customActions = body.plugin_context?.custom_actions || {};\nconst isCustomAction = Object.keys(customActions).includes(context.action);\nconst customWebhookUrl = isCustomAction ? customActions[context.action]?.webhook_url : null;\n\n// Valider l'URL du webhook custom\nif (isCustomAction && !customWebhookUrl) {\n  return {\n    json: {\n      valid: false,\n      response: {\n        success: false,\n        error: {\n          code: 'INVALID_CONFIG',\n          message: `Custom action '${context.action}' has no webhook_url configured`\n        }\n      },\n      status_code: 400\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    response: {\n      success: true,\n      message: 'Processing started',\n      job_id: body.job_id\n    },\n    status_code: 200,\n    context: context,\n    is_custom_action: isCustomAction,\n    custom_webhook_url: customWebhookUrl\n  }\n};"
-      }
+      "position": [
+        480,
+        304
+      ]
     },
     {
-      "id": "respond-ack",
-      "name": "Respond ACK",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [720, 300],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json.response }}",
         "options": {
           "responseCode": "={{ $json.status_code }}"
         }
-      }
+      },
+      "id": "respond-ack",
+      "name": "Respond ACK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        720,
+        304
+      ]
     },
     {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// Si invalide, on s'arrête\nif (!input.valid) {\n  return [];\n}\n\n// Continuer avec le contexte\nreturn {\n  json: input\n};"
+      },
       "id": "check-valid",
       "name": "Check Valid",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [960, 300],
-      "parameters": {
-        "jsCode": "const input = $input.first().json;\n\n// Si invalide, on s'arrête\nif (!input.valid) {\n  return [];\n}\n\n// Continuer avec le contexte\nreturn {\n  json: input\n};"
-      }
+      "position": [
+        960,
+        304
+      ]
     },
     {
-      "id": "route-and-process",
-      "name": "Route and Process",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1200, 300],
       "parameters": {
         "method": "POST",
         "url": "={{ $json.is_custom_action ? $json.custom_webhook_url : ($json.context.action === 'translate' ? ($env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678') + '/webhook/pdf-layout-translator' : ($env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678') + '/webhook/image-ocr') }}",
-        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -70,45 +77,62 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ $json.is_custom_action ? { file_url: $json.context.file_url, file_base64: $json.context.file_base64, file_type: $json.context.file_type, params: $json.context.params, plugin_context: $json.context.plugin_context, job_id: $json.context.job_id } : ($json.context.action === 'translate' ? { file_url: $json.context.file_url, file_base64: $json.context.file_base64, file_type: $json.context.file_type, target_language: $json.context.params.target_language || 'en', mistral_api_key: $json.context.plugin_context.api_keys?.mistral || $env.MISTRAL_API_KEY, api_key: $json.context.plugin_context.api_keys?.anthropic || $env.ANTHROPIC_API_KEY, openai_api_key: $json.context.plugin_context.api_keys?.openai || $env.OPENAI_API_KEY, ocr_thresholds: $json.context.plugin_context.ocr_thresholds } : { image_url: $json.context.file_url, image_base64: $json.context.file_base64, file_type: $json.context.file_type, mistral_api_key: $json.context.plugin_context.api_keys?.mistral || $env.MISTRAL_API_KEY, ocr_thresholds: $json.context.plugin_context.ocr_thresholds }) }}",
+        "jsonBody": "={{ JSON.stringify($json.is_custom_action ? { file_url: $json.context.file_url, file_base64: $json.context.file_base64, file_type: $json.context.file_type, context: { guild_id: $json.context.guild_id, user_id: $json.context.user_id, channel_id: $json.context.channel_id }, params: $json.context.params, plugin_context: $json.context.plugin_context, job_id: $json.context.job_id } : ($json.context.action === 'translate' ? { file_url: $json.context.file_url, file_base64: $json.context.file_base64, file_type: $json.context.file_type, context: { guild_id: $json.context.guild_id, user_id: $json.context.user_id, channel_id: $json.context.channel_id }, target_language: $json.context.params.target_language || 'en', mistral_api_key: $json.context.plugin_context.api_keys?.mistral, api_key: $json.context.plugin_context.api_keys?.anthropic, openai_api_key: $json.context.plugin_context.api_keys?.openai, ocr_thresholds: $json.context.plugin_context.ocr_thresholds } : { image_url: $json.context.file_url, image_base64: $json.context.file_base64, file_type: $json.context.file_type, context: { guild_id: $json.context.guild_id, user_id: $json.context.user_id, channel_id: $json.context.channel_id }, mistral_api_key: $json.context.plugin_context.api_keys?.mistral, ocr_thresholds: $json.context.plugin_context.ocr_thresholds })) }}",
         "options": {
           "timeout": 300000
         }
       },
+      "id": "route-and-process",
+      "name": "Route and Process",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        304
+      ],
       "onError": "continueRegularOutput"
     },
     {
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst prevNode = $('Check Valid').first().json;\nconst context = prevNode.context;\nconst startTime = context.start_time;\nconst processingTime = Date.now() - startTime;\n\n// Déterminer si succès ou erreur\nconst isSuccess = result.success !== false && !result.error;\nconst hasData = result.data || result.text || result.result;\n\nlet callback;\n\nif (isSuccess && hasData) {\n  // Succès\n  const text = result.data?.text || result.data?.translated_text || result.text || JSON.stringify(result.data || result);\n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: true,\n    result: {\n      text: text,\n      output_type: 'text',\n      word_count: text.split(/\\s+/).length\n    },\n    metrics: {\n      tokens_used: result.meta?.usage?.total_tokens || result.usage?.total_tokens || Math.ceil(text.length / 4),\n      processing_time_ms: processingTime,\n      ocr_confidence: result.meta?.ocr_confidence || result.data?.ocr_confidence || 0.9,\n      pages_processed: result.meta?.usage?.pages_processed || result.data?.page_count || 1\n    },\n    error: null\n  };\n} else {\n  // Erreur\n  const errorCode = result.error?.code || result.error?.status || 'INTERNAL_ERROR';\n  const errorMessage = result.error?.message || 'Processing failed';\n  \n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: false,\n    result: null,\n    metrics: {\n      tokens_used: 0,\n      processing_time_ms: processingTime,\n      ocr_confidence: 0,\n      pages_processed: 0\n    },\n    error: {\n      code: errorCode,\n      message: errorMessage,\n      retriable: ['LLM_RATE_LIMITED', 'TIMEOUT', 'INTERNAL_ERROR'].includes(errorCode),\n      refund: {\n        recommended: true,\n        percentage: errorCode === 'PARTIAL_SUCCESS' ? 50 : 100,\n        reason: `Processing failed: ${errorMessage}`\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    callback: callback,\n    callback_url: context.callback_url\n  }\n};"
+      },
       "id": "format-callback",
       "name": "Format Callback",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1440, 300],
-      "parameters": {
-        "jsCode": "const result = $input.first().json;\nconst prevNode = $('Check Valid').first().json;\nconst context = prevNode.context;\nconst startTime = context.start_time;\nconst processingTime = Date.now() - startTime;\n\n// Déterminer si succès ou erreur\nconst isSuccess = result.success !== false && !result.error;\nconst hasData = result.data || result.text || result.result;\n\nlet callback;\n\nif (isSuccess && hasData) {\n  // Succès\n  const text = result.data?.text || result.data?.translated_text || result.text || JSON.stringify(result.data || result);\n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: true,\n    result: {\n      text: text,\n      output_type: 'text',\n      word_count: text.split(/\\s+/).length\n    },\n    metrics: {\n      tokens_used: result.meta?.usage?.total_tokens || result.usage?.total_tokens || Math.ceil(text.length / 4),\n      processing_time_ms: processingTime,\n      ocr_confidence: result.meta?.ocr_confidence || result.data?.ocr_confidence || 0.9,\n      pages_processed: result.meta?.usage?.pages_processed || result.data?.page_count || 1\n    },\n    error: null\n  };\n} else {\n  // Erreur\n  const errorCode = result.error?.code || result.error?.status || 'INTERNAL_ERROR';\n  const errorMessage = result.error?.message || 'Processing failed';\n  \n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: false,\n    result: null,\n    metrics: {\n      tokens_used: 0,\n      processing_time_ms: processingTime,\n      ocr_confidence: 0,\n      pages_processed: 0\n    },\n    error: {\n      code: errorCode,\n      message: errorMessage,\n      retriable: ['LLM_RATE_LIMITED', 'TIMEOUT', 'INTERNAL_ERROR'].includes(errorCode),\n      refund: {\n        recommended: true,\n        percentage: errorCode === 'PARTIAL_SUCCESS' ? 50 : 100,\n        reason: `Processing failed: ${errorMessage}`\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    callback: callback,\n    callback_url: context.callback_url\n  }\n};"
-      }
+      "position": [
+        1440,
+        304
+      ]
     },
     {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// Si pas de callback URL, on log seulement\nif (!input.callback_url) {\n  return {\n    json: {\n      status: 'no_callback',\n      callback: input.callback\n    }\n  };\n}\n\n// Envoyer le callback\ntry {\n  const response = await fetch(input.callback_url, {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(input.callback)\n  });\n  \n  return {\n    json: {\n      status: 'callback_sent',\n      callback_status: response.status,\n      callback: input.callback\n    }\n  };\n} catch (error) {\n  return {\n    json: {\n      status: 'callback_failed',\n      error: error.message,\n      callback: input.callback\n    }\n  };\n}"
+      },
       "id": "send-callback",
       "name": "Send Callback",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1680, 300],
-      "parameters": {
-        "jsCode": "const input = $input.first().json;\n\n// Si pas de callback URL, on log seulement\nif (!input.callback_url) {\n  return {\n    json: {\n      status: 'no_callback',\n      callback: input.callback\n    }\n  };\n}\n\n// Envoyer le callback\ntry {\n  const response = await fetch(input.callback_url, {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(input.callback)\n  });\n  \n  return {\n    json: {\n      status: 'callback_sent',\n      callback_status: response.status,\n      callback: input.callback\n    }\n  };\n} catch (error) {\n  return {\n    json: {\n      status: 'callback_failed',\n      error: error.message,\n      callback: input.callback\n    }\n  };\n}"
-      }
+      "position": [
+        1680,
+        304
+      ]
     },
     {
+      "parameters": {
+        "content": "## MCP - Documents Process (RFC-014 Phase 2)\n\n**Endpoint:** POST /webhook/documents/process\n\n**Purpose:** Process document with async callback\n\n**RFC-014 Input Structure:**\n```json\n{\n  \"job_id\": \"uuid\",\n  \"context\": {\n    \"file_url\": \"https://...\" OR \"file_base64\": \"...\",\n    \"action\": \"translate|summarize|ocr\",\n    \"params\": { \"target_language\": \"fr\" }\n  },\n  \"plugin_context\": { \"api_keys\": {...} },\n  \"callback_url\": \"https://...\"\n}\n```\n\n**Legacy Input (also supported):**\n```json\n{\n  \"job_id\": \"uuid\",\n  \"file_url\": \"https://...\",\n  \"action\": \"translate\",\n  \"params\": {...},\n  \"callback_url\": \"...\"\n}\n```\n\n**Response:** Immediate ACK with job_id, result via callback",
+        "height": 300,
+        "width": 650,
+        "color": 6
+      },
       "id": "sticky-note-doc",
       "name": "API Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [240, 60],
-      "parameters": {
-        "color": 6,
-        "width": 650,
-        "height": 300,
-        "content": "## MCP - Documents Process (RFC-014 Phase 2)\n\n**Endpoint:** POST /webhook/documents/process\n\n**Purpose:** Process document with async callback - simplified Code node architecture\n\n**Input:**\n- `job_id`: UUID from chatbot-core\n- `file_url` / `file_base64`: Document\n- `action`: translate | summarize | custom\n- `params`: { target_language, format, etc. }\n- `plugin_context`: { api_keys, pricing, custom_actions, ocr_thresholds }\n- `callback_url`: URL to POST result\n\n**Custom Actions (2.1):**\n- Define in `plugin_context.custom_actions[action_name].webhook_url`\n- Validates webhook_url exists before routing\n\n**OCR Thresholds (2.2):**\n- Passed to sub-workflows via `plugin_context.ocr_thresholds`"
-      }
+      "position": [
+        240,
+        64
+      ]
     }
   ],
   "connections": {
@@ -180,6 +204,9 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
-  }
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": []
 }

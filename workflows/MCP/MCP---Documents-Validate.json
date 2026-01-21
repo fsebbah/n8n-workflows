@@ -1,5 +1,6 @@
 {
   "name": "MCP - Documents Validate",
+  "active": true,
   "nodes": [
     {
       "id": "webhook-validate",
@@ -16,13 +17,13 @@
       }
     },
     {
-      "id": "check-params",
-      "name": "Validate and Check Params",
+      "id": "validate-all",
+      "name": "Validate All",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [480, 300],
       "parameters": {
-        "jsCode": "const body = $input.first().json.body || {};\n\n// Vérifier les champs requis\nconst hasFile = !!(body.file_url || body.file_base64);\nconst hasAction = !!body.action;\n\nif (!hasFile || !hasAction) {\n  return {\n    json: {\n      valid: false,\n      can_proceed: false,\n      missing: [\n        ...(!hasFile ? ['file'] : []),\n        ...(!hasAction ? ['action'] : [])\n      ],\n      errors: [\n        ...(!hasFile ? ['Document requis (file_url ou file_base64)'] : []),\n        ...(!hasAction ? ['Action requise (translate, summarize, etc.)'] : [])\n      ],\n      questions: []\n    }\n  };\n}\n\nconst action = body.action;\nconst params = body.params || {};\nconst pluginContext = body.plugin_context || {};\nconst availableActions = pluginContext.available_actions || ['translate', 'summarize'];\nconst requiredParams = pluginContext.required_params || {\n  translate: ['target_language'],\n  summarize: ['format']\n};\nconst customActions = pluginContext.custom_actions || {};\n\n// Vérifier si l'action est valide\nconst isStandardAction = availableActions.includes(action);\nconst isCustomAction = Object.keys(customActions).includes(action);\n\nif (!isStandardAction && !isCustomAction) {\n  return {\n    json: {\n      valid: false,\n      can_proceed: false,\n      missing: [],\n      errors: [`Action '${action}' non disponible. Actions valides: ${[...availableActions, ...Object.keys(customActions)].join(', ')}`],\n      questions: []\n    }\n  };\n}\n\n// Récupérer les params requis pour cette action\nconst finalRequiredParams = customActions[action]?.required_params || requiredParams[action] || [];\n\n// Questions prédéfinies par paramètre\nconst paramQuestions = {\n  target_language: {\n    question: 'Dans quelle langue veux-tu la traduction ?',\n    type: 'text',\n    examples: 'français, anglais, espagnol...'\n  },\n  format: {\n    question: 'Quel format de synthèse souhaites-tu ?',\n    type: 'choice',\n    options: [\n      { value: 'express', label: 'Résumé express (2-3 phrases)' },\n      { value: 'points', label: 'Points clés (liste à puces)' },\n      { value: 'structured', label: 'Résumé structuré (paragraphes)' },\n      { value: 'outline', label: 'Plan détaillé (hiérarchique)' },\n      { value: 'focused', label: 'Extraction ciblée (vous précisez)' }\n    ]\n  },\n  output_format: {\n    question: 'Quel format de sortie ?',\n    type: 'choice',\n    options: [\n      { value: 'json', label: 'JSON structuré' },\n      { value: 'list', label: 'Liste texte' }\n    ]\n  },\n  target_system: {\n    question: 'Vers quel système convertir les unités ?',\n    type: 'choice',\n    options: [\n      { value: 'metric', label: 'Métrique (g, ml, °C)' },\n      { value: 'imperial', label: 'Impérial (oz, cups, °F)' }\n    ]\n  },\n  servings: {\n    question: 'Pour combien de personnes ?',\n    type: 'number',\n    default: 4\n  }\n};\n\nconst missing = [];\nconst questions = [];\n\n// Vérifier chaque paramètre requis\nfor (const param of finalRequiredParams) {\n  if (!params[param] || params[param] === '') {\n    missing.push(param);\n    questions.push({\n      param: param,\n      ...(paramQuestions[param] || {\n        question: `Veuillez fournir: ${param}`,\n        type: 'text'\n      })\n    });\n  }\n}\n\nreturn {\n  json: {\n    valid: missing.length === 0,\n    can_proceed: missing.length === 0,\n    missing: missing,\n    errors: [],\n    questions: questions,\n    action: action,\n    params: params,\n    is_custom_action: isCustomAction,\n    custom_webhook_url: customActions[action]?.webhook_url || null\n  }\n};"
+        "jsCode": "const body = $input.first().json.body || {};\n\n// Check required fields\nconst hasFile = !!(body.file_url || body.file_base64);\nconst hasAction = !!body.action;\n\n// If missing required fields, return error\nif (!hasFile || !hasAction) {\n  const missing = [];\n  const errors = [];\n  \n  if (!hasFile) {\n    missing.push('file');\n    errors.push('Document requis (file_url ou file_base64)');\n  }\n  if (!hasAction) {\n    missing.push('action');\n    errors.push('Action requise');\n  }\n  \n  return {\n    json: {\n      valid: false,\n      can_proceed: false,\n      missing: missing,\n      errors: errors,\n      questions: []\n    }\n  };\n}\n\n// Extract config\nconst action = body.action;\nconst params = body.params || {};\nconst userMessage = body.user_message || '';\nconst availableActions = body.available_actions || body.plugin_context?.available_actions || ['translate', 'summarize', 'process'];\nconst requiredParams = body.plugin_context?.required_params || { translate: ['target_language'], summarize: ['format'] };\nconst customActions = body.plugin_context?.custom_actions || {};\n\n// Check if action is valid\nconst isStandardAction = availableActions.includes(action);\nconst isCustomAction = Object.keys(customActions).includes(action);\n\nif (!isStandardAction && !isCustomAction) {\n  return {\n    json: {\n      valid: false,\n      can_proceed: false,\n      missing: [],\n      errors: [`Action '${action}' non disponible. Actions valides: ${[...availableActions, ...Object.keys(customActions)].join(', ')}`],\n      questions: []\n    }\n  };\n}\n\n// Check required params for the action\nconst finalRequiredParams = customActions[action]?.required_params || requiredParams[action] || [];\n\nconst missingParams = [];\nconst questions = [];\n\nconst paramQuestions = {\n  target_language: {\n    question: 'Dans quelle langue veux-tu la traduction ?',\n    type: 'text',\n    examples: 'français, anglais, espagnol...'\n  },\n  format: {\n    question: 'Quel format de synthèse souhaites-tu ?',\n    type: 'choice',\n    options: [\n      { value: 'express', label: 'Résumé express (2-3 phrases)' },\n      { value: 'points', label: 'Points clés (liste à puces)' },\n      { value: 'structured', label: 'Résumé structuré (paragraphes)' }\n    ]\n  }\n};\n\nfor (const param of finalRequiredParams) {\n  if (!params[param] || params[param] === '') {\n    missingParams.push(param);\n    questions.push({\n      param: param,\n      ...(paramQuestions[param] || { question: `Veuillez fournir: ${param}`, type: 'text' })\n    });\n  }\n}\n\nreturn {\n  json: {\n    valid: missingParams.length === 0,\n    can_proceed: missingParams.length === 0,\n    missing: missingParams,\n    errors: [],\n    questions: questions,\n    action: action,\n    user_message: userMessage,\n    params: params,\n    file_url: body.file_url || '',\n    file_type: body.file_type || '',\n    is_custom_action: isCustomAction,\n    custom_webhook_url: customActions[action]?.webhook_url || null\n  }\n};"
       }
     },
     {
@@ -47,7 +48,7 @@
         "color": 6,
         "width": 500,
         "height": 220,
-        "content": "## MCP - Documents Validate (RFC-014)\n\n**Endpoint:** POST /webhook/documents/validate\n\n**Input:**\n- `file_url` or `file_base64`: Document\n- `action`: translate | summarize | custom\n- `params`: Action parameters\n- `plugin_context`: { available_actions, required_params, custom_actions }\n\n**Output:**\n- `valid`: boolean\n- `can_proceed`: boolean\n- `missing`: array of missing params\n- `questions`: array of questions to ask user"
+        "content": "## MCP - Documents Validate\n\n**Endpoint:** POST /webhook/documents/validate\n\n**Input:**\n- `file_url` ou `file_base64`: Document\n- `action`: process | translate | summarize\n- `user_message`: Message utilisateur à interpréter\n- `available_actions`: Actions disponibles\n- `plugin_context`: Config plugin\n\n**Output:**\n- `valid`: boolean\n- `can_proceed`: boolean\n- `missing`: params manquants\n- `questions`: questions à poser"
       }
     }
   ],
@@ -56,14 +57,14 @@
       "main": [
         [
           {
-            "node": "Validate and Check Params",
+            "node": "Validate All",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Validate and Check Params": {
+    "Validate All": {
       "main": [
         [
           {
@@ -77,5 +78,6 @@
   },
   "settings": {
     "executionOrder": "v1"
-  }
+  },
+  "tags": []
 }

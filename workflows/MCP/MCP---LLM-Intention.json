@@ -1,0 +1,389 @@
+{
+  "name": "MCP - LLM Intention",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook-intention",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "llm-intention-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "llm-intention",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\n// Validate required fields\nconst query = body.query;\nconst context = body.context || {};\nconst pluginContext = body.plugin_context || {};\nconst apiKey = pluginContext.api_keys?.anthropic;\n\nconst errors = [];\nif (!query || query.trim() === '') errors.push('query requis');\nif (!context.type) errors.push('context.type requis');\nif (!apiKey) errors.push('plugin_context.api_keys.anthropic requis');\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// Extract config with defaults\nconst minScore = context.min_score || 0.7;\nconst allowedIntents = context.allowed_intents || ['search', 'info', 'help'];\nconst llmModel = pluginContext.llm_model || 'claude-3-haiku-20240307';\n\nreturn {\n  json: {\n    valid: true,\n    query: query.trim(),\n    context: {\n      type: context.type,\n      allowed_intents: allowedIntents,\n      min_score: minScore\n    },\n    plugin_context: pluginContext,\n    llm_model: llmModel,\n    api_key: apiKey,\n    user: body.user || {}\n  }\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 450],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "llm-analyze",
+      "name": "LLM Analyze Intent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: $json.llm_model,\n  max_tokens: 500,\n  messages: [{\n    role: 'user',\n    content: `Tu es un assistant d'analyse d'intention STRICT. Analyse la requête utilisateur et réponds UNIQUEMENT en JSON valide.\n\nContexte: Plugin de type \"${$json.context.type}\"\nIntentions autorisées: ${$json.context.allowed_intents.join(', ')}\n\nRequête utilisateur: \"${$json.query}\"\n\n**IMPORTANT - Définition stricte pour le contexte \"recipe\":**\n- ✅ PERTINENT (is_relevant=true): L'utilisateur cherche UNE RECETTE à cuisiner, demande quoi faire avec des ingrédients, ou veut des instructions de cuisine.\n  Exemples: \"recette de poulet\", \"j'ai du paleron que faire\", \"comment cuisiner le foie de veau\", \"gâteau au chocolat\"\n- ❌ NON PERTINENT (is_relevant=false): Demandes de formation, cours, écoles, histoire, culture, informations générales sur la cuisine.\n  Exemples: \"formation cuisine française\", \"cours de pâtisserie\", \"histoire de la gastronomie\", \"école de cuisine\", \"apprendre à cuisiner\"\n\nAnalyse et retourne un JSON avec:\n1. is_relevant: boolean - la requête demande-t-elle UNE RECETTE CONCRÈTE à réaliser ?\n2. intent: string - l'intention détectée parmi les autorisées, ou \"out_of_context\"\n3. extracted_terms: string - UNIQUEMENT l'ingrédient ou le plat principal pour recherche (SANS quantités, SANS mots de question). Exemples: \"paleron\", \"foie de veau\", \"poulet rôti\". Corrige l'orthographe si nécessaire. VIDE si non pertinent.\n4. reformulation: string - la question reformulée de manière claire. Si non pertinent, reformuler quand même pour montrer ce que l'utilisateur demande réellement.\n5. detected_language: string - langue détectée (fr, en, he, etc.)\n6. spelling_corrected: boolean - as-tu corrigé l'orthographe ?\n7. confidence: number - confiance de 0 à 1\n8. rejection_reason: string ou null - si is_relevant=false, explique POURQUOI ce n'est pas une recherche de recette\n\nRéponds UNIQUEMENT avec le JSON, sans texte avant ou après.`\n  }]\n}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-llm",
+      "name": "Parse LLM Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst statusCode = input.statusCode || 200;\n\n// Handle LLM API error\nif (statusCode >= 400) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: input.body?.error?.message || 'LLM API error',\n        status: 'LLM_ERROR'\n      }\n    }\n  };\n}\n\n// Extract LLM response\nconst content = input.body?.content?.[0]?.text || '';\n\n// Parse JSON from LLM response\nlet analysis;\ntry {\n  // Try to extract JSON from the response\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    analysis = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (e) {\n  // Default analysis if parsing fails\n  analysis = {\n    is_relevant: true,\n    intent: 'search',\n    extracted_terms: prevData.query,\n    detected_language: 'fr',\n    spelling_corrected: false,\n    confidence: 0.5,\n    rejection_reason: null\n  };\n}\n\nreturn {\n  json: {\n    success: true,\n    analysis: analysis,\n    original_query: prevData.query,\n    context: prevData.context,\n    plugin_context: prevData.plugin_context,\n    user: prevData.user\n  }\n};"
+      }
+    },
+    {
+      "id": "check-relevant",
+      "name": "Is Relevant?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1440, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-relevant",
+              "leftValue": "={{ $json.analysis.is_relevant }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "build-reject",
+      "name": "Build Reject Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 450],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nreturn {\n  json: {\n    success: true,\n    is_relevant: false,\n    intent: {\n      type: 'out_of_context',\n      confidence: input.analysis.confidence || 0\n    },\n    query_analysis: {\n      original: input.original_query,\n      reformulation: input.analysis.reformulation || input.original_query,\n      extracted_terms: input.analysis.extracted_terms || '',\n      spelling_corrected: input.analysis.spelling_corrected || false,\n      detected_language: input.analysis.detected_language || 'unknown'\n    },\n    qdrant: {\n      searched: false,\n      results: [],\n      best_score: 0,\n      above_threshold: false\n    },\n    next_action: 'reject',\n    message: input.analysis.rejection_reason || `Cette requête ne concerne pas le contexte ${input.context.type}.`\n  }\n};"
+      }
+    },
+    {
+      "id": "qdrant-search",
+      "name": "Qdrant Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678') + '/webhook/qdrant-search' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  query: $json.analysis.extracted_terms,\n  collection: $json.context.type,\n  limit: 5,\n  plugin_context: $json.plugin_context\n}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "build-response",
+      "name": "Build Final Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1920, 300],
+      "parameters": {
+        "jsCode": "const qdrantResponse = $input.first().json;\nconst prevData = $('Parse LLM Response').first().json;\n\n// Extract Qdrant results\nconst qdrantBody = qdrantResponse.body || qdrantResponse;\nconst qdrantSuccess = qdrantBody.success !== false;\nconst qdrantResults = qdrantBody.data?.results || [];\n\n// Find best score\nlet bestScore = 0;\nif (qdrantResults.length > 0) {\n  bestScore = Math.max(...qdrantResults.map(r => r.score || 0));\n}\n\n// Check against threshold\nconst minScore = prevData.context.min_score || 0.7;\nconst aboveThreshold = bestScore >= minScore;\n\n// Determine next action\nlet nextAction;\nlet message;\n\nif (qdrantResults.length === 0) {\n  nextAction = 'propose_web_search';\n  message = `Aucun résultat trouvé pour \"${prevData.analysis.extracted_terms}\". Voulez-vous chercher sur le web ?`;\n} else if (aboveThreshold) {\n  nextAction = 'return_results';\n  message = null;\n} else {\n  nextAction = 'propose_web_search';\n  message = `Résultats peu pertinents (score: ${Math.round(bestScore * 100)}%). Voulez-vous chercher sur le web ?`;\n}\n\nreturn {\n  json: {\n    success: true,\n    is_relevant: true,\n    intent: {\n      type: prevData.analysis.intent,\n      confidence: prevData.analysis.confidence\n    },\n    query_analysis: {\n      original: prevData.original_query,\n      reformulation: prevData.analysis.reformulation || prevData.original_query,\n      extracted_terms: prevData.analysis.extracted_terms,\n      spelling_corrected: prevData.analysis.spelling_corrected,\n      detected_language: prevData.analysis.detected_language\n    },\n    qdrant: {\n      searched: true,\n      results: qdrantResults,\n      best_score: bestScore,\n      above_threshold: aboveThreshold\n    },\n    next_action: nextAction,\n    message: message\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2160, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "respond-reject",
+      "name": "Respond Reject",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1920, 450],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 650,
+        "height": 320,
+        "content": "## MCP - LLM Intention\n\n**Endpoint:** POST /webhook/llm-intention\n\n**Input:**\n```json\n{\n  \"query\": \"user message\",\n  \"context\": {\n    \"type\": \"recipe\",\n    \"allowed_intents\": [\"recipe_search\", \"ingredient_info\"],\n    \"min_score\": 0.7\n  },\n  \"plugin_context\": {\n    \"api_keys\": { \"anthropic\": \"sk-ant-...\" },\n    \"llm_model\": \"claude-3-haiku-20240307\"\n  },\n  \"user\": { \"user_id\": \"...\", \"guild_id\": \"...\" }\n}\n```\n\n**Output:**\n- `is_relevant`: boolean\n- `intent`: { type, confidence }\n- `query_analysis`: { original, extracted_terms, spelling_corrected, detected_language }\n- `qdrant`: { searched, results, best_score, above_threshold }\n- `next_action`: \"return_results\" | \"propose_web_search\" | \"reject\"\n- `message`: string or null"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "LLM Analyze Intent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Analyze Intent": {
+      "main": [
+        [
+          {
+            "node": "Parse LLM Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse LLM Response": {
+      "main": [
+        [
+          {
+            "node": "Is Relevant?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Relevant?": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Reject Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Search": {
+      "main": [
+        [
+          {
+            "node": "Build Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Final Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reject Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": []
+}

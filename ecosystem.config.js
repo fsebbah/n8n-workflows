@@ -48,9 +48,9 @@ module.exports = {
         // Stripe redirect URL (pour success/cancel après checkout)
         STRIPE_WEBHOOK_URL: 'https://stripe.azy.solutions',
 
-        // API Torah
-        TORAH_API_URL: 'http://pi6.local:3031',
-        TORAH_API_KEY: '17ae129e4b49828e7439cae4949803e0a78d3725ff5dd76857e32d071f33af26',
+        // API URL
+        API_URL: 'http://pi6.local:3031',
+        API_KEY: '17ae129e4b49828e7439cae4949803e0a78d3725ff5dd76857e32d071f33af26',
 
         // LLM API Keys (set via environment or .env.local)
         MISTRAL_API_KEY: process.env.MISTRAL_API_KEY || '',
@@ -78,7 +78,8 @@ module.exports = {
         N8N_TEMPLATES_ENABLED: 'false',
         WEBHOOK_URL: 'http://pi6.local:5678/',
         STRIPE_WEBHOOK_URL: 'https://stripe.azy.solutions',
-        TORAH_API_URL: 'http://pi6.local:3031',
+        API_URL: 'http://pi6.local:3031',
+        API_KEY: '17ae129e4b49828e7439cae4949803e0a78d3725ff5dd76857e32d071f33af26',
 
         // LLM API Keys (set via environment or .env.local)
         MISTRAL_API_KEY: process.env.MISTRAL_API_KEY || '',
