@@ -1,0 +1,553 @@
+{
+  "name": "MCP - Qdrant - Search",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "qdrant-search",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ],
+      "webhookId": "recipes-search-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const input = $input.first().json;\n  const body = input.body || input;\n\n  const errors = [];\n\n  if (!body.query) {\n    errors.push('Missing required parameter: query');\n  }\n  if (!body.entity_type) {\n    errors.push('Missing required parameter: entity_type');\n  }\n  if (!body.qdrant_host) {\n    errors.push('Missing required parameter: qdrant_host');\n  }\n  if (!body.qdrant_port) {\n    errors.push('Missing required parameter: qdrant_port');\n  }\n  if (!body.qdrant_collection) {\n    errors.push('Missing required parameter: qdrant_collection');\n  }\n  if (!body.openai_api_key) {\n    errors.push('Missing required parameter: openai_api_key');\n  }\n\n  if (errors.length > 0) {\n    return [{\n      json: {\n        valid: false,\n        error: {\n          code: 400,\n          message: errors.join(', '),\n          status: 'BAD_REQUEST'\n        }\n      }\n    }];\n  }\n\n  const qdrantUrl = `http://${body.qdrant_host}:${body.qdrant_port}`;\n\n  return [{\n    json: {\n      valid: true,\n      query: body.query,\n      entity_type: body.entity_type,\n      limit: body.limit || 10,\n      filters: body.filters || {},\n      user_id: body.user_id,\n      qdrant_url: qdrantUrl,\n      qdrant_collection: body.qdrant_collection,\n      openai_api_key: body.openai_api_key\n    }\n  }];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        688,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'qdrant' } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        912,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": \"{{ $json.query }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "generate-embedding",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        912,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate Input').first().json.qdrant_url }}/collections/{{ $('Validate Input').first().json.qdrant_collection }}/points/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $('Validate Input').first().json.qdrant_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.data[0].embedding) }},\n  \"limit\": {{ $('Validate Input').first().json.limit }},\n  \"with_payload\": true,\n  \"score_threshold\": 0.5\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "search-qdrant",
+      "name": "Search Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": " const input = $input.first().json;\n  const prevData = $('Validate Input').first().json;\n\n  try {\n    if (input.error || input.status?.error) {\n      return [{\n        json: {\n          success: false,\n          error: {\n            code: 500,\n            message: input.error?.message || input.status?.error || 'Qdrant search failed',\n            status: 'SEARCH_ERROR'\n          },\n          meta: { provider: 'qdrant', collection: prevData.qdrant_collection }\n        }\n      }];\n    }\n\n    const results = (input.result || []).map(item => ({\n      id: item.id,\n      score: item.score,\n      entity: item.payload || {}\n    }));\n\n    // Apply filters if any\n    let filtered = results;\n    const filters = prevData.filters;\n\n    if (filters.max_time_minutes) {\n      filtered = filtered.filter(r => {\n        const total = (r.entity.prep_time_minutes || 0) + (r.entity.cook_time_minutes || 0);\n        return total <= filters.max_time_minutes;\n      });\n    }\n\n    if (filters.vegetarian) {\n      filtered = filtered.filter(r => r.entity.tags?.includes('vegetarian') || r.entity.tags?.includes('végétarien'));\n    }\n\n    if (filters.vegan) {\n      filtered = filtered.filter(r => r.entity.tags?.includes('vegan') || r.entity.tags?.includes('végan'));\n    }\n\n    return [{\n      json: {\n        success: true,\n        data: {\n          results: filtered,\n          total: filtered.length,\n          query: prevData.query,\n          entity_type: prevData.entity_type\n        },\n        meta: {\n          provider: 'qdrant',\n          collection: prevData.qdrant_collection,\n          query_embedding_used: true,\n          original_count: results.length,\n          filtered_count: filtered.length\n        }\n      }\n    }];\n  } catch (e) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to process search results: ' + e.message,\n          status: 'PROCESS_ERROR'\n        },\n        meta: { provider: 'qdrant' }\n      }\n    }];\n  }"
+      },
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1632,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Recipes - Search (Qdrant)\n\n**Endpoint:** POST /webhook/recipes-search\n\n**Parameters:**\n- `query` (required): Search query\n- `limit` (optional): Max results (default: 10)\n- `filters`: { max_time_minutes, vegetarian, vegan }\n- `user_id` (optional): For tracking\n\n**Returns:** Semantically similar recipes from Qdrant",
+        "height": 180,
+        "width": 500,
+        "color": 4
+      },
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Generate Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embedding": {
+      "main": [
+        [
+          {
+            "node": "Search Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-01-12T14:27:23.707Z",
+    "createdAt": "2026-01-12T14:27:23.707Z",
+    "versionId": "79351bbb-7d5f-4374-8bbd-58155cff82be",
+    "workflowId": "H57j1dGyBNtnMrLf",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "qdrant-search",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          304
+        ],
+        "webhookId": "recipes-search-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "  const input = $input.first().json;\n  const body = input.body || input;\n\n  const errors = [];\n\n  if (!body.query) {\n    errors.push('Missing required parameter: query');\n  }\n  if (!body.entity_type) {\n    errors.push('Missing required parameter: entity_type');\n  }\n  if (!body.qdrant_host) {\n    errors.push('Missing required parameter: qdrant_host');\n  }\n  if (!body.qdrant_port) {\n    errors.push('Missing required parameter: qdrant_port');\n  }\n  if (!body.qdrant_collection) {\n    errors.push('Missing required parameter: qdrant_collection');\n  }\n  if (!body.openai_api_key) {\n    errors.push('Missing required parameter: openai_api_key');\n  }\n\n  if (errors.length > 0) {\n    return [{\n      json: {\n        valid: false,\n        error: {\n          code: 400,\n          message: errors.join(', '),\n          status: 'BAD_REQUEST'\n        }\n      }\n    }];\n  }\n\n  const qdrantUrl = `http://${body.qdrant_host}:${body.qdrant_port}`;\n\n  return [{\n    json: {\n      valid: true,\n      query: body.query,\n      entity_type: body.entity_type,\n      limit: body.limit || 10,\n      filters: body.filters || {},\n      user_id: body.user_id,\n      qdrant_url: qdrantUrl,\n      qdrant_collection: body.qdrant_collection,\n      openai_api_key: body.openai_api_key\n    }\n  }];"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          464,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          688,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'qdrant' } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        },
+        "id": "error-validation",
+        "name": "Error: Validation",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          912,
+          464
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/embeddings",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.openai_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": \"{{ $json.query }}\"\n}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "generate-embedding",
+        "name": "Generate Embedding",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          912,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $('Validate Input').first().json.qdrant_url }}/collections/{{ $('Validate Input').first().json.qdrant_collection }}/points/search",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "api-key",
+                "value": "={{ $('Validate Input').first().json.qdrant_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.data[0].embedding) }},\n  \"limit\": {{ $('Validate Input').first().json.limit }},\n  \"with_payload\": true,\n  \"score_threshold\": 0.5\n}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "search-qdrant",
+        "name": "Search Qdrant",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1152,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": " const input = $input.first().json;\n  const prevData = $('Validate Input').first().json;\n\n  try {\n    if (input.error || input.status?.error) {\n      return [{\n        json: {\n          success: false,\n          error: {\n            code: 500,\n            message: input.error?.message || input.status?.error || 'Qdrant search failed',\n            status: 'SEARCH_ERROR'\n          },\n          meta: { provider: 'qdrant', collection: prevData.qdrant_collection }\n        }\n      }];\n    }\n\n    const results = (input.result || []).map(item => ({\n      id: item.id,\n      score: item.score,\n      entity: item.payload || {}\n    }));\n\n    // Apply filters if any\n    let filtered = results;\n    const filters = prevData.filters;\n\n    if (filters.max_time_minutes) {\n      filtered = filtered.filter(r => {\n        const total = (r.entity.prep_time_minutes || 0) + (r.entity.cook_time_minutes || 0);\n        return total <= filters.max_time_minutes;\n      });\n    }\n\n    if (filters.vegetarian) {\n      filtered = filtered.filter(r => r.entity.tags?.includes('vegetarian') || r.entity.tags?.includes('végétarien'));\n    }\n\n    if (filters.vegan) {\n      filtered = filtered.filter(r => r.entity.tags?.includes('vegan') || r.entity.tags?.includes('végan'));\n    }\n\n    return [{\n      json: {\n        success: true,\n        data: {\n          results: filtered,\n          total: filtered.length,\n          query: prevData.query,\n          entity_type: prevData.entity_type\n        },\n        meta: {\n          provider: 'qdrant',\n          collection: prevData.qdrant_collection,\n          query_embedding_used: true,\n          original_count: results.length,\n          filtered_count: filtered.length\n        }\n      }\n    }];\n  } catch (e) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to process search results: ' + e.message,\n          status: 'PROCESS_ERROR'\n        },\n        meta: { provider: 'qdrant' }\n      }\n    }];\n  }"
+        },
+        "id": "format-output",
+        "name": "Format Output",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1392,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        },
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1632,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## Recipes - Search (Qdrant)\n\n**Endpoint:** POST /webhook/recipes-search\n\n**Parameters:**\n- `query` (required): Search query\n- `limit` (optional): Max results (default: 10)\n- `filters`: { max_time_minutes, vegetarian, vegan }\n- `user_id` (optional): For tracking\n\n**Returns:** Semantically similar recipes from Qdrant",
+          "height": 180,
+          "width": 500,
+          "color": 4
+        },
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          80
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Generate Embedding",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: Validation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Generate Embedding": {
+        "main": [
+          [
+            {
+              "node": "Search Qdrant",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Search Qdrant": {
+        "main": [
+          [
+            {
+              "node": "Format Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Franck Sebbah",
+    "name": null,
+    "description": null
+  }
+}

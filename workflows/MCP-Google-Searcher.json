@@ -1,0 +1,445 @@
+{
+  "name": "MCP - Google Searcher",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook-google",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "google-searcher-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "google-searcher",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.query }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-query",
+      "name": "Error: No Query",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: query\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"serpapi\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "serpapi-search",
+      "name": "SerpAPI Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://serpapi.com/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "serpApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "engine",
+              "value": "google"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.body.query }}"
+            },
+            {
+              "name": "num",
+              "value": "={{ $json.body.num_results || 10 }}"
+            },
+            {
+              "name": "hl",
+              "value": "={{ $json.body.language || 'en' }}"
+            },
+            {
+              "name": "gl",
+              "value": "={{ $json.body.country || 'us' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "serpApi": {
+          "id": "serpapi-credentials",
+          "name": "SerpAPI"
+        }
+      }
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        920,
+        200
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ { \"success\": true, \"data\": { \"organic_results\": ($json.organic_results || []).map(r => ({ \"position\": r.position, \"title\": r.title, \"link\": r.link, \"snippet\": r.snippet, \"displayed_link\": r.displayed_link, \"source\": r.source })), \"knowledge_graph\": $json.knowledge_graph || null, \"answer_box\": $json.answer_box || null, \"related_searches\": ($json.related_searches || []).map(r => r.query), \"total_results\": $json.search_information?.total_results || 0, \"query\": $('Webhook').first().json.body.query }, \"meta\": { \"provider\": \"serpapi\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"search_time\": $json.search_information?.time_taken_displayed } } }}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 550,
+        "height": 220,
+        "content": "## MCP - Google Searcher\n\n**Endpoint:** POST /webhook/google-searcher\n\n**Parameters:**\n- `query` (required): Search query\n- `num_results` (optional): Number of results 1-100 (default: 10)\n- `language` (optional): Language code, e.g., 'en', 'fr' (default: en)\n- `country` (optional): Country code, e.g., 'us', 'fr' (default: us)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Organic results, knowledge graph, answer box, related searches\n\n**Note:** Requires SerpAPI credentials"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "SerpAPI Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SerpAPI Search": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2025-12-15T15:03:43.344Z",
+    "createdAt": "2025-12-15T15:03:43.344Z",
+    "versionId": "0b5ab47c-708d-4207-bba2-f01950714c29",
+    "workflowId": "6WtKoi2pkRShkVT7",
+    "nodes": [
+      {
+        "id": "webhook-google",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "google-searcher-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "google-searcher",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.body.query }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-no-query",
+        "name": "Error: No Query",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          700,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: query\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"serpapi\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "serpapi-search",
+        "name": "SerpAPI Search",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          700,
+          200
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://serpapi.com/search",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "serpApi",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "engine",
+                "value": "google"
+              },
+              {
+                "name": "q",
+                "value": "={{ $json.body.query }}"
+              },
+              {
+                "name": "num",
+                "value": "={{ $json.body.num_results || 10 }}"
+              },
+              {
+                "name": "hl",
+                "value": "={{ $json.body.language || 'en' }}"
+              },
+              {
+                "name": "gl",
+                "value": "={{ $json.body.country || 'us' }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "serpApi": {
+            "id": "serpapi-credentials",
+            "name": "SerpAPI"
+          }
+        }
+      },
+      {
+        "id": "format-output",
+        "name": "Format Output",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          920,
+          200
+        ],
+        "parameters": {
+          "mode": "raw",
+          "jsonOutput": "={{ { \"success\": true, \"data\": { \"organic_results\": ($json.organic_results || []).map(r => ({ \"position\": r.position, \"title\": r.title, \"link\": r.link, \"snippet\": r.snippet, \"displayed_link\": r.displayed_link, \"source\": r.source })), \"knowledge_graph\": $json.knowledge_graph || null, \"answer_box\": $json.answer_box || null, \"related_searches\": ($json.related_searches || []).map(r => r.query), \"total_results\": $json.search_information?.total_results || 0, \"query\": $('Webhook').first().json.body.query }, \"meta\": { \"provider\": \"serpapi\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"search_time\": $json.search_information?.time_taken_displayed } } }}"
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1140,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          80
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 550,
+          "height": 220,
+          "content": "## MCP - Google Searcher\n\n**Endpoint:** POST /webhook/google-searcher\n\n**Parameters:**\n- `query` (required): Search query\n- `num_results` (optional): Number of results 1-100 (default: 10)\n- `language` (optional): Language code, e.g., 'en', 'fr' (default: en)\n- `country` (optional): Country code, e.g., 'us', 'fr' (default: us)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Organic results, knowledge graph, answer box, related searches\n\n**Note:** Requires SerpAPI credentials"
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "SerpAPI Search",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: No Query",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "SerpAPI Search": {
+        "main": [
+          [
+            {
+              "node": "Format Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Franck Sebbah",
+    "name": null,
+    "description": null
+  }
+}

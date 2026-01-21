@@ -1,0 +1,427 @@
+{
+  "name": "MCP - Mathpix",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook-mathpix",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "mathpix-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mathpix",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-image",
+              "leftValue": "={{ $json.body.image_url || $json.body.image_base64 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-image",
+      "name": "Error: No Image",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: image_url or image_base64\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"mathpix\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "mathpix-ocr",
+      "name": "Mathpix OCR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mathpix.com/v3/text",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "app_id",
+              "value": "={{ $json.body.mathpix_app_id }}"
+            },
+            {
+              "name": "app_key",
+              "value": "={{ $json.body.mathpix_app_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"src\": \"{{ $json.body.image_url || ('data:image/jpeg;base64,' + $json.body.image_base64) }}\",\n  \"formats\": {{ JSON.stringify($json.body.formats || ['latex_styled', 'text', 'data']) }},\n  \"data_options\": {\n    \"include_asciimath\": {{ $json.body.include_asciimath || true }},\n    \"include_latex\": {{ $json.body.include_latex !== false }},\n    \"include_mathml\": {{ $json.body.include_mathml || false }},\n    \"include_svg\": {{ $json.body.include_svg || false }}\n  },\n  \"metadata\": {\n    \"improve_mathpix\": {{ $json.body.improve_mathpix || false }}\n  }\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-response",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error_info?.code || 500,\n          message: item.json.error_info?.message || item.json.error || 'Mathpix API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'mathpix'\n        }\n      }\n    };\n  }\n\n  try {\n    const data = item.json;\n    \n    // Extract different format outputs\n    const result = {\n      text: data.text || '',\n      latex: data.latex_styled || data.latex || '',\n      latex_confidence: data.latex_confidence || 0,\n      asciimath: data.asciimath || null,\n      mathml: data.mathml || null,\n      data: data.data || []\n    };\n    \n    // Parse detected elements if available\n    const elements = (data.data || []).map(d => ({\n      type: d.type,\n      value: d.value,\n      latex: d.latex,\n      position: d.position\n    }));\n    \n    return {\n      json: {\n        success: true,\n        data: {\n          text: result.text,\n          latex: result.latex,\n          latex_display: result.latex ? `$$${result.latex}$$` : '',\n          latex_inline: result.latex ? `$${result.latex}$` : '',\n          confidence: result.latex_confidence,\n          asciimath: result.asciimath,\n          mathml: result.mathml,\n          elements: elements,\n          is_math: data.is_printed || data.is_handwritten || false,\n          is_handwritten: data.is_handwritten || false\n        },\n        meta: {\n          provider: 'mathpix',\n          confidence: result.latex_confidence,\n          detection_score: data.detection_score || 0\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to parse Mathpix response: ' + e.message,\n          status: 'PARSE_ERROR'\n        },\n        meta: {\n          provider: 'mathpix'\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 700,
+        "height": 340,
+        "content": "## MCP - Mathpix\n\n**Endpoint:** POST /webhook/mathpix\n\n**Parameters:**\n- `image_url` (required*): URL of image with math/equations\n- `image_base64` (required*): Base64-encoded image\n- `mathpix_app_id` (required): Mathpix App ID\n- `mathpix_app_key` (required): Mathpix App Key\n- `formats` (optional): Output formats (default: ['latex_styled', 'text', 'data'])\n- `include_asciimath` (optional): Include AsciiMath output (default: true)\n- `include_latex` (optional): Include LaTeX output (default: true)\n- `include_mathml` (optional): Include MathML output (default: false)\n- `include_svg` (optional): Include SVG rendering (default: false)\n\n*One of image_url or image_base64 is required\n\n**Returns:**\n- `latex`: LaTeX representation of math\n- `latex_display`: Display math ($$...$$)\n- `latex_inline`: Inline math ($...$)\n- `text`: Plain text representation\n- `confidence`: Recognition confidence\n- `is_handwritten`: Handwriting detection\n\n**Use cases:** Math OCR, equation extraction, homework help"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Mathpix OCR",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mathpix OCR": {
+      "main": [
+        [
+          {
+            "node": "Parse Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2025-12-18T15:12:51.992Z",
+    "createdAt": "2025-12-18T15:12:51.992Z",
+    "versionId": "f70329f3-8bdd-4de5-acd5-2ca04c71bd8d",
+    "workflowId": "o6hfceJb86t0k52C",
+    "nodes": [
+      {
+        "id": "webhook-mathpix",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "mathpix-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "mathpix",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "condition-image",
+                "leftValue": "={{ $json.body.image_url || $json.body.image_base64 }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-no-image",
+        "name": "Error: No Image",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          700,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: image_url or image_base64\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"mathpix\" } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "mathpix-ocr",
+        "name": "Mathpix OCR",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          700,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.mathpix.com/v3/text",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "app_id",
+                "value": "={{ $json.body.mathpix_app_id }}"
+              },
+              {
+                "name": "app_key",
+                "value": "={{ $json.body.mathpix_app_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"src\": \"{{ $json.body.image_url || ('data:image/jpeg;base64,' + $json.body.image_base64) }}\",\n  \"formats\": {{ JSON.stringify($json.body.formats || ['latex_styled', 'text', 'data']) }},\n  \"data_options\": {\n    \"include_asciimath\": {{ $json.body.include_asciimath || true }},\n    \"include_latex\": {{ $json.body.include_latex !== false }},\n    \"include_mathml\": {{ $json.body.include_mathml || false }},\n    \"include_svg\": {{ $json.body.include_svg || false }}\n  },\n  \"metadata\": {\n    \"improve_mathpix\": {{ $json.body.improve_mathpix || false }}\n  }\n}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "parse-response",
+        "name": "Parse Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          920,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error_info?.code || 500,\n          message: item.json.error_info?.message || item.json.error || 'Mathpix API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'mathpix'\n        }\n      }\n    };\n  }\n\n  try {\n    const data = item.json;\n    \n    // Extract different format outputs\n    const result = {\n      text: data.text || '',\n      latex: data.latex_styled || data.latex || '',\n      latex_confidence: data.latex_confidence || 0,\n      asciimath: data.asciimath || null,\n      mathml: data.mathml || null,\n      data: data.data || []\n    };\n    \n    // Parse detected elements if available\n    const elements = (data.data || []).map(d => ({\n      type: d.type,\n      value: d.value,\n      latex: d.latex,\n      position: d.position\n    }));\n    \n    return {\n      json: {\n        success: true,\n        data: {\n          text: result.text,\n          latex: result.latex,\n          latex_display: result.latex ? `$$${result.latex}$$` : '',\n          latex_inline: result.latex ? `$${result.latex}$` : '',\n          confidence: result.latex_confidence,\n          asciimath: result.asciimath,\n          mathml: result.mathml,\n          elements: elements,\n          is_math: data.is_printed || data.is_handwritten || false,\n          is_handwritten: data.is_handwritten || false\n        },\n        meta: {\n          provider: 'mathpix',\n          confidence: result.latex_confidence,\n          detection_score: data.detection_score || 0\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to parse Mathpix response: ' + e.message,\n          status: 'PARSE_ERROR'\n        },\n        meta: {\n          provider: 'mathpix'\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1140,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          60
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 700,
+          "height": 340,
+          "content": "## MCP - Mathpix\n\n**Endpoint:** POST /webhook/mathpix\n\n**Parameters:**\n- `image_url` (required*): URL of image with math/equations\n- `image_base64` (required*): Base64-encoded image\n- `mathpix_app_id` (required): Mathpix App ID\n- `mathpix_app_key` (required): Mathpix App Key\n- `formats` (optional): Output formats (default: ['latex_styled', 'text', 'data'])\n- `include_asciimath` (optional): Include AsciiMath output (default: true)\n- `include_latex` (optional): Include LaTeX output (default: true)\n- `include_mathml` (optional): Include MathML output (default: false)\n- `include_svg` (optional): Include SVG rendering (default: false)\n\n*One of image_url or image_base64 is required\n\n**Returns:**\n- `latex`: LaTeX representation of math\n- `latex_display`: Display math ($$...$$)\n- `latex_inline`: Inline math ($...$)\n- `text`: Plain text representation\n- `confidence`: Recognition confidence\n- `is_handwritten`: Handwriting detection\n\n**Use cases:** Math OCR, equation extraction, homework help"
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Mathpix OCR",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: No Image",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mathpix OCR": {
+        "main": [
+          [
+            {
+              "node": "Parse Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Franck Sebbah",
+    "name": null,
+    "description": null
+  }
+}

@@ -1,0 +1,673 @@
+{
+  "name": "MCP - Documents Save",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook-save",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "documents-save-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "documents/save",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.content || $json.body.file_base64 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
+              "leftValue": "={{ $json.body.filename }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-invalid-input",
+      "name": "Error: Invalid Input",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": \"INVALID_FORMAT\", \"message\": \"Missing required fields: content/file_base64 and filename\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "prepare-file",
+      "name": "Prepare File",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ {\n  \"content\": $json.body.content,\n  \"file_base64\": $json.body.file_base64,\n  \"filename\": $json.body.filename,\n  \"folder_id\": $json.body.folder_id || '',\n  \"user_id\": $json.body.user_id,\n  \"guild_id\": $json.body.guild_id,\n  \"mime_type\": $json.body.mime_type || 'text/plain',\n  \"google_access_token\": $json.body.google_access_token || $json.body.plugin_context?.api_keys?.google\n} }}"
+      }
+    },
+    {
+      "id": "check-auth",
+      "name": "Has Google Auth?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        920,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.google_access_token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-auth",
+      "name": "Error: No Auth",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": \"AUTH_REQUIRED\", \"message\": \"Google access token required for Drive upload\" } } }}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "convert-to-binary",
+      "name": "Convert to Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nlet binaryData;\n\nif (input.file_base64) {\n  // Déjà en base64\n  binaryData = Buffer.from(input.file_base64, 'base64');\n} else if (input.content) {\n  // Texte brut\n  binaryData = Buffer.from(input.content, 'utf-8');\n}\n\nreturn {\n  json: {\n    filename: input.filename,\n    folder_id: input.folder_id,\n    mime_type: input.mime_type,\n    google_access_token: input.google_access_token\n  },\n  binary: {\n    data: {\n      data: binaryData.toString('base64'),\n      mimeType: input.mime_type,\n      fileName: input.filename\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "upload-to-drive",
+      "name": "Upload to Google Drive",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.google_access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "metadata",
+              "value": "={{ JSON.stringify({ name: $json.filename, parents: $json.folder_id ? [$json.folder_id] : [] }) }}"
+            }
+          ]
+        },
+        "sendBinaryData": true,
+        "binaryPropertyName": "data",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\n\nif (result.id) {\n  // Succès\n  return {\n    json: {\n      success: true,\n      drive_url: `https://drive.google.com/file/d/${result.id}/view`,\n      file_id: result.id,\n      filename: result.name\n    }\n  };\n} else {\n  // Erreur\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'UPLOAD_FAILED',\n        message: result.error?.message || 'Failed to upload to Google Drive'\n      }\n    }\n  };\n}"
+      }
+    },
+    {
+      "id": "respond-result",
+      "name": "Respond Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        100
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 550,
+        "height": 260,
+        "content": "## MCP - Documents Save (RFC-014)\n\n**Endpoint:** POST /webhook/documents/save\n\n**Purpose:** Save processed document to Google Drive\n\n**Input:**\n- `content` (string): Text content to save\n- OR `file_base64` (string): Binary file in base64\n- `filename` (required): Name for the file\n- `folder_id` (optional): Google Drive folder ID\n- `google_access_token`: OAuth2 token for Drive\n- `mime_type` (optional): Default 'text/plain'\n\n**Output:**\n- `success`: boolean\n- `drive_url`: URL to access file\n- `file_id`: Google Drive file ID\n\n**Auth:** Requires Google OAuth2 access token"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Prepare File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Invalid Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare File": {
+      "main": [
+        [
+          {
+            "node": "Has Google Auth?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Google Auth?": {
+      "main": [
+        [
+          {
+            "node": "Convert to Binary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to Binary": {
+      "main": [
+        [
+          {
+            "node": "Upload to Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Google Drive": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-01-19T13:39:52.418Z",
+    "createdAt": "2026-01-19T13:39:52.418Z",
+    "versionId": "eb4d10c1-ee15-4bb5-a6f2-1fd260aff7c8",
+    "workflowId": "rXxo6q8W8edGCgoV",
+    "nodes": [
+      {
+        "id": "webhook-save",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "documents-save-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "documents/save",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.body.content || $json.body.file_base64 }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              },
+              {
+                "leftValue": "={{ $json.body.filename }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-invalid-input",
+        "name": "Error: Invalid Input",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          700,
+          500
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": \"INVALID_FORMAT\", \"message\": \"Missing required fields: content/file_base64 and filename\" } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "prepare-file",
+        "name": "Prepare File",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          700,
+          200
+        ],
+        "parameters": {
+          "mode": "raw",
+          "jsonOutput": "={{ {\n  \"content\": $json.body.content,\n  \"file_base64\": $json.body.file_base64,\n  \"filename\": $json.body.filename,\n  \"folder_id\": $json.body.folder_id || '',\n  \"user_id\": $json.body.user_id,\n  \"guild_id\": $json.body.guild_id,\n  \"mime_type\": $json.body.mime_type || 'text/plain',\n  \"google_access_token\": $json.body.google_access_token || $json.body.plugin_context?.api_keys?.google\n} }}"
+        }
+      },
+      {
+        "id": "check-auth",
+        "name": "Has Google Auth?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          920,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.google_access_token }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-no-auth",
+        "name": "Error: No Auth",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1140,
+          400
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": \"AUTH_REQUIRED\", \"message\": \"Google access token required for Drive upload\" } } }}",
+          "options": {
+            "responseCode": 401
+          }
+        }
+      },
+      {
+        "id": "convert-to-binary",
+        "name": "Convert to Binary",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1140,
+          100
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nlet binaryData;\n\nif (input.file_base64) {\n  // Déjà en base64\n  binaryData = Buffer.from(input.file_base64, 'base64');\n} else if (input.content) {\n  // Texte brut\n  binaryData = Buffer.from(input.content, 'utf-8');\n}\n\nreturn {\n  json: {\n    filename: input.filename,\n    folder_id: input.folder_id,\n    mime_type: input.mime_type,\n    google_access_token: input.google_access_token\n  },\n  binary: {\n    data: {\n      data: binaryData.toString('base64'),\n      mimeType: input.mime_type,\n      fileName: input.filename\n    }\n  }\n};"
+        }
+      },
+      {
+        "id": "upload-to-drive",
+        "name": "Upload to Google Drive",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1360,
+          100
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.google_access_token }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "multipart-form-data",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "metadata",
+                "value": "={{ JSON.stringify({ name: $json.filename, parents: $json.folder_id ? [$json.folder_id] : [] }) }}"
+              }
+            ]
+          },
+          "sendBinaryData": true,
+          "binaryPropertyName": "data",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "format-response",
+        "name": "Format Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1580,
+          100
+        ],
+        "parameters": {
+          "jsCode": "const result = $input.first().json;\n\nif (result.id) {\n  // Succès\n  return {\n    json: {\n      success: true,\n      drive_url: `https://drive.google.com/file/d/${result.id}/view`,\n      file_id: result.id,\n      filename: result.name\n    }\n  };\n} else {\n  // Erreur\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'UPLOAD_FAILED',\n        message: result.error?.message || 'Failed to upload to Google Drive'\n      }\n    }\n  };\n}"
+        }
+      },
+      {
+        "id": "respond-result",
+        "name": "Respond Result",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1800,
+          100
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          60
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 550,
+          "height": 260,
+          "content": "## MCP - Documents Save (RFC-014)\n\n**Endpoint:** POST /webhook/documents/save\n\n**Purpose:** Save processed document to Google Drive\n\n**Input:**\n- `content` (string): Text content to save\n- OR `file_base64` (string): Binary file in base64\n- `filename` (required): Name for the file\n- `folder_id` (optional): Google Drive folder ID\n- `google_access_token`: OAuth2 token for Drive\n- `mime_type` (optional): Default 'text/plain'\n\n**Output:**\n- `success`: boolean\n- `drive_url`: URL to access file\n- `file_id`: Google Drive file ID\n\n**Auth:** Requires Google OAuth2 access token"
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Prepare File",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: Invalid Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare File": {
+        "main": [
+          [
+            {
+              "node": "Has Google Auth?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Google Auth?": {
+        "main": [
+          [
+            {
+              "node": "Convert to Binary",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: No Auth",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Convert to Binary": {
+        "main": [
+          [
+            {
+              "node": "Upload to Google Drive",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Upload to Google Drive": {
+        "main": [
+          [
+            {
+              "node": "Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Franck Sebbah",
+    "name": null,
+    "description": null
+  }
+}
