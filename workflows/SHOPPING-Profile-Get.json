@@ -1,0 +1,465 @@
+{
+  "name": "SHOPPING---Profile-Get",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "profile-get",
+        "options": {}
+      },
+      "id": "profile-get-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        304
+      ],
+      "webhookId": "profile-get-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst query = input.query || {};\nconst headers = input.headers || {};\n\n// --- Extraction Project ID ---\nconst projectId = headers['x-project-id'] \n  || headers['X-Project-ID'] \n  || headers['X-Project-Id']\n  || 'unknown';\n\n// --- Validation discord_user_id ---\nconst discordUserId = query.discord_user_id;\n\nif (!discordUserId) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le parametre \"discord_user_id\" est requis'\n  };\n}\n\n// --- Retour des donnees validees ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: discordUserId,\n    project_id: projectId\n  }\n};"
+      },
+      "id": "profile-get-0002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "profile-get-0003",
+      "name": "Check Validation Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/profile/{{ $json.data.discord_user_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.data.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "profile-get-0004",
+      "name": "Call API Get Profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT SUCCESS RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst validationData = $('Validate Input').first().json;\n\n// --- Check API errors ---\nif (apiResponse.error || apiResponse.success === false) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.error?.code || 'PROFILE_NOT_FOUND',\n      message: apiResponse.error?.message || 'Profil non trouve',\n      http_status: apiResponse.error?.http_status || 404\n    }\n  };\n}\n\n// --- Format profile ---\nconst profile = apiResponse.profile || apiResponse;\n\n// --- Format addresses ---\nconst addresses = (profile.addresses || []).map(addr => ({\n  id: addr.id,\n  label: addr.label || null,\n  full_name: addr.full_name,\n  phone: addr.phone || null,\n  line1: addr.line1,\n  line2: addr.line2 || null,\n  city: addr.city,\n  postal_code: addr.postal_code,\n  country_code: addr.country_code || 'FR',\n  is_default: addr.is_default || false\n}));\n\n// --- Success response ---\nreturn {\n  success: true,\n  profile: {\n    discord_user_id: profile.discord_user_id || validationData.data.discord_user_id,\n    email: profile.email || null,\n    phone: profile.phone || null,\n    addresses: addresses,\n    default_address_id: profile.default_address_id || addresses.find(a => a.is_default)?.id || null,\n    created_at: profile.created_at,\n    updated_at: profile.updated_at\n  }\n};"
+      },
+      "id": "profile-get-0005",
+      "name": "Format Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT ERROR RESPONSE (Validation)\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation',\n    http_status: 400\n  }\n};"
+      },
+      "id": "profile-get-0006",
+      "name": "Format Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "profile-get-0007",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1104,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.http_status || 400 }}"
+        }
+      },
+      "id": "profile-get-0008",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Check Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Format Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call API Get Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call API Get Profile": {
+      "main": [
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-01-20T19:37:12.204Z",
+    "createdAt": "2026-01-20T19:37:12.204Z",
+    "versionId": "0c1d4a7d-a880-436d-848c-792056899159",
+    "workflowId": "x904eRnalOSHiy1e",
+    "nodes": [
+      {
+        "parameters": {
+          "path": "profile-get",
+          "options": {}
+        },
+        "id": "profile-get-0001",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          304
+        ],
+        "webhookId": "profile-get-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst query = input.query || {};\nconst headers = input.headers || {};\n\n// --- Extraction Project ID ---\nconst projectId = headers['x-project-id'] \n  || headers['X-Project-ID'] \n  || headers['X-Project-Id']\n  || 'unknown';\n\n// --- Validation discord_user_id ---\nconst discordUserId = query.discord_user_id;\n\nif (!discordUserId) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le parametre \"discord_user_id\" est requis'\n  };\n}\n\n// --- Retour des donnees validees ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: discordUserId,\n    project_id: projectId\n  }\n};"
+        },
+        "id": "profile-get-0002",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          224,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-error",
+                "leftValue": "={{ $json.error }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "profile-get-0003",
+        "name": "Check Validation Error",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          448,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/profile/{{ $json.data.discord_user_id }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Project-ID",
+                "value": "={{ $json.data.project_id }}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "profile-get-0004",
+        "name": "Call API Get Profile",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          672,
+          208
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT SUCCESS RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst validationData = $('Validate Input').first().json;\n\n// --- Check API errors ---\nif (apiResponse.error || apiResponse.success === false) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.error?.code || 'PROFILE_NOT_FOUND',\n      message: apiResponse.error?.message || 'Profil non trouve',\n      http_status: apiResponse.error?.http_status || 404\n    }\n  };\n}\n\n// --- Format profile ---\nconst profile = apiResponse.profile || apiResponse;\n\n// --- Format addresses ---\nconst addresses = (profile.addresses || []).map(addr => ({\n  id: addr.id,\n  label: addr.label || null,\n  full_name: addr.full_name,\n  phone: addr.phone || null,\n  line1: addr.line1,\n  line2: addr.line2 || null,\n  city: addr.city,\n  postal_code: addr.postal_code,\n  country_code: addr.country_code || 'FR',\n  is_default: addr.is_default || false\n}));\n\n// --- Success response ---\nreturn {\n  success: true,\n  profile: {\n    discord_user_id: profile.discord_user_id || validationData.data.discord_user_id,\n    email: profile.email || null,\n    phone: profile.phone || null,\n    addresses: addresses,\n    default_address_id: profile.default_address_id || addresses.find(a => a.is_default)?.id || null,\n    created_at: profile.created_at,\n    updated_at: profile.updated_at\n  }\n};"
+        },
+        "id": "profile-get-0005",
+        "name": "Format Success Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT ERROR RESPONSE (Validation)\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation',\n    http_status: 400\n  }\n};"
+        },
+        "id": "profile-get-0006",
+        "name": "Format Validation Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          672,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "profile-get-0007",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1104,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.http_status || 400 }}"
+          }
+        },
+        "id": "profile-get-0008",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          880,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Check Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Format Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Call API Get Profile",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call API Get Profile": {
+        "main": [
+          [
+            {
+              "node": "Format Success Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Success Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Franck Sebbah",
+    "name": null,
+    "description": null
+  }
+}

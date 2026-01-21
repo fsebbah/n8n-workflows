@@ -1,0 +1,687 @@
+{
+  "name": "DISCORD - Credits Debit",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## DISCORD - Credits Debit\n\n**Endpoint:** POST /webhook/credits-debit\n\n**Headers:**\n- `X-Project-ID` (required): ID du projet (ex: torah-fun)\n\n**Body:**\n```json\n{\n  \"discord_user_id\": \"636639897767378954\",\n  \"amount\": 5,\n  \"reason\": \"translation_page_12\"\n}\n```\n\n**API appellee:** POST /api/webhook/account/debit\n\n**Reponses:**\n- 200: Success\n- 402: Insufficient credits\n- 404: User not found",
+        "height": 480,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        60,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "credits-debit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "webhookId": "credits-debit"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valider les parametres\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// Extraire le project_id du header (case-insensitive)\nconst projectId = headers['x-project-id'] || headers['X-Project-ID'] || null;\nconst discordUserId = body.discord_user_id || null;\nconst amount = body.amount || null;\nconst reason = body.reason || '';\n\nconst errors = [];\nif (!projectId) errors.push('X-Project-ID header');\nif (!discordUserId) errors.push('discord_user_id');\nif (!amount || amount <= 0) errors.push('amount (must be > 0)');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants ou invalides: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    discord_user_id: discordUserId,\n    amount: Number(amount),\n    reason: reason\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://pi6.local:3031/api/webhook/account/debit",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "discord_user_id",
+              "value": "={{ $json.discord_user_id }}"
+            },
+            {
+              "name": "amount",
+              "value": "={{ $json.amount }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.reason }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "call-api",
+      "name": "Call Debit API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Traiter la reponse de l'API\nconst apiResponse = $input.first().json;\nconst statusCode = apiResponse.statusCode || 500;\nconst body = apiResponse.body || {};\n\n// Reponse success (200)\nif (statusCode === 200 && body.success) {\n  return [{\n    json: {\n      success: true,\n      credits: body.credits || {},\n      statusCode: 200\n    }\n  }];\n}\n\n// Reponse erreur (402, 404, ou autre)\nconst errorResponse = {\n  success: false,\n  error: body.error || {\n    code: statusCode,\n    message: body.message || 'Erreur API inconnue',\n    status: statusCode === 402 ? 'PAYMENT_REQUIRED' : \n            statusCode === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR'\n  },\n  statusCode: statusCode\n};\n\n// Ajouter credits_remaining si disponible (pour 402)\nif (body.error?.credits_remaining !== undefined) {\n  errorResponse.error.credits_remaining = body.error.credits_remaining;\n}\n\nreturn [{ json: errorResponse }];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-success",
+      "name": "API Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, credits: $json.credits }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.statusCode || 500 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-api-error",
+      "name": "Respond API Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Call Debit API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Debit API": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "API Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Success?": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond API Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-01-13T20:53:30.748Z",
+    "createdAt": "2026-01-13T20:53:30.748Z",
+    "versionId": "40ad86df-770d-49ae-b9ec-dae8ccf3c986",
+    "workflowId": "mpU9a8EDO8MhhzAO",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## DISCORD - Credits Debit\n\n**Endpoint:** POST /webhook/credits-debit\n\n**Headers:**\n- `X-Project-ID` (required): ID du projet (ex: torah-fun)\n\n**Body:**\n```json\n{\n  \"discord_user_id\": \"636639897767378954\",\n  \"amount\": 5,\n  \"reason\": \"translation_page_12\"\n}\n```\n\n**API appellee:** POST /api/webhook/account/debit\n\n**Reponses:**\n- 200: Success\n- 402: Insufficient credits\n- 404: User not found",
+          "height": 480,
+          "width": 340,
+          "color": 5
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          60,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "credits-debit",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          440,
+          300
+        ],
+        "webhookId": "credits-debit"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Valider les parametres\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// Extraire le project_id du header (case-insensitive)\nconst projectId = headers['x-project-id'] || headers['X-Project-ID'] || null;\nconst discordUserId = body.discord_user_id || null;\nconst amount = body.amount || null;\nconst reason = body.reason || '';\n\nconst errors = [];\nif (!projectId) errors.push('X-Project-ID header');\nif (!discordUserId) errors.push('discord_user_id');\nif (!amount || amount <= 0) errors.push('amount (must be > 0)');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants ou invalides: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    discord_user_id: discordUserId,\n    amount: Number(amount),\n    reason: reason\n  }\n}];"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-valid",
+        "name": "Input Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          880,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://pi6.local:3031/api/webhook/account/debit",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Project-ID",
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "discord_user_id",
+                "value": "={{ $json.discord_user_id }}"
+              },
+              {
+                "name": "amount",
+                "value": "={{ $json.amount }}"
+              },
+              {
+                "name": "reason",
+                "value": "={{ $json.reason }}"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "neverError": true,
+                "fullResponse": true
+              }
+            }
+          }
+        },
+        "id": "call-api",
+        "name": "Call Debit API",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1100,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Traiter la reponse de l'API\nconst apiResponse = $input.first().json;\nconst statusCode = apiResponse.statusCode || 500;\nconst body = apiResponse.body || {};\n\n// Reponse success (200)\nif (statusCode === 200 && body.success) {\n  return [{\n    json: {\n      success: true,\n      credits: body.credits || {},\n      statusCode: 200\n    }\n  }];\n}\n\n// Reponse erreur (402, 404, ou autre)\nconst errorResponse = {\n  success: false,\n  error: body.error || {\n    code: statusCode,\n    message: body.message || 'Erreur API inconnue',\n    status: statusCode === 402 ? 'PAYMENT_REQUIRED' : \n            statusCode === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR'\n  },\n  statusCode: statusCode\n};\n\n// Ajouter credits_remaining si disponible (pour 402)\nif (body.error?.credits_remaining !== undefined) {\n  errorResponse.error.credits_remaining = body.error.credits_remaining;\n}\n\nreturn [{ json: errorResponse }];"
+        },
+        "id": "format-response",
+        "name": "Format Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-success",
+                "leftValue": "={{ $json.success }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-success",
+        "name": "API Success?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1540,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: true, credits: $json.credits }) }}",
+          "options": {
+            "responseCode": 200,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1760,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.code || 400 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-validation-error",
+        "name": "Respond Validation Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1100,
+          420
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+          "options": {
+            "responseCode": "={{ $json.statusCode || 500 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-api-error",
+        "name": "Respond API Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1760,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Input Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Input Valid?": {
+        "main": [
+          [
+            {
+              "node": "Call Debit API",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Debit API": {
+        "main": [
+          [
+            {
+              "node": "Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Response": {
+        "main": [
+          [
+            {
+              "node": "API Success?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "API Success?": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond API Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Franck Sebbah",
+    "name": null,
+    "description": null
+  }
+}

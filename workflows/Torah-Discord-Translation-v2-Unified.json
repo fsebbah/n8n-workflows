@@ -1,0 +1,1253 @@
+{
+  "name": "Torah Discord Translation v2 (Unified)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Discord Translation v2 (Unified)\n\n**Endpoint:** POST /webhook/torah-discord-translate\n\n**Unified Architecture:**\n1. Check cache\n   → If hit: return immediately (cached: true)\n2. Create job via API\n3. Call worker asynchronously\n4. Return job_id immediately\n\n**Bot polls torah-job-status for result**\n\n**Response (cache hit):**\n```json\n{ \"cached\": true, \"translation\": {...} }\n```\n\n**Response (new translation):**\n```json\n{ \"cached\": false, \"job_id\": \"xxx\" }\n```",
+        "height": 340,
+        "width": 320,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-discord-translate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        400,
+        304
+      ],
+      "webhookId": "torah-discord-translate"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validation et préparation des données\n// Supports:\n// - Single text: { text: '...' }\n// - Batch commentaries: { job_type: 'batch_commentaries', segments: [{commentary_id, text}] }\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Detect batch mode\nconst jobType = body.job_type || 'unit_translation';\nconst isBatch = jobType === 'batch_commentaries' && Array.isArray(body.segments);\n\n// Extraction des paramètres\nlet text = body.text || '';\nlet segments = [];\n\nif (isBatch) {\n  segments = body.segments;\n  // For batch, text is not required at root - segments have their own text\n  text = segments.length > 0 ? (segments[0].text || '') : '';\n}\n\nconst apiKey = body.api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\nconst targetLanguage = body.target_language || 'fr';\nconst sourceLanguage = body.source_language || 'he';\nconst context = body.context || {};\nconst mode = body.mode || 'standard';\nconst commentator = body.commentator || context.commentator || '';\n\n// Validation\nconst errors = [];\nif (isBatch) {\n  if (segments.length === 0) {\n    errors.push('Le champ \"segments\" doit contenir au moins un élément');\n  }\n  segments.forEach((seg, i) => {\n    if (!seg.text || seg.text.trim().length === 0) {\n      errors.push(`Segment ${i}: le champ \"text\" est requis`);\n    }\n  });\n} else {\n  if (!text || text.trim().length === 0) {\n    errors.push('Le champ \"text\" est requis');\n  }\n}\nif (!apiKey) {\n  errors.push('Le champ \"api_key\" est requis');\n}\nif (!openaiApiKey) {\n  errors.push('Le champ \"openai_api_key\" est requis');\n}\n\n// Cache search params (only for single text, not batch)\nlet cacheSearchParams = `target_language=${targetLanguage}`;\nconst canSearchCache = !isBatch && !!(context.traite && context.page);\nif (canSearchCache) {\n  cacheSearchParams += `&traite=${encodeURIComponent(context.traite)}&page=${encodeURIComponent(context.page)}`;\n  if (context.commentator) {\n    cacheSearchParams += `&commentator=${encodeURIComponent(context.commentator)}`;\n  }\n  cacheSearchParams += `&text=${encodeURIComponent(text)}&exact=true`;\n}\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    isBatch: isBatch,\n    jobType: jobType,\n    text: text,\n    segments: segments,\n    traite: body.traite || context.traite,\n    page: body.page || context.page,\n    commentator: commentator,\n    apiKey: apiKey,\n    openaiApiKey: openaiApiKey,\n    sourceLanguage: sourceLanguage,\n    targetLanguage: targetLanguage,\n    context: context,\n    mode: mode,\n    metadata: body.metadata || {},\n    requestId: body.request_id || 'req_' + Date.now(),\n    cacheSearchParams: cacheSearchParams,\n    canSearchCache: canSearchCache\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "can-cache",
+              "leftValue": "={{ $json.canSearchCache }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-can-cache",
+      "name": "Can Search Cache?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1072,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/translations/search?{{ $json.cacheSearchParams }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 5000
+        }
+      },
+      "id": "search-cache",
+      "name": "Search Cache",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check cache result\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nconst cacheHit = statusCode === 200 && data.found === true && data.translations?.length > 0;\n\nif (cacheHit) {\n  const cached = data.translations[0];\n  return [{\n    json: {\n      cacheHit: true,\n      cachedTranslation: cached.translated_text,\n      cachedQuality: cached.quality_score || 0.9,\n      originalText: prevData.text,\n      targetLanguage: prevData.targetLanguage,\n      context: prevData.context\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    cacheHit: false,\n    ...prevData\n  }\n}];"
+      },
+      "id": "check-cache-result",
+      "name": "Check Cache Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cache-hit",
+              "leftValue": "={{ $json.cacheHit }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-cache-hit",
+      "name": "Cache Hit?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1728,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format cache hit response\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    success: true,\n    cached: true,\n    translation: {\n      original: input.originalText,\n      final: input.cachedTranslation,\n      source_language: 'he',\n      target_language: input.targetLanguage\n    },\n    verification: {\n      approved: true,\n      confidence: input.cachedQuality\n    },\n    tokens: null\n  }\n}];"
+      },
+      "id": "format-cache-response",
+      "name": "Format Cache Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/v2/jobs",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_type: $json.isBatch ? 'commentary_translation' : $json.jobType, traite: $json.traite || $json.context.traite || 'Unknown', page: $json.page || $json.context.page || '1a', target_language: $json.targetLanguage, segments_count: $json.isBatch ? $json.segments.length : 1, metadata: { commentator: $json.commentator || $json.context.commentator, ref_format: $json.metadata.ref_format || 'commentary' } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "create-job",
+      "name": "Create Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1952,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract job_id and prepare worker call\n// Supports both single text and batch commentaries\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || !data.job_id) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || 'Erreur création job',\n        status: 'JOB_CREATE_ERROR'\n      }\n    }\n  }];\n}\n\n// Prepare segments for worker\nlet segments;\nif (prevData.isBatch) {\n  // Batch mode: segments already contain {commentary_id, text}\n  segments = prevData.segments;\n} else {\n  // Single mode: wrap text in array\n  segments = [prevData.text];\n}\n\nreturn [{\n  json: {\n    jobId: data.job_id,\n    workerPayload: {\n      job_id: data.job_id,\n      job_type: prevData.jobType,\n      text: prevData.text,\n      segments: segments,\n      traite: prevData.traite || prevData.context.traite,\n      page: prevData.page || prevData.context.page,\n      commentator: prevData.commentator,\n      source_language: prevData.sourceLanguage,\n      target_language: prevData.targetLanguage,\n      mode: prevData.mode,\n      api_key: prevData.apiKey,\n      openai_api_key: prevData.openaiApiKey,\n      context: prevData.context,\n      metadata: prevData.metadata,\n      request_id: prevData.requestId\n    }\n  }\n}];"
+      },
+      "id": "extract-job-id",
+      "name": "Extract Job ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-job-id",
+              "leftValue": "={{ $json.jobId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "job-created",
+      "name": "Job Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2384,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare response and worker call\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    jobId: input.jobId,\n    workerPayload: input.workerPayload,\n    response: {\n      success: true,\n      cached: false,\n      job_id: input.jobId\n    }\n  }\n}];"
+      },
+      "id": "prepare-response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2608,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.response) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-job-id",
+      "name": "Respond Job ID",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2832,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-translate-worker",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.workerPayload) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "call-worker",
+      "name": "Call Worker (Async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3040,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-cache",
+      "name": "Respond Cache",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build error response\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 500 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-job-error",
+      "name": "Respond Job Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2608,
+        304
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "done",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3264,
+        112
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Can Search Cache?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can Search Cache?": {
+      "main": [
+        [
+          {
+            "node": "Search Cache",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Cache": {
+      "main": [
+        [
+          {
+            "node": "Check Cache Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Cache Result": {
+      "main": [
+        [
+          {
+            "node": "Cache Hit?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache Hit?": {
+      "main": [
+        [
+          {
+            "node": "Format Cache Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Cache Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Job": {
+      "main": [
+        [
+          {
+            "node": "Extract Job ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Job ID": {
+      "main": [
+        [
+          {
+            "node": "Job Created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Created?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Job Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Job ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Job ID": {
+      "main": [
+        [
+          {
+            "node": "Call Worker (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Worker (Async)": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-01-20T19:10:50.733Z",
+    "createdAt": "2026-01-20T19:10:50.733Z",
+    "versionId": "39f57ccf-1da3-4f86-82db-d0d532d5e04b",
+    "workflowId": "euZAb9a3EuC9rfIj",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Torah Discord Translation v2 (Unified)\n\n**Endpoint:** POST /webhook/torah-discord-translate\n\n**Unified Architecture:**\n1. Check cache\n   → If hit: return immediately (cached: true)\n2. Create job via API\n3. Call worker asynchronously\n4. Return job_id immediately\n\n**Bot polls torah-job-status for result**\n\n**Response (cache hit):**\n```json\n{ \"cached\": true, \"translation\": {...} }\n```\n\n**Response (new translation):**\n```json\n{ \"cached\": false, \"job_id\": \"xxx\" }\n```",
+          "height": 340,
+          "width": 320,
+          "color": 5
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          64,
+          64
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "torah-discord-translate",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          400,
+          304
+        ],
+        "webhookId": "torah-discord-translate"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Validation et préparation des données\n// Supports:\n// - Single text: { text: '...' }\n// - Batch commentaries: { job_type: 'batch_commentaries', segments: [{commentary_id, text}] }\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Detect batch mode\nconst jobType = body.job_type || 'unit_translation';\nconst isBatch = jobType === 'batch_commentaries' && Array.isArray(body.segments);\n\n// Extraction des paramètres\nlet text = body.text || '';\nlet segments = [];\n\nif (isBatch) {\n  segments = body.segments;\n  // For batch, text is not required at root - segments have their own text\n  text = segments.length > 0 ? (segments[0].text || '') : '';\n}\n\nconst apiKey = body.api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\nconst targetLanguage = body.target_language || 'fr';\nconst sourceLanguage = body.source_language || 'he';\nconst context = body.context || {};\nconst mode = body.mode || 'standard';\nconst commentator = body.commentator || context.commentator || '';\n\n// Validation\nconst errors = [];\nif (isBatch) {\n  if (segments.length === 0) {\n    errors.push('Le champ \"segments\" doit contenir au moins un élément');\n  }\n  segments.forEach((seg, i) => {\n    if (!seg.text || seg.text.trim().length === 0) {\n      errors.push(`Segment ${i}: le champ \"text\" est requis`);\n    }\n  });\n} else {\n  if (!text || text.trim().length === 0) {\n    errors.push('Le champ \"text\" est requis');\n  }\n}\nif (!apiKey) {\n  errors.push('Le champ \"api_key\" est requis');\n}\nif (!openaiApiKey) {\n  errors.push('Le champ \"openai_api_key\" est requis');\n}\n\n// Cache search params (only for single text, not batch)\nlet cacheSearchParams = `target_language=${targetLanguage}`;\nconst canSearchCache = !isBatch && !!(context.traite && context.page);\nif (canSearchCache) {\n  cacheSearchParams += `&traite=${encodeURIComponent(context.traite)}&page=${encodeURIComponent(context.page)}`;\n  if (context.commentator) {\n    cacheSearchParams += `&commentator=${encodeURIComponent(context.commentator)}`;\n  }\n  cacheSearchParams += `&text=${encodeURIComponent(text)}&exact=true`;\n}\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    isBatch: isBatch,\n    jobType: jobType,\n    text: text,\n    segments: segments,\n    traite: body.traite || context.traite,\n    page: body.page || context.page,\n    commentator: commentator,\n    apiKey: apiKey,\n    openaiApiKey: openaiApiKey,\n    sourceLanguage: sourceLanguage,\n    targetLanguage: targetLanguage,\n    context: context,\n    mode: mode,\n    metadata: body.metadata || {},\n    requestId: body.request_id || 'req_' + Date.now(),\n    cacheSearchParams: cacheSearchParams,\n    canSearchCache: canSearchCache\n  }\n}];"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          624,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-valid",
+        "name": "Input Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          848,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "can-cache",
+                "leftValue": "={{ $json.canSearchCache }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-can-cache",
+        "name": "Can Search Cache?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1072,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/translations/search?{{ $json.cacheSearchParams }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 5000
+          }
+        },
+        "id": "search-cache",
+        "name": "Search Cache",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1280,
+          112
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Check cache result\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nconst cacheHit = statusCode === 200 && data.found === true && data.translations?.length > 0;\n\nif (cacheHit) {\n  const cached = data.translations[0];\n  return [{\n    json: {\n      cacheHit: true,\n      cachedTranslation: cached.translated_text,\n      cachedQuality: cached.quality_score || 0.9,\n      originalText: prevData.text,\n      targetLanguage: prevData.targetLanguage,\n      context: prevData.context\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    cacheHit: false,\n    ...prevData\n  }\n}];"
+        },
+        "id": "check-cache-result",
+        "name": "Check Cache Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1504,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "cache-hit",
+                "leftValue": "={{ $json.cacheHit }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "is-cache-hit",
+        "name": "Cache Hit?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1728,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Format cache hit response\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    success: true,\n    cached: true,\n    translation: {\n      original: input.originalText,\n      final: input.cachedTranslation,\n      source_language: 'he',\n      target_language: input.targetLanguage\n    },\n    verification: {\n      approved: true,\n      confidence: input.cachedQuality\n    },\n    tokens: null\n  }\n}];"
+        },
+        "id": "format-cache-response",
+        "name": "Format Cache Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1952,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/v2/jobs",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ job_type: $json.isBatch ? 'commentary_translation' : $json.jobType, traite: $json.traite || $json.context.traite || 'Unknown', page: $json.page || $json.context.page || '1a', target_language: $json.targetLanguage, segments_count: $json.isBatch ? $json.segments.length : 1, metadata: { commentator: $json.commentator || $json.context.commentator, ref_format: $json.metadata.ref_format || 'commentary' } }) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 10000
+          }
+        },
+        "id": "create-job",
+        "name": "Create Job",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1952,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Extract job_id and prepare worker call\n// Supports both single text and batch commentaries\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || !data.job_id) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || 'Erreur création job',\n        status: 'JOB_CREATE_ERROR'\n      }\n    }\n  }];\n}\n\n// Prepare segments for worker\nlet segments;\nif (prevData.isBatch) {\n  // Batch mode: segments already contain {commentary_id, text}\n  segments = prevData.segments;\n} else {\n  // Single mode: wrap text in array\n  segments = [prevData.text];\n}\n\nreturn [{\n  json: {\n    jobId: data.job_id,\n    workerPayload: {\n      job_id: data.job_id,\n      job_type: prevData.jobType,\n      text: prevData.text,\n      segments: segments,\n      traite: prevData.traite || prevData.context.traite,\n      page: prevData.page || prevData.context.page,\n      commentator: prevData.commentator,\n      source_language: prevData.sourceLanguage,\n      target_language: prevData.targetLanguage,\n      mode: prevData.mode,\n      api_key: prevData.apiKey,\n      openai_api_key: prevData.openaiApiKey,\n      context: prevData.context,\n      metadata: prevData.metadata,\n      request_id: prevData.requestId\n    }\n  }\n}];"
+        },
+        "id": "extract-job-id",
+        "name": "Extract Job ID",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2160,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "has-job-id",
+                "leftValue": "={{ $json.jobId }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "job-created",
+        "name": "Job Created?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2384,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Prepare response and worker call\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    jobId: input.jobId,\n    workerPayload: input.workerPayload,\n    response: {\n      success: true,\n      cached: false,\n      job_id: input.jobId\n    }\n  }\n}];"
+        },
+        "id": "prepare-response",
+        "name": "Prepare Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2608,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json.response) }}",
+          "options": {
+            "responseCode": 200,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-job-id",
+        "name": "Respond Job ID",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2832,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-translate-worker",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.workerPayload) }}",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "call-worker",
+        "name": "Call Worker (Async)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3040,
+          112
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 200,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-cache",
+        "name": "Respond Cache",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2160,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Build error response\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+        },
+        "id": "build-error",
+        "name": "Build Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1072,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1280,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.code || 500 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-job-error",
+        "name": "Respond Job Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2608,
+          304
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "done",
+        "name": "Done",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          3264,
+          112
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Input Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Input Valid?": {
+        "main": [
+          [
+            {
+              "node": "Can Search Cache?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Can Search Cache?": {
+        "main": [
+          [
+            {
+              "node": "Search Cache",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Create Job",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Search Cache": {
+        "main": [
+          [
+            {
+              "node": "Check Cache Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Cache Result": {
+        "main": [
+          [
+            {
+              "node": "Cache Hit?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Cache Hit?": {
+        "main": [
+          [
+            {
+              "node": "Format Cache Response",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Create Job",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Cache Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Cache",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Job": {
+        "main": [
+          [
+            {
+              "node": "Extract Job ID",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Job ID": {
+        "main": [
+          [
+            {
+              "node": "Job Created?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Job Created?": {
+        "main": [
+          [
+            {
+              "node": "Prepare Response",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Job Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Job ID",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Respond Job ID": {
+        "main": [
+          [
+            {
+              "node": "Call Worker (Async)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Worker (Async)": {
+        "main": [
+          [
+            {
+              "node": "Done",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Franck Sebbah",
+    "name": null,
+    "description": null
+  }
+}

@@ -1,0 +1,483 @@
+{
+  "name": "SHOPPING---Cart-Update",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cart-update",
+        "options": {}
+      },
+      "id": "cart-update-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        304
+      ],
+      "webhookId": "cart-update-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extraction Project ID ---\nconst projectId = headers['x-project-id'] \n  || headers['X-Project-ID'] \n  || headers['X-Project-Id']\n  || 'unknown';\n\n// --- Validation discord_user_id ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis'\n  };\n}\n\n// --- Validation item_id ---\nif (!body.item_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_ITEM_ID',\n    message: 'Le champ \"item_id\" est requis'\n  };\n}\n\n// --- Validation quantity ---\nconst quantity = body.quantity;\nif (typeof quantity !== 'number' || quantity < 0 || quantity > 99) {\n  return {\n    error: true,\n    error_code: 'INVALID_QUANTITY',\n    message: 'Le champ \"quantity\" doit etre un nombre entre 0 et 99 (0 = suppression)'\n  };\n}\n\n// --- Retour des donnees validees ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: body.discord_user_id,\n    item_id: body.item_id,\n    quantity: quantity,\n    project_id: projectId\n  }\n};"
+      },
+      "id": "cart-update-0002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cart-update-0003",
+      "name": "Check Validation Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.API_URL }}/api/cart/{{ $json.data.discord_user_id }}/items/{{ $json.data.item_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.data.project_id }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"quantity\": {{ $json.data.quantity }}\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "cart-update-0004",
+      "name": "Call API Update Item",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT SUCCESS RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst validationData = $('Validate Input').first().json;\n\n// --- Check API errors ---\nif (apiResponse.error || apiResponse.success === false) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.error?.code || 'API_ERROR',\n      message: apiResponse.error?.message || 'Erreur API',\n      http_status: apiResponse.error?.http_status || 500\n    }\n  };\n}\n\n// --- Format total_display ---\nconst cart = apiResponse.cart || apiResponse;\nconst totalEuros = (cart.total_cents || 0) / 100;\nconst totalDisplay = totalEuros.toLocaleString('fr-FR', {\n  minimumFractionDigits: 2,\n  maximumFractionDigits: 2\n}) + ' EUR';\n\nreturn {\n  success: true,\n  cart: {\n    id: cart.id,\n    items: cart.items || [],\n    subtotal_cents: cart.subtotal_cents || 0,\n    discount_cents: cart.discount_cents || 0,\n    total_cents: cart.total_cents || 0,\n    total_display: totalDisplay,\n    item_count: cart.item_count || (cart.items?.length || 0),\n    currency: cart.currency || 'EUR'\n  }\n};"
+      },
+      "id": "cart-update-0005",
+      "name": "Format Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT ERROR RESPONSE (Validation)\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation',\n    http_status: 400\n  }\n};"
+      },
+      "id": "cart-update-0006",
+      "name": "Format Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "cart-update-0007",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1104,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.http_status || 400 }}"
+        }
+      },
+      "id": "cart-update-0008",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Check Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Format Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call API Update Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call API Update Item": {
+      "main": [
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-01-20T19:41:54.170Z",
+    "createdAt": "2026-01-20T19:41:54.170Z",
+    "versionId": "c728058a-cfa5-4b52-8cdc-2bbbcdfd6a16",
+    "workflowId": "thMAVXKe1Ri1U6Py",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "cart-update",
+          "options": {}
+        },
+        "id": "cart-update-0001",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          304
+        ],
+        "webhookId": "cart-update-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extraction Project ID ---\nconst projectId = headers['x-project-id'] \n  || headers['X-Project-ID'] \n  || headers['X-Project-Id']\n  || 'unknown';\n\n// --- Validation discord_user_id ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis'\n  };\n}\n\n// --- Validation item_id ---\nif (!body.item_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_ITEM_ID',\n    message: 'Le champ \"item_id\" est requis'\n  };\n}\n\n// --- Validation quantity ---\nconst quantity = body.quantity;\nif (typeof quantity !== 'number' || quantity < 0 || quantity > 99) {\n  return {\n    error: true,\n    error_code: 'INVALID_QUANTITY',\n    message: 'Le champ \"quantity\" doit etre un nombre entre 0 et 99 (0 = suppression)'\n  };\n}\n\n// --- Retour des donnees validees ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: body.discord_user_id,\n    item_id: body.item_id,\n    quantity: quantity,\n    project_id: projectId\n  }\n};"
+        },
+        "id": "cart-update-0002",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          224,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-error",
+                "leftValue": "={{ $json.error }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "cart-update-0003",
+        "name": "Check Validation Error",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          448,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "={{ $env.API_URL }}/api/cart/{{ $json.data.discord_user_id }}/items/{{ $json.data.item_id }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Project-ID",
+                "value": "={{ $json.data.project_id }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"quantity\": {{ $json.data.quantity }}\n}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "cart-update-0004",
+        "name": "Call API Update Item",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          672,
+          208
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT SUCCESS RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst validationData = $('Validate Input').first().json;\n\n// --- Check API errors ---\nif (apiResponse.error || apiResponse.success === false) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.error?.code || 'API_ERROR',\n      message: apiResponse.error?.message || 'Erreur API',\n      http_status: apiResponse.error?.http_status || 500\n    }\n  };\n}\n\n// --- Format total_display ---\nconst cart = apiResponse.cart || apiResponse;\nconst totalEuros = (cart.total_cents || 0) / 100;\nconst totalDisplay = totalEuros.toLocaleString('fr-FR', {\n  minimumFractionDigits: 2,\n  maximumFractionDigits: 2\n}) + ' EUR';\n\nreturn {\n  success: true,\n  cart: {\n    id: cart.id,\n    items: cart.items || [],\n    subtotal_cents: cart.subtotal_cents || 0,\n    discount_cents: cart.discount_cents || 0,\n    total_cents: cart.total_cents || 0,\n    total_display: totalDisplay,\n    item_count: cart.item_count || (cart.items?.length || 0),\n    currency: cart.currency || 'EUR'\n  }\n};"
+        },
+        "id": "cart-update-0005",
+        "name": "Format Success Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT ERROR RESPONSE (Validation)\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation',\n    http_status: 400\n  }\n};"
+        },
+        "id": "cart-update-0006",
+        "name": "Format Validation Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          672,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "cart-update-0007",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1104,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.http_status || 400 }}"
+          }
+        },
+        "id": "cart-update-0008",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          880,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Check Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Format Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Call API Update Item",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call API Update Item": {
+        "main": [
+          [
+            {
+              "node": "Format Success Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Success Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Franck Sebbah",
+    "name": null,
+    "description": null
+  }
+}

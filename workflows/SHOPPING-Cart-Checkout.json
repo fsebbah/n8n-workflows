@@ -1,0 +1,483 @@
+{
+  "name": "SHOPPING---Cart-Checkout",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cart-checkout",
+        "options": {}
+      },
+      "id": "checkout-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        304
+      ],
+      "webhookId": "cart-checkout-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extraction Project ID ---\nconst projectId = headers['x-project-id'] \n  || headers['X-Project-ID'] \n  || headers['X-Project-Id']\n  || 'unknown';\n\n// --- Validation discord_user_id ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis'\n  };\n}\n\n// --- URLs de retour (optionnelles) ---\nconst successUrl = body.success_url || null;\nconst cancelUrl = body.cancel_url || null;\n\n// --- Guild ID pour branding (RFC-003) ---\nconst guildId = body.guild_id || null;\n\n// --- Metadata avec guild_id ---\nconst metadata = {\n  ...(body.metadata || {}),\n  guild_id: guildId\n};\n\n// --- Retour des donnees validees ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: body.discord_user_id,\n    project_id: projectId,\n    success_url: successUrl,\n    cancel_url: cancelUrl,\n    guild_id: guildId,\n    customer_email: body.customer_email || null,\n    metadata: metadata\n  }\n};"
+      },
+      "id": "checkout-0002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "checkout-0003",
+      "name": "Check Validation Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/checkout/{{ $json.data.discord_user_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.data.project_id }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"success_url\": {{ JSON.stringify($json.data.success_url) }},\n  \"cancel_url\": {{ JSON.stringify($json.data.cancel_url) }},\n  \"customer_email\": {{ JSON.stringify($json.data.customer_email) }},\n  \"metadata\": {{ JSON.stringify($json.data.metadata) }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "checkout-0004",
+      "name": "Call API Create Checkout",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT SUCCESS RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst validationData = $('Validate Input').first().json;\n\n// --- Check API errors ---\nif (apiResponse.error || apiResponse.success === false) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.error?.code || 'CHECKOUT_ERROR',\n      message: apiResponse.error?.message || 'Erreur creation checkout',\n      http_status: apiResponse.error?.http_status || 500\n    }\n  };\n}\n\n// --- Success response ---\nreturn {\n  success: true,\n  checkout: {\n    session_id: apiResponse.session_id || apiResponse.checkout?.session_id,\n    checkout_url: apiResponse.checkout_url || apiResponse.checkout?.url,\n    expires_at: apiResponse.expires_at || null\n  },\n  order: {\n    id: apiResponse.order_id || apiResponse.order?.id,\n    order_number: apiResponse.order_number || apiResponse.order?.order_number\n  }\n};"
+      },
+      "id": "checkout-0005",
+      "name": "Format Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT ERROR RESPONSE (Validation)\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation',\n    http_status: 400\n  }\n};"
+      },
+      "id": "checkout-0006",
+      "name": "Format Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "checkout-0007",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1104,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.http_status || 400 }}"
+        }
+      },
+      "id": "checkout-0008",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Check Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Format Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call API Create Checkout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call API Create Checkout": {
+      "main": [
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-01-20T19:35:07.147Z",
+    "createdAt": "2026-01-20T19:35:07.147Z",
+    "versionId": "30daff37-6360-4296-bb79-982948412c1d",
+    "workflowId": "pdwD4Hq228LXWGw1",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "cart-checkout",
+          "options": {}
+        },
+        "id": "checkout-0001",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          304
+        ],
+        "webhookId": "cart-checkout-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extraction Project ID ---\nconst projectId = headers['x-project-id'] \n  || headers['X-Project-ID'] \n  || headers['X-Project-Id']\n  || 'unknown';\n\n// --- Validation discord_user_id ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis'\n  };\n}\n\n// --- URLs de retour (optionnelles) ---\nconst successUrl = body.success_url || null;\nconst cancelUrl = body.cancel_url || null;\n\n// --- Guild ID pour branding (RFC-003) ---\nconst guildId = body.guild_id || null;\n\n// --- Metadata avec guild_id ---\nconst metadata = {\n  ...(body.metadata || {}),\n  guild_id: guildId\n};\n\n// --- Retour des donnees validees ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: body.discord_user_id,\n    project_id: projectId,\n    success_url: successUrl,\n    cancel_url: cancelUrl,\n    guild_id: guildId,\n    customer_email: body.customer_email || null,\n    metadata: metadata\n  }\n};"
+        },
+        "id": "checkout-0002",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          224,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-error",
+                "leftValue": "={{ $json.error }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "checkout-0003",
+        "name": "Check Validation Error",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          448,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/checkout/{{ $json.data.discord_user_id }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Project-ID",
+                "value": "={{ $json.data.project_id }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"success_url\": {{ JSON.stringify($json.data.success_url) }},\n  \"cancel_url\": {{ JSON.stringify($json.data.cancel_url) }},\n  \"customer_email\": {{ JSON.stringify($json.data.customer_email) }},\n  \"metadata\": {{ JSON.stringify($json.data.metadata) }}\n}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "checkout-0004",
+        "name": "Call API Create Checkout",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          672,
+          208
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT SUCCESS RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst validationData = $('Validate Input').first().json;\n\n// --- Check API errors ---\nif (apiResponse.error || apiResponse.success === false) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.error?.code || 'CHECKOUT_ERROR',\n      message: apiResponse.error?.message || 'Erreur creation checkout',\n      http_status: apiResponse.error?.http_status || 500\n    }\n  };\n}\n\n// --- Success response ---\nreturn {\n  success: true,\n  checkout: {\n    session_id: apiResponse.session_id || apiResponse.checkout?.session_id,\n    checkout_url: apiResponse.checkout_url || apiResponse.checkout?.url,\n    expires_at: apiResponse.expires_at || null\n  },\n  order: {\n    id: apiResponse.order_id || apiResponse.order?.id,\n    order_number: apiResponse.order_number || apiResponse.order?.order_number\n  }\n};"
+        },
+        "id": "checkout-0005",
+        "name": "Format Success Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT ERROR RESPONSE (Validation)\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation',\n    http_status: 400\n  }\n};"
+        },
+        "id": "checkout-0006",
+        "name": "Format Validation Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          672,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "checkout-0007",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1104,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.http_status || 400 }}"
+          }
+        },
+        "id": "checkout-0008",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          880,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Check Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Format Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Call API Create Checkout",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call API Create Checkout": {
+        "main": [
+          [
+            {
+              "node": "Format Success Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Success Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Franck Sebbah",
+    "name": null,
+    "description": null
+  }
+}

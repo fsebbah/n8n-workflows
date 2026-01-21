@@ -1,0 +1,699 @@
+{
+  "name": "GUILD---On-Startup-Register",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Guild Registration (Startup)\n\n**Webhook:** POST /guild/register-if-needed\n\n**Input:**\n- guild_id (requis)\n- project_id (requis)\n- name (optionnel)\n\n**Flow:**\n1. Check if guild exists\n2. If not → register it\n3. Return status",
+        "height": 220,
+        "width": 280,
+        "color": 6
+      },
+      "id": "guild-register-note",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "guild/register-if-needed",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "guild-register-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        304
+      ],
+      "webhookId": "guild-register"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\nif (!body.guild_id) errors.push('guild_id requis');\nif (!body.project_id) errors.push('project_id requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: errors.join(', '),\n      http_status: 400\n    }\n  };\n}\n\nreturn {\n  valid: true,\n  guild_id: body.guild_id,\n  project_id: body.project_id,\n  name: body.name || `Guild ${body.guild_id}`\n};"
+      },
+      "id": "guild-register-0002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "guild-register-0003",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/guild/{{ $json.guild_id }}/check",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "guild-register-0004",
+      "name": "Check Guild Exists",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-registered",
+              "leftValue": "={{ $json.registered }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "guild-register-0005",
+      "name": "Already Registered?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/guild/register",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"guild_id\": {{ JSON.stringify($('Validate Input').item.json.guild_id) }},\n  \"project_id\": {{ JSON.stringify($('Validate Input').item.json.project_id) }},\n  \"name\": {{ JSON.stringify($('Validate Input').item.json.name) }}\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "guild-register-0006",
+      "name": "Register Guild",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1104,
+        304
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, action: 'already_registered', guild_id: $json.guild_id, project_id: $json.project_id, name: $json.name }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "guild-register-0007",
+      "name": "Respond Already Registered",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1104,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: $json.success, action: $json.success ? 'registered' : 'conflict', message: $json.message, guild_id: $json.guild_id, project_id: $json.project_id, error: $json.error || null }) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 201 : ($json.error?.code || 500) }}"
+        }
+      },
+      "id": "guild-register-0008",
+      "name": "Respond Registered",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1328,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.http_status || 400 }}"
+        }
+      },
+      "id": "guild-register-0009",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'API_ERROR', message: 'Erreur API check guild', http_status: 500 } }) }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "guild-register-0010",
+      "name": "Respond Check Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, action: 'conflict', error: $json.error || { code: 'REGISTER_ERROR', message: 'Erreur API register guild' } }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 500 }}"
+        }
+      },
+      "id": "guild-register-0011",
+      "name": "Respond Register Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1328,
+        512
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "Check Guild Exists",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Guild Exists": {
+      "main": [
+        [
+          {
+            "node": "Already Registered?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Check Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Registered?": {
+      "main": [
+        [
+          {
+            "node": "Respond Already Registered",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Register Guild",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Guild": {
+      "main": [
+        [
+          {
+            "node": "Respond Registered",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Register Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-01-20T19:57:21.007Z",
+    "createdAt": "2026-01-20T19:57:21.007Z",
+    "versionId": "d45c276d-5eba-4e4f-a6b4-5c9df02fd692",
+    "workflowId": "ltWjzJmmYr6EhyD7",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Guild Registration (Startup)\n\n**Webhook:** POST /guild/register-if-needed\n\n**Input:**\n- guild_id (requis)\n- project_id (requis)\n- name (optionnel)\n\n**Flow:**\n1. Check if guild exists\n2. If not → register it\n3. Return status",
+          "height": 220,
+          "width": 280,
+          "color": 6
+        },
+        "id": "guild-register-note",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -288,
+          192
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "guild/register-if-needed",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "guild-register-0001",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          304
+        ],
+        "webhookId": "guild-register"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATE INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\nif (!body.guild_id) errors.push('guild_id requis');\nif (!body.project_id) errors.push('project_id requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: errors.join(', '),\n      http_status: 400\n    }\n  };\n}\n\nreturn {\n  valid: true,\n  guild_id: body.guild_id,\n  project_id: body.project_id,\n  name: body.name || `Guild ${body.guild_id}`\n};"
+        },
+        "id": "guild-register-0002",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          224,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "guild-register-0003",
+        "name": "Is Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          448,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/guild/{{ $json.guild_id }}/check",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "guild-register-0004",
+        "name": "Check Guild Exists",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          672,
+          208
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-registered",
+                "leftValue": "={{ $json.registered }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "guild-register-0005",
+        "name": "Already Registered?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          880,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/guild/register",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"guild_id\": {{ JSON.stringify($('Validate Input').item.json.guild_id) }},\n  \"project_id\": {{ JSON.stringify($('Validate Input').item.json.project_id) }},\n  \"name\": {{ JSON.stringify($('Validate Input').item.json.name) }}\n}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "guild-register-0006",
+        "name": "Register Guild",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1104,
+          304
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: true, action: 'already_registered', guild_id: $json.guild_id, project_id: $json.project_id, name: $json.name }) }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "guild-register-0007",
+        "name": "Respond Already Registered",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1104,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: $json.success, action: $json.success ? 'registered' : 'conflict', message: $json.message, guild_id: $json.guild_id, project_id: $json.project_id, error: $json.error || null }) }}",
+          "options": {
+            "responseCode": "={{ $json.success ? 201 : ($json.error?.code || 500) }}"
+          }
+        },
+        "id": "guild-register-0008",
+        "name": "Respond Registered",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1328,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.http_status || 400 }}"
+          }
+        },
+        "id": "guild-register-0009",
+        "name": "Respond Validation Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          672,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'API_ERROR', message: 'Erreur API check guild', http_status: 500 } }) }}",
+          "options": {
+            "responseCode": 500
+          }
+        },
+        "id": "guild-register-0010",
+        "name": "Respond Check Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          880,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, action: 'conflict', error: $json.error || { code: 'REGISTER_ERROR', message: 'Erreur API register guild' } }) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.code || 500 }}"
+          }
+        },
+        "id": "guild-register-0011",
+        "name": "Respond Register Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1328,
+          512
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Is Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Valid?": {
+        "main": [
+          [
+            {
+              "node": "Check Guild Exists",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Guild Exists": {
+        "main": [
+          [
+            {
+              "node": "Already Registered?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Check Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Already Registered?": {
+        "main": [
+          [
+            {
+              "node": "Respond Already Registered",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Register Guild",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Register Guild": {
+        "main": [
+          [
+            {
+              "node": "Respond Registered",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Register Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Franck Sebbah",
+    "name": null,
+    "description": null
+  }
+}
