@@ -1,0 +1,399 @@
+{
+  "name": "Document Translate Worker",
+  "nodes": [
+    {
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [64, 64],
+      "parameters": {
+        "color": 6,
+        "width": 450,
+        "height": 480,
+        "content": "## Document Translate Worker\n\n**Endpoint:** POST /webhook/document-translate-worker\n\n**Input:**\n```json\n{\n  \"job_type\": \"pdf_translation\",\n  \"document\": {\n    \"type\": \"pdf | text | url\",\n    \"content\": \"base64 | text | url\",\n    \"filename\": \"document.pdf\",\n    \"total_pages\": 35\n  },\n  \"source_language\": \"he\",\n  \"target_language\": \"fr\",\n  \"mode\": \"premium\",\n  \"api_key\": \"sk-ant-...\",\n  \"openai_api_key\": \"sk-...\",\n  \"project_id\": \"...\"\n}\n```\n\n**Process:**\n1. Validate input & create job\n2. Respond immediately with job_id\n3. Split document into pages/chunks\n4. Translate each page (loop)\n5. Update progress after each page\n6. Combine results\n7. Store final result & mark complete\n\n**Output:**\n- `job_id`: string\n- `status`: \"accepted\"\n- `total_pages`: number"
+      }
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "webhookId": "document-translate-worker",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "document-translate-worker",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300],
+      "parameters": {
+        "jsCode": "// Validation des paramètres\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst document = body.document || {};\nconst jobType = body.job_type || 'pdf_translation';\nconst sourceLanguage = body.source_language || 'he';\nconst targetLanguage = body.target_language || 'fr';\nconst mode = body.mode || 'premium';\nconst apiKey = body.api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\nconst projectId = body.project_id || '';\nconst requestId = body.request_id || null;\n\n// Validation\nconst errors = [];\nif (!document.content) errors.push('document.content requis');\nif (!document.type) errors.push('document.type requis (pdf, text, url)');\nif (!apiKey) errors.push('api_key (Anthropic) requis');\nif (!openaiApiKey) errors.push('openai_api_key requis');\nif (!projectId) errors.push('project_id requis');\n\n// Générer un job_id unique\nconst jobId = 'doc_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\n// Déterminer le nombre de pages\nconst totalPages = document.total_pages || 1;\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    jobId: jobId,\n    jobType: jobType,\n    document: document,\n    totalPages: totalPages,\n    sourceLanguage: sourceLanguage,\n    targetLanguage: targetLanguage,\n    mode: mode,\n    apiKey: apiKey,\n    openaiApiKey: openaiApiKey,\n    projectId: projectId,\n    requestId: requestId,\n    startTime: Date.now()\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [920, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 450],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 400, message: $json.errors.join(', '), status: 'BAD_REQUEST' } }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "application/json" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create-job",
+      "name": "Create Job (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/v2/jobs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-Project-ID", "value": "={{ $json.projectId }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_type: $json.jobType, input: { document_type: $json.document.type, filename: $json.document.filename, total_pages: $json.totalPages, source_language: $json.sourceLanguage, target_language: $json.targetLanguage, mode: $json.mode, metadata: { requested_by: 'n8n_workflow', request_id: $json.requestId } } }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "prepare-response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\n// Extraire job_id de la réponse API ou utiliser celui généré\nconst apiJobId = input.body?.id || input.body?.job_id || input.id || input.job_id;\nconst jobId = apiJobId || prevData.jobId;\n\nreturn [{\n  json: {\n    ...prevData,\n    jobId: jobId,\n    apiResponse: input.body || input\n  }\n}];"
+      }
+    },
+    {
+      "id": "respond-accepted",
+      "name": "Respond Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1580, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'accepted', total_pages: $json.totalPages, message: 'Document translation started' }) }}",
+        "options": {
+          "responseCode": 202,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "application/json" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "set-processing",
+      "name": "Set Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 300],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-Project-ID", "value": "={{ $json.projectId }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'processing' }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "split-document",
+      "name": "Split Document",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 300],
+      "parameters": {
+        "jsCode": "// Récupérer les données\nconst prevData = $('Prepare Response').first().json;\nconst document = prevData.document;\nconst totalPages = prevData.totalPages;\n\n// Créer un item par page\nconst pages = [];\nfor (let i = 0; i < totalPages; i++) {\n  pages.push({\n    json: {\n      pageIndex: i,\n      pageNumber: i + 1,\n      totalPages: totalPages,\n      jobId: prevData.jobId,\n      jobType: prevData.jobType,\n      document: document,\n      sourceLanguage: prevData.sourceLanguage,\n      targetLanguage: prevData.targetLanguage,\n      mode: prevData.mode,\n      apiKey: prevData.apiKey,\n      openaiApiKey: prevData.openaiApiKey,\n      projectId: prevData.projectId,\n      requestId: prevData.requestId,\n      startTime: prevData.startTime\n    }\n  });\n}\n\nreturn pages;"
+      }
+    },
+    {
+      "id": "loop-pages",
+      "name": "Loop Pages",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2240, 300],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "extract-page-content",
+      "name": "Extract Page Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2460, 400],
+      "parameters": {
+        "jsCode": "// Extraire le contenu de la page actuelle\nconst input = $input.first().json;\nconst document = input.document;\nconst pageIndex = input.pageIndex;\n\n// Selon le type de document, extraire le contenu\nlet pageContent = '';\n\nif (document.type === 'text') {\n  // Si c'est du texte, on divise par pages (approximatif)\n  const lines = (document.content || '').split('\\n');\n  const linesPerPage = Math.ceil(lines.length / input.totalPages);\n  const startLine = pageIndex * linesPerPage;\n  const endLine = Math.min(startLine + linesPerPage, lines.length);\n  pageContent = lines.slice(startLine, endLine).join('\\n');\n} else if (document.type === 'pages') {\n  // Si pages pré-découpées\n  pageContent = document.pages?.[pageIndex] || '';\n} else {\n  // PDF ou autre - le contenu devrait être pré-extrait\n  pageContent = document.pages?.[pageIndex] || document.content || '';\n}\n\nreturn [{\n  json: {\n    ...input,\n    pageContent: pageContent\n  }\n}];"
+      }
+    },
+    {
+      "id": "translate-page",
+      "name": "Translate Page (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2680, 400],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $json.apiKey }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 4096, messages: [{ role: 'user', content: 'Traduis ce texte du ' + $json.sourceLanguage + ' vers le ' + $json.targetLanguage + '. Conserve la mise en forme.\\n\\nTexte à traduire:\\n' + $json.pageContent + '\\n\\nRéponds UNIQUEMENT avec la traduction.' }] }) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": { "fullResponse": true }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "extract-translation",
+      "name": "Extract Translation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2900, 400],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Extract Page Content').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nlet translation = '';\nlet claudeUsage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\nlet error = null;\n\nif (statusCode >= 400 || data.error) {\n  error = data.error?.message || `HTTP ${statusCode}`;\n  translation = prevData.pageContent; // Fallback: texte original\n} else if (data.content?.[0]?.text) {\n  translation = data.content[0].text.trim();\n  claudeUsage = {\n    input_tokens: data.usage?.input_tokens || 0,\n    output_tokens: data.usage?.output_tokens || 0,\n    total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)\n  };\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    translation: translation,\n    claudeUsage: claudeUsage,\n    translationError: error\n  }\n}];"
+      }
+    },
+    {
+      "id": "update-progress",
+      "name": "Update Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3120, 400],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-Project-ID", "value": "={{ $json.projectId }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'processing', progress: { current: $json.pageNumber, total: $json.totalPages, percentage: Math.round($json.pageNumber / $json.totalPages * 100) } }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "accumulate-result",
+      "name": "Accumulate Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3340, 400],
+      "parameters": {
+        "jsCode": "// Accumuler les traductions dans staticData\nconst staticData = $getWorkflowStaticData('global');\nconst input = $input.first().json;\nconst jobId = input.jobId;\n\nif (!staticData.translations) {\n  staticData.translations = {};\n}\nif (!staticData.translations[jobId]) {\n  staticData.translations[jobId] = {\n    pages: [],\n    totalTokens: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }\n  };\n}\n\n// Ajouter la traduction de cette page\nstaticData.translations[jobId].pages[input.pageIndex] = {\n  pageNumber: input.pageNumber,\n  original: input.pageContent,\n  translation: input.translation,\n  error: input.translationError\n};\n\n// Accumuler les tokens\nconst usage = input.claudeUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\nstaticData.translations[jobId].totalTokens.input_tokens += usage.input_tokens;\nstaticData.translations[jobId].totalTokens.output_tokens += usage.output_tokens;\nstaticData.translations[jobId].totalTokens.total_tokens += usage.total_tokens;\n\n// Vérifier si c'est la dernière page\nconst isComplete = input.pageNumber >= input.totalPages;\n\nreturn [{\n  json: {\n    ...input,\n    isComplete: isComplete,\n    accumulatedData: staticData.translations[jobId]\n  }\n}];"
+      }
+    },
+    {
+      "id": "back-to-loop",
+      "name": "Back to Loop",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [3560, 400]
+    },
+    {
+      "id": "finalize",
+      "name": "Finalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2460, 200],
+      "parameters": {
+        "jsCode": "// Récupérer les traductions accumulées\nconst staticData = $getWorkflowStaticData('global');\nconst input = $input.first().json;\n\n// Trouver le jobId depuis les données précédentes\nlet jobId = null;\nlet result = null;\n\nif (staticData.translations) {\n  for (const [id, data] of Object.entries(staticData.translations)) {\n    if (data.pages && data.pages.length > 0) {\n      jobId = id;\n      result = data;\n      delete staticData.translations[id];\n      break;\n    }\n  }\n}\n\nif (!result) {\n  return [{ json: { success: false, reason: 'no_translations_found' } }];\n}\n\n// Combiner toutes les traductions\nconst fullTranslation = result.pages\n  .filter(p => p)\n  .map(p => p.translation)\n  .join('\\n\\n--- Page Break ---\\n\\n');\n\nreturn [{\n  json: {\n    jobId: jobId,\n    success: true,\n    totalPages: result.pages.filter(p => p).length,\n    fullTranslation: fullTranslation,\n    pages: result.pages,\n    tokens: result.totalTokens,\n    completedAt: Date.now()\n  }\n}];"
+      }
+    },
+    {
+      "id": "store-result",
+      "name": "Store Result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2680, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-result-store",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.jobId, result: { type: 'document_translation', pages: $json.pages, full_translation: $json.fullTranslation, tokens: $json.tokens, completed_at: $json.completedAt } }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "mark-complete",
+      "name": "Mark Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2900, 200],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'completed', progress: { current: $json.totalPages, total: $json.totalPages, percentage: 100 }, output: { pages_translated: $json.totalPages, tokens: $json.tokens } }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "done",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [3120, 200]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Input Valid?", "type": "main", "index": 0 }]]
+    },
+    "Input Valid?": {
+      "main": [
+        [{ "node": "Create Job (API)", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Job (API)": {
+      "main": [[{ "node": "Prepare Response", "type": "main", "index": 0 }]]
+    },
+    "Prepare Response": {
+      "main": [[{ "node": "Respond Accepted", "type": "main", "index": 0 }]]
+    },
+    "Respond Accepted": {
+      "main": [[{ "node": "Set Processing", "type": "main", "index": 0 }]]
+    },
+    "Set Processing": {
+      "main": [[{ "node": "Split Document", "type": "main", "index": 0 }]]
+    },
+    "Split Document": {
+      "main": [[{ "node": "Loop Pages", "type": "main", "index": 0 }]]
+    },
+    "Loop Pages": {
+      "main": [
+        [{ "node": "Finalize", "type": "main", "index": 0 }],
+        [{ "node": "Extract Page Content", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Page Content": {
+      "main": [[{ "node": "Translate Page (Claude)", "type": "main", "index": 0 }]]
+    },
+    "Translate Page (Claude)": {
+      "main": [[{ "node": "Extract Translation", "type": "main", "index": 0 }]]
+    },
+    "Extract Translation": {
+      "main": [[{ "node": "Update Progress", "type": "main", "index": 0 }]]
+    },
+    "Update Progress": {
+      "main": [[{ "node": "Accumulate Result", "type": "main", "index": 0 }]]
+    },
+    "Accumulate Result": {
+      "main": [[{ "node": "Back to Loop", "type": "main", "index": 0 }]]
+    },
+    "Back to Loop": {
+      "main": [[{ "node": "Loop Pages", "type": "main", "index": 0 }]]
+    },
+    "Finalize": {
+      "main": [[{ "node": "Store Result", "type": "main", "index": 0 }]]
+    },
+    "Store Result": {
+      "main": [[{ "node": "Mark Complete", "type": "main", "index": 0 }]]
+    },
+    "Mark Complete": {
+      "main": [[{ "node": "Done", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}
