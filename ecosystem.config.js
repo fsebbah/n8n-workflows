@@ -56,6 +56,11 @@ module.exports = {
         MISTRAL_API_KEY: process.env.MISTRAL_API_KEY || '',
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
         OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+
+        // Discord API
+        DISCORD_API_URL: 'https://discord.com/api/v10',
+        DISCORD_URL_CHANNEL: 'https://discord.com/api/v10/channels/',
+        DISCORD_TOKEN: process.env.DISCORD_TOKEN || '',
       },
 
       // Environnement production (moins de logs)
@@ -85,6 +90,11 @@ module.exports = {
         MISTRAL_API_KEY: process.env.MISTRAL_API_KEY || '',
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
         OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+
+        // Discord API
+        DISCORD_API_URL: 'https://discord.com/api/v10',
+        DISCORD_URL_CHANNEL: 'https://discord.com/api/v10/channels/',
+        DISCORD_TOKEN: process.env.DISCORD_TOKEN || '',
       },
 
       // Redémarrage automatique
