@@ -3,8 +3,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Translate Worker (Unified)\n\n**Endpoint:** POST /webhook/torah-translate-worker\n\n**Called by:** torah-discord-translate\n\n**Features:**\n- Single or multi-segment translation\n- Auto-pivot if source ≠ en AND target ≠ en\n- Claude translation + GPT verification\n- Detailed tokens (claude/gpt/total)\n- Stores result for job-status retrieval\n\n**Process:**\n1. Respond immediately (async)\n2. PATCH /api/jobs → in_progress\n3. For each segment:\n   - Check if pivot needed\n   - Claude: translate (1 or 2 steps)\n   - GPT: verify\n   - POST /api/translations/save\n   - PATCH /api/jobs (progress + tokens)\n4. Store final result\n5. PATCH /api/jobs → completed",
-        "height": 420,
+        "content": "## Torah Translate Worker (Unified)\n\n**Endpoint:** POST /webhook/torah-translate-worker\n\n**Called by:** torah-discord-translate\n\n**Features:**\n- Single or multi-segment translation\n- Auto-pivot if source ≠ en AND target ≠ en\n- Claude translation + GPT verification\n- Detailed tokens (claude/gpt/total)\n- **Check-before-process** (cancellation support)\n- Stores result for job-status retrieval\n\n**Process:**\n1. Respond immediately (async)\n2. PATCH /api/jobs → in_progress\n3. For each segment:\n   - **CHECK job status** (exit if cancelled)\n   - Check if pivot needed\n   - Claude: translate (1 or 2 steps)\n   - GPT: verify\n   - POST /api/translations/save\n   - PATCH /api/jobs (progress + tokens)\n4. Store final result\n5. PATCH /api/jobs → completed\n\n**RFC:** RFC-017 (Job Lifecycle)",
+        "height": 480,
         "width": 340,
         "color": 5
       },
@@ -507,6 +507,98 @@
         5040,
         304
       ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 5000
+        }
+      },
+      "id": "check-job-status",
+      "name": "Check Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1968,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if job is still active (not cancelled)\nconst input = $input.first().json;\nconst prevData = $('Loop Segments').first().json;\n\nconst statusCode = input.statusCode || 200;\nconst job = input.body || input;\nconst jobStatus = job.status || 'processing';\n\n// If job was cancelled, we should exit\nconst isCancelled = jobStatus === 'cancelled';\n\n// Get accumulated credits so far from static data\nconst staticData = $getWorkflowStaticData('global');\nconst jobId = prevData.jobId;\nconst accumulated = staticData.pendingResults?.[jobId] || {\n  totalClaudeTokens: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },\n  totalGptTokens: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },\n  segments: []\n};\n\nreturn [{\n  json: {\n    ...prevData,\n    jobStatus: jobStatus,\n    isCancelled: isCancelled,\n    segmentsCompleted: accumulated.segments?.length || 0,\n    accumulatedCredits: {\n      claude: accumulated.totalClaudeTokens,\n      gpt: accumulated.totalGptTokens,\n      total: {\n        input_tokens: (accumulated.totalClaudeTokens?.input_tokens || 0) + (accumulated.totalGptTokens?.input_tokens || 0),\n        output_tokens: (accumulated.totalClaudeTokens?.output_tokens || 0) + (accumulated.totalGptTokens?.output_tokens || 0),\n        total_tokens: (accumulated.totalClaudeTokens?.total_tokens || 0) + (accumulated.totalGptTokens?.total_tokens || 0)\n      }\n    }\n  }\n}];"
+      },
+      "id": "parse-job-status",
+      "name": "Parse Job Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2176,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-cancelled",
+              "leftValue": "={{ $json.isCancelled }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "job-still-active",
+      "name": "Job Still Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Job was cancelled - exit early with credits summary\nconst input = $input.first().json;\n\n// Clean up static data\nconst staticData = $getWorkflowStaticData('global');\nconst jobId = input.jobId;\nif (staticData.pendingResults?.[jobId]) {\n  delete staticData.pendingResults[jobId];\n}\n\nreturn [{\n  json: {\n    jobId: input.jobId,\n    exitReason: 'cancelled',\n    segmentsCompleted: input.segmentsCompleted,\n    totalSegments: input.totalSegments,\n    creditsConsumed: input.accumulatedCredits,\n    message: `Job annulé. ${input.segmentsCompleted}/${input.totalSegments} segments traités.`\n  }\n}];"
+      },
+      "id": "handle-cancellation",
+      "name": "Handle Cancellation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2624,
+        100
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "exit-cancelled",
+      "name": "Exit (Cancelled)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2848,
+        100
+      ]
     }
   ],
   "connections": {
@@ -587,7 +679,58 @@
         ],
         [
           {
+            "node": "Check Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Job Status": {
+      "main": [
+        [
+          {
+            "node": "Parse Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Job Status": {
+      "main": [
+        [
+          {
+            "node": "Job Still Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Still Active?": {
+      "main": [
+        [
+          {
             "node": "Needs Pivot?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Cancellation": {
+      "main": [
+        [
+          {
+            "node": "Exit (Cancelled)",
             "type": "main",
             "index": 0
           }
