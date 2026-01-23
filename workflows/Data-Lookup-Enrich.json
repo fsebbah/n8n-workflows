@@ -1,0 +1,363 @@
+{
+  "name": "Data Lookup Enrich",
+  "nodes": [
+    {
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 700,
+        "height": 420,
+        "content": "## Data Lookup Enrich\n\n**Endpoint:** POST /webhook/data-lookup-enrich\n\n**Purpose:** Enrich items with external data sources (nutrition, prices, etc.).\n\n**Request:**\n```json\n{\n  \"items\": [\n    {\"name\": \"poulet\", \"quantity\": 650, \"unit\": \"g\"},\n    {\"name\": \"lait de coco\", \"quantity\": 400, \"unit\": \"ml\"}\n  ],\n  \"source\": \"openfoodfacts\",\n  \"fields\": [\"energy_kcal\", \"protein_g\", \"fat_g\", \"carbs_g\"],\n  \"aggregate\": { \"method\": \"sum\", \"divide_by\": 4 }\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"enriched_items\": [...],\n  \"aggregated\": {\n    \"energy_kcal\": 536,\n    \"protein_g\": 38\n  },\n  \"data_quality\": {\n    \"matched\": 5,\n    \"estimated\": 1,\n    \"not_found\": 0\n  }\n}\n```\n\n**Available sources:**\n- `openfoodfacts`: OpenFoodFacts API (free, community)\n- `ciqual`: CIQUAL database (Phase 2)\n- `custom_api`: Custom API endpoint\n\n**RFC:** RFC-018 (Recipe Enrichment)"
+      }
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500],
+      "webhookId": "data-lookup-enrich",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "data-lookup-enrich",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 500],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\n// Validate required fields\nconst items = body.items;\nconst source = body.source;\nconst fields = body.fields || ['energy_kcal', 'protein_g', 'fat_g', 'carbs_g', 'fiber_g', 'salt_g'];\nconst aggregate = body.aggregate || { method: 'sum' };\nconst pluginContext = body.plugin_context || {};\n\nconst errors = [];\nif (!items || !Array.isArray(items) || items.length === 0) {\n  errors.push('items (array) is required');\n}\nif (!source || typeof source !== 'string') {\n  errors.push('source (string) is required');\n}\n\n// Validate items structure\nif (items && Array.isArray(items)) {\n  for (let i = 0; i < items.length; i++) {\n    const item = items[i];\n    if (!item.name) {\n      errors.push(`items[${i}].name is required`);\n    }\n  }\n}\n\n// Check valid sources\nconst validSources = ['openfoodfacts', 'ciqual', 'custom_api'];\nif (source && !validSources.includes(source)) {\n  errors.push(`Invalid source. Valid sources: ${validSources.join(', ')}`);\n}\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// Normalize items\nconst normalizedItems = items.map((item, index) => ({\n  index: index,\n  name: item.name.trim(),\n  name_normalized: item.name.trim().toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, ''),\n  quantity: item.quantity || 100,\n  unit: item.unit || 'g',\n  original: item\n}));\n\nreturn {\n  json: {\n    valid: true,\n    items: normalizedItems,\n    source: source,\n    fields: fields,\n    aggregate: {\n      method: aggregate.method || 'sum',\n      divide_by: aggregate.divide_by || null\n    },\n    plugin_context: pluginContext,\n    custom_api_url: body.custom_api_url || null\n  }\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 500],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 650],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error || { code: 400, message: 'Validation error', status: 'BAD_REQUEST' } }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "switch-source",
+      "name": "Source Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [960, 500],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "openfoodfacts",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.source }}",
+                    "rightValue": "openfoodfacts",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "ciqual",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.source }}",
+                    "rightValue": "ciqual",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "custom_api",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.source }}",
+                    "rightValue": "custom_api",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      }
+    },
+    {
+      "id": "openfoodfacts-lookup",
+      "name": "OpenFoodFacts Lookup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 400],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst items = input.items;\nconst fields = input.fields;\nconst aggregate = input.aggregate;\n\n// Simulate OpenFoodFacts lookup (in production, this would make HTTP requests)\n// For now, use estimated nutrition data based on common ingredients\nconst nutritionDatabase = {\n  // Proteins\n  'poulet': { energy_kcal: 165, protein_g: 31, fat_g: 3.6, fat_saturated_g: 1, carbs_g: 0, carbs_sugar_g: 0, fiber_g: 0, salt_g: 0.12, per_100g: true },\n  'blancs de poulet': { energy_kcal: 165, protein_g: 31, fat_g: 3.6, fat_saturated_g: 1, carbs_g: 0, carbs_sugar_g: 0, fiber_g: 0, salt_g: 0.12, per_100g: true },\n  'boeuf': { energy_kcal: 250, protein_g: 26, fat_g: 15, fat_saturated_g: 6, carbs_g: 0, carbs_sugar_g: 0, fiber_g: 0, salt_g: 0.08, per_100g: true },\n  'saumon': { energy_kcal: 208, protein_g: 20, fat_g: 13, fat_saturated_g: 3, carbs_g: 0, carbs_sugar_g: 0, fiber_g: 0, salt_g: 0.06, per_100g: true },\n  'oeuf': { energy_kcal: 155, protein_g: 13, fat_g: 11, fat_saturated_g: 3.3, carbs_g: 1.1, carbs_sugar_g: 1.1, fiber_g: 0, salt_g: 0.35, per_100g: true },\n  'oeufs': { energy_kcal: 155, protein_g: 13, fat_g: 11, fat_saturated_g: 3.3, carbs_g: 1.1, carbs_sugar_g: 1.1, fiber_g: 0, salt_g: 0.35, per_100g: true },\n  \n  // Dairy\n  'lait de coco': { energy_kcal: 185, protein_g: 1.8, fat_g: 18, fat_saturated_g: 16, carbs_g: 3.3, carbs_sugar_g: 3.3, fiber_g: 0, salt_g: 0.03, per_100g: true },\n  'beurre': { energy_kcal: 717, protein_g: 0.9, fat_g: 81, fat_saturated_g: 51, carbs_g: 0.1, carbs_sugar_g: 0.1, fiber_g: 0, salt_g: 0.6, per_100g: true },\n  'creme fraiche': { energy_kcal: 292, protein_g: 2.4, fat_g: 30, fat_saturated_g: 19, carbs_g: 2.8, carbs_sugar_g: 2.8, fiber_g: 0, salt_g: 0.06, per_100g: true },\n  'fromage': { energy_kcal: 350, protein_g: 25, fat_g: 27, fat_saturated_g: 17, carbs_g: 1.3, carbs_sugar_g: 0.5, fiber_g: 0, salt_g: 1.5, per_100g: true },\n  'lait': { energy_kcal: 42, protein_g: 3.4, fat_g: 1, fat_saturated_g: 0.6, carbs_g: 5, carbs_sugar_g: 5, fiber_g: 0, salt_g: 0.1, per_100g: true },\n  \n  // Oils & fats\n  'huile d\\'olive': { energy_kcal: 884, protein_g: 0, fat_g: 100, fat_saturated_g: 14, carbs_g: 0, carbs_sugar_g: 0, fiber_g: 0, salt_g: 0, per_100g: true },\n  'huile vegetale': { energy_kcal: 884, protein_g: 0, fat_g: 100, fat_saturated_g: 12, carbs_g: 0, carbs_sugar_g: 0, fiber_g: 0, salt_g: 0, per_100g: true },\n  \n  // Vegetables\n  'oignon': { energy_kcal: 40, protein_g: 1.1, fat_g: 0.1, fat_saturated_g: 0, carbs_g: 9.3, carbs_sugar_g: 4.2, fiber_g: 1.7, salt_g: 0.01, per_100g: true },\n  'ail': { energy_kcal: 149, protein_g: 6.4, fat_g: 0.5, fat_saturated_g: 0.1, carbs_g: 33, carbs_sugar_g: 1, fiber_g: 2.1, salt_g: 0.02, per_100g: true },\n  'carotte': { energy_kcal: 41, protein_g: 0.9, fat_g: 0.2, fat_saturated_g: 0, carbs_g: 10, carbs_sugar_g: 4.7, fiber_g: 2.8, salt_g: 0.08, per_100g: true },\n  'tomate': { energy_kcal: 18, protein_g: 0.9, fat_g: 0.2, fat_saturated_g: 0, carbs_g: 3.9, carbs_sugar_g: 2.6, fiber_g: 1.2, salt_g: 0.01, per_100g: true },\n  'poivron': { energy_kcal: 31, protein_g: 1, fat_g: 0.3, fat_saturated_g: 0.1, carbs_g: 6, carbs_sugar_g: 4.2, fiber_g: 2.1, salt_g: 0, per_100g: true },\n  'courgette': { energy_kcal: 17, protein_g: 1.2, fat_g: 0.3, fat_saturated_g: 0.1, carbs_g: 3.1, carbs_sugar_g: 2.5, fiber_g: 1, salt_g: 0.01, per_100g: true },\n  'pomme de terre': { energy_kcal: 77, protein_g: 2, fat_g: 0.1, fat_saturated_g: 0, carbs_g: 17, carbs_sugar_g: 0.8, fiber_g: 2.2, salt_g: 0.01, per_100g: true },\n  \n  // Spices & condiments\n  'curry': { energy_kcal: 325, protein_g: 14, fat_g: 14, fat_saturated_g: 2, carbs_g: 55, carbs_sugar_g: 2.8, fiber_g: 33, salt_g: 0.05, per_100g: true },\n  'curry en poudre': { energy_kcal: 325, protein_g: 14, fat_g: 14, fat_saturated_g: 2, carbs_g: 55, carbs_sugar_g: 2.8, fiber_g: 33, salt_g: 0.05, per_100g: true },\n  'sel': { energy_kcal: 0, protein_g: 0, fat_g: 0, fat_saturated_g: 0, carbs_g: 0, carbs_sugar_g: 0, fiber_g: 0, salt_g: 100, per_100g: true },\n  'poivre': { energy_kcal: 251, protein_g: 10, fat_g: 3.3, fat_saturated_g: 1.4, carbs_g: 64, carbs_sugar_g: 0.6, fiber_g: 25, salt_g: 0.02, per_100g: true },\n  \n  // Grains\n  'riz': { energy_kcal: 130, protein_g: 2.7, fat_g: 0.3, fat_saturated_g: 0.1, carbs_g: 28, carbs_sugar_g: 0.1, fiber_g: 0.4, salt_g: 0, per_100g: true },\n  'pates': { energy_kcal: 131, protein_g: 5, fat_g: 1.1, fat_saturated_g: 0.2, carbs_g: 25, carbs_sugar_g: 0.6, fiber_g: 1.8, salt_g: 0.01, per_100g: true },\n  'pain': { energy_kcal: 265, protein_g: 9, fat_g: 3.2, fat_saturated_g: 0.7, carbs_g: 49, carbs_sugar_g: 5, fiber_g: 2.7, salt_g: 1.2, per_100g: true },\n  'farine': { energy_kcal: 364, protein_g: 10, fat_g: 1, fat_saturated_g: 0.2, carbs_g: 76, carbs_sugar_g: 0.3, fiber_g: 2.7, salt_g: 0, per_100g: true }\n};\n\n// Helper function to find best match\nfunction findBestMatch(name) {\n  const normalized = name.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n  \n  // Exact match\n  if (nutritionDatabase[normalized]) {\n    return { data: nutritionDatabase[normalized], match_type: 'exact' };\n  }\n  \n  // Partial match\n  for (const key of Object.keys(nutritionDatabase)) {\n    if (normalized.includes(key) || key.includes(normalized)) {\n      return { data: nutritionDatabase[key], match_type: 'partial' };\n    }\n  }\n  \n  // Not found - return estimate\n  return { data: null, match_type: 'not_found' };\n}\n\n// Helper function to convert unit to grams\nfunction convertToGrams(quantity, unit) {\n  const unitConversions = {\n    'g': 1,\n    'kg': 1000,\n    'ml': 1, // Assuming density ~1 for liquids\n    'l': 1000,\n    'cl': 10,\n    'c.s.': 15, // cuillère à soupe\n    'c.c.': 5, // cuillère à café\n    'tsp': 5,\n    'tbsp': 15,\n    'cup': 240,\n    'piece': 50, // Average piece\n    'pièce': 50,\n    'unite': 50,\n    'unité': 50\n  };\n  \n  const unitLower = unit.toLowerCase();\n  const multiplier = unitConversions[unitLower] || 1;\n  return quantity * multiplier;\n}\n\n// Process each item\nconst enrichedItems = [];\nlet matched = 0;\nlet estimated = 0;\nlet notFound = 0;\n\nfor (const item of items) {\n  const match = findBestMatch(item.name);\n  const quantityInGrams = convertToGrams(item.quantity, item.unit);\n  \n  if (match.data) {\n    // Calculate nutrition based on quantity\n    const ratio = quantityInGrams / 100;\n    const enrichedData = {};\n    \n    for (const field of fields) {\n      if (match.data[field] !== undefined) {\n        enrichedData[field] = Math.round(match.data[field] * ratio * 10) / 10;\n      }\n    }\n    \n    enrichedItems.push({\n      ...item.original,\n      nutrition: enrichedData,\n      match_type: match.match_type,\n      quantity_g: quantityInGrams\n    });\n    \n    if (match.match_type === 'exact') {\n      matched++;\n    } else {\n      estimated++;\n    }\n  } else {\n    // Not found - add with null values\n    const enrichedData = {};\n    for (const field of fields) {\n      enrichedData[field] = null;\n    }\n    \n    enrichedItems.push({\n      ...item.original,\n      nutrition: enrichedData,\n      match_type: 'not_found',\n      quantity_g: quantityInGrams\n    });\n    notFound++;\n  }\n}\n\n// Calculate aggregated values\nconst aggregated = {};\nfor (const field of fields) {\n  let total = 0;\n  let hasValue = false;\n  \n  for (const item of enrichedItems) {\n    if (item.nutrition[field] !== null) {\n      total += item.nutrition[field];\n      hasValue = true;\n    }\n  }\n  \n  if (hasValue) {\n    let finalValue = total;\n    \n    if (aggregate.method === 'average') {\n      finalValue = total / enrichedItems.length;\n    }\n    \n    if (aggregate.divide_by && aggregate.divide_by > 0) {\n      finalValue = finalValue / aggregate.divide_by;\n    }\n    \n    aggregated[field] = Math.round(finalValue * 10) / 10;\n  } else {\n    aggregated[field] = null;\n  }\n}\n\n// Calculate total and per_serving if divide_by is provided\nconst result = {\n  success: true,\n  enriched_items: enrichedItems,\n  aggregated: aggregate.divide_by ? {\n    per_serving: aggregated,\n    total: {}\n  } : aggregated,\n  data_quality: {\n    matched: matched,\n    estimated: estimated,\n    not_found: notFound,\n    confidence: (matched + estimated * 0.7) / items.length\n  },\n  meta: {\n    source: 'openfoodfacts',\n    items_count: items.length,\n    fields: fields,\n    aggregate_method: aggregate.method,\n    servings: aggregate.divide_by || 1\n  }\n};\n\n// If divide_by is set, also calculate total\nif (aggregate.divide_by) {\n  for (const field of fields) {\n    if (aggregated[field] !== null) {\n      result.aggregated.total[field] = Math.round(aggregated[field] * aggregate.divide_by * 10) / 10;\n    }\n  }\n}\n\nreturn { json: result };"
+      }
+    },
+    {
+      "id": "ciqual-lookup",
+      "name": "CIQUAL Lookup (Phase 2)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 550],
+      "parameters": {
+        "jsCode": "// CIQUAL lookup - Phase 2 implementation\n// For now, return a message indicating this source is not yet available\n\nconst input = $input.first().json;\n\nreturn {\n  json: {\n    success: false,\n    error: {\n      code: 501,\n      message: 'CIQUAL data source is planned for Phase 2. Please use openfoodfacts in the meantime.',\n      status: 'NOT_IMPLEMENTED'\n    },\n    meta: {\n      source: 'ciqual',\n      items_count: input.items.length\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "custom-api-lookup",
+      "name": "Custom API Lookup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 700],
+      "parameters": {
+        "jsCode": "// Custom API lookup\n// For now, return a message indicating custom API needs configuration\n\nconst input = $input.first().json;\n\nif (!input.custom_api_url) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: 'custom_api_url is required when using custom_api source',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// In production, this would make HTTP requests to the custom API\nreturn {\n  json: {\n    success: false,\n    error: {\n      code: 501,\n      message: 'Custom API integration requires HTTP Request configuration. Contact n8n admin.',\n      status: 'NOT_IMPLEMENTED'\n    },\n    meta: {\n      source: 'custom_api',\n      custom_api_url: input.custom_api_url,\n      items_count: input.items.length\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-unknown-source",
+      "name": "Respond Unknown Source",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 850],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 400, message: 'Unknown data source', status: 'BAD_REQUEST' } }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1680, 500],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Source Router",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Source Router": {
+      "main": [
+        [
+          {
+            "node": "OpenFoodFacts Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CIQUAL Lookup (Phase 2)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Custom API Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unknown Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenFoodFacts Lookup": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CIQUAL Lookup (Phase 2)": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Custom API Lookup": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  }
+}
