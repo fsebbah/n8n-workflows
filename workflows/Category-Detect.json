@@ -1,0 +1,364 @@
+{
+  "name": "Category Detect",
+  "nodes": [
+    {
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 650,
+        "height": 400,
+        "content": "## Category Detect\n\n**Endpoint:** POST /webhook/category-detect\n\n**Purpose:** Detect categories in items using ruleset (JSON mapping or LLM).\n\n**Request:**\n```json\n{\n  \"items\": [\"beurre\", \"curry\", \"poulet\", \"lait de coco\"],\n  \"ruleset\": \"allergens_inco\",\n  \"options\": {\n    \"include_possible\": true,\n    \"language\": \"fr\"\n  }\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"detected\": {\n    \"confirmed\": [{\"type\": \"lait\", \"label\": \"Lait\", \"icon\": \"🥛\", \"sources\": [\"beurre\"]}],\n    \"possible_traces\": [{\"type\": \"celeri\", \"label\": \"Céleri\", \"sources\": [\"curry\"], \"reason\": \"Traces possibles\"}]\n  },\n  \"warnings\": [\"Ce plat contient de la noix de coco...\"]\n}\n```\n\n**Available rulesets:**\n- `allergens_inco`: 14 INCO allergens (JSON mapping)\n- `cuisine_tags`: Cuisine style tags (LLM)\n\n**RFC:** RFC-018 (Recipe Enrichment)"
+      }
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "webhookId": "category-detect",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "category-detect",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 400],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\n// Validate required fields\nconst items = body.items;\nconst ruleset = body.ruleset;\nconst options = body.options || {};\nconst pluginContext = body.plugin_context || {};\n\nconst errors = [];\nif (!items || !Array.isArray(items) || items.length === 0) {\n  errors.push('items (array) is required');\n}\nif (!ruleset || typeof ruleset !== 'string') {\n  errors.push('ruleset (string) is required');\n}\n\n// Check if LLM-based ruleset needs API key\nconst llmRulesets = ['cuisine_tags', 'torah_topics'];\nif (llmRulesets.includes(ruleset) && !pluginContext.api_keys?.anthropic) {\n  errors.push('plugin_context.api_keys.anthropic is required for LLM rulesets');\n}\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// Determine ruleset type\nconst jsonRulesets = ['allergens_inco'];\nconst rulesetType = jsonRulesets.includes(ruleset) ? 'json_mapping' : 'llm_classify';\n\nreturn {\n  json: {\n    valid: true,\n    items: items.map(i => typeof i === 'string' ? i.toLowerCase().trim() : String(i).toLowerCase().trim()),\n    items_original: items,\n    ruleset: ruleset,\n    ruleset_type: rulesetType,\n    options: {\n      include_possible: options.include_possible !== false,\n      language: options.language || 'fr'\n    },\n    plugin_context: pluginContext,\n    api_key: pluginContext.api_keys?.anthropic\n  }\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 400],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 550],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error || { code: 400, message: 'Validation error', status: 'BAD_REQUEST' } }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "switch-ruleset-type",
+      "name": "Ruleset Type?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [960, 400],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "json_mapping",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.ruleset_type }}",
+                    "rightValue": "json_mapping",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "llm_classify",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.ruleset_type }}",
+                    "rightValue": "llm_classify",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      }
+    },
+    {
+      "id": "json-mapping-detect",
+      "name": "JSON Mapping Detection",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst items = input.items;\nconst itemsOriginal = input.items_original;\nconst ruleset = input.ruleset;\nconst includePossible = input.options.include_possible;\n\n// Load allergens_inco ruleset (embedded for reliability)\nconst allergensInco = {\n  \"categories\": [\n    {\n      \"id\": \"gluten\",\n      \"label\": \"Gluten\",\n      \"icon\": \"🌾\",\n      \"keywords\": [\"blé\", \"ble\", \"froment\", \"farine de blé\", \"farine de ble\", \"seigle\", \"orge\", \"avoine\", \"épeautre\", \"epeautre\", \"kamut\", \"pain\", \"pâte\", \"pate\", \"croûte\", \"croute\", \"chapelure\", \"biscuit\", \"gâteau\", \"gateau\", \"brioche\", \"croissant\", \"pâtes\", \"pates\", \"spaghetti\", \"macaroni\", \"nouille\", \"couscous\", \"boulgour\", \"semoule\", \"bière\", \"biere\", \"malt\"],\n      \"traces_keywords\": [\"bouillon cube\", \"bouillon de légumes\", \"bouillon de volaille\", \"sauce soja\", \"sauce teriyaki\"]\n    },\n    {\n      \"id\": \"crustaces\",\n      \"label\": \"Crustacés\",\n      \"icon\": \"🦐\",\n      \"keywords\": [\"crevette\", \"crevettes\", \"gambas\", \"langoustine\", \"langoustines\", \"homard\", \"crabe\", \"tourteau\", \"araignée de mer\", \"araignee de mer\", \"écrevisse\", \"ecrevisse\", \"langouste\", \"bisque\", \"sauce cocktail\", \"surimi\"],\n      \"traces_keywords\": []\n    },\n    {\n      \"id\": \"oeufs\",\n      \"label\": \"Œufs\",\n      \"icon\": \"🥚\",\n      \"keywords\": [\"oeuf\", \"oeufs\", \"œuf\", \"œufs\", \"jaune d'oeuf\", \"blanc d'oeuf\", \"jaune d'œuf\", \"blanc d'œuf\", \"mayonnaise\", \"mayo\", \"aïoli\", \"aioli\", \"meringue\", \"crème anglaise\", \"creme anglaise\", \"omelette\", \"quiche\", \"flan\"],\n      \"traces_keywords\": [\"pâte brisée\", \"pate brisee\", \"pâte feuilletée\", \"pate feuilletee\"]\n    },\n    {\n      \"id\": \"poisson\",\n      \"label\": \"Poisson\",\n      \"icon\": \"🐟\",\n      \"keywords\": [\"saumon\", \"thon\", \"cabillaud\", \"colin\", \"merlu\", \"lieu\", \"truite\", \"sole\", \"bar\", \"loup\", \"dorade\", \"daurade\", \"sardine\", \"anchois\", \"maquereau\", \"hareng\", \"morue\", \"brandade\", \"tarama\", \"rillettes de poisson\", \"fumet de poisson\", \"sauce worcestershire\", \"nuoc mam\", \"fish sauce\", \"garum\"],\n      \"traces_keywords\": []\n    },\n    {\n      \"id\": \"arachides\",\n      \"label\": \"Arachides\",\n      \"icon\": \"🥜\",\n      \"keywords\": [\"cacahuète\", \"cacahuete\", \"cacahuètes\", \"cacahuetes\", \"arachide\", \"arachides\", \"beurre de cacahuète\", \"beurre de cacahuete\", \"huile d'arachide\", \"huile arachide\", \"pâte de cacahuète\", \"pate de cacahuete\"],\n      \"traces_keywords\": [\"huile végétale\", \"huile vegetale\"]\n    },\n    {\n      \"id\": \"soja\",\n      \"label\": \"Soja\",\n      \"icon\": \"🫘\",\n      \"keywords\": [\"soja\", \"tofu\", \"tempeh\", \"edamame\", \"sauce soja\", \"shoyu\", \"tamari\", \"miso\", \"lait de soja\", \"crème de soja\", \"creme de soja\", \"protéines de soja\", \"proteines de soja\", \"lécithine de soja\", \"lecithine de soja\", \"huile de soja\"],\n      \"traces_keywords\": [\"bouillon cube\", \"bouillon de légumes\", \"margarine\"]\n    },\n    {\n      \"id\": \"lait\",\n      \"label\": \"Lait\",\n      \"icon\": \"🥛\",\n      \"keywords\": [\"lait\", \"crème\", \"creme\", \"beurre\", \"fromage\", \"parmesan\", \"gruyère\", \"gruyere\", \"emmental\", \"comté\", \"comte\", \"mozzarella\", \"ricotta\", \"mascarpone\", \"gorgonzola\", \"yaourt\", \"yogourt\", \"yoghurt\", \"fromage blanc\", \"crème fraîche\", \"creme fraiche\", \"crème liquide\", \"creme liquide\", \"béchamel\", \"bechamel\", \"lactose\", \"caséine\", \"caseine\", \"lactosérum\", \"lactoserum\", \"petit-lait\", \"babeurre\"],\n      \"traces_keywords\": [\"margarine\", \"chocolat au lait\"],\n      \"exclusions\": [\"lait de coco\", \"crème de coco\", \"creme de coco\", \"lait d'amande\", \"lait d'avoine\", \"lait de soja\", \"lait de riz\", \"beurre de cacao\", \"beurre de karité\"]\n    },\n    {\n      \"id\": \"fruits_a_coque\",\n      \"label\": \"Fruits à coque\",\n      \"icon\": \"🌰\",\n      \"keywords\": [\"amande\", \"amandes\", \"poudre d'amande\", \"poudre d'amandes\", \"noisette\", \"noisettes\", \"pâte de noisette\", \"pate de noisette\", \"noix\", \"cerneaux de noix\", \"noix de cajou\", \"cajou\", \"noix de pécan\", \"noix de pecan\", \"pécan\", \"pecan\", \"noix du brésil\", \"noix du bresil\", \"pistache\", \"pistaches\", \"noix de macadamia\", \"macadamia\", \"pralin\", \"praliné\", \"praline\", \"gianduja\", \"frangipane\", \"massepain\", \"marzipan\", \"huile de noix\", \"huile de noisette\"],\n      \"traces_keywords\": [\"chocolat\", \"pâtisserie\", \"patisserie\", \"glace\", \"muesli\", \"granola\"],\n      \"exclusions\": [\"noix de coco\", \"coco\", \"lait de coco\", \"crème de coco\", \"noix de muscade\", \"muscade\"]\n    },\n    {\n      \"id\": \"celeri\",\n      \"label\": \"Céleri\",\n      \"icon\": \"🥬\",\n      \"keywords\": [\"céleri\", \"celeri\", \"céleri branche\", \"celeri branche\", \"céleri-rave\", \"celeri-rave\", \"céleri rave\", \"celeri rave\", \"sel de céleri\", \"sel de celeri\"],\n      \"traces_keywords\": [\"bouillon cube\", \"bouillon de légumes\", \"bouillon de volaille\", \"fond de veau\", \"fond de volaille\", \"curry\", \"curry en poudre\", \"mélange d'épices\", \"melange d'epices\"]\n    },\n    {\n      \"id\": \"moutarde\",\n      \"label\": \"Moutarde\",\n      \"icon\": \"🟡\",\n      \"keywords\": [\"moutarde\", \"graines de moutarde\", \"moutarde de dijon\", \"moutarde à l'ancienne\"],\n      \"traces_keywords\": [\"vinaigrette\", \"sauce salade\", \"curry\", \"curry en poudre\", \"mayonnaise\", \"sauce cocktail\"]\n    },\n    {\n      \"id\": \"sesame\",\n      \"label\": \"Sésame\",\n      \"icon\": \"⚪\",\n      \"keywords\": [\"sésame\", \"sesame\", \"graines de sésame\", \"graines de sesame\", \"tahini\", \"tahin\", \"tahina\", \"huile de sésame\", \"huile de sesame\", \"halva\", \"houmous\", \"hummus\"],\n      \"traces_keywords\": [\"pain burger\", \"pain à burger\", \"bagel\"]\n    },\n    {\n      \"id\": \"sulfites\",\n      \"label\": \"Sulfites\",\n      \"icon\": \"🍷\",\n      \"keywords\": [\"sulfite\", \"sulfites\", \"anhydride sulfureux\", \"vin\", \"vin blanc\", \"vin rouge\", \"vinaigre de vin\", \"vinaigre balsamique\"],\n      \"traces_keywords\": [\"fruits secs\", \"abricots secs\", \"raisins secs\", \"moutarde\", \"cornichon\", \"câpres\", \"capres\", \"bocal\", \"conserve\", \"pousses de bambou en bocal\"]\n    },\n    {\n      \"id\": \"lupin\",\n      \"label\": \"Lupin\",\n      \"icon\": \"🌸\",\n      \"keywords\": [\"lupin\", \"farine de lupin\", \"graines de lupin\"],\n      \"traces_keywords\": [\"pain sans gluten\", \"pâtisserie sans gluten\"]\n    },\n    {\n      \"id\": \"mollusques\",\n      \"label\": \"Mollusques\",\n      \"icon\": \"🦪\",\n      \"keywords\": [\"moule\", \"moules\", \"huître\", \"huitre\", \"huîtres\", \"huitres\", \"coquille saint-jacques\", \"saint-jacques\", \"noix de saint-jacques\", \"palourde\", \"palourdes\", \"praire\", \"praires\", \"coque\", \"coques\", \"couteau\", \"couteaux\", \"poulpe\", \"pieuvre\", \"calamar\", \"calmar\", \"encornet\", \"seiche\", \"chipiron\", \"escargot\", \"escargots\", \"bigorneau\", \"bigorneaux\", \"sauce aux huîtres\", \"sauce huitre\"],\n      \"traces_keywords\": []\n    }\n  ],\n  \"warnings\": [\n    { \"pattern\": \"noix de coco|coco|lait de coco|crème de coco\", \"message\": \"Ce plat contient de la noix de coco (non allergène INCO mais risque individuel possible)\" },\n    { \"pattern\": \"bouillon|fond de|cube\", \"message\": \"Les bouillons et fonds peuvent contenir plusieurs allergènes (vérifier l'étiquette)\" }\n  ]\n};\n\n// Get ruleset data\nlet rulesetData;\nif (ruleset === 'allergens_inco') {\n  rulesetData = allergensInco;\n} else {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: `Unknown JSON ruleset: ${ruleset}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// Detection logic\nconst confirmed = [];\nconst possibleTraces = [];\nconst warnings = [];\nconst confirmedMap = new Map(); // category -> sources\nconst tracesMap = new Map(); // category -> sources\n\n// Process each item\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const itemOriginal = itemsOriginal[i];\n  \n  // Check each category\n  for (const category of rulesetData.categories) {\n    // Check exclusions first\n    const exclusions = category.exclusions || [];\n    const isExcluded = exclusions.some(ex => item.includes(ex.toLowerCase()));\n    if (isExcluded) continue;\n    \n    // Check confirmed keywords\n    const isConfirmed = category.keywords.some(kw => {\n      const kwLower = kw.toLowerCase();\n      return item.includes(kwLower) || kwLower.includes(item);\n    });\n    \n    if (isConfirmed) {\n      if (!confirmedMap.has(category.id)) {\n        confirmedMap.set(category.id, { category, sources: [] });\n      }\n      confirmedMap.get(category.id).sources.push(itemOriginal);\n    }\n    \n    // Check traces keywords (only if include_possible and not already confirmed for this item)\n    if (includePossible && !isConfirmed) {\n      const isTrace = category.traces_keywords.some(kw => {\n        const kwLower = kw.toLowerCase();\n        return item.includes(kwLower) || kwLower.includes(item);\n      });\n      \n      if (isTrace) {\n        if (!tracesMap.has(category.id)) {\n          tracesMap.set(category.id, { category, sources: [] });\n        }\n        tracesMap.get(category.id).sources.push(itemOriginal);\n      }\n    }\n  }\n  \n  // Check warnings\n  for (const warning of rulesetData.warnings) {\n    const regex = new RegExp(warning.pattern.toLowerCase());\n    if (regex.test(item) && !warnings.includes(warning.message)) {\n      warnings.push(warning.message);\n    }\n  }\n}\n\n// Build confirmed list\nfor (const [id, data] of confirmedMap) {\n  confirmed.push({\n    type: data.category.id,\n    label: data.category.label,\n    icon: data.category.icon,\n    sources: [...new Set(data.sources)] // dedupe\n  });\n}\n\n// Build traces list (exclude already confirmed)\nfor (const [id, data] of tracesMap) {\n  if (!confirmedMap.has(id)) {\n    possibleTraces.push({\n      type: data.category.id,\n      label: data.category.label,\n      icon: data.category.icon,\n      sources: [...new Set(data.sources)],\n      reason: 'Traces possibles'\n    });\n  }\n}\n\n// Build display strings\nconst confirmedLabels = confirmed.map(c => `${c.icon} ${c.label}`).join(', ');\nconst tracesLabels = possibleTraces.map(t => t.label).join(', ');\n\nlet displayShort = '';\nif (confirmed.length > 0) {\n  displayShort = `Allergènes : ${confirmedLabels}`;\n}\nif (possibleTraces.length > 0) {\n  displayShort += (displayShort ? ' | ' : '') + `Traces possibles : ${tracesLabels}`;\n}\nif (!displayShort) {\n  displayShort = 'Aucun allergène INCO détecté';\n}\n\nreturn {\n  json: {\n    success: true,\n    detected: {\n      confirmed: confirmed,\n      possible_traces: possibleTraces\n    },\n    warnings: warnings,\n    display: {\n      short: displayShort,\n      html: displayShort.replace('Allergènes :', '<strong>Allergènes :</strong>').replace('Traces possibles :', '<em>Traces possibles :</em>')\n    },\n    inco_compliant: true,\n    meta: {\n      ruleset: ruleset,\n      ruleset_type: 'json_mapping',\n      items_count: items.length,\n      confirmed_count: confirmed.length,\n      traces_count: possibleTraces.length\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "llm-classify",
+      "name": "LLM Classification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 500],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: $json.plugin_context.llm_model || 'claude-3-haiku-20240307',\n  max_tokens: 1000,\n  temperature: 0.1,\n  messages: [{\n    role: 'user',\n    content: `Tu es un expert en classification. Classe les éléments suivants selon le ruleset \"${$json.ruleset}\".\n\nÉléments à classer:\n${$json.items_original.map((item, i) => `${i+1}. ${item}`).join('\\n')}\n\nRéponds UNIQUEMENT en JSON valide avec cette structure:\n{\n  \"detected\": {\n    \"confirmed\": [{ \"type\": \"category_id\", \"label\": \"Category Label\", \"sources\": [\"item1\", \"item2\"] }],\n    \"possible_traces\": [{ \"type\": \"category_id\", \"label\": \"Category Label\", \"sources\": [\"item1\"], \"reason\": \"Explication\" }]\n  },\n  \"warnings\": [\"Warning message if any\"]\n}`\n  }]\n}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-llm-response",
+      "name": "Parse LLM Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 500],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst statusCode = input.statusCode || 200;\n\n// Handle LLM API error\nif (statusCode >= 400) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: input.body?.error?.message || 'LLM API error',\n        status: 'LLM_ERROR'\n      }\n    }\n  };\n}\n\n// Extract LLM response content\nconst content = input.body?.content?.[0]?.text || '';\n\n// Parse JSON from LLM response\nlet parsed;\ntry {\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to parse LLM response: ' + e.message,\n        status: 'PARSE_ERROR'\n      }\n    }\n  };\n}\n\nconst detected = parsed.detected || { confirmed: [], possible_traces: [] };\nconst warnings = parsed.warnings || [];\n\n// Build display\nconst confirmedLabels = (detected.confirmed || []).map(c => c.label).join(', ');\nconst tracesLabels = (detected.possible_traces || []).map(t => t.label).join(', ');\n\nlet displayShort = '';\nif (detected.confirmed?.length > 0) {\n  displayShort = `Catégories : ${confirmedLabels}`;\n}\nif (detected.possible_traces?.length > 0) {\n  displayShort += (displayShort ? ' | ' : '') + `Possibles : ${tracesLabels}`;\n}\nif (!displayShort) {\n  displayShort = 'Aucune catégorie détectée';\n}\n\nreturn {\n  json: {\n    success: true,\n    detected: detected,\n    warnings: warnings,\n    display: {\n      short: displayShort,\n      html: displayShort\n    },\n    meta: {\n      ruleset: prevData.ruleset,\n      ruleset_type: 'llm_classify',\n      provider: 'anthropic',\n      model: prevData.plugin_context.llm_model || 'claude-3-haiku-20240307',\n      items_count: prevData.items.length\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-unknown-ruleset",
+      "name": "Respond Unknown Ruleset",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 650],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 400, message: 'Unknown ruleset type', status: 'BAD_REQUEST' } }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1680, 400],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Ruleset Type?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ruleset Type?": {
+      "main": [
+        [
+          {
+            "node": "JSON Mapping Detection",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LLM Classification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unknown Ruleset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON Mapping Detection": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Classification": {
+      "main": [
+        [
+          {
+            "node": "Parse LLM Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse LLM Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  }
+}
