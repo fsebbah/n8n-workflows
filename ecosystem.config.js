@@ -4,7 +4,7 @@ module.exports = {
       name: 'n8n',
       script: 'n8n',
       args: 'start',
-      cwd: '/home/fsebb/n8n-workflows',
+      cwd: '/storage6/pi6/n8n-workflows',
 
       // Environnement
       env: {
@@ -17,10 +17,15 @@ module.exports = {
         N8N_PROTOCOL: 'http',
 
         // Custom nodes
-        N8N_CUSTOM_EXTENSIONS: '/home/fsebb/n8n-workflows/custom-nodes/n8n-nodes-gmail-dynamic',
+        N8N_CUSTOM_EXTENSIONS: '/storage6/pi6/n8n-workflows/custom-nodes',
 
-        // Performance SQLite
-        DB_SQLITE_POOL_SIZE: 4,
+        // PostgreSQL
+        DB_TYPE: 'postgresdb',
+        DB_POSTGRESDB_HOST: 'databases.local',
+        DB_POSTGRESDB_PORT: 5435,
+        DB_POSTGRESDB_DATABASE: 'n8n',
+        DB_POSTGRESDB_USER: 'n8n',
+        DB_POSTGRESDB_PASSWORD: 'n8npass',
 
         // Task runners (recommandé)
         N8N_RUNNERS_ENABLED: 'true',
@@ -69,8 +74,13 @@ module.exports = {
         N8N_HOST: '0.0.0.0',
         N8N_PORT: 5678,
         N8N_PROTOCOL: 'http',
-        N8N_CUSTOM_EXTENSIONS: '/home/fsebb/n8n-workflows/custom-nodes/n8n-nodes-gmail-dynamic',
-        DB_SQLITE_POOL_SIZE: 4,
+        N8N_CUSTOM_EXTENSIONS: '/storage6/pi6/n8n-workflows/custom-nodes',
+        DB_TYPE: 'postgresdb',
+        DB_POSTGRESDB_HOST: 'databases.local',
+        DB_POSTGRESDB_PORT: 5435,
+        DB_POSTGRESDB_DATABASE: 'n8n',
+        DB_POSTGRESDB_USER: 'n8n',
+        DB_POSTGRESDB_PASSWORD: 'n8npass',
         N8N_RUNNERS_ENABLED: 'true',
         N8N_BLOCK_ENV_ACCESS_IN_NODE: 'false',
         N8N_GIT_NODE_DISABLE_BARE_REPOS: 'true',
@@ -103,8 +113,8 @@ module.exports = {
       max_memory_restart: '1536M',
 
       // Logs - dans le dossier du projet
-      error_file: '/home/fsebb/n8n-workflows/logs/n8n-error.log',
-      out_file: '/home/fsebb/n8n-workflows/logs/n8n-out.log',
+      error_file: '/storage6/pi6/n8n-workflows/logs/n8n-error.log',
+      out_file: '/storage6/pi6/n8n-workflows/logs/n8n-out.log',
       combine_logs: true,
       merge_logs: true,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
