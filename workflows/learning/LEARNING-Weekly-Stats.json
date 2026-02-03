@@ -19,11 +19,83 @@
       }
     },
     {
+      "id": "get-all-guilds",
+      "name": "Get All Guilds",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/v1/guilds",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.API_KEY }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "active",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "check-has-guilds",
+      "name": "Has Guilds?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.data?.length || $json.guilds?.length || 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "extract-guilds",
+      "name": "Extract Guild IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 200],
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst guilds = response.data || response.guilds || [];\n\n// Return each guild as a separate item\nreturn guilds.map(guild => ({\n  json: {\n    guild_id: guild.id || guild.guild_id,\n    guild_name: guild.name || guild.guild_name || 'Unknown',\n    stats_channel_id: guild.learning_stats_channel_id || guild.stats_channel_id\n  }\n}));"
+      }
+    },
+    {
       "id": "get-weekly-stats",
       "name": "Get Weekly Stats",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [460, 300],
+      "position": [1120, 200],
       "parameters": {
         "method": "GET",
         "url": "={{ $env.API_URL }}/api/v1/stats/weekly",
@@ -42,7 +114,7 @@
           "parameters": [
             {
               "name": "guild_id",
-              "value": "={{ $env.DEFAULT_GUILD_ID }}"
+              "value": "={{ $json.guild_id }}"
             },
             {
               "name": "top_n",
@@ -61,9 +133,37 @@
       "name": "Format Report",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 300],
+      "position": [1340, 200],
       "parameters": {
-        "jsCode": "const stats = $input.first().json;\n\n// Format dates\nconst weekStart = new Date(stats.week_start).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });\nconst weekEnd = new Date(stats.week_end).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });\n\n// Calculate engagement rate\nconst engagementRate = stats.summary.total_learners > 0 \n  ? Math.round((stats.summary.active_learners / stats.summary.total_learners) * 100) \n  : 0;\n\n// Format top learners for embed\nconst topLearnersField = stats.top_learners?.slice(0, 5).map((l, i) => {\n  const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];\n  return `${medals[i]} **${l.display_name}** - ${l.xp_earned} XP`;\n}).join('\\n') || 'Aucun apprenant actif cette semaine';\n\n// Format course stats\nconst courseStatsField = stats.course_stats?.slice(0, 3).map(c => {\n  return `📖 **${c.course_title}**\\n└ ${c.new_enrollments_this_week} inscriptions, ${c.completions_this_week} complétion(s)`;\n}).join('\\n\\n') || 'Aucune activité de cours';\n\n// Build Discord embed\nconst embed = {\n  title: '📊 Rapport Hebdomadaire - Apprentissage',\n  description: `Semaine du ${weekStart} au ${weekEnd}`,\n  color: 5814783,\n  fields: [\n    {\n      name: '📈 Résumé Global',\n      value: `👥 **${stats.summary.total_learners}** apprenants (${stats.summary.active_learners} actifs)\\n📚 **${stats.summary.lessons_completed}** leçons complétées\\n✅ **${stats.summary.quizzes_passed}** quiz réussis\\n🆕 **${stats.summary.new_enrollments}** nouvelles inscriptions\\n💫 **${stats.total_xp_earned?.toLocaleString() || 0}** XP distribués`,\n      inline: false\n    },\n    {\n      name: '🏆 Top Apprenants',\n      value: topLearnersField,\n      inline: false\n    },\n    {\n      name: '📖 Cours Populaires',\n      value: courseStatsField,\n      inline: false\n    },\n    {\n      name: '🎖️ Badges & Engagement',\n      value: `🏅 **${stats.badges_awarded || 0}** badges attribués\\n📊 Taux d'engagement: **${engagementRate}%**`,\n      inline: false\n    }\n  ],\n  footer: {\n    text: 'Généré automatiquement par le système d\\'apprentissage'\n  },\n  timestamp: new Date().toISOString()\n};\n\nreturn {\n  json: {\n    embed: embed,\n    summary: stats.summary,\n    engagement_rate: engagementRate\n  }\n};"
+        "jsCode": "const guildData = $('Extract Guild IDs').item;\nconst stats = $input.first().json;\n\n// Check if we have valid stats\nif (!stats || !stats.summary) {\n  return { json: { skip: true, message: 'No stats available for guild' } };\n}\n\n// Check if guild has a stats channel configured\nif (!guildData.json.stats_channel_id) {\n  return { json: { skip: true, message: 'No stats channel configured for guild' } };\n}\n\n// Format dates\nconst weekStart = new Date(stats.week_start).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });\nconst weekEnd = new Date(stats.week_end).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });\n\n// Calculate engagement rate\nconst engagementRate = stats.summary.total_learners > 0 \n  ? Math.round((stats.summary.active_learners / stats.summary.total_learners) * 100) \n  : 0;\n\n// Format top learners for embed\nconst topLearnersField = stats.top_learners?.slice(0, 5).map((l, i) => {\n  const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];\n  return `${medals[i]} **${l.display_name}** - ${l.xp_earned} XP`;\n}).join('\\n') || 'Aucun apprenant actif cette semaine';\n\n// Format course stats\nconst courseStatsField = stats.course_stats?.slice(0, 3).map(c => {\n  return `📖 **${c.course_title}**\\n└ ${c.new_enrollments_this_week} inscriptions, ${c.completions_this_week} complétion(s)`;\n}).join('\\n\\n') || 'Aucune activité de cours';\n\n// Build Discord embed\nconst embed = {\n  title: '📊 Rapport Hebdomadaire - Apprentissage',\n  description: `Semaine du ${weekStart} au ${weekEnd}`,\n  color: 5814783,\n  fields: [\n    {\n      name: '📈 Résumé Global',\n      value: `👥 **${stats.summary.total_learners}** apprenants (${stats.summary.active_learners} actifs)\\n📚 **${stats.summary.lessons_completed}** leçons complétées\\n✅ **${stats.summary.quizzes_passed}** quiz réussis\\n🆕 **${stats.summary.new_enrollments}** nouvelles inscriptions\\n💫 **${stats.total_xp_earned?.toLocaleString() || 0}** XP distribués`,\n      inline: false\n    },\n    {\n      name: '🏆 Top Apprenants',\n      value: topLearnersField,\n      inline: false\n    },\n    {\n      name: '📖 Cours Populaires',\n      value: courseStatsField,\n      inline: false\n    },\n    {\n      name: '🎖️ Badges & Engagement',\n      value: `🏅 **${stats.badges_awarded || 0}** badges attribués\\n📊 Taux d'engagement: **${engagementRate}%**`,\n      inline: false\n    }\n  ],\n  footer: {\n    text: 'Généré automatiquement par le système d\\'apprentissage'\n  },\n  timestamp: new Date().toISOString()\n};\n\nreturn {\n  json: {\n    skip: false,\n    guild_id: guildData.json.guild_id,\n    guild_name: guildData.json.guild_name,\n    stats_channel_id: guildData.json.stats_channel_id,\n    embed: embed,\n    summary: stats.summary,\n    engagement_rate: engagementRate\n  }\n};"
+      }
+    },
+    {
+      "id": "filter-skip",
+      "name": "Filter Skip",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [1560, 200],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       }
     },
     {
@@ -71,10 +171,10 @@
       "name": "Send to Discord Channel",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 300],
+      "position": [1780, 200],
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.DISCORD_URL_CHANNEL }}{{ $env.LEARNING_STATS_CHANNEL_ID }}/messages",
+        "url": "={{ $env.DISCORD_API_URL }}/channels/{{ $json.stats_channel_id }}/messages",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -99,11 +199,11 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "log-completion",
-      "name": "Log Completion",
+      "id": "no-guilds",
+      "name": "No Guilds",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [1120, 300],
+      "position": [900, 400],
       "parameters": {}
     },
     {
@@ -114,14 +214,54 @@
       "position": [240, 60],
       "parameters": {
         "color": 6,
-        "width": 650,
+        "width": 700,
         "height": 220,
-        "content": "## LEARNING - Weekly Stats (RFC-022)\n\n**Trigger:** Every Monday at 9:00 AM (cron: 0 9 * * 1)\n\n**Process:**\n1. Fetch weekly statistics from API\n2. Format report with:\n   - Global summary (learners, lessons, quizzes)\n   - Top 5 learners by XP\n   - Popular courses\n   - Badges and engagement rate\n3. Send formatted embed to Discord channel\n\n**Environment Variables:**\n- `API_URL`: Backend API URL\n- `API_KEY`: Backend API key\n- `DEFAULT_GUILD_ID`: Discord guild ID\n- `DISCORD_URL_CHANNEL`: Discord channel API base\n- `DISCORD_TOKEN`: Bot token\n- `LEARNING_STATS_CHANNEL_ID`: Target channel for stats"
+        "content": "## LEARNING - Weekly Stats (RFC-022) - Multi-Guild\n\n**Trigger:** Every Monday at 9:00 AM (cron: 0 9 * * 1)\n\n**Process:**\n1. Fetch ALL active guilds from API\n2. For each guild with a stats_channel_id configured:\n   - Fetch weekly statistics\n   - Format report with top learners, courses, engagement\n   - Send formatted embed to guild's stats channel\n\n**No DEFAULT_GUILD_ID needed** - processes all guilds automatically\n**Requires:** Each guild must have `learning_stats_channel_id` configured"
       }
     }
   ],
   "connections": {
     "Weekly Schedule": {
+      "main": [
+        [
+          {
+            "node": "Get All Guilds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Guilds": {
+      "main": [
+        [
+          {
+            "node": "Has Guilds?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Guilds?": {
+      "main": [
+        [
+          {
+            "node": "Extract Guild IDs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Guilds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Guild IDs": {
       "main": [
         [
           {
@@ -147,18 +287,18 @@
       "main": [
         [
           {
-            "node": "Send to Discord Channel",
+            "node": "Filter Skip",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send to Discord Channel": {
+    "Filter Skip": {
       "main": [
         [
           {
-            "node": "Log Completion",
+            "node": "Send to Discord Channel",
             "type": "main",
             "index": 0
           }
