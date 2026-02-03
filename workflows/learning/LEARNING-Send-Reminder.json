@@ -1,0 +1,352 @@
+{
+  "name": "LEARNING - Send Reminder",
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "get-inactive-enrollments",
+      "name": "Get Inactive Enrollments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/v1/enrollments/inactive",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.API_KEY }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "guild_id",
+              "value": "={{ $env.DEFAULT_GUILD_ID }}"
+            },
+            {
+              "name": "days_threshold",
+              "value": "7"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "check-has-inactive",
+      "name": "Has Inactive?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.enrollments?.length || 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "split-enrollments",
+      "name": "Split Enrollments",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [900, 200],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare-message",
+      "name": "Prepare Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 200],
+      "parameters": {
+        "jsCode": "const apiData = $('Get Inactive Enrollments').first().json;\nconst enrollments = apiData.enrollments || [];\nconst enrollment = enrollments[$runIndex];\n\nif (!enrollment) {\n  return { json: { skip: true } };\n}\n\n// Personalize message based on progress\nlet message;\nconst progress = enrollment.progress_percent || 0;\nconst daysInactive = enrollment.days_inactive || 7;\n\nif (progress < 25) {\n  message = `👋 Salut ! Tu as commencé \"${enrollment.course_title}\" mais on ne t'a pas vu depuis ${daysInactive} jours. Reviens continuer ton apprentissage ! 🍳`;\n} else if (progress < 75) {\n  message = `🎯 Tu es à ${Math.round(progress)}% du cours \"${enrollment.course_title}\" ! Plus que quelques leçons pour finir. On t'attend ! 👨‍🍳`;\n} else {\n  message = `🏆 Tu es si proche de terminer \"${enrollment.course_title}\" (${Math.round(progress)}%) ! Viens décrocher ton badge de complétion ! 🎓`;\n}\n\nreturn {\n  json: {\n    skip: false,\n    discord_id: enrollment.discord_id,\n    display_name: enrollment.display_name,\n    course_title: enrollment.course_title,\n    progress_percent: progress,\n    days_inactive: daysInactive,\n    message: message\n  }\n};"
+      }
+    },
+    {
+      "id": "check-skip",
+      "name": "Should Skip?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1340, 200],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "send-discord-dm",
+      "name": "Send Discord DM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_API_URL }}/users/@me/channels",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bot {{ $env.DISCORD_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient_id\": \"{{ $json.discord_id }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "send-message",
+      "name": "Send Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_API_URL }}/channels/{{ $json.id }}/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bot {{ $env.DISCORD_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": \"{{ $('Prepare Message').first().json.message }}\",\n  \"embeds\": [{\n    \"title\": \"📚 {{ $('Prepare Message').first().json.course_title }}\",\n    \"description\": \"Progression: {{ Math.round($('Prepare Message').first().json.progress_percent) }}%\",\n    \"color\": 5814783,\n    \"footer\": {\n      \"text\": \"Clique pour continuer ton apprentissage !\"\n    }\n  }]\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "loop-back",
+      "name": "Loop Back",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2000, 100],
+      "parameters": {}
+    },
+    {
+      "id": "no-inactive",
+      "name": "No Inactive",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [900, 400],
+      "parameters": {}
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 650,
+        "height": 220,
+        "content": "## LEARNING - Send Reminder (RFC-022)\n\n**Trigger:** Daily at 10:00 AM (cron: 0 10 * * *)\n\n**Process:**\n1. Fetch inactive enrollments (7+ days without activity)\n2. Personalize message based on progress:\n   - < 25%: Encourage to start\n   - 25-75%: Motivate to continue\n   - > 75%: Push to complete\n3. Send Discord DM to each inactive learner\n\n**Environment Variables:**\n- `API_URL`: Backend API URL\n- `API_KEY`: Backend API key\n- `DEFAULT_GUILD_ID`: Default Discord guild\n- `DISCORD_API_URL`: Discord API base URL\n- `DISCORD_TOKEN`: Bot token"
+      }
+    }
+  ],
+  "connections": {
+    "Daily Schedule": {
+      "main": [
+        [
+          {
+            "node": "Get Inactive Enrollments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Inactive Enrollments": {
+      "main": [
+        [
+          {
+            "node": "Has Inactive?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Inactive?": {
+      "main": [
+        [
+          {
+            "node": "Split Enrollments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Inactive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Enrollments": {
+      "main": [
+        [
+          {
+            "node": "Prepare Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Message": {
+      "main": [
+        [
+          {
+            "node": "Should Skip?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Skip?": {
+      "main": [
+        [
+          {
+            "node": "Send Discord DM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Discord DM": {
+      "main": [
+        [
+          {
+            "node": "Send Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Message": {
+      "main": [
+        [
+          {
+            "node": "Loop Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Back": {
+      "main": [
+        [
+          {
+            "node": "Split Enrollments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
