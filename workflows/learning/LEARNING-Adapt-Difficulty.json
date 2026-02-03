@@ -1,0 +1,194 @@
+{
+  "name": "LEARNING - Adapt Difficulty",
+  "nodes": [
+    {
+      "id": "webhook-adapt-difficulty",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "learning-adapt-difficulty",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "learning-adapt-difficulty",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [460, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.learner_discord_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
+              "leftValue": "={{ $json.body.guild_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-missing-params",
+      "name": "Error: Missing Params",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameters: learner_discord_id, guild_id\", \"status\": \"BAD_REQUEST\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "get-learner-progress",
+      "name": "Get Learner Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 200],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/v1/progress/{{ $json.body.learner_discord_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.API_KEY }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "guild_id",
+              "value": "={{ $json.body.guild_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "calculate-difficulty",
+      "name": "Calculate Difficulty",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 200],
+      "parameters": {
+        "jsCode": "const webhookData = $('Webhook').first().json;\nconst progress = $input.first().json;\n\n// Adaptive difficulty algorithm\nconst quizStats = progress.quiz_stats || {};\nconst avgScore = quizStats.average_score || 70;\nconst passed = quizStats.passed || 0;\nconst failed = quizStats.failed || 0;\nconst totalAttempts = passed + failed;\n\n// Calculate success rate\nconst successRate = totalAttempts > 0 ? (passed / totalAttempts) * 100 : 50;\n\n// Determine recommended difficulty\nlet recommendedDifficulty;\nlet difficultyScore;\nlet reasoning;\n\nif (avgScore >= 90 && successRate >= 85) {\n  recommendedDifficulty = 'hard';\n  difficultyScore = 3;\n  reasoning = 'Excellent performance - ready for advanced challenges';\n} else if (avgScore >= 75 && successRate >= 70) {\n  recommendedDifficulty = 'medium';\n  difficultyScore = 2;\n  reasoning = 'Good progress - maintaining appropriate challenge level';\n} else if (avgScore >= 60 && successRate >= 50) {\n  recommendedDifficulty = 'easy';\n  difficultyScore = 1;\n  reasoning = 'Building foundations - focusing on core concepts';\n} else {\n  recommendedDifficulty = 'easy';\n  difficultyScore = 1;\n  reasoning = 'Needs more practice - reinforcing basics';\n}\n\n// Identify areas for focus\nconst weaknesses = progress.weaknesses || [];\nconst strengths = progress.strengths || [];\n\n// Generate personalized recommendations\nconst recommendations = [];\nif (weaknesses.length > 0) {\n  recommendations.push(`Focus on: ${weaknesses.slice(0, 2).join(', ')}`);\n}\nif (avgScore < 70) {\n  recommendations.push('Review previous lessons before advancing');\n}\nif (successRate < 60 && totalAttempts > 3) {\n  recommendations.push('Consider retaking recent quizzes for better understanding');\n}\nif (strengths.length > 0 && avgScore >= 80) {\n  recommendations.push(`Ready for advanced content in: ${strengths[0]}`);\n}\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      learner_discord_id: webhookData.body.learner_discord_id,\n      recommended_difficulty: recommendedDifficulty,\n      difficulty_score: difficultyScore,\n      reasoning: reasoning,\n      metrics: {\n        average_score: Math.round(avgScore * 10) / 10,\n        success_rate: Math.round(successRate * 10) / 10,\n        total_attempts: totalAttempts,\n        current_level: progress.level || 1\n      },\n      focus_areas: {\n        weaknesses: weaknesses.slice(0, 3),\n        strengths: strengths.slice(0, 3)\n      },\n      recommendations: recommendations\n    },\n    meta: {\n      workflow: 'learning-adapt-difficulty',\n      algorithm: 'v1.0',\n      timestamp: new Date().toISOString()\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1140, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 650,
+        "height": 220,
+        "content": "## LEARNING - Adapt Difficulty (RFC-022)\n\n**Endpoint:** POST /webhook/learning-adapt-difficulty\n\n**Parameters:**\n- `learner_discord_id` (required): Discord user ID\n- `guild_id` (required): Discord guild ID\n\n**Algorithm:**\n- avg_score >= 90 & success_rate >= 85 → hard (3)\n- avg_score >= 75 & success_rate >= 70 → medium (2)  \n- avg_score >= 60 & success_rate >= 50 → easy (1)\n- else → easy with reinforcement\n\n**Returns:**\n- `recommended_difficulty`: easy | medium | hard\n- `difficulty_score`: 1-3\n- `metrics`: Learner performance data\n- `focus_areas`: Strengths and weaknesses\n- `recommendations`: Personalized suggestions"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Get Learner Progress",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Missing Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Learner Progress": {
+      "main": [
+        [
+          {
+            "node": "Calculate Difficulty",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Difficulty": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
