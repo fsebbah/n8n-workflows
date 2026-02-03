@@ -1,0 +1,374 @@
+{
+    "id": "TwmCjwkEaml2lXQt",
+    "name": "CHANNELS---Private-Register-Callback",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "private-channel-callback",
+                "options": {}
+            },
+            "id": "channel-callback-0001",
+            "name": "Webhook Trigger",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                0,
+                304
+            ],
+            "webhookId": "private-channel-callback-webhook"
+        },
+        {
+            "parameters": {
+                "jsCode": "// ============================================\n// VALIDATE CALLBACK DATA (RFC-004)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// --- Validate required fields ---\nif (!body.channel_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_CHANNEL_ID',\n    message: 'Le champ \"channel_id\" est requis'\n  };\n}\n\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis'\n  };\n}\n\nif (!body.guild_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_GUILD_ID',\n    message: 'Le champ \"guild_id\" est requis'\n  };\n}\n\n// --- Extract project_id from metadata or default ---\nconst projectId = body.metadata?.project_id || body.project_id || 'unknown';\n\n// --- Return validated data ---\nreturn {\n  error: false,\n  data: {\n    channel_id: body.channel_id,\n    discord_user_id: body.discord_user_id,\n    guild_id: body.guild_id,\n    channel_type: body.channel_type || 'support',\n    channel_name: body.channel_name || null,\n    project_id: projectId,\n    metadata: body.metadata || {}\n  }\n};"
+            },
+            "id": "channel-callback-0002",
+            "name": "Validate Callback",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                224,
+                304
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "check-error",
+                            "leftValue": "={{ $json.error }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "channel-callback-0003",
+            "name": "Check Validation Error",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                448,
+                304
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "={{ $env.API_URL }}/api/channels/private",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "X-Project-ID",
+                            "value": "={{ $json.data.project_id }}"
+                        },
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"guild_id\": {{ JSON.stringify($json.data.guild_id) }},\n  \"discord_user_id\": {{ JSON.stringify($json.data.discord_user_id) }},\n  \"channel_id\": {{ JSON.stringify($json.data.channel_id) }},\n  \"channel_type\": {{ JSON.stringify($json.data.channel_type) }},\n  \"channel_name\": {{ JSON.stringify($json.data.channel_name) }},\n  \"metadata\": {{ JSON.stringify($json.data.metadata) }}\n}",
+                "options": {
+                    "timeout": 10000
+                }
+            },
+            "id": "channel-callback-0004",
+            "name": "Register Channel in API",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                672,
+                208
+            ],
+            "onError": "continueErrorOutput"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "check-api-success",
+                            "leftValue": "={{ $json.success }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "channel-callback-0005",
+            "name": "API Success?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                880,
+                208
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// ============================================\n// FORMAT SUCCESS RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst validationData = $('Validate Callback').first().json.data;\n\nreturn {\n  success: true,\n  registered: true,\n  created: apiResponse.created || false,\n  channel: {\n    channel_id: validationData.channel_id,\n    discord_user_id: validationData.discord_user_id,\n    guild_id: validationData.guild_id,\n    channel_type: validationData.channel_type\n  },\n  message: apiResponse.created ? 'Channel registered successfully' : 'Channel already exists (reactivated)'\n};"
+            },
+            "id": "channel-callback-0006",
+            "name": "Format Success Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1104,
+                112
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// ============================================\n// PREPARE FALLBACK LOG (Mode d\u00e9grad\u00e9 RFC-004)\n// ============================================\n\nconst validationData = $('Validate Callback').first().json.data;\nconst apiError = $input.first().json;\n\n// Prepare JSONL line for fallback log\nconst logEntry = {\n  ts: new Date().toISOString(),\n  project_id: validationData.project_id,\n  guild_id: validationData.guild_id,\n  user_id: validationData.discord_user_id,\n  channel_id: validationData.channel_id,\n  type: validationData.channel_type,\n  name: validationData.channel_name,\n  error: apiError.error || 'API_UNAVAILABLE'\n};\n\nreturn {\n  log_entry: JSON.stringify(logEntry),\n  validation_data: validationData,\n  should_log: true\n};"
+            },
+            "id": "channel-callback-0007",
+            "name": "Prepare Fallback Log",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1104,
+                304
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "push",
+                "list": "n8n:pending_channels",
+                "tail": true,
+                "messageData": "={{ $json.log_entry }}"
+            },
+            "id": "channel-callback-0008",
+            "name": "Push to Pending Queue",
+            "type": "n8n-nodes-base.redis",
+            "typeVersion": 1,
+            "position": [
+                1328,
+                304
+            ],
+            "credentials": {
+                "redis": {
+                    "id": "2idv3VKZ91q5gOnz",
+                    "name": "Redis account"
+                }
+            },
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "jsCode": "// ============================================\n// FORMAT DEGRADED MODE RESPONSE\n// ============================================\n\nconst prepareData = $('Prepare Fallback Log').first().json;\n\nreturn {\n  success: true,\n  registered: false,\n  degraded_mode: true,\n  channel: {\n    channel_id: prepareData.validation_data.channel_id,\n    discord_user_id: prepareData.validation_data.discord_user_id,\n    guild_id: prepareData.validation_data.guild_id,\n    channel_type: prepareData.validation_data.channel_type\n  },\n  message: 'Channel created but API registration failed. Logged for retry.'\n};"
+            },
+            "id": "channel-callback-0009",
+            "name": "Format Degraded Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1552,
+                304
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// ============================================\n// FORMAT VALIDATION ERROR RESPONSE\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation',\n    http_status: 400\n  }\n};"
+            },
+            "id": "channel-callback-0010",
+            "name": "Format Validation Error",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                672,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ JSON.stringify($json) }}",
+                "options": {
+                    "responseCode": 200
+                }
+            },
+            "id": "channel-callback-0011",
+            "name": "Respond Success",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1760,
+                208
+            ]
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ JSON.stringify($json) }}",
+                "options": {
+                    "responseCode": "={{ $json.error?.http_status || 400 }}"
+                }
+            },
+            "id": "channel-callback-0012",
+            "name": "Respond Error",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                880,
+                400
+            ]
+        }
+    ],
+    "connections": {
+        "API Success?": {
+            "main": [
+                [
+                    {
+                        "node": "Prepare Fallback Log",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Format Success Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Webhook Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Validate Callback",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Validate Callback": {
+            "main": [
+                [
+                    {
+                        "node": "Check Validation Error",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Prepare Fallback Log": {
+            "main": [
+                [
+                    {
+                        "node": "Push to Pending Queue",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Push to Pending Queue": {
+            "main": [
+                [
+                    {
+                        "node": "Format Degraded Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Check Validation Error": {
+            "main": [
+                [
+                    {
+                        "node": "Format Validation Error",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Register Channel in API",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Format Success Response": {
+            "main": [
+                [
+                    {
+                        "node": "Respond Success",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Format Validation Error": {
+            "main": [
+                [
+                    {
+                        "node": "Respond Error",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Register Channel in API": {
+            "main": [
+                [
+                    {
+                        "node": "API Success?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Format Degraded Response": {
+            "main": [
+                [
+                    {
+                        "node": "Respond Success",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1",
+        "callerPolicy": "workflowsFromSameOwner",
+        "availableInMCP": false
+    },
+    "active": true
+}
