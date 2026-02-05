@@ -1,0 +1,237 @@
+{
+  "name": "NOTIF---Course-Expiring",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## NOTIF - Course Expiring\n\n**Trigger:** Redis event `course.access.expiring`\n\n**Source:** RFC-027 (Option B)\n\n**Description:**\nEnvoie un rappel Discord quand l'accès\nà un cours expire bientôt (7 jours).\n\n**Stream:** `learning:events:stream`\n**Consumer Group:** `n8n-notifications`",
+        "height": 260,
+        "width": 320,
+        "color": 5
+      },
+      "id": "notif-course-0000",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xRead",
+        "key": "learning:events:stream",
+        "options": {
+          "block": 5000,
+          "count": 10
+        }
+      },
+      "id": "notif-course-0001",
+      "name": "Redis Subscribe",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FILTER COURSE EXPIRING EVENTS\n// ============================================\n\nconst items = $input.all();\nconst expiringEvents = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Parse event if stringified\n  let event = data.event || data;\n  if (typeof event === 'string') {\n    try {\n      event = JSON.parse(event);\n    } catch (e) {\n      continue;\n    }\n  }\n  \n  // Filter only course.access.expiring events\n  if (event.event === 'course.access.expiring' || event.type === 'course.access.expiring') {\n    expiringEvents.push({\n      json: {\n        event_id: data.id || `expiring_${Date.now()}`,\n        event_type: 'course.access.expiring',\n        guild_id: event.guild_id,\n        user_id: event.data?.user_id || event.user_id,\n        discord_id: event.data?.discord_id || event.discord_id,\n        course_id: event.data?.course_id,\n        course_name: event.data?.course_name || 'Cours',\n        expires_at: event.data?.expires_at,\n        days_until_expiration: event.data?.days_until_expiration || 7,\n        notification_type: event.data?.notification_type || 'expires_soon',\n        timestamp: event.timestamp || new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn expiringEvents.length > 0 ? expiringEvents : [];"
+      },
+      "id": "notif-course-0002",
+      "name": "Filter Expiring Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-events",
+              "leftValue": "={{ $json.event_type }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "notif-course-0003",
+      "name": "Has Events?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE EXPIRING REMINDER EMBED\n// ============================================\n\nconst data = $input.first().json;\n\n// Format expiration date\nconst expiresAt = data.expires_at ? new Date(data.expires_at) : null;\nconst formattedDate = expiresAt \n  ? expiresAt.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })\n  : 'bientôt';\n\n// Urgency based on days remaining\nlet urgencyEmoji = '📅';\nlet urgencyColor = 0x3498DB; // Blue\nlet urgencyText = `dans ${data.days_until_expiration} jours`;\n\nif (data.days_until_expiration <= 1) {\n  urgencyEmoji = '🚨';\n  urgencyColor = 0xE74C3C; // Red\n  urgencyText = 'DEMAIN';\n} else if (data.days_until_expiration <= 3) {\n  urgencyEmoji = '⚠️';\n  urgencyColor = 0xF39C12; // Orange\n  urgencyText = `dans ${data.days_until_expiration} jours`;\n}\n\nconst embed = {\n  title: `${urgencyEmoji} Ton accès expire ${urgencyText}`,\n  description: `Ton accès au cours **${data.course_name}** arrive à expiration.`,\n  color: urgencyColor,\n  fields: [\n    {\n      name: '📚 Cours',\n      value: data.course_name,\n      inline: true\n    },\n    {\n      name: '📆 Date d\\'expiration',\n      value: formattedDate,\n      inline: true\n    },\n    {\n      name: '💡 Que faire ?',\n      value: 'Renouvelle ton accès pour continuer à apprendre !\\nUtilise `/cours` pour voir les options.',\n      inline: false\n    }\n  ],\n  footer: {\n    text: 'Ne perds pas ta progression !'\n  },\n  timestamp: data.timestamp\n};\n\nreturn {\n  discord_id: data.discord_id,\n  guild_id: data.guild_id,\n  embed: embed,\n  content: `<@${data.discord_id}>`,\n  event_id: data.event_id,\n  urgency: data.days_until_expiration <= 1 ? 'critical' : (data.days_until_expiration <= 3 ? 'warning' : 'info')\n};"
+      },
+      "id": "notif-course-0004",
+      "name": "Prepare Reminder Embed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CHATBOT_CORE_URL }}/api/notifications/dm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  discord_id: $json.discord_id,\n  guild_id: $json.guild_id,\n  content: $json.content,\n  embed: $json.embed,\n  notification_type: 'course_expiring',\n  urgency: $json.urgency\n}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notif-course-0005",
+      "name": "Send DM via Chatbot-Core",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// LOG NOTIFICATION RESULT\n// ============================================\n\nconst response = $input.first().json;\nconst prepData = $('Prepare Reminder Embed').first().json;\n\nconst success = !response.error && response.statusCode !== 500;\n\nconsole.log(`Course expiring notification ${success ? 'sent' : 'failed'} for user ${prepData.discord_id} (urgency: ${prepData.urgency})`);\n\nreturn {\n  success: success,\n  event_id: prepData.event_id,\n  discord_id: prepData.discord_id,\n  notification_type: 'course_expiring',\n  urgency: prepData.urgency\n};"
+      },
+      "id": "notif-course-0006",
+      "name": "Log Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "notif-course-0007",
+      "name": "No Events",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        860,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Redis Subscribe": {
+      "main": [
+        [
+          {
+            "node": "Filter Expiring Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Expiring Events": {
+      "main": [
+        [
+          {
+            "node": "Has Events?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Events?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Reminder Embed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Reminder Embed": {
+      "main": [
+        [
+          {
+            "node": "Send DM via Chatbot-Core",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send DM via Chatbot-Core": {
+      "main": [
+        [
+          {
+            "node": "Log Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [
+    {
+      "name": "notification"
+    },
+    {
+      "name": "rfc-027"
+    },
+    {
+      "name": "course"
+    }
+  ]
+}
