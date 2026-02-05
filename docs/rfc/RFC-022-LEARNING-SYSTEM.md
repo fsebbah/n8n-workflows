@@ -1245,16 +1245,19 @@ Bot: ✅ **Photo reçue !**
 
 ### 11.1 État des lieux
 
-Les services génériques prévus pour chatbot-core n'existent pas encore :
+Services génériques chatbot-core :
 
 | Service prévu | Statut | Dépendances existantes |
 |---------------|--------|------------------------|
-| `ChannelManager` | ❌ À créer | `FrameworkBot`, `discord.py` |
-| `ThreadManager` | ❌ À créer | `ChannelManager` (optionnel) |
-| `RoleManager` | ❌ À créer | `FrameworkBot`, `RedisService` |
-| `LeaderboardService` | ❌ À créer | `RedisService`, `N8nClient` |
-| `BadgeService` | ❌ À créer | `RedisService`, `N8nClient`, `PromptManager` |
-| `VoiceSessionManager` | ❌ À créer | `ChannelManager` |
+| `ChannelManager` | ✅ Implémenté | `FrameworkBot`, `discord.py` |
+| `ThreadManager` | ✅ Implémenté | `ChannelManager` (optionnel) |
+| `RoleManager` | ✅ Implémenté | `FrameworkBot`, `RedisService` |
+| `LeaderboardService` | ✅ Implémenté | `RedisService`, `N8nClient` |
+| `BadgeService` | ✅ Implémenté | `RedisService`, `N8nClient`, `PromptManager` |
+| `VoiceSessionManager` | ✅ Implémenté | `ChannelManager` |
+| `EventBus` | ✅ Implémenté | - |
+| `I18nService` | ✅ Implémenté | `RedisService` |
+| `Protocols` | ✅ Implémenté | - |
 
 **Infrastructure réutilisable :**
 - `DiscordAdapter` : messages, interactions, embeds, pagination
