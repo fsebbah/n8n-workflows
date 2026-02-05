@@ -1,0 +1,237 @@
+{
+  "name": "NOTIF---Level-Up",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## NOTIF - Level Up\n\n**Trigger:** Redis event `level:up`\n\n**Source:** RFC-027 (Option B)\n\n**Description:**\nEnvoie une notification Discord célébratoire\nquand un utilisateur monte de niveau.\n\n**Stream:** `xp:events:stream`\n**Consumer Group:** `n8n-notifications`",
+        "height": 260,
+        "width": 320,
+        "color": 5
+      },
+      "id": "notif-level-0000",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xRead",
+        "key": "xp:events:stream",
+        "options": {
+          "block": 5000,
+          "count": 10
+        }
+      },
+      "id": "notif-level-0001",
+      "name": "Redis Subscribe",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FILTER LEVEL UP EVENTS\n// ============================================\n\nconst items = $input.all();\nconst levelUpEvents = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Parse event if stringified\n  let event = data.event || data;\n  if (typeof event === 'string') {\n    try {\n      event = JSON.parse(event);\n    } catch (e) {\n      continue;\n    }\n  }\n  \n  // Filter only level:up events\n  if (event.event === 'level:up' || event.type === 'level:up') {\n    levelUpEvents.push({\n      json: {\n        event_id: data.id || `level_${Date.now()}`,\n        event_type: 'level:up',\n        guild_id: event.guild_id,\n        user_id: event.data?.user_id || event.user_id,\n        discord_id: event.data?.discord_id || event.discord_id,\n        old_level: event.data?.old_level || 0,\n        new_level: event.data?.new_level || event.data?.level || 1,\n        total_xp: event.data?.total_xp || 0,\n        timestamp: event.timestamp || new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn levelUpEvents.length > 0 ? levelUpEvents : [];"
+      },
+      "id": "notif-level-0002",
+      "name": "Filter Level Up Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-events",
+              "leftValue": "={{ $json.event_type }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "notif-level-0003",
+      "name": "Has Events?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE CELEBRATION EMBED\n// ============================================\n\nconst data = $input.first().json;\n\n// Level emojis based on level\nconst levelEmojis = {\n  5: '⭐',\n  10: '🌟',\n  15: '💫',\n  20: '🏆',\n  25: '👑',\n  30: '🎖️',\n  50: '🏅',\n  100: '💎'\n};\n\n// Find appropriate emoji\nlet emoji = '🎉';\nfor (const [level, e] of Object.entries(levelEmojis).sort((a, b) => b[0] - a[0])) {\n  if (data.new_level >= parseInt(level)) {\n    emoji = e;\n    break;\n  }\n}\n\n// Celebration messages\nconst messages = [\n  `Tu viens d'atteindre le niveau ${data.new_level} !`,\n  `Bravo ! Niveau ${data.new_level} débloqué !`,\n  `Félicitations pour ton niveau ${data.new_level} !`,\n  `Level up ! Tu es maintenant niveau ${data.new_level} !`\n];\nconst message = messages[Math.floor(Math.random() * messages.length)];\n\n// Color based on level (gradient from green to gold)\nconst colors = {\n  1: 0x57F287,   // Green\n  10: 0x3498DB,  // Blue\n  20: 0x9B59B6,  // Purple\n  30: 0xE91E63,  // Pink\n  50: 0xF1C40F,  // Gold\n  100: 0xFFD700  // Bright Gold\n};\n\nlet color = 0x57F287;\nfor (const [level, c] of Object.entries(colors).sort((a, b) => b[0] - a[0])) {\n  if (data.new_level >= parseInt(level)) {\n    color = c;\n    break;\n  }\n}\n\nconst embed = {\n  title: `${emoji} Level Up !`,\n  description: message,\n  color: color,\n  fields: [\n    {\n      name: '📊 Niveau',\n      value: `${data.old_level} → **${data.new_level}**`,\n      inline: true\n    },\n    {\n      name: '✨ XP Total',\n      value: `${data.total_xp.toLocaleString()} XP`,\n      inline: true\n    }\n  ],\n  footer: {\n    text: 'Continue comme ça ! 🚀'\n  },\n  timestamp: data.timestamp\n};\n\nreturn {\n  discord_id: data.discord_id,\n  guild_id: data.guild_id,\n  embed: embed,\n  content: `<@${data.discord_id}>`,\n  event_id: data.event_id\n};"
+      },
+      "id": "notif-level-0004",
+      "name": "Prepare Celebration Embed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CHATBOT_CORE_URL }}/api/notifications/dm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  discord_id: $json.discord_id,\n  guild_id: $json.guild_id,\n  content: $json.content,\n  embed: $json.embed,\n  notification_type: 'level_up'\n}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notif-level-0005",
+      "name": "Send DM via Chatbot-Core",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// LOG NOTIFICATION RESULT\n// ============================================\n\nconst response = $input.first().json;\nconst prepData = $('Prepare Celebration Embed').first().json;\n\nconst success = !response.error && response.statusCode !== 500;\n\nconsole.log(`Level-Up notification ${success ? 'sent' : 'failed'} for user ${prepData.discord_id}`);\n\nreturn {\n  success: success,\n  event_id: prepData.event_id,\n  discord_id: prepData.discord_id,\n  notification_type: 'level_up'\n};"
+      },
+      "id": "notif-level-0006",
+      "name": "Log Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "notif-level-0007",
+      "name": "No Events",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        860,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Redis Subscribe": {
+      "main": [
+        [
+          {
+            "node": "Filter Level Up Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Level Up Events": {
+      "main": [
+        [
+          {
+            "node": "Has Events?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Events?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Celebration Embed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Celebration Embed": {
+      "main": [
+        [
+          {
+            "node": "Send DM via Chatbot-Core",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send DM via Chatbot-Core": {
+      "main": [
+        [
+          {
+            "node": "Log Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [
+    {
+      "name": "notification"
+    },
+    {
+      "name": "rfc-027"
+    },
+    {
+      "name": "xp"
+    }
+  ]
+}

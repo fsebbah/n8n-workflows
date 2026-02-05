@@ -1,0 +1,237 @@
+{
+  "name": "NOTIF---Badge-Earned",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## NOTIF - Badge Earned\n\n**Trigger:** Redis event `badge:earned`\n\n**Source:** RFC-027 (Option B)\n\n**Description:**\nEnvoie une notification Discord quand\nun utilisateur débloque un badge.\n\n**Stream:** `xp:events:stream`\n**Consumer Group:** `n8n-notifications`",
+        "height": 260,
+        "width": 320,
+        "color": 5
+      },
+      "id": "notif-badge-0000",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xRead",
+        "key": "xp:events:stream",
+        "options": {
+          "block": 5000,
+          "count": 10
+        }
+      },
+      "id": "notif-badge-0001",
+      "name": "Redis Subscribe",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FILTER BADGE EARNED EVENTS\n// ============================================\n\nconst items = $input.all();\nconst badgeEvents = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Parse event if stringified\n  let event = data.event || data;\n  if (typeof event === 'string') {\n    try {\n      event = JSON.parse(event);\n    } catch (e) {\n      continue;\n    }\n  }\n  \n  // Filter only badge:earned events\n  if (event.event === 'badge:earned' || event.type === 'badge:earned') {\n    badgeEvents.push({\n      json: {\n        event_id: data.id || `badge_${Date.now()}`,\n        event_type: 'badge:earned',\n        guild_id: event.guild_id,\n        user_id: event.data?.user_id || event.user_id,\n        discord_id: event.data?.discord_id || event.discord_id,\n        badge_id: event.data?.badge_id,\n        badge_name: event.data?.badge_name || 'Badge',\n        badge_emoji: event.data?.badge_emoji || '🏅',\n        badge_description: event.data?.badge_description || '',\n        badge_rarity: event.data?.badge_rarity || 'common',\n        timestamp: event.timestamp || new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn badgeEvents.length > 0 ? badgeEvents : [];"
+      },
+      "id": "notif-badge-0002",
+      "name": "Filter Badge Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-events",
+              "leftValue": "={{ $json.event_type }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "notif-badge-0003",
+      "name": "Has Events?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE BADGE EMBED\n// ============================================\n\nconst data = $input.first().json;\n\n// Rarity colors\nconst rarityColors = {\n  common: 0x95A5A6,      // Gray\n  uncommon: 0x2ECC71,    // Green\n  rare: 0x3498DB,        // Blue\n  epic: 0x9B59B6,        // Purple\n  legendary: 0xF39C12,   // Orange\n  mythic: 0xE74C3C       // Red\n};\n\nconst rarityLabels = {\n  common: 'Commun',\n  uncommon: 'Peu commun',\n  rare: 'Rare',\n  epic: 'Épique',\n  legendary: 'Légendaire',\n  mythic: 'Mythique'\n};\n\nconst color = rarityColors[data.badge_rarity] || 0x95A5A6;\nconst rarityLabel = rarityLabels[data.badge_rarity] || 'Commun';\n\nconst embed = {\n  title: `${data.badge_emoji} Nouveau Badge Débloqué !`,\n  description: `Tu as obtenu le badge **${data.badge_name}** !`,\n  color: color,\n  fields: [\n    {\n      name: '📋 Description',\n      value: data.badge_description || 'Un badge spécial !',\n      inline: false\n    },\n    {\n      name: '💎 Rareté',\n      value: rarityLabel,\n      inline: true\n    }\n  ],\n  footer: {\n    text: 'Consulte ta collection avec /progression'\n  },\n  timestamp: data.timestamp\n};\n\n// Add thumbnail if badge has an image\nif (data.badge_image_url) {\n  embed.thumbnail = { url: data.badge_image_url };\n}\n\nreturn {\n  discord_id: data.discord_id,\n  guild_id: data.guild_id,\n  embed: embed,\n  content: `<@${data.discord_id}> 🎊`,\n  event_id: data.event_id\n};"
+      },
+      "id": "notif-badge-0004",
+      "name": "Prepare Badge Embed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CHATBOT_CORE_URL }}/api/notifications/dm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  discord_id: $json.discord_id,\n  guild_id: $json.guild_id,\n  content: $json.content,\n  embed: $json.embed,\n  notification_type: 'badge_earned'\n}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notif-badge-0005",
+      "name": "Send DM via Chatbot-Core",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// LOG NOTIFICATION RESULT\n// ============================================\n\nconst response = $input.first().json;\nconst prepData = $('Prepare Badge Embed').first().json;\n\nconst success = !response.error && response.statusCode !== 500;\n\nconsole.log(`Badge notification ${success ? 'sent' : 'failed'} for user ${prepData.discord_id}`);\n\nreturn {\n  success: success,\n  event_id: prepData.event_id,\n  discord_id: prepData.discord_id,\n  notification_type: 'badge_earned'\n};"
+      },
+      "id": "notif-badge-0006",
+      "name": "Log Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "notif-badge-0007",
+      "name": "No Events",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        860,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Redis Subscribe": {
+      "main": [
+        [
+          {
+            "node": "Filter Badge Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Badge Events": {
+      "main": [
+        [
+          {
+            "node": "Has Events?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Events?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Badge Embed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Badge Embed": {
+      "main": [
+        [
+          {
+            "node": "Send DM via Chatbot-Core",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send DM via Chatbot-Core": {
+      "main": [
+        [
+          {
+            "node": "Log Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [
+    {
+      "name": "notification"
+    },
+    {
+      "name": "rfc-027"
+    },
+    {
+      "name": "badge"
+    }
+  ]
+}
