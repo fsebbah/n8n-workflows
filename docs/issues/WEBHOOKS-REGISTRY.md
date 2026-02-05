@@ -66,7 +66,7 @@ Crée une nouvelle promotion et publie un event Redis pour déclencher la créat
 }
 ```
 
-**Event Redis:** `promotion.created` → `formation:events:{guild_id}`
+**Event Redis:** `promotion.created` → `formation:events:stream`
 
 ---
 
@@ -96,7 +96,7 @@ Archive une promotion existante et publie un event Redis.
 }
 ```
 
-**Event Redis:** `promotion.archived` → `formation:events:{guild_id}`
+**Event Redis:** `promotion.archived` → `formation:events:stream`
 
 ---
 
@@ -160,7 +160,7 @@ Réconcilie l'état API avec Discord. Détecte et corrige les désynchronisation
 }
 ```
 
-**Event Redis (mode repair):** `promotion.repair_structure` → `formation:events:{guild_id}`
+**Event Redis (mode repair):** `promotion.repair_structure` → `formation:events:stream`
 
 ---
 
@@ -168,9 +168,36 @@ Réconcilie l'état API avec Discord. Détecte et corrige les désynchronisation
 
 | Event Type | Stream | Publisher | Consumer |
 |------------|--------|-----------|----------|
-| `promotion.created` | `formation:events:{guild_id}` | formation-create-promotion | chatbot-core (FormationEventSubscriber) |
-| `promotion.archived` | `formation:events:{guild_id}` | formation-archive-promotion | chatbot-core (FormationEventSubscriber) |
-| `promotion.repair_structure` | `formation:events:{guild_id}` | formation-sync | chatbot-core (FormationEventSubscriber) |
+| `promotion.created` | `formation:events:stream` | formation-create-promotion | chatbot-core (FormationEventSubscriber) |
+| `promotion.archived` | `formation:events:stream` | formation-archive-promotion | chatbot-core (FormationEventSubscriber) |
+| `promotion.repair_structure` | `formation:events:stream` | formation-sync | chatbot-core (FormationEventSubscriber) |
+
+### Format des events (RFC-023)
+
+Tous les events suivent le format standard défini dans `REDIS-STREAMS-EVENTS-API.md` :
+
+```json
+{
+  "event": "promotion.created",
+  "guild_id": "123456789",
+  "timestamp": "2026-02-05T15:30:00Z",
+  "data": {
+    "promotion_id": "uuid",
+    "formation_id": "uuid",
+    "formation_name": "CAP Cuisine",
+    "formation_emoji": "👨‍🍳",
+    "year_start": 2024,
+    "year_end": 2025,
+    "matieres": ["techniques", "patisserie"]
+  }
+}
+```
+
+**Champs obligatoires :**
+- `event` : Type d'événement (format `domain.action`)
+- `guild_id` : ID du serveur Discord
+- `timestamp` : ISO 8601 UTC
+- `data` : Payload spécifique à l'événement
 
 ---
 
