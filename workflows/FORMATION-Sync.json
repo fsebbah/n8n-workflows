@@ -1,0 +1,585 @@
+{
+  "name": "FORMATION---Sync",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## FORMATION - Sync (Réconciliation)\n\n**Endpoint:** POST /webhook/formation-sync\n\n**Source:** RFC-023 Section 16.2.4\n\n**Description:**\nRéconcilie l'état API avec Discord.\nDétecte et corrige les désynchronisations.\n\n**Input:**\n```json\n{\n  \"guild_id\": \"123456789\",\n  \"mode\": \"check\" | \"repair\"\n}\n```\n\n**Modes:**\n- `check` : Rapport sans correction\n- `repair` : Corrige les désynchronisations\n\n**Flow:**\n1. Récupère les promotions actives de l'API\n2. Compare avec les catégories/rôles Discord\n3. Génère un rapport des différences\n4. Si mode=repair, publie events de correction\n\n**Anomalies détectées:**\n- Catégorie Discord manquante\n- Rôle Discord manquant\n- Channels manquants\n- Promotion API sans structure Discord",
+        "height": 560,
+        "width": 380,
+        "color": 5
+      },
+      "id": "formation-sync-0000",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "formation-sync",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "formation-sync-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "formation-sync"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// Extract project_id from header\nconst projectId = headers['x-project-id'] || headers['X-Project-ID'] || 'default';\n\n// Required fields\nconst errors = [];\n\nif (!body.guild_id) errors.push('guild_id');\n\n// Validate mode\nconst validModes = ['check', 'repair'];\nconst mode = body.mode || 'check';\nif (!validModes.includes(mode)) {\n  errors.push(`mode must be one of: ${validModes.join(', ')}`);\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 400,\n      message: `Paramètres invalides: ${errors.join(', ')}`,\n      status: 'BAD_REQUEST'\n    }\n  };\n}\n\nreturn {\n  valid: true,\n  project_id: projectId,\n  data: {\n    guild_id: body.guild_id,\n    mode: mode\n  }\n};"
+      },
+      "id": "formation-sync-0002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "formation-sync-0003",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.error) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "formation-sync-0004",
+      "name": "Response Error 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/promotions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "guild_id",
+              "value": "={{ $json.data.guild_id }}"
+            },
+            {
+              "name": "status",
+              "value": "active"
+            },
+            {
+              "name": "include",
+              "value": "formation,matieres,discord_ids"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "formation-sync-0005",
+      "name": "Get API Promotions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        200
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CHECK API RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\n// Check for API error\nif (apiResponse.error || apiResponse.statusCode >= 400) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.statusCode || 500,\n      message: apiResponse.message || apiResponse.error || 'API error',\n      status: 'API_ERROR'\n    }\n  };\n}\n\n// Extract promotions\nconst promotions = apiResponse.data || apiResponse.promotions || apiResponse || [];\n\nreturn {\n  success: true,\n  guild_id: inputData.data.guild_id,\n  mode: inputData.data.mode,\n  promotions: Array.isArray(promotions) ? promotions : [promotions],\n  project_id: inputData.project_id\n};"
+      },
+      "id": "formation-sync-0006",
+      "name": "Check API Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-api-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "formation-sync-0007",
+      "name": "API Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.error) }}",
+        "options": {
+          "responseCode": "={{ $json.error.code || 500 }}"
+        }
+      },
+      "id": "formation-sync-0008",
+      "name": "Response API Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/discord/guild/{{ $json.guild_id }}/formation-structures",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "formation-sync-0009",
+      "name": "Get Discord Structures",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1520,
+        100
+      ],
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "Récupère les catégories/rôles Discord liés aux formations"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// COMPARE AND DETECT ANOMALIES\n// ============================================\n\nconst apiData = $('Check API Response').first().json;\nconst discordResponse = $input.first().json;\n\nconst promotions = apiData.promotions || [];\nconst discordStructures = discordResponse.data || discordResponse.structures || discordResponse || [];\n\n// Build lookup maps\nconst discordByPromotionId = new Map();\nfor (const structure of (Array.isArray(discordStructures) ? discordStructures : [])) {\n  if (structure.promotion_id) {\n    discordByPromotionId.set(structure.promotion_id, structure);\n  }\n}\n\n// Detect anomalies\nconst anomalies = [];\nconst syncActions = [];\n\nfor (const promotion of promotions) {\n  const discordStructure = discordByPromotionId.get(promotion.id);\n  \n  if (!discordStructure) {\n    // Promotion without Discord structure\n    anomalies.push({\n      type: 'MISSING_DISCORD_STRUCTURE',\n      severity: 'high',\n      promotion_id: promotion.id,\n      promotion_name: promotion.formation?.name || promotion.name,\n      year: `${promotion.year_start}-${promotion.year_end}`,\n      message: `Structure Discord manquante pour la promotion ${promotion.id}`\n    });\n    syncActions.push({\n      action: 'CREATE_STRUCTURE',\n      promotion_id: promotion.id,\n      promotion: promotion\n    });\n  } else {\n    // Check individual components\n    if (!discordStructure.category_id) {\n      anomalies.push({\n        type: 'MISSING_CATEGORY',\n        severity: 'high',\n        promotion_id: promotion.id,\n        message: `Catégorie Discord manquante`\n      });\n    }\n    if (!discordStructure.role_id) {\n      anomalies.push({\n        type: 'MISSING_ROLE',\n        severity: 'high',\n        promotion_id: promotion.id,\n        message: `Rôle Discord manquant`\n      });\n    }\n    // Check channels\n    const expectedChannels = ['general', 'annonces', 'ressources'];\n    const existingChannels = discordStructure.channels || [];\n    for (const expected of expectedChannels) {\n      if (!existingChannels.some(c => c.type === expected || c.name?.includes(expected))) {\n        anomalies.push({\n          type: 'MISSING_CHANNEL',\n          severity: 'medium',\n          promotion_id: promotion.id,\n          channel_type: expected,\n          message: `Channel '${expected}' manquant`\n        });\n      }\n    }\n  }\n}\n\n// Check for orphan Discord structures (in Discord but not in API)\nfor (const [promotionId, structure] of discordByPromotionId) {\n  if (!promotions.find(p => p.id === promotionId)) {\n    anomalies.push({\n      type: 'ORPHAN_DISCORD_STRUCTURE',\n      severity: 'low',\n      promotion_id: promotionId,\n      category_id: structure.category_id,\n      message: `Structure Discord orpheline (promotion supprimée de l'API)`\n    });\n  }\n}\n\nreturn {\n  guild_id: apiData.guild_id,\n  mode: apiData.mode,\n  promotions_count: promotions.length,\n  discord_structures_count: discordByPromotionId.size,\n  anomalies: anomalies,\n  anomalies_count: anomalies.length,\n  sync_actions: syncActions,\n  has_anomalies: anomalies.length > 0\n};"
+      },
+      "id": "formation-sync-0010",
+      "name": "Compare & Detect Anomalies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-mode-repair",
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "repair",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "check-has-actions",
+              "leftValue": "={{ $json.sync_actions.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "formation-sync-0011",
+      "name": "Mode Repair & Has Actions?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE REPAIR EVENTS\n// ============================================\n\nconst data = $input.first().json;\nconst syncActions = data.sync_actions || [];\n\n// Prepare events for each action\nconst events = [];\nfor (const action of syncActions) {\n  if (action.action === 'CREATE_STRUCTURE') {\n    const promotion = action.promotion;\n    events.push({\n      type: 'promotion.repair_structure',\n      timestamp: new Date().toISOString(),\n      guild_id: data.guild_id,\n      data: {\n        promotion_id: action.promotion_id,\n        formation_id: promotion.formation_id || promotion.formation?.id,\n        formation_name: promotion.formation?.name || promotion.name,\n        formation_emoji: promotion.formation?.emoji || '🎓',\n        year_start: promotion.year_start,\n        year_end: promotion.year_end,\n        matieres: promotion.matieres || []\n      }\n    });\n  }\n}\n\nreturn {\n  ...data,\n  repair_events: events,\n  stream_name: `formation:events:${data.guild_id}`\n};"
+      },
+      "id": "formation-sync-0012",
+      "name": "Prepare Repair Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// SPLIT EVENTS FOR PUBLISHING\n// ============================================\n\nconst data = $input.first().json;\nconst events = data.repair_events || [];\n\nif (events.length === 0) {\n  return {\n    ...data,\n    events_published: 0\n  };\n}\n\n// Return each event for loop processing\nreturn events.map(event => ({\n  json: {\n    event: event,\n    stream_name: data.stream_name,\n    original_data: data\n  }\n}));"
+      },
+      "id": "formation-sync-0013",
+      "name": "Split Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xAdd",
+        "key": "={{ $json.stream_name }}",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldName": "event",
+              "fieldValue": "={{ JSON.stringify($json.event) }}"
+            }
+          ]
+        }
+      },
+      "id": "formation-sync-0014",
+      "name": "Publish Repair Event",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2620,
+        0
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE FINAL REPORT (REPAIR MODE)\n// ============================================\n\nconst items = $input.all();\nconst originalData = items[0]?.json?.original_data || $('Prepare Repair Events').first().json;\n\nreturn {\n  success: true,\n  mode: 'repair',\n  guild_id: originalData.guild_id,\n  report: {\n    promotions_checked: originalData.promotions_count,\n    discord_structures_found: originalData.discord_structures_count,\n    anomalies_detected: originalData.anomalies_count,\n    anomalies: originalData.anomalies,\n    repairs_attempted: originalData.sync_actions.length,\n    events_published: items.length\n  },\n  message: `Réconciliation terminée: ${originalData.anomalies_count} anomalies détectées, ${items.length} réparations lancées`\n};"
+      },
+      "id": "formation-sync-0015",
+      "name": "Format Repair Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE FINAL REPORT (CHECK MODE)\n// ============================================\n\nconst data = $input.first().json;\n\nreturn {\n  success: true,\n  mode: 'check',\n  guild_id: data.guild_id,\n  report: {\n    promotions_checked: data.promotions_count,\n    discord_structures_found: data.discord_structures_count,\n    anomalies_detected: data.anomalies_count,\n    anomalies: data.anomalies,\n    suggested_repairs: data.sync_actions.length\n  },\n  message: data.has_anomalies \n    ? `${data.anomalies_count} anomalies détectées. Utilisez mode=repair pour corriger.`\n    : 'Aucune anomalie détectée. Tout est synchronisé.'\n};"
+      },
+      "id": "formation-sync-0016",
+      "name": "Format Check Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "formation-sync-0017",
+      "name": "Response Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3060,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get API Promotions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response Error 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get API Promotions": {
+      "main": [
+        [
+          {
+            "node": "Check API Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check API Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check API Response": {
+      "main": [
+        [
+          {
+            "node": "API Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Success?": {
+      "main": [
+        [
+          {
+            "node": "Get Discord Structures",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response API Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Discord Structures": {
+      "main": [
+        [
+          {
+            "node": "Compare & Detect Anomalies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compare & Detect Anomalies": {
+      "main": [
+        [
+          {
+            "node": "Mode Repair & Has Actions?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mode Repair & Has Actions?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Repair Events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Check Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Repair Events": {
+      "main": [
+        [
+          {
+            "node": "Split Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Events": {
+      "main": [
+        [
+          {
+            "node": "Publish Repair Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Repair Event": {
+      "main": [
+        [
+          {
+            "node": "Format Repair Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Repair Report": {
+      "main": [
+        [
+          {
+            "node": "Response Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Check Report": {
+      "main": [
+        [
+          {
+            "node": "Response Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [
+    {
+      "name": "formation"
+    },
+    {
+      "name": "rfc-023"
+    }
+  ]
+}
