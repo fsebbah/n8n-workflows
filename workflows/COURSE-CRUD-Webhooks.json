@@ -1,0 +1,763 @@
+{
+  "name": "COURSE---CRUD-Webhooks",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## COURSE - CRUD Webhooks\n\n**Source:** RFC-025 Section 9\n\n**Description:**\nWebhooks pour les opérations cours:\n- GET /course-list\n- GET /course-get/{slug}\n- POST /course-subscribe\n- POST /course-unsubscribe\n- GET /user-courses/{user_id}\n\nUtilisés par les commandes Discord pour\nla gestion des cours.",
+        "height": 300,
+        "width": 340,
+        "color": 5
+      },
+      "id": "course-crud-0000",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "course-list",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "course-crud-0001",
+      "name": "GET Course List",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        200
+      ],
+      "webhookId": "course-list"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/courses?include_pricing=true",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "course-crud-0002",
+      "name": "API Get Courses",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT COURSE LIST RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\n\nif (apiResponse.error || apiResponse.statusCode >= 400) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.statusCode || 500,\n      message: apiResponse.message || 'Failed to fetch courses'\n    }\n  };\n}\n\nconst courses = apiResponse.data || apiResponse || [];\nconst courseList = Array.isArray(courses) ? courses : [];\n\n// Group by category\nconst byCategory = {};\nfor (const course of courseList) {\n  const category = course.category || 'other';\n  if (!byCategory[category]) {\n    byCategory[category] = [];\n  }\n  byCategory[category].push({\n    id: course.id,\n    slug: course.slug,\n    name: course.name,\n    description: course.short_description || course.description,\n    price_monthly: course.price_monthly,\n    price_onetime: course.price_onetime,\n    category: category,\n    level: course.level,\n    duration_weeks: course.duration_weeks\n  });\n}\n\nreturn {\n  success: true,\n  total: courseList.length,\n  courses: courseList.map(c => ({\n    id: c.id,\n    slug: c.slug,\n    name: c.name,\n    description: c.short_description,\n    price_monthly: c.price_monthly,\n    category: c.category,\n    level: c.level\n  })),\n  by_category: byCategory\n};"
+      },
+      "id": "course-crud-0003",
+      "name": "Format Course List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}"
+        }
+      },
+      "id": "course-crud-0004",
+      "name": "Response Course List",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "course-get/:slug",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "course-crud-0005",
+      "name": "GET Course By Slug",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        400
+      ],
+      "webhookId": "course-get"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/courses/{{ $json.params.slug }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "course-crud-0006",
+      "name": "API Get Course",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT COURSE DETAIL RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\n\nif (apiResponse.error || apiResponse.statusCode >= 400) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.statusCode || 404,\n      message: apiResponse.message || 'Course not found'\n    }\n  };\n}\n\nconst course = apiResponse.data || apiResponse;\n\nreturn {\n  success: true,\n  course: {\n    id: course.id,\n    slug: course.slug,\n    name: course.name,\n    description: course.description,\n    short_description: course.short_description,\n    category: course.category,\n    level: course.level,\n    duration_weeks: course.duration_weeks,\n    price_monthly: course.price_monthly,\n    price_onetime: course.price_onetime,\n    stripe_product_id: course.stripe_product_id,\n    stripe_price_id: course.stripe_price_id,\n    discord_role: course.discord_role_name,\n    discord_channel: course.discord_channel_slug\n  }\n};"
+      },
+      "id": "course-crud-0007",
+      "name": "Format Course Detail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}"
+        }
+      },
+      "id": "course-crud-0008",
+      "name": "Response Course Detail",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "course-subscribe",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "course-crud-0009",
+      "name": "POST Course Subscribe",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        600
+      ],
+      "webhookId": "course-subscribe"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE SUBSCRIBE INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\n\nconst errors = [];\nif (!body.user_id && !body.discord_id) errors.push('user_id or discord_id');\nif (!body.course_slug && !body.course_id) errors.push('course_slug or course_id');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 400,\n      message: `Missing required fields: ${errors.join(', ')}`\n    }\n  };\n}\n\nreturn {\n  valid: true,\n  user_id: body.user_id,\n  discord_id: body.discord_id,\n  guild_id: body.guild_id,\n  course_slug: body.course_slug,\n  course_id: body.course_id\n};"
+      },
+      "id": "course-crud-0010",
+      "name": "Validate Subscribe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "course-crud-0011",
+      "name": "Subscribe Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "course-crud-0012",
+      "name": "Response Subscribe Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/subscriptions/add-course",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  user_id: $json.user_id,\n  discord_id: $json.discord_id,\n  course_slug: $json.course_slug,\n  course_id: $json.course_id\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "course-crud-0013",
+      "name": "API Add Course",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        500
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT SUBSCRIBE RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst inputData = $('Validate Subscribe').first().json;\n\nif (apiResponse.error || apiResponse.statusCode >= 400) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.statusCode || 500,\n      message: apiResponse.message || 'Failed to add course to subscription'\n    }\n  };\n}\n\nconst result = apiResponse.data || apiResponse;\n\nreturn {\n  success: true,\n  message: 'Course added to subscription',\n  course: result.course,\n  subscription_item_id: result.subscription_item_id,\n  prorated_amount: result.prorated_amount\n};"
+      },
+      "id": "course-crud-0014",
+      "name": "Format Subscribe Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}"
+        }
+      },
+      "id": "course-crud-0015",
+      "name": "Response Subscribe",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "course-unsubscribe",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "course-crud-0016",
+      "name": "POST Course Unsubscribe",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        900
+      ],
+      "webhookId": "course-unsubscribe"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE UNSUBSCRIBE INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\n\nconst errors = [];\nif (!body.user_id && !body.discord_id) errors.push('user_id or discord_id');\nif (!body.course_slug && !body.course_id) errors.push('course_slug or course_id');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 400,\n      message: `Missing required fields: ${errors.join(', ')}`\n    }\n  };\n}\n\nreturn {\n  valid: true,\n  user_id: body.user_id,\n  discord_id: body.discord_id,\n  course_slug: body.course_slug,\n  course_id: body.course_id\n};"
+      },
+      "id": "course-crud-0017",
+      "name": "Validate Unsubscribe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "course-crud-0018",
+      "name": "Unsubscribe Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "course-crud-0019",
+      "name": "Response Unsubscribe Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/subscriptions/remove-course",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  user_id: $json.user_id,\n  discord_id: $json.discord_id,\n  course_slug: $json.course_slug,\n  course_id: $json.course_id\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "course-crud-0020",
+      "name": "API Remove Course",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        800
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT UNSUBSCRIBE RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\n\nif (apiResponse.error || apiResponse.statusCode >= 400) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.statusCode || 500,\n      message: apiResponse.message || 'Failed to remove course from subscription'\n    }\n  };\n}\n\nconst result = apiResponse.data || apiResponse;\n\nreturn {\n  success: true,\n  message: 'Course removed from subscription',\n  course: result.course,\n  credit_amount: result.credit_amount\n};"
+      },
+      "id": "course-crud-0021",
+      "name": "Format Unsubscribe Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}"
+        }
+      },
+      "id": "course-crud-0022",
+      "name": "Response Unsubscribe",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "user-courses/:user_id",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "course-crud-0023",
+      "name": "GET User Courses",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        1150
+      ],
+      "webhookId": "user-courses"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/users/{{ $json.params.user_id }}/courses",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "course-crud-0024",
+      "name": "API Get User Courses",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        1150
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT USER COURSES RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\n\nif (apiResponse.error || apiResponse.statusCode >= 400) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.statusCode || 500,\n      message: apiResponse.message || 'Failed to fetch user courses'\n    }\n  };\n}\n\nconst coursesData = apiResponse.data || apiResponse || [];\nconst courses = Array.isArray(coursesData) ? coursesData : [];\n\n// Separate active from expired\nconst active = courses.filter(c => c.status === 'active');\nconst expired = courses.filter(c => c.status === 'expired');\n\nreturn {\n  success: true,\n  total: courses.length,\n  active_count: active.length,\n  expired_count: expired.length,\n  courses: active.map(c => ({\n    course_id: c.course_id,\n    course_slug: c.course?.slug,\n    course_name: c.course?.name,\n    access_type: c.access_type,\n    status: c.status,\n    expires_at: c.expires_at,\n    enrolled_at: c.created_at\n  })),\n  expired_courses: expired.map(c => ({\n    course_id: c.course_id,\n    course_name: c.course?.name,\n    expired_at: c.expires_at\n  }))\n};"
+      },
+      "id": "course-crud-0025",
+      "name": "Format User Courses",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        1150
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}"
+        }
+      },
+      "id": "course-crud-0026",
+      "name": "Response User Courses",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        1150
+      ]
+    }
+  ],
+  "connections": {
+    "GET Course List": {
+      "main": [
+        [
+          {
+            "node": "API Get Courses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Get Courses": {
+      "main": [
+        [
+          {
+            "node": "Format Course List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Course List": {
+      "main": [
+        [
+          {
+            "node": "Response Course List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET Course By Slug": {
+      "main": [
+        [
+          {
+            "node": "API Get Course",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Get Course": {
+      "main": [
+        [
+          {
+            "node": "Format Course Detail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Course Detail": {
+      "main": [
+        [
+          {
+            "node": "Response Course Detail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Course Subscribe": {
+      "main": [
+        [
+          {
+            "node": "Validate Subscribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Subscribe": {
+      "main": [
+        [
+          {
+            "node": "Subscribe Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscribe Valid?": {
+      "main": [
+        [
+          {
+            "node": "API Add Course",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response Subscribe Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Add Course": {
+      "main": [
+        [
+          {
+            "node": "Format Subscribe Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Subscribe Response": {
+      "main": [
+        [
+          {
+            "node": "Response Subscribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Course Unsubscribe": {
+      "main": [
+        [
+          {
+            "node": "Validate Unsubscribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Unsubscribe": {
+      "main": [
+        [
+          {
+            "node": "Unsubscribe Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unsubscribe Valid?": {
+      "main": [
+        [
+          {
+            "node": "API Remove Course",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response Unsubscribe Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Remove Course": {
+      "main": [
+        [
+          {
+            "node": "Format Unsubscribe Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Unsubscribe Response": {
+      "main": [
+        [
+          {
+            "node": "Response Unsubscribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET User Courses": {
+      "main": [
+        [
+          {
+            "node": "API Get User Courses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Get User Courses": {
+      "main": [
+        [
+          {
+            "node": "Format User Courses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format User Courses": {
+      "main": [
+        [
+          {
+            "node": "Response User Courses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [
+    {
+      "name": "course"
+    },
+    {
+      "name": "rfc-025"
+    },
+    {
+      "name": "webhook"
+    }
+  ]
+}
