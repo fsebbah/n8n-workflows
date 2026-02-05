@@ -1,0 +1,404 @@
+{
+  "name": "FORMATION---Create-Promotion",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## FORMATION - Create Promotion\n\n**Endpoint:** POST /webhook/formation-create-promotion\n\n**Source:** RFC-023 Section 7\n\n**Description:**\nCrée une promotion et publie un event pour que chatbot-core\ncrée la structure Discord (catégorie, rôle, channels).\n\n**Input:**\n```json\n{\n  \"guild_id\": \"123456789\",\n  \"formation_id\": \"uuid\",\n  \"formation_name\": \"CAP Cuisine\",\n  \"formation_emoji\": \"👨‍🍳\",\n  \"year_start\": 2024,\n  \"year_end\": 2025,\n  \"matieres\": [\"techniques\", \"patisserie\"]\n}\n```\n\n**Flow:**\n1. Valide les données d'entrée\n2. Appelle API POST /promotions\n3. Publie event `promotion.created` vers Redis Stream\n4. Retourne le résultat",
+        "height": 520,
+        "width": 340,
+        "color": 5
+      },
+      "id": "formation-create-0000",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "formation-create-promotion",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "formation-create-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "formation-create-promotion"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// Extract project_id from header\nconst projectId = headers['x-project-id'] || headers['X-Project-ID'] || 'default';\n\n// Required fields\nconst errors = [];\n\nif (!body.guild_id) errors.push('guild_id');\nif (!body.formation_id) errors.push('formation_id');\nif (!body.formation_name) errors.push('formation_name');\nif (!body.year_start) errors.push('year_start');\nif (!body.year_end) errors.push('year_end');\n\n// Validate year range\nif (body.year_start && body.year_end && body.year_start >= body.year_end) {\n  errors.push('year_start must be < year_end');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 400,\n      message: `Paramètres requis manquants ou invalides: ${errors.join(', ')}`,\n      status: 'BAD_REQUEST'\n    }\n  };\n}\n\nreturn {\n  valid: true,\n  project_id: projectId,\n  data: {\n    guild_id: body.guild_id,\n    formation_id: body.formation_id,\n    formation_name: body.formation_name,\n    formation_emoji: body.formation_emoji || '🎓',\n    year_start: parseInt(body.year_start),\n    year_end: parseInt(body.year_end),\n    matieres: body.matieres || []\n  }\n};"
+      },
+      "id": "formation-create-0002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "formation-create-0003",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.error) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "formation-create-0004",
+      "name": "Response Error 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/promotions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  guild_id: $json.data.guild_id,\n  formation_id: $json.data.formation_id,\n  year_start: $json.data.year_start,\n  year_end: $json.data.year_end,\n  matieres: $json.data.matieres\n}) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "formation-create-0005",
+      "name": "API Create Promotion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        200
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CHECK API RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\n// Check for API error\nif (apiResponse.error || apiResponse.statusCode >= 400) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.statusCode || 500,\n      message: apiResponse.message || apiResponse.error || 'API error',\n      status: 'API_ERROR'\n    }\n  };\n}\n\n// Success - extract promotion data\nconst promotion = apiResponse.data || apiResponse;\n\nreturn {\n  success: true,\n  promotion: {\n    id: promotion.id,\n    formation_id: promotion.formation_id || inputData.data.formation_id,\n    guild_id: inputData.data.guild_id,\n    year_start: promotion.year_start || inputData.data.year_start,\n    year_end: promotion.year_end || inputData.data.year_end,\n    formation_name: inputData.data.formation_name,\n    formation_emoji: inputData.data.formation_emoji,\n    matieres: promotion.matieres || inputData.data.matieres\n  },\n  input_data: inputData.data\n};"
+      },
+      "id": "formation-create-0006",
+      "name": "Check API Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-api-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "formation-create-0007",
+      "name": "API Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.error) }}",
+        "options": {
+          "responseCode": "={{ $json.error.code || 500 }}"
+        }
+      },
+      "id": "formation-create-0008",
+      "name": "Response API Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE REDIS EVENT\n// ============================================\n\nconst data = $input.first().json;\nconst promotion = data.promotion;\n\n// Préparer l'event pour Redis Stream\nconst event = {\n  type: 'promotion.created',\n  timestamp: new Date().toISOString(),\n  guild_id: promotion.guild_id,\n  data: {\n    promotion_id: promotion.id,\n    formation_id: promotion.formation_id,\n    formation_name: promotion.formation_name,\n    formation_emoji: promotion.formation_emoji,\n    year_start: promotion.year_start,\n    year_end: promotion.year_end,\n    matieres: promotion.matieres\n  }\n};\n\nreturn {\n  promotion: promotion,\n  stream_name: `formation:events:${promotion.guild_id}`,\n  event: event\n};"
+      },
+      "id": "formation-create-0009",
+      "name": "Prepare Redis Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xAdd",
+        "key": "={{ $json.stream_name }}",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldName": "event",
+              "fieldValue": "={{ JSON.stringify($json.event) }}"
+            }
+          ]
+        }
+      },
+      "id": "formation-create-0010",
+      "name": "Publish Event",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1740,
+        100
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE SUCCESS RESPONSE\n// ============================================\n\nconst data = $('Prepare Redis Event').first().json;\n\nreturn {\n  success: true,\n  message: 'Promotion créée avec succès',\n  promotion: data.promotion,\n  event_published: true\n};"
+      },
+      "id": "formation-create-0011",
+      "name": "Format Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 201
+        }
+      },
+      "id": "formation-create-0012",
+      "name": "Response Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2180,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "API Create Promotion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response Error 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Create Promotion": {
+      "main": [
+        [
+          {
+            "node": "Check API Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check API Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check API Response": {
+      "main": [
+        [
+          {
+            "node": "API Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Success?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Redis Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response API Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Redis Event": {
+      "main": [
+        [
+          {
+            "node": "Publish Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Event": {
+      "main": [
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Response": {
+      "main": [
+        [
+          {
+            "node": "Response Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [
+    {
+      "name": "formation"
+    },
+    {
+      "name": "rfc-023"
+    }
+  ]
+}
