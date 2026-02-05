@@ -1,0 +1,417 @@
+{
+  "name": "STRIPE---Handler-Payment-Intent",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## STRIPE - Handler Payment Intent\n\n**Trigger:** Called by STRIPE-Webhook-Handler\n\n**Source:** RFC-025 Section 15.2.4\n\n**Description:**\nGère les achats one-time (certifications):\n- Détecte PaymentIntent avec metadata type=certification\n- Grant accès avec validity_months\n- Add rôle Discord\n- Publie event course.access.granted\n\n**Event:** payment_intent.succeeded",
+        "height": 300,
+        "width": 340,
+        "color": 5
+      },
+      "id": "stripe-payment-0000",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stripe-handler-payment-intent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "stripe-payment-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "stripe-handler-payment-intent"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// EXTRACT PAYMENT INTENT DATA\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst eventData = body.event_data || body;\nconst paymentIntent = eventData;\n\n// Check metadata for certification/one-time purchase\nconst metadata = paymentIntent.metadata || {};\nconst productType = metadata.type || metadata.product_type;\nconst courseId = metadata.course_id;\nconst validityMonths = parseInt(metadata.validity_months) || 0;\n\n// Check if this is a one-time course purchase\nconst isOnetime = productType === 'certification' || \n                  productType === 'one_time' ||\n                  metadata.one_time === 'true';\n\nreturn {\n  event_id: body.event_id,\n  payment_intent_id: paymentIntent.id,\n  customer_id: paymentIntent.customer,\n  amount: paymentIntent.amount,\n  currency: paymentIntent.currency,\n  status: paymentIntent.status,\n  metadata: metadata,\n  product_type: productType,\n  course_id: courseId,\n  validity_months: validityMonths,\n  is_onetime: isOnetime,\n  stripe_product_id: metadata.stripe_product_id,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "stripe-payment-0002",
+      "name": "Extract Payment Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-onetime",
+              "leftValue": "={{ $json.is_onetime }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "stripe-payment-0003",
+      "name": "Is One-Time?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ handled: false, message: 'Not a one-time purchase, skipping', event_id: $json.event_id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "stripe-payment-0004",
+      "name": "Response Skip",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/users/by-stripe-customer/{{ $json.customer_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "stripe-payment-0005",
+      "name": "Get User By Customer ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        200
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CHECK USER EXISTS\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst paymentData = $('Extract Payment Data').first().json;\n\nif (apiResponse.error || apiResponse.statusCode >= 400 || !apiResponse.data) {\n  return {\n    success: false,\n    error: {\n      code: 404,\n      message: `User not found for Stripe customer: ${paymentData.customer_id}`,\n      status: 'USER_NOT_FOUND'\n    },\n    customer_id: paymentData.customer_id\n  };\n}\n\nconst user = apiResponse.data || apiResponse;\n\n// Calculate expiration date\nlet expiresAt = null;\nif (paymentData.validity_months > 0) {\n  const expDate = new Date();\n  expDate.setMonth(expDate.getMonth() + paymentData.validity_months);\n  expiresAt = expDate.toISOString();\n}\n\nreturn {\n  success: true,\n  user_id: user.id,\n  discord_id: user.discord_id,\n  guild_id: user.guild_id,\n  customer_id: paymentData.customer_id,\n  payment_intent_id: paymentData.payment_intent_id,\n  course_id: paymentData.course_id,\n  stripe_product_id: paymentData.stripe_product_id,\n  validity_months: paymentData.validity_months,\n  expires_at: expiresAt,\n  amount: paymentData.amount,\n  event_id: paymentData.event_id\n};"
+      },
+      "id": "stripe-payment-0006",
+      "name": "Check User",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-user-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "stripe-payment-0007",
+      "name": "User Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ handled: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "stripe-payment-0008",
+      "name": "Response User Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/users/{{ $json.user_id }}/course-access",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  stripe_product_id: $json.stripe_product_id,\n  course_id: $json.course_id,\n  status: 'active',\n  access_type: 'one_time',\n  expires_at: $json.expires_at,\n  payment_intent_id: $json.payment_intent_id\n}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "stripe-payment-0009",
+      "name": "API Grant Access",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1520,
+        100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE REDIS EVENT\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst userData = $('Check User').first().json;\n\nconst success = !apiResponse.error && apiResponse.statusCode !== 500;\n\n// Prepare event for Redis Stream (RFC-023 format)\nconst event = {\n  event: 'course.access.granted',\n  guild_id: userData.guild_id,\n  timestamp: new Date().toISOString(),\n  data: {\n    user_id: userData.user_id,\n    discord_id: userData.discord_id,\n    course_id: userData.course_id,\n    access_type: 'one_time',\n    expires_at: userData.expires_at,\n    payment_intent_id: userData.payment_intent_id\n  }\n};\n\nreturn {\n  event_id: userData.event_id,\n  user_id: userData.user_id,\n  discord_id: userData.discord_id,\n  guild_id: userData.guild_id,\n  course_id: userData.course_id,\n  access_granted: success,\n  expires_at: userData.expires_at,\n  stream_name: 'learning:events:stream',\n  event: event\n};"
+      },
+      "id": "stripe-payment-0010",
+      "name": "Prepare Redis Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xAdd",
+        "key": "={{ $json.stream_name }}",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldName": "event",
+              "fieldValue": "={{ JSON.stringify($json.event) }}"
+            }
+          ]
+        }
+      },
+      "id": "stripe-payment-0011",
+      "name": "Publish Event",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1960,
+        100
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ handled: true, event_id: $('Prepare Redis Event').first().json.event_id, course_id: $('Prepare Redis Event').first().json.course_id, access_granted: $('Prepare Redis Event').first().json.access_granted, expires_at: $('Prepare Redis Event').first().json.expires_at }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "stripe-payment-0012",
+      "name": "Response Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2180,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Payment Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Payment Data": {
+      "main": [
+        [
+          {
+            "node": "Is One-Time?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is One-Time?": {
+      "main": [
+        [
+          {
+            "node": "Get User By Customer ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response Skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User By Customer ID": {
+      "main": [
+        [
+          {
+            "node": "Check User",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check User": {
+      "main": [
+        [
+          {
+            "node": "User Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "User Found?": {
+      "main": [
+        [
+          {
+            "node": "API Grant Access",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response User Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Grant Access": {
+      "main": [
+        [
+          {
+            "node": "Prepare Redis Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Redis Event": {
+      "main": [
+        [
+          {
+            "node": "Publish Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Event": {
+      "main": [
+        [
+          {
+            "node": "Response Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [
+    {
+      "name": "stripe"
+    },
+    {
+      "name": "rfc-025"
+    },
+    {
+      "name": "handler"
+    }
+  ]
+}

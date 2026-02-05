@@ -1,6 +1,6 @@
 # Registre des Webhooks n8n
 
-> **Dernière mise à jour :** 2026-02-05
+> **Dernière mise à jour :** 2026-02-05 (RFC-025 ajouté)
 > **Base URL :** `{N8N_WEBHOOK_URL}/webhook/`
 
 ---
@@ -164,13 +164,142 @@ Réconcilie l'état API avec Discord. Détecte et corrige les désynchronisation
 
 ---
 
+## Stripe & Subscriptions (RFC-025)
+
+### Webhook principal
+
+| Endpoint | Méthode | Workflow | Fichier |
+|----------|---------|----------|---------|
+| `/webhook/stripe` | POST | `STRIPE---Webhook-Handler` | `workflows/STRIPE-Webhook-Handler.json` |
+
+### Handlers (appelés par le webhook principal)
+
+| Endpoint | Méthode | Workflow | Fichier |
+|----------|---------|----------|---------|
+| `/webhook/stripe-handler-subscription-updated` | POST | `STRIPE---Handler-Subscription-Updated` | `workflows/STRIPE-Handler-Subscription-Updated.json` |
+| `/webhook/stripe-handler-payment-intent` | POST | `STRIPE---Handler-Payment-Intent` | `workflows/STRIPE-Handler-Payment-Intent.json` |
+| `/webhook/stripe-handler-payment-failed` | POST | `STRIPE---Handler-Payment-Failed` | `workflows/STRIPE-Handler-Payment-Failed.json` |
+
+### Crons
+
+| Workflow | Fichier | Fréquence | Description |
+|----------|---------|-----------|-------------|
+| `SUBSCRIPTION---Reconciliation` | `workflows/SUBSCRIPTION-Reconciliation.json` | Daily 3h00 | Réconciliation Stripe ↔ API ↔ Discord |
+| `COURSE---Expiration-Cron` | `workflows/COURSE-Expiration-Cron.json` | Daily 6h00 | Expiration des accès one_time |
+
+### Course CRUD
+
+| Endpoint | Méthode | Workflow | Fichier |
+|----------|---------|----------|---------|
+| `/webhook/course-list` | GET | `COURSE---CRUD-Webhooks` | `workflows/COURSE-CRUD-Webhooks.json` |
+| `/webhook/course-get/:slug` | GET | `COURSE---CRUD-Webhooks` | `workflows/COURSE-CRUD-Webhooks.json` |
+| `/webhook/course-subscribe` | POST | `COURSE---CRUD-Webhooks` | `workflows/COURSE-CRUD-Webhooks.json` |
+| `/webhook/course-unsubscribe` | POST | `COURSE---CRUD-Webhooks` | `workflows/COURSE-CRUD-Webhooks.json` |
+| `/webhook/user-courses/:user_id` | GET | `COURSE---CRUD-Webhooks` | `workflows/COURSE-CRUD-Webhooks.json` |
+
+### Détails des endpoints
+
+#### POST /webhook/stripe
+
+Webhook principal Stripe avec sécurité complète:
+- Validation signature `stripe-signature`
+- Protection replay attack (< 5 min)
+- Idempotence via `stripe_processed_events`
+- Lock Redis (anti race conditions)
+
+**Headers:**
+- `stripe-signature` (requis) : Signature Stripe
+
+**Events gérés:**
+- `customer.subscription.updated` → Handler Subscription Updated
+- `customer.subscription.deleted` → Handler Subscription Updated (revoke all)
+- `invoice.payment_failed` → Handler Payment Failed
+- `payment_intent.succeeded` → Handler Payment Intent
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "event_id": "evt_xxx",
+  "event_type": "customer.subscription.updated",
+  "handled": true
+}
+```
+
+---
+
+#### GET /webhook/course-list
+
+Liste tous les cours disponibles.
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "total": 5,
+  "courses": [
+    {
+      "id": "uuid",
+      "slug": "cuisine-bases",
+      "name": "Les bases de la cuisine",
+      "price_monthly": 9.99,
+      "category": "cuisine",
+      "level": "debutant"
+    }
+  ],
+  "by_category": {
+    "cuisine": [...],
+    "patisserie": [...]
+  }
+}
+```
+
+---
+
+#### POST /webhook/course-subscribe
+
+Ajoute un cours à la subscription de l'utilisateur.
+
+**Body:**
+```json
+{
+  "user_id": "uuid",
+  "discord_id": "123456789",
+  "course_slug": "cuisine-bases"
+}
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "message": "Course added to subscription",
+  "course": {...},
+  "prorated_amount": 4.99
+}
+```
+
+---
+
 ## Events Redis publiés
 
-| Event Type | Stream | Publisher | Consumer |
-|------------|--------|-----------|----------|
-| `promotion.created` | `formation:events:stream` | formation-create-promotion | chatbot-core (FormationEventSubscriber) |
-| `promotion.archived` | `formation:events:stream` | formation-archive-promotion | chatbot-core (FormationEventSubscriber) |
-| `promotion.repair_structure` | `formation:events:stream` | formation-sync | chatbot-core (FormationEventSubscriber) |
+### Formation Events (`formation:events:stream`)
+
+| Event Type | Publisher | Consumer |
+|------------|-----------|----------|
+| `promotion.created` | formation-create-promotion | chatbot-core (FormationEventSubscriber) |
+| `promotion.archived` | formation-archive-promotion | chatbot-core (FormationEventSubscriber) |
+| `promotion.repair_structure` | formation-sync | chatbot-core (FormationEventSubscriber) |
+
+### Learning Events (`learning:events:stream`)
+
+| Event Type | Publisher | Consumer |
+|------------|-----------|----------|
+| `subscription.updated` | stripe-handler-subscription-updated | chatbot-core |
+| `subscription.payment_failed` | stripe-handler-payment-failed | chatbot-core |
+| `course.access.granted` | stripe-handler-payment-intent | chatbot-core |
+| `course.access.expired` | course-expiration-cron | chatbot-core |
+| `course.access.expiring` | course-expiration-cron | chatbot-core |
 
 ### Format des events (RFC-023)
 
@@ -219,6 +348,7 @@ Tous les events suivent le format standard défini dans `REDIS-STREAMS-EVENTS-AP
 |----------|-------------|---------|
 | `API_URL` | URL de l'API backend | `http://localhost:3031` |
 | `DISCORD_ADMIN_WEBHOOK` | Webhook Discord pour alertes admin | `https://discord.com/api/webhooks/xxx/yyy` |
+| `STRIPE_WEBHOOK_SECRET` | Secret pour validation signature Stripe | `whsec_xxxxx` |
 
 ### Credentials n8n requis
 
@@ -233,13 +363,20 @@ Tous les events suivent le format standard défini dans `REDIS-STREAMS-EVENTS-AP
 
 ```
 workflows/
-├── INFRA-Process-Pending-Events.json    # Cron fallback DB
-├── FORMATION-Create-Promotion.json      # POST /webhook/formation-create-promotion
-├── FORMATION-Archive-Promotion.json     # POST /webhook/formation-archive-promotion
-└── FORMATION-Sync.json                  # POST /webhook/formation-sync
+├── INFRA-Process-Pending-Events.json           # Cron fallback DB
+├── FORMATION-Create-Promotion.json             # POST /webhook/formation-create-promotion
+├── FORMATION-Archive-Promotion.json            # POST /webhook/formation-archive-promotion
+├── FORMATION-Sync.json                         # POST /webhook/formation-sync
+├── STRIPE-Webhook-Handler.json                 # POST /webhook/stripe (principal)
+├── STRIPE-Handler-Subscription-Updated.json    # Handler subscription.updated
+├── STRIPE-Handler-Payment-Intent.json          # Handler payment_intent.succeeded
+├── STRIPE-Handler-Payment-Failed.json          # Handler invoice.payment_failed
+├── SUBSCRIPTION-Reconciliation.json            # Cron daily 3h00
+├── COURSE-Expiration-Cron.json                 # Cron daily 6h00
+└── COURSE-CRUD-Webhooks.json                   # Webhooks CRUD cours
 ```
 
 ---
 
 *Document généré le 2026-02-05*
-*Sources : RFC-023, Issues #268, #269*
+*Sources : RFC-023, RFC-025, Issues #268, #269, #270*
