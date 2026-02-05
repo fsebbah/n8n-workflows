@@ -13,6 +13,38 @@ Cette RFC definit l'architecture hybride qui separe clairement :
 
 **Principe fondamental : Chaque service a un role clair, pas de duplication.**
 
+
+  ---
+
+  ## Retour Equipe chatbot-core (2026-02-05)
+
+  L'equipe chatbot-core a analyse la RFC-027 v3.0.0 et propose les modifications suivantes pour clarifier l'architecture hybride :
+
+  ### Constats
+
+  1. **Confusion des roles** : La v3.0.0 presentait chatbot-core comme un simple client MCP, alors qu'il a un role specifique
+  d'infrastructure Discord
+  2. **Redis Streams ignores** : L'architecture event-driven deja implementee n'etait pas mentionnee
+  3. **Duplication des chemins** : Deux facons de creer des structures Discord (slash commands + events)
+
+  ### Decisions
+
+  | Decision | Justification |
+  |----------|---------------|
+  | chatbot-core = Service d'Infrastructure Discord | Role unique et clair |
+  | chatbot-core ne utilise PAS MCPClient | Il expose des tools, n'initie pas de conversations |
+  | FormationAdminCog a supprimer | Conflit avec l'architecture (duplication) |
+  | Events passent directement (sans azy.mcp) | Pas besoin de NLU pour des actions deterministes |
+  | Conversations passent par azy.mcp | NLU/Dialog/NLG necessaire |
+
+  ### Impact sur le code existant
+
+  - `FormationSetupService` : **Conserve** (logique metier)
+  - `FormationEventSubscriber` : **Conserve** (handler events)
+  - `FormationAdminCog` : **A supprimer** (remplace par menus plugin)
+  - Nouveau : `MCPToolsServer` pour exposer les tools mcp-discord
+
+
 ---
 
 ## Architecture Globale
@@ -635,3 +667,633 @@ Si n8n doit etre consommateur d'events pour notifications:
 ---
 
 *Retour ajoute par: Claude (equipe n8n) - 2026-02-05*
+
+---
+
+## Retour Equipe plugin-recipes (Claude - 2026-02-05)
+
+### Analyse d'Impact sur le Code Existant
+
+J'ai recemment implemente les issues #110, #111, #112 (RFC-023, 024, 025). Voici l'impact de RFC-027:
+
+| Fichier | Lignes | Verdict | Justification |
+|---------|--------|---------|---------------|
+| `course_subscription.py` | ~500 | 🔄 **REFACTORER** | Slash commands → View menu |
+| `formation_admin.py` | ~300 | 🗑️ **SUPPRIMER** | chatbot-core gere via events |
+| `branding_commands.py` | ~250 | 🔄 **REFACTORER** | → Menu `/admin` |
+| `CourseApiClient` | ~400 | ❓ **A CLARIFIER** | azy.mcp appelle direct ou on garde? |
+| `FormationApiClient` | ~200 | 🗑️ **SUPPRIMER** | Plugin ne gere plus formations |
+| `mentions.py` | ~1400 | 🔄 **REFACTORER** | Forward vers azy.mcp |
+| `course_helpers.py` | ~400 | ✅ **GARDER** | Formatage embeds Discord |
+| `branding_helpers.py` | ~300 | ✅ **GARDER** | Utilitaires couleurs/templates |
+
+### Impact Detaille
+
+#### 1. Slash Commands → Views
+
+**Avant (mon code actuel):**
+```python
+# course_subscription.py
+cours_group = app_commands.Group(name="cours", ...)
+
+@cours_group.command(name="catalogue")
+async def catalogue(interaction): ...
+
+@cours_group.command(name="info")
+async def info(interaction, slug: str): ...
+
+# 6 sous-commandes
+```
+
+**Apres (RFC-027):**
+```python
+# commands/menus/cours_menu.py
+class CoursMenuView(discord.ui.View):
+    @discord.ui.button(label="Catalogue", emoji="📚")
+    async def catalogue(self, interaction, button): ...
+
+    @discord.ui.button(label="Mes cours", emoji="📖")
+    async def mes_cours(self, interaction, button): ...
+
+@app_commands.command(name="cours")
+async def cours(interaction):
+    view = CoursMenuView(...)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+```
+
+**Effort: 1 jour** - Transformer les handlers en callbacks de boutons.
+
+#### 2. Formation Admin → Suppression
+
+**Avant:**
+```python
+# formation_admin.py
+@formation_admin_group.command(name="list")
+async def list_formations(interaction): ...
+
+@formation_admin_group.command(name="sync")
+async def sync_formations(interaction): ...
+```
+
+**Apres (RFC-027):**
+- Plugin n'a plus ces commandes
+- `/admin` menu → [Formations] → [Sync] → appelle API endpoint
+- API publie events → chatbot-core execute
+
+**Effort: Suppression + 0.5 jour** pour le menu `/admin`.
+
+#### 3. Mention Handler → Forward azy.mcp
+
+**Avant (mon code):**
+```python
+# mentions.py - 1400 lignes de logique locale
+class BotAppetitMentionHandler:
+    async def handle_mention(self, context, message):
+        # Detection intention locale
+        if self._is_greeting(content):
+            return MentionResult(response=get_greeting_response())
+
+        # Appel n8n direct
+        if self._interactive_mode:
+            return await self._handle_interactive_search(context, message)
+```
+
+**Apres (RFC-027):**
+```python
+# mentions.py - ~50 lignes
+class BotAppetitMentionHandler:
+    def __init__(self, mcp_client: MCPClient):
+        self.mcp_client = mcp_client
+
+    async def handle_mention(self, context, message):
+        # Forward tout a azy.mcp
+        result = await self.mcp_client.process(
+            message=context.content,
+            user_id=context.user_id,
+            guild_id=context.guild_id,
+        )
+        # Formatter la reponse pour Discord
+        return self._format_discord_response(result)
+```
+
+**Effort: 0.5 jour** - Simplification massive, suppression de ~1300 lignes.
+
+#### 4. API Clients - Question Ouverte
+
+**Question:** Plugin garde-t-il ses API clients (`CourseApiClient`, etc.) ou azy.mcp appelle directement?
+
+**Option A: Plugin garde les clients**
+```
+User → /cours menu → CoursMenuView → CourseApiClient.get_catalogue() → API
+```
+Pro: Controle local, pas de dependance azy.mcp pour les menus
+Con: Duplication avec mcp-courses tools
+
+**Option B: Plugin forward tout a azy.mcp**
+```
+User → /cours menu → azy.mcp → mcp-courses.list() → API
+```
+Pro: Single source of truth
+Con: Latence +1 hop, complexite pour actions simples
+
+**Ma recommandation: Option A pour les menus, Option B pour @Bot**
+
+```python
+# Menus: appel direct API (rapide, deterministe)
+class CoursMenuView:
+    async def catalogue(self, interaction, button):
+        courses = await self.course_api.get_catalogue(guild_id)  # Direct
+        embed = create_course_list_embed(courses)
+        await interaction.response.edit_message(embed=embed)
+
+# @Bot: forward azy.mcp (conversationnel)
+class MentionHandler:
+    async def handle_mention(self, context, message):
+        return await self.mcp_client.process(context.content)  # azy.mcp
+```
+
+### Fichiers a Creer
+
+```
+src/commands/menus/
+├── __init__.py
+├── cours_menu.py       # Menu /cours avec Views
+├── admin_menu.py       # Menu /admin avec sous-menus
+├── liste_menu.py       # Menu /liste
+└── progression_menu.py # Menu /progression
+
+src/mcp/
+├── __init__.py
+└── client.py           # MCPClient pour forward a azy.mcp
+```
+
+### Fichiers a Supprimer
+
+```
+src/commands/formation_admin.py      # → events chatbot-core
+src/clients/formation_api_client.py  # → plus utilise
+```
+
+### Fichiers a Refactorer
+
+```
+src/commands/course_subscription.py  # → cours_menu.py
+src/commands/branding_commands.py    # → admin_menu.py (sous-menu)
+src/mentions.py                      # → forward azy.mcp
+```
+
+### Questions pour les Autres Equipes
+
+1. **MCPClient interface?** Quel est le contrat d'interface pour appeler azy.mcp depuis plugin?
+   ```python
+   class MCPClient:
+       async def process(self, message: str, user_id: str, guild_id: str) -> MCPResult: ...
+   ```
+
+2. **Response format?** azy.mcp retourne quoi exactement?
+   ```python
+   @dataclass
+   class MCPResult:
+       text: str                    # Message a afficher
+       embed: dict | None           # Embed Discord (optionnel)
+       view: discord.ui.View | None # Boutons (optionnel)?
+       actions: list[Action]        # Actions executees
+   ```
+
+3. **Qui formate les embeds?**
+   - Option A: azy.mcp retourne du texte brut, plugin formate en embed
+   - Option B: azy.mcp retourne un embed structure, plugin l'affiche
+   - **Je recommande Option A** - separation des concerns
+
+4. **Autocomplete perdu?** Les menus Views perdent l'autocomplete Discord (ex: `/cours info pyt` → suggestions). Est-ce acceptable?
+
+### Estimation Effort Total
+
+| Tache | Effort |
+|-------|--------|
+| Creer menus Views (`/cours`, `/admin`, `/liste`, `/progression`) | 1.5 jours |
+| Refactorer mentions.py → forward azy.mcp | 0.5 jour |
+| Supprimer code obsolete (formation_admin, etc.) | 0.5 jour |
+| Creer MCPClient wrapper | 0.5 jour |
+| Tests | 1 jour |
+| **Total** | **4 jours** |
+
+### Plan de Migration
+
+**Phase 1: Menus (sans azy.mcp)** - 2 jours
+- Creer les Views menus
+- Garder les API clients existants
+- Plugin fonctionne standalone
+
+**Phase 2: Integration azy.mcp** - 1 jour
+- Creer MCPClient
+- Refactorer mentions.py
+- Tester les flux conversationnels
+
+**Phase 3: Cleanup** - 1 jour
+- Supprimer formation_admin.py
+- Supprimer FormationApiClient
+- Supprimer code mort dans mentions.py
+
+### Risques Identifies
+
+| Risque | Impact | Mitigation |
+|--------|--------|------------|
+| azy.mcp pas pret | Bloquant Phase 2 | Phase 1 fonctionne sans |
+| Latence azy.mcp | UX degradee | Menus en direct, @Bot via azy.mcp |
+| Perte autocomplete | UX power users | Accepter ou garder `/cours info <slug>` en plus |
+| MCPClient interface change | Refactoring | Wrapper abstrait l'interface |
+
+---
+
+*Retour ajoute par: Claude (equipe plugin-recipes) - 2026-02-05*
+
+---
+
+## Retour Equipe API - Formation Management System (RFC-023)
+
+### Contexte
+
+L'equipe API a implemente les endpoints CRUD pour le Formation Management System:
+- `api/routers/formation.py` - 1400+ lignes, endpoints REST complets
+- `api/schemas/formation.py` - Schemas Pydantic
+- Prefix: `/api/v1/formations`, `/api/v1/promotions`, `/api/v1/matieres`, `/api/v1/enrollments`
+
+### Impact de RFC-027 sur nos endpoints
+
+#### 1. Endpoints REST vs Tools MCP
+
+| Endpoint actuel | Usage prevu RFC-027 |
+|-----------------|---------------------|
+| `POST /formations` | Tool `formation.create` via azy.mcp |
+| `POST /promotions` | Tool `formation.create_promotion` via azy.mcp |
+| `POST /enrollments` | Tool `formation.enroll_user` via azy.mcp |
+| `GET /stats` | Tool `formation.get_stats` via azy.mcp |
+
+**Decision**: Nos endpoints REST restent pour les appels **M2M** (machine-to-machine):
+- chatbot-core callbacks (`/setup-complete`, `/role-assigned`)
+- n8n workflows directs
+- Tests et debug
+
+Les interactions **humaines** passeront par azy.mcp → tools → nos endpoints.
+
+#### 2. Flow Multi-turn vs Atomique
+
+**Probleme identifie**: Notre `POST /promotions` attend tous les parametres d'un coup:
+
+```python
+# Actuel - atomique
+POST /promotions
+{
+  "formation_id": "uuid",
+  "year_start": 2024,
+  "year_end": 2025,
+  "matieres": [{"name": "Cuisine", "slug": "cuisine"}]
+}
+```
+
+**RFC-027 veut un flow conversationnel**:
+```
+User: "Creer une promo"
+Bot: "Pour quelle formation?" → [Master Cuisine] [BTS]
+User: clique [Master Cuisine]
+Bot: "Annee?" → input
+User: "2024-2025"
+Bot: "Matieres?" → [Ajouter] [Copier annee precedente]
+```
+
+**Solution proposee**: Creer un **FormationService** comme couche intermediaire:
+
+```python
+# api/services/formation/formation_service.py
+class FormationService:
+    """Service layer - logique metier pure, reutilisable."""
+
+    async def create_promotion(
+        self,
+        formation_id: str,
+        year_start: int,
+        year_end: int,
+        matieres: list[dict] | None = None,  # Optionnel pour multi-turn
+    ) -> Promotion:
+        # Logique metier
+        ...
+
+    async def add_matiere_to_promotion(
+        self,
+        promotion_id: str,
+        matiere: dict,
+    ) -> Matiere:
+        # Permet d'ajouter incrementalement
+        ...
+```
+
+#### 3. Publication des evenements Redis
+
+**Question**: Qui publie les evenements `promotion.created`, `enrollment.created`, etc.?
+
+| Option | Avantage | Inconvenient |
+|--------|----------|--------------|
+| **A: Endpoint publie** | Simple, actuel | Duplication si azy.mcp publie aussi |
+| **B: azy.mcp publie** | Centralise | Endpoints "passifs", moins autonomes |
+| **C: Service publie** | Couche unique | Refactoring necessaire |
+
+**Recommandation**: **Option C** - Le `FormationService` publie les evenements. Ainsi:
+- Endpoints REST appellent le service → evenements publies
+- azy.mcp tools appellent le service → memes evenements publies
+- Pas de duplication
+
+```python
+class FormationService:
+    def __init__(self, db: Session, event_publisher: ResilientEventPublisher):
+        self.db = db
+        self.publisher = event_publisher
+
+    async def create_promotion(self, ...) -> Promotion:
+        # 1. Logique DB
+        promotion = Promotion(...)
+        self.db.add(promotion)
+        self.db.commit()
+
+        # 2. Publier evenement (une seule fois, ici)
+        await self.publisher.publish(
+            stream_name="formation:events:stream",
+            event_data={
+                "event": "promotion.created",
+                "guild_id": promotion.guild_id,
+                "data": {...}
+            }
+        )
+
+        return promotion
+```
+
+#### 4. Callbacks Machine-to-Machine
+
+Nos endpoints de callback restent **hors azy.mcp**:
+
+```
+POST /promotions/{id}/setup-complete   # chatbot-core → API direct
+POST /enrollments/{id}/role-assigned   # chatbot-core → API direct
+```
+
+**Justification**: Ces callbacks sont M2M, pas conversationnels. Passer par azy.mcp ajouterait de la latence sans valeur.
+
+### Fichiers a Creer
+
+```
+api/services/formation/
+  __init__.py
+  formation_service.py      # Service layer avec publication events
+  promotion_service.py      # Optionnel, si trop gros
+```
+
+### Fichiers a Refactorer
+
+```
+api/routers/formation.py    # Deleguer au FormationService
+api/dependencies.py         # Ajouter get_formation_service()
+```
+
+### Questions pour azy.mcp
+
+1. **Tools MCP pour Formation?** Faut-il creer des tools specifiques ou azy.mcp appelle nos endpoints REST?
+
+   ```python
+   # Option A: Tool appelle endpoint REST
+   @tool("formation.create_promotion")
+   async def create_promotion(self, ...):
+       async with httpx.AsyncClient() as client:
+           return await client.post(f"{API_URL}/promotions", json=data)
+
+   # Option B: Tool appelle service directement (si meme codebase)
+   @tool("formation.create_promotion")
+   async def create_promotion(self, ...):
+       return await formation_service.create_promotion(...)
+   ```
+
+2. **Session multi-turn?** Comment azy.mcp gere l'accumulation des reponses pour creer une promotion incrementalement?
+
+3. **Permissions admin?** Comment azy.mcp sait que l'utilisateur a le droit de creer une formation? Verification cote azy.mcp ou cote endpoint?
+
+### Estimation Effort
+
+| Tache | Effort |
+|-------|--------|
+| Creer `FormationService` | 1 jour |
+| Refactorer `formation.py` router | 0.5 jour |
+| Integrer `ResilientEventPublisher` | 0.5 jour |
+| Tests unitaires service | 1 jour |
+| Documentation tools MCP (si necessaire) | 0.5 jour |
+| **Total** | **3.5 jours** |
+
+### Plan de Migration
+
+**Phase 1: Service Layer** (1.5 jours)
+- Creer `FormationService` avec logique extraite du router
+- Integrer publication evenements dans le service
+- Router delegue au service
+
+**Phase 2: Tests** (1 jour)
+- Tests unitaires du service
+- Tests integration avec mock Redis
+
+**Phase 3: Documentation Tools** (0.5 jour)
+- Documenter comment azy.mcp peut appeler nos services/endpoints
+- Exemples de tools MCP pour formation
+
+**Phase 4: Coordination azy.mcp** (0.5 jour)
+- Valider l'interface avec l'equipe azy.mcp
+- Creer les tools si necessaire
+
+### Risques Identifies
+
+| Risque | Impact | Mitigation |
+|--------|--------|------------|
+| Refactoring service casse les endpoints | Regression | Tests avant/apres |
+| Double publication evenements | Events dupliques | Service = seul publisher |
+| azy.mcp pas pret | Bloquant tools | Endpoints REST fonctionnent standalone |
+| Multi-turn complexe | UX degradee | Supporter aussi creation atomique |
+
+### Schema Architecture Finale
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         INTERACTIONS                                 │
+├─────────────────┬─────────────────┬─────────────────────────────────┤
+│   Discord       │   n8n           │   chatbot-core                  │
+│   (via azy.mcp) │   (direct REST) │   (callbacks direct REST)       │
+└────────┬────────┴────────┬────────┴─────────────────┬───────────────┘
+         │                 │                           │
+         ▼                 │                           │
+┌─────────────────┐        │                           │
+│    azy.mcp      │        │                           │
+│  (tools MCP)    │        │                           │
+└────────┬────────┘        │                           │
+         │                 │                           │
+         ▼                 ▼                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    api/routers/formation.py                          │
+│                    (endpoints REST)                                  │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                 api/services/formation/formation_service.py          │
+│                 (logique metier + publication events)                │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+        ┌──────────┐   ┌──────────┐   ┌──────────────┐
+        │ Database │   │  Redis   │   │ chatbot-core │
+        │ (models) │   │ (events) │   │ (via events) │
+        └──────────┘   └──────────┘   └──────────────┘
+```
+
+---
+
+*Retour ajoute par: Claude (equipe API - RFC-023) - 2026-02-05*
+
+---
+
+# SYNTHESE ET PLAN D'ACTION
+
+## Analyse Consolidee des Retours (4 equipes)
+
+### Consensus
+
+| Equipe | Position | Contribution cle | Effort estime |
+|--------|----------|------------------|---------------|
+| **chatbot-core** | ✅ Favorable | Clarifie le role d'infrastructure Discord, separation events/conversations | ~2 jours |
+| **n8n** | ✅ Favorable | Supprime 4 workflows proxy, garde 7 | ~0.5 jour |
+| **plugin-recipes** | ✅ Favorable | Refactoring menus Views, -1300 lignes mentions.py | ~4 jours |
+| **API** | ✅ Favorable | Cree Service Layer avec publication events | ~3.5 jours |
+
+**Verdict : Consensus unanime sur l'architecture hybride.**
+
+### Principes Valides par Tous
+
+| Principe | chatbot-core | n8n | plugin | API |
+|----------|:------------:|:---:|:------:|:---:|
+| Events = directs (sans azy.mcp) | ✅ | ✅ | ✅ | ✅ |
+| Conversations = via azy.mcp | ✅ | ✅ | ✅ | ✅ |
+| Service Layer publie les events | - | ✅ | - | ✅ |
+| Plugin formate les embeds Discord | ✅ | - | ✅ | - |
+| chatbot-core = point unique Discord | ✅ | ✅ | ✅ | ✅ |
+
+### Decisions Cles
+
+| # | Decision | Justification |
+|---|----------|---------------|
+| 1 | chatbot-core n'utilise PAS MCPClient | Expose des tools, n'initie pas de conversations |
+| 2 | chatbot-core = seul createur Discord | Elimine la duplication des chemins |
+| 3 | Events passent directement | Pas de NLU pour actions deterministes |
+| 4 | FormationAdminCog supprime | Remplace par menus plugin |
+| 5 | Service Layer publie events | Source unique, pas de duplication |
+| 6 | Plugin garde API clients pour menus | Hybride: menus directs, @Bot via azy.mcp |
+
+---
+
+## Taches par Equipe
+
+### Equipe chatbot-core
+
+| # | Tache | Priorite | Statut |
+|---|-------|----------|--------|
+| 1 | Supprimer `FormationAdminCog` | P0 | ⬜ TODO |
+| 2 | Verifier `FormationEventSubscriber` gere tous les cas | P0 | ⬜ TODO |
+| 3 | Creer `MCPToolsServer` (expose mcp-discord.*) | P1 | ⬜ TODO |
+| 4 | Implementer tools: create_category, create_channel, assign_role, send_message | P1 | ⬜ TODO |
+| 5 | Tests unitaires MCPToolsServer | P2 | ⬜ TODO |
+
+### Equipe n8n
+
+| # | Tache | Priorite | Statut |
+|---|-------|----------|--------|
+| 1 | Supprimer `COURSE-CRUD-Webhooks.json` | P0 | ⬜ TODO |
+| 2 | Supprimer `FORMATION-Create-Promotion.json` | P0 | ⬜ TODO |
+| 3 | Supprimer `FORMATION-Archive-Promotion.json` | P0 | ⬜ TODO |
+| 4 | Supprimer `FORMATION-Sync.json` | P0 | ⬜ TODO |
+| 5 | (Optionnel) Creer workflows notifications (level-up, badges) | P2 | ⬜ TODO |
+
+### Equipe plugin-recipes
+
+| # | Tache | Priorite | Statut |
+|---|-------|----------|--------|
+| 1 | Creer `CoursMenuView` (menu /cours) | P0 | ⬜ TODO |
+| 2 | Creer `AdminMenuView` (menu /admin) | P0 | ⬜ TODO |
+| 3 | Creer `ListeMenuView` (menu /liste) | P1 | ⬜ TODO |
+| 4 | Creer `ProgressionMenuView` (menu /progression) | P1 | ⬜ TODO |
+| 5 | Creer `MCPClient` wrapper | P0 | ⬜ TODO |
+| 6 | Refactorer `mentions.py` → forward azy.mcp | P0 | ⬜ TODO |
+| 7 | Supprimer `formation_admin.py` | P1 | ⬜ TODO |
+| 8 | Supprimer `FormationApiClient` | P1 | ⬜ TODO |
+| 9 | Tests menus + integration | P2 | ⬜ TODO |
+
+### Equipe API
+
+| # | Tache | Priorite | Statut |
+|---|-------|----------|--------|
+| 1 | Creer `FormationService` (service layer) | P0 | ⬜ TODO |
+| 2 | Integrer `ResilientEventPublisher` dans service | P0 | ⬜ TODO |
+| 3 | Refactorer `formation.py` router → delegue au service | P1 | ⬜ TODO |
+| 4 | Tests unitaires FormationService | P1 | ⬜ TODO |
+| 5 | Documenter interface tools MCP pour formations | P2 | ⬜ TODO |
+
+### Equipe azy.mcp
+
+| # | Tache | Priorite | Statut |
+|---|-------|----------|--------|
+| 1 | Creer `ResponseFormatter` (composant manquant NLG) | P0 | ⬜ TODO |
+| 2 | Exposer endpoint `/process` | P0 | ⬜ TODO |
+| 3 | Enregistrer tools mcp-discord (chatbot-core) | P1 | ⬜ TODO |
+| 4 | Enregistrer tools mcp-formations (API) | P1 | ⬜ TODO |
+| 5 | Tests flux conversationnels E2E | P2 | ⬜ TODO |
+
+---
+
+## Planning Propose
+
+```
+Semaine 1 (Parallele)
+├── chatbot-core: Supprimer FormationAdminCog + verifier EventSubscriber
+├── n8n: Supprimer 4 workflows proxy
+├── plugin: Creer Views menus (Phase 1 sans azy.mcp)
+├── API: Creer FormationService
+└── azy.mcp: Creer ResponseFormatter + endpoint /process
+
+Semaine 2
+├── chatbot-core: Creer MCPToolsServer
+├── plugin: Creer MCPClient + refactorer mentions.py
+├── azy.mcp: Enregistrer tools mcp-discord, mcp-formations
+└── Tests E2E inter-equipes
+```
+
+---
+
+## Effort Total
+
+| Equipe | Effort |
+|--------|--------|
+| chatbot-core | 2 jours |
+| n8n | 0.5 jour (+1 jour optionnel notifications) |
+| plugin-recipes | 4 jours |
+| API | 3.5 jours |
+| azy.mcp | 2 jours |
+| Tests E2E | 2 jours |
+| **Total** | **~14 jours** (parallele: ~7 jours calendaires) |
+
+---
+
+## Prochaines Etapes
+
+1. ⬜ Chaque equipe valide ses taches ci-dessus
+2. ⬜ Kick-off semaine 1 (travail parallele)
+3. ⬜ Point de synchro mi-semaine 1
+4. ⬜ Integration semaine 2
+5. ⬜ Tests E2E et validation finale
+
+---
+
+*Synthese ajoutee par: Architecture Team - 2026-02-05*
