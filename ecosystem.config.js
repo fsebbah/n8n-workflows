@@ -57,6 +57,9 @@ module.exports = {
         API_URL: 'http://pi6.local:3031',
         API_KEY: '17ae129e4b49828e7439cae4949803e0a78d3725ff5dd76857e32d071f33af26',
 
+        // n8n API URL (pour les workflows qui appellent l'API n8n)
+        N8N_API_URL: process.env.N8N_API_URL || 'http://pi6.local:5678/api/v1',
+
         // LLM API Keys (set via environment or .env.local)
         MISTRAL_API_KEY: process.env.MISTRAL_API_KEY || '',
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
@@ -95,6 +98,9 @@ module.exports = {
         STRIPE_WEBHOOK_URL: 'https://stripe.azy.solutions',
         API_URL: 'http://pi6.local:3031',
         API_KEY: '17ae129e4b49828e7439cae4949803e0a78d3725ff5dd76857e32d071f33af26',
+
+        // n8n API URL (pour les workflows qui appellent l'API n8n)
+        N8N_API_URL: process.env.N8N_API_URL || 'http://pi6.local:5678/api/v1',
 
         // LLM API Keys (set via environment or .env.local)
         MISTRAL_API_KEY: process.env.MISTRAL_API_KEY || '',
