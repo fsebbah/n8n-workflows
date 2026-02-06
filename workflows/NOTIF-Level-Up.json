@@ -1,10 +1,9 @@
 {
-  "name": "NOTIF---Level-Up",
-  "active": true,
+  "name": "NOTIF - Level Up",
   "nodes": [
     {
       "parameters": {
-        "content": "## NOTIF - Level Up\n\n**Trigger:** Redis event `level:up`\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPublie une notification Discord célébratoire\nsur le stream Redis notifications.\n\n**Input Stream:** `xp:events:stream`\n**Output Stream:** `notifications:stream`\n**Redis DB:** REDIS_DB_NOTIFICATION (5)",
+        "content": "## NOTIF - Level Up\n\n**Trigger:** Cron every 10 seconds\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPolls Redis Stream for level:up events\nand publishes notifications to Discord.\n\n**Input Stream:** `xp:events:stream`\n**Output Stream:** `notifications:stream`\n**Redis DB:** REDIS_DB_NOTIFICATION (5)",
         "height": 280,
         "width": 320,
         "color": 5
@@ -13,28 +12,34 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        -200,
-        60
-      ]
+      "position": [-200, 60]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "seconds", "secondsInterval": 10 }]
+        }
+      },
+      "id": "notif-level-trigger",
+      "name": "Every 10 Seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [60, 300]
     },
     {
       "parameters": {
         "operation": "xRead",
         "key": "xp:events:stream",
         "options": {
-          "block": 5000,
+          "block": 0,
           "count": 10
         }
       },
       "id": "notif-level-0001",
-      "name": "Redis Subscribe",
+      "name": "Redis xRead",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
-      "position": [
-        200,
-        300
-      ],
+      "position": [280, 300],
       "credentials": {
         "redis": {
           "id": "2idv3VKZ91q5gOnz",
@@ -50,10 +55,7 @@
       "name": "Filter Level Up Events",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        420,
-        300
-      ]
+      "position": [500, 300]
     },
     {
       "parameters": {
@@ -82,10 +84,7 @@
       "name": "Has Events?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        640,
-        300
-      ]
+      "position": [720, 300]
     },
     {
       "parameters": {
@@ -95,10 +94,7 @@
       "name": "Prepare Notification Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        860,
-        200
-      ]
+      "position": [940, 200]
     },
     {
       "parameters": {
@@ -106,42 +102,15 @@
         "key": "notifications:stream",
         "fieldsUi": {
           "fieldValues": [
-            {
-              "fieldName": "type",
-              "fieldValue": "={{ $json.type }}"
-            },
-            {
-              "fieldName": "guild_id",
-              "fieldValue": "={{ $json.guild_id }}"
-            },
-            {
-              "fieldName": "discord_id",
-              "fieldValue": "={{ $json.discord_id }}"
-            },
-            {
-              "fieldName": "content",
-              "fieldValue": "={{ $json.content }}"
-            },
-            {
-              "fieldName": "embed",
-              "fieldValue": "={{ JSON.stringify($json.embed) }}"
-            },
-            {
-              "fieldName": "notification_type",
-              "fieldValue": "={{ $json.notification_type }}"
-            },
-            {
-              "fieldName": "source",
-              "fieldValue": "={{ $json.source }}"
-            },
-            {
-              "fieldName": "event_id",
-              "fieldValue": "={{ $json.event_id }}"
-            },
-            {
-              "fieldName": "timestamp",
-              "fieldValue": "={{ $json.timestamp }}"
-            }
+            { "fieldName": "type", "fieldValue": "={{ $json.type }}" },
+            { "fieldName": "guild_id", "fieldValue": "={{ $json.guild_id }}" },
+            { "fieldName": "discord_id", "fieldValue": "={{ $json.discord_id }}" },
+            { "fieldName": "content", "fieldValue": "={{ $json.content }}" },
+            { "fieldName": "embed", "fieldValue": "={{ JSON.stringify($json.embed) }}" },
+            { "fieldName": "notification_type", "fieldValue": "={{ $json.notification_type }}" },
+            { "fieldName": "source", "fieldValue": "={{ $json.source }}" },
+            { "fieldName": "event_id", "fieldValue": "={{ $json.event_id }}" },
+            { "fieldName": "timestamp", "fieldValue": "={{ $json.timestamp }}" }
           ]
         },
         "options": {}
@@ -150,10 +119,7 @@
       "name": "Publish to notifications:stream",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
-      "position": [
-        1080,
-        200
-      ],
+      "position": [1160, 200],
       "credentials": {
         "redis": {
           "id": "notifications-redis",
@@ -162,107 +128,35 @@
       }
     },
     {
-      "parameters": {
-        "jsCode": "// ============================================\n// LOG NOTIFICATION PUBLISHED\n// ============================================\n\nconst response = $input.first().json;\nconst prepData = $('Prepare Notification Payload').first().json;\n\nconsole.log(`Level-Up notification published to stream for user ${prepData.discord_id} in guild ${prepData.guild_id}`);\n\nreturn {\n  success: true,\n  event_id: prepData.event_id,\n  discord_id: prepData.discord_id,\n  guild_id: prepData.guild_id,\n  notification_type: 'level_up',\n  stream: 'notifications:stream'\n};"
-      },
-      "id": "notif-level-0006",
-      "name": "Log Result",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1300,
-        200
-      ]
-    },
-    {
       "parameters": {},
       "id": "notif-level-0007",
       "name": "No Events",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [
-        860,
-        400
-      ]
+      "position": [940, 400]
     }
   ],
   "connections": {
-    "Redis Subscribe": {
-      "main": [
-        [
-          {
-            "node": "Filter Level Up Events",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Every 10 Seconds": {
+      "main": [[{ "node": "Redis xRead", "type": "main", "index": 0 }]]
+    },
+    "Redis xRead": {
+      "main": [[{ "node": "Filter Level Up Events", "type": "main", "index": 0 }]]
     },
     "Filter Level Up Events": {
-      "main": [
-        [
-          {
-            "node": "Has Events?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Has Events?", "type": "main", "index": 0 }]]
     },
     "Has Events?": {
       "main": [
-        [
-          {
-            "node": "Prepare Notification Payload",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "No Events",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Prepare Notification Payload", "type": "main", "index": 0 }],
+        [{ "node": "No Events", "type": "main", "index": 0 }]
       ]
     },
     "Prepare Notification Payload": {
-      "main": [
-        [
-          {
-            "node": "Publish to notifications:stream",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Publish to notifications:stream": {
-      "main": [
-        [
-          {
-            "node": "Log Result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Publish to notifications:stream", "type": "main", "index": 0 }]]
     }
   },
   "settings": {
-    "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner"
-  },
-  "tags": [
-    {
-      "name": "notification"
-    },
-    {
-      "name": "rfc-030"
-    },
-    {
-      "name": "xp"
-    }
-  ]
+    "executionOrder": "v1"
+  }
 }

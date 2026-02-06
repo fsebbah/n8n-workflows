@@ -1,10 +1,9 @@
 {
-  "name": "MCP---Tools-Registry",
-  "active": true,
+  "name": "MCP - Tools Registry",
   "nodes": [
     {
       "parameters": {
-        "content": "## MCP - Tools Registry\n\n**Endpoint:** GET /webhook/mcp/tools/registry\n\n**Source:** RFC-030\n\n**Description:**\nRetourne la liste de tous les workflows MCP-*\navec leurs schemas pour intégration azy.mcp.\n\n**Appelé par:** Plugins au startup + après notification\n\n**Output:** JSON avec liste des tools",
+        "content": "## MCP - Tools Registry\n\n**Endpoint:** GET /webhook/mcp/tools/registry\n\n**Source:** RFC-030\n\n**Description:**\nRetourne la liste de tous les workflows MCP-*\navec leurs schemas pour integration azy.mcp.\n\n**Appele par:** Plugins au startup + apres notification\n\n**Output:** JSON avec liste des tools",
         "height": 300,
         "width": 320,
         "color": 4
@@ -13,31 +12,26 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        -200,
-        60
-      ]
+      "position": [-200, 60]
     },
     {
       "parameters": {
         "httpMethod": "GET",
         "path": "mcp/tools/registry",
+        "responseMode": "responseNode",
         "options": {}
       },
       "id": "mcp-registry-0001",
       "name": "Webhook GET",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        200,
-        300
-      ],
+      "position": [200, 300],
       "webhookId": "mcp-tools-registry"
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.N8N_API_URL }}/workflows",
+        "url": "={{ $env.N8N_API_URL || 'http://localhost:5678/api/v1' }}/workflows",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
@@ -52,10 +46,7 @@
       "name": "Fetch All Workflows",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        420,
-        300
-      ],
+      "position": [420, 300],
       "credentials": {
         "httpHeaderAuth": {
           "id": "n8n-api-key",
@@ -65,79 +56,38 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FILTER MCP-* WORKFLOWS AND BUILD REGISTRY\n// ============================================\n\nconst response = $input.first().json;\nconst workflows = response.data || response;\n\n// Filter MCP-* workflows only\nconst mcpWorkflows = workflows.filter(wf => \n  wf.name && wf.name.startsWith('MCP-') && wf.active\n);\n\n// Build tools registry\nconst tools = mcpWorkflows.map(wf => {\n  // Extract tool info from workflow name\n  // MCP-Transcriber → mcp_transcribe\n  // MCP-Image-Generator → mcp_image_generator\n  const toolName = 'mcp_' + wf.name\n    .replace('MCP-', '')\n    .replace(/-/g, '_')\n    .toLowerCase();\n  \n  // Try to extract description from sticky note or first node\n  let description = `Workflow ${wf.name}`;\n  let parameters = {};\n  let metadata = {\n    webhook_path: `/webhook/mcp/${wf.name.replace('MCP-', '').toLowerCase()}`,\n    async: false,\n    timeout_seconds: 30,\n    workflow_id: wf.id,\n    workflow_name: wf.name\n  };\n  \n  // Check if workflow has nodes with documentation\n  if (wf.nodes && Array.isArray(wf.nodes)) {\n    // Find sticky note with documentation\n    const stickyNote = wf.nodes.find(n => \n      n.type === 'n8n-nodes-base.stickyNote' && \n      n.parameters?.content\n    );\n    \n    if (stickyNote) {\n      const content = stickyNote.parameters.content;\n      // Extract description from sticky note\n      const descMatch = content.match(/\\*\\*Description:\\*\\*\\s*([^\\n]+)/i);\n      if (descMatch) {\n        description = descMatch[1].trim();\n      }\n    }\n    \n    // Find webhook node to get actual path\n    const webhookNode = wf.nodes.find(n => \n      n.type === 'n8n-nodes-base.webhook'\n    );\n    \n    if (webhookNode && webhookNode.parameters?.path) {\n      metadata.webhook_path = `/webhook/${webhookNode.parameters.path}`;\n    }\n    \n    // Check for async indicators\n    if (wf.nodes.some(n => \n      n.name?.toLowerCase().includes('callback') ||\n      n.name?.toLowerCase().includes('async')\n    )) {\n      metadata.async = true;\n      metadata.timeout_seconds = 120;\n    }\n  }\n  \n  // Basic parameters schema (can be enhanced per workflow)\n  parameters = {\n    type: 'object',\n    properties: {\n      input: { type: 'string', description: 'Input data for the tool' }\n    },\n    required: []\n  };\n  \n  return {\n    name: toolName,\n    description: description,\n    parameters: parameters,\n    metadata: metadata\n  };\n});\n\n// Exclude this registry workflow and notify workflow\nconst filteredTools = tools.filter(t => \n  !t.name.includes('registry') && \n  !t.name.includes('notify') &&\n  !t.name.includes('watcher')\n);\n\nreturn {\n  version: '1.0',\n  updated_at: new Date().toISOString(),\n  count: filteredTools.length,\n  tools: filteredTools\n};"
+        "jsCode": "// ============================================\n// FILTER MCP-* WORKFLOWS AND BUILD REGISTRY\n// ============================================\n\nconst response = $input.first().json;\nconst workflows = response.data || response;\n\n// Filter MCP-* workflows only\nconst mcpWorkflows = workflows.filter(wf => \n  wf.name && wf.name.startsWith('MCP') && wf.active\n);\n\n// Build tools registry\nconst tools = mcpWorkflows.map(wf => {\n  // Extract tool info from workflow name\n  // MCP - Transcriber → mcp_transcriber\n  // MCP-Image-Generator → mcp_image_generator\n  const toolName = 'mcp_' + wf.name\n    .replace(/^MCP\\s*-\\s*/, '')\n    .replace(/\\s+/g, '_')\n    .replace(/-/g, '_')\n    .toLowerCase();\n  \n  // Try to extract description from sticky note or first node\n  let description = `Workflow ${wf.name}`;\n  let parameters = {};\n  let metadata = {\n    webhook_path: `/webhook/mcp/${wf.name.replace(/^MCP\\s*-\\s*/, '').replace(/\\s+/g, '-').toLowerCase()}`,\n    async: false,\n    timeout_seconds: 30,\n    workflow_id: wf.id,\n    workflow_name: wf.name\n  };\n  \n  // Check if workflow has nodes with documentation\n  if (wf.nodes && Array.isArray(wf.nodes)) {\n    // Find sticky note with documentation\n    const stickyNote = wf.nodes.find(n => \n      n.type === 'n8n-nodes-base.stickyNote' && \n      n.parameters?.content\n    );\n    \n    if (stickyNote) {\n      const content = stickyNote.parameters.content;\n      // Extract description from sticky note\n      const descMatch = content.match(/\\*\\*Description:\\*\\*\\s*([^\\n]+)/i);\n      if (descMatch) {\n        description = descMatch[1].trim();\n      }\n    }\n    \n    // Find webhook node to get actual path\n    const webhookNode = wf.nodes.find(n => \n      n.type === 'n8n-nodes-base.webhook'\n    );\n    \n    if (webhookNode && webhookNode.parameters?.path) {\n      metadata.webhook_path = `/webhook/${webhookNode.parameters.path}`;\n    }\n    \n    // Check for async indicators\n    if (wf.nodes.some(n => \n      n.name?.toLowerCase().includes('callback') ||\n      n.name?.toLowerCase().includes('async')\n    )) {\n      metadata.async = true;\n      metadata.timeout_seconds = 120;\n    }\n  }\n  \n  // Basic parameters schema (can be enhanced per workflow)\n  parameters = {\n    type: 'object',\n    properties: {\n      input: { type: 'string', description: 'Input data for the tool' }\n    },\n    required: []\n  };\n  \n  return {\n    name: toolName,\n    description: description,\n    parameters: parameters,\n    metadata: metadata\n  };\n});\n\n// Exclude this registry workflow and notify workflow\nconst filteredTools = tools.filter(t => \n  !t.name.includes('registry') && \n  !t.name.includes('notify') &&\n  !t.name.includes('watcher')\n);\n\nreturn {\n  version: '1.0',\n  updated_at: new Date().toISOString(),\n  count: filteredTools.length,\n  tools: filteredTools\n};"
       },
       "id": "mcp-registry-0003",
       "name": "Build Tools Registry",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        640,
-        300
-      ]
+      "position": [640, 300]
     },
     {
       "parameters": {
+        "respondWith": "json",
         "options": {}
       },
       "id": "mcp-registry-0004",
       "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        860,
-        300
-      ]
+      "position": [860, 300]
     }
   ],
   "connections": {
     "Webhook GET": {
-      "main": [
-        [
-          {
-            "node": "Fetch All Workflows",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Fetch All Workflows", "type": "main", "index": 0 }]]
     },
     "Fetch All Workflows": {
-      "main": [
-        [
-          {
-            "node": "Build Tools Registry",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Build Tools Registry", "type": "main", "index": 0 }]]
     },
     "Build Tools Registry": {
-      "main": [
-        [
-          {
-            "node": "Respond to Webhook",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
     }
   },
   "settings": {
-    "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner"
-  },
-  "tags": [
-    {
-      "name": "mcp"
-    },
-    {
-      "name": "rfc-030"
-    },
-    {
-      "name": "registry"
-    }
-  ]
+    "executionOrder": "v1"
+  }
 }
