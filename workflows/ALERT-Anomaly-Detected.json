@@ -4,8 +4,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## ALERT - Anomaly Detected\n\n**Trigger:** Redis event `reconciliation.anomaly`\n\n**Source:** RFC-027 (Option B)\n\n**Description:**\nEnvoie une alerte au channel admin Discord\nquand une anomalie est détectée lors de\nla réconciliation (Stripe, cours, etc.).\n\n**Stream:** `system:events:stream`\n**Destination:** Webhook Admin Discord",
-        "height": 280,
+        "content": "## ALERT - Anomaly Detected\n\n**Trigger:** Redis event `reconciliation.anomaly`\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPublie une alerte admin sur le stream Redis\nquand une anomalie est détectée.\n\n**Input Stream:** `system:events:stream`\n**Output Stream:** `notifications:stream`\n**Redis DB:** REDIS_DB_NOTIFICATION (5)\n\n**Type:** `webhook` (pour admin channel)",
+        "height": 300,
         "width": 320,
         "color": 1
       },
@@ -89,10 +89,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PREPARE ADMIN ALERT EMBED\n// ============================================\n\nconst data = $input.first().json;\n\n// Severity colors and emojis\nconst severityConfig = {\n  critical: { color: 0xE74C3C, emoji: '🚨', label: 'CRITIQUE' },\n  error: { color: 0xE74C3C, emoji: '❌', label: 'ERREUR' },\n  warning: { color: 0xF39C12, emoji: '⚠️', label: 'ATTENTION' },\n  info: { color: 0x3498DB, emoji: 'ℹ️', label: 'INFO' }\n};\n\nconst config = severityConfig[data.severity] || severityConfig.warning;\n\n// Anomaly type labels\nconst anomalyTypeLabels = {\n  subscription_mismatch: 'Désynchronisation abonnement',\n  payment_missing: 'Paiement manquant',\n  access_without_subscription: 'Accès sans abonnement',\n  subscription_without_access: 'Abonnement sans accès',\n  duplicate_subscription: 'Abonnement dupliqué',\n  expired_access_active: 'Accès expiré encore actif',\n  data_inconsistency: 'Incohérence de données',\n  unknown: 'Anomalie inconnue'\n};\n\nconst anomalyLabel = anomalyTypeLabels[data.anomaly_type] || data.anomaly_type;\n\n// Build fields\nconst fields = [\n  {\n    name: '📋 Type',\n    value: anomalyLabel,\n    inline: true\n  },\n  {\n    name: '📊 Source',\n    value: data.source,\n    inline: true\n  },\n  {\n    name: '⏰ Détecté à',\n    value: new Date(data.timestamp).toLocaleString('fr-FR'),\n    inline: true\n  }\n];\n\n// Add affected user if present\nif (data.affected_discord_id) {\n  fields.push({\n    name: '👤 Utilisateur affecté',\n    value: `<@${data.affected_discord_id}>`,\n    inline: true\n  });\n}\n\n// Add expected vs actual if present\nif (data.expected_value !== undefined && data.actual_value !== undefined) {\n  fields.push({\n    name: '📌 Valeur attendue',\n    value: String(data.expected_value),\n    inline: true\n  });\n  fields.push({\n    name: '📍 Valeur actuelle',\n    value: String(data.actual_value),\n    inline: true\n  });\n}\n\n// Add details if present\nif (data.details && Object.keys(data.details).length > 0) {\n  const detailsStr = Object.entries(data.details)\n    .map(([k, v]) => `**${k}:** ${v}`)\n    .join('\\n');\n  fields.push({\n    name: '🔍 Détails',\n    value: detailsStr.substring(0, 1024),\n    inline: false\n  });\n}\n\nconst embed = {\n  title: `${config.emoji} [${config.label}] Anomalie Détectée`,\n  description: data.description,\n  color: config.color,\n  fields: fields,\n  footer: {\n    text: `Event ID: ${data.event_id}`\n  },\n  timestamp: data.timestamp\n};\n\nreturn {\n  embed: embed,\n  event_id: data.event_id,\n  severity: data.severity,\n  anomaly_type: data.anomaly_type\n};"
+        "jsCode": "// ============================================\n// PREPARE ADMIN ALERT PAYLOAD\n// ============================================\n\nconst data = $input.first().json;\n\n// Severity colors and emojis\nconst severityConfig = {\n  critical: { color: 0xE74C3C, emoji: '🚨', label: 'CRITIQUE' },\n  error: { color: 0xE74C3C, emoji: '❌', label: 'ERREUR' },\n  warning: { color: 0xF39C12, emoji: '⚠️', label: 'ATTENTION' },\n  info: { color: 0x3498DB, emoji: 'ℹ️', label: 'INFO' }\n};\n\nconst config = severityConfig[data.severity] || severityConfig.warning;\n\n// Anomaly type labels\nconst anomalyTypeLabels = {\n  subscription_mismatch: 'Désynchronisation abonnement',\n  payment_missing: 'Paiement manquant',\n  access_without_subscription: 'Accès sans abonnement',\n  subscription_without_access: 'Abonnement sans accès',\n  duplicate_subscription: 'Abonnement dupliqué',\n  expired_access_active: 'Accès expiré encore actif',\n  data_inconsistency: 'Incohérence de données',\n  unknown: 'Anomalie inconnue'\n};\n\nconst anomalyLabel = anomalyTypeLabels[data.anomaly_type] || data.anomaly_type;\n\n// Build fields\nconst fields = [\n  {\n    name: '📋 Type',\n    value: anomalyLabel,\n    inline: true\n  },\n  {\n    name: '📊 Source',\n    value: data.source,\n    inline: true\n  },\n  {\n    name: '⏰ Détecté à',\n    value: new Date(data.timestamp).toLocaleString('fr-FR'),\n    inline: true\n  }\n];\n\n// Add affected user if present\nif (data.affected_discord_id) {\n  fields.push({\n    name: '👤 Utilisateur affecté',\n    value: `<@${data.affected_discord_id}>`,\n    inline: true\n  });\n}\n\n// Add expected vs actual if present\nif (data.expected_value !== undefined && data.actual_value !== undefined) {\n  fields.push({\n    name: '📌 Valeur attendue',\n    value: String(data.expected_value),\n    inline: true\n  });\n  fields.push({\n    name: '📍 Valeur actuelle',\n    value: String(data.actual_value),\n    inline: true\n  });\n}\n\n// Add details if present\nif (data.details && Object.keys(data.details).length > 0) {\n  const detailsStr = Object.entries(data.details)\n    .map(([k, v]) => `**${k}:** ${v}`)\n    .join('\\n');\n  fields.push({\n    name: '🔍 Détails',\n    value: detailsStr.substring(0, 1024),\n    inline: false\n  });\n}\n\nconst embed = {\n  title: `${config.emoji} [${config.label}] Anomalie Détectée`,\n  description: data.description,\n  color: config.color,\n  fields: fields,\n  footer: {\n    text: `Event ID: ${data.event_id}`\n  },\n  timestamp: data.timestamp\n};\n\n// RFC-030: Format pour notifications:stream\nreturn {\n  type: 'webhook',  // Pour admin channel, pas DM\n  guild_id: data.guild_id,\n  target: 'admin',  // Indique que c'est pour le channel admin\n  content: data.severity === 'critical' ? '@here' : null,\n  embed: embed,\n  notification_type: 'admin_alert',\n  severity: data.severity,\n  anomaly_type: data.anomaly_type,\n  source: 'n8n:ALERT-Anomaly-Detected',\n  event_id: data.event_id,\n  timestamp: new Date().toISOString()\n};"
       },
       "id": "alert-anomaly-0004",
-      "name": "Prepare Alert Embed",
+      "name": "Prepare Notification Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -102,37 +102,76 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.DISCORD_ADMIN_WEBHOOK_URL }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
+        "operation": "xAdd",
+        "key": "notifications:stream",
+        "fieldsUi": {
+          "fieldValues": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
+              "fieldName": "type",
+              "fieldValue": "={{ $json.type }}"
+            },
+            {
+              "fieldName": "guild_id",
+              "fieldValue": "={{ $json.guild_id }}"
+            },
+            {
+              "fieldName": "target",
+              "fieldValue": "={{ $json.target }}"
+            },
+            {
+              "fieldName": "content",
+              "fieldValue": "={{ $json.content }}"
+            },
+            {
+              "fieldName": "embed",
+              "fieldValue": "={{ JSON.stringify($json.embed) }}"
+            },
+            {
+              "fieldName": "notification_type",
+              "fieldValue": "={{ $json.notification_type }}"
+            },
+            {
+              "fieldName": "severity",
+              "fieldValue": "={{ $json.severity }}"
+            },
+            {
+              "fieldName": "anomaly_type",
+              "fieldValue": "={{ $json.anomaly_type }}"
+            },
+            {
+              "fieldName": "source",
+              "fieldValue": "={{ $json.source }}"
+            },
+            {
+              "fieldName": "event_id",
+              "fieldValue": "={{ $json.event_id }}"
+            },
+            {
+              "fieldName": "timestamp",
+              "fieldValue": "={{ $json.timestamp }}"
             }
           ]
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  content: $json.severity === 'critical' ? '@here' : null,\n  embeds: [$json.embed]\n}) }}",
-        "options": {
-          "timeout": 10000
-        }
+        "options": {}
       },
       "id": "alert-anomaly-0005",
-      "name": "Send to Admin Webhook",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "name": "Publish to notifications:stream",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
       "position": [
         1080,
         200
       ],
-      "onError": "continueRegularOutput"
+      "credentials": {
+        "redis": {
+          "id": "notifications-redis",
+          "name": "Redis Notifications (DB 5)"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// LOG ALERT RESULT\n// ============================================\n\nconst response = $input.first().json;\nconst prepData = $('Prepare Alert Embed').first().json;\n\nconst success = !response.error && response.statusCode !== 500;\n\nconsole.log(`Admin alert ${success ? 'sent' : 'failed'} - ${prepData.anomaly_type} (severity: ${prepData.severity})`);\n\nreturn {\n  success: success,\n  event_id: prepData.event_id,\n  anomaly_type: prepData.anomaly_type,\n  severity: prepData.severity,\n  alert_type: 'admin_anomaly'\n};"
+        "jsCode": "// ============================================\n// LOG ALERT PUBLISHED\n// ============================================\n\nconst response = $input.first().json;\nconst prepData = $('Prepare Notification Payload').first().json;\n\nconsole.log(`Admin alert published to stream - ${prepData.anomaly_type} (severity: ${prepData.severity})`);\n\nreturn {\n  success: true,\n  event_id: prepData.event_id,\n  anomaly_type: prepData.anomaly_type,\n  severity: prepData.severity,\n  notification_type: 'admin_alert',\n  stream: 'notifications:stream'\n};"
       },
       "id": "alert-anomaly-0006",
       "name": "Log Result",
@@ -182,7 +221,7 @@
       "main": [
         [
           {
-            "node": "Prepare Alert Embed",
+            "node": "Prepare Notification Payload",
             "type": "main",
             "index": 0
           }
@@ -196,18 +235,18 @@
         ]
       ]
     },
-    "Prepare Alert Embed": {
+    "Prepare Notification Payload": {
       "main": [
         [
           {
-            "node": "Send to Admin Webhook",
+            "node": "Publish to notifications:stream",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send to Admin Webhook": {
+    "Publish to notifications:stream": {
       "main": [
         [
           {
@@ -228,7 +267,7 @@
       "name": "alert"
     },
     {
-      "name": "rfc-027"
+      "name": "rfc-030"
     },
     {
       "name": "admin"

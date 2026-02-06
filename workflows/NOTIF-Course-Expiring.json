@@ -4,8 +4,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## NOTIF - Course Expiring\n\n**Trigger:** Redis event `course.access.expiring`\n\n**Source:** RFC-027 (Option B)\n\n**Description:**\nEnvoie un rappel Discord quand l'accès\nà un cours expire bientôt (7 jours).\n\n**Stream:** `learning:events:stream`\n**Consumer Group:** `n8n-notifications`",
-        "height": 260,
+        "content": "## NOTIF - Course Expiring\n\n**Trigger:** Redis event `course.access.expiring`\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPublie un rappel Discord quand l'accès\nà un cours expire bientôt.\n\n**Input Stream:** `learning:events:stream`\n**Output Stream:** `notifications:stream`\n**Redis DB:** REDIS_DB_NOTIFICATION (5)",
+        "height": 280,
         "width": 320,
         "color": 5
       },
@@ -89,10 +89,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PREPARE EXPIRING REMINDER EMBED\n// ============================================\n\nconst data = $input.first().json;\n\n// Format expiration date\nconst expiresAt = data.expires_at ? new Date(data.expires_at) : null;\nconst formattedDate = expiresAt \n  ? expiresAt.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })\n  : 'bientôt';\n\n// Urgency based on days remaining\nlet urgencyEmoji = '📅';\nlet urgencyColor = 0x3498DB; // Blue\nlet urgencyText = `dans ${data.days_until_expiration} jours`;\n\nif (data.days_until_expiration <= 1) {\n  urgencyEmoji = '🚨';\n  urgencyColor = 0xE74C3C; // Red\n  urgencyText = 'DEMAIN';\n} else if (data.days_until_expiration <= 3) {\n  urgencyEmoji = '⚠️';\n  urgencyColor = 0xF39C12; // Orange\n  urgencyText = `dans ${data.days_until_expiration} jours`;\n}\n\nconst embed = {\n  title: `${urgencyEmoji} Ton accès expire ${urgencyText}`,\n  description: `Ton accès au cours **${data.course_name}** arrive à expiration.`,\n  color: urgencyColor,\n  fields: [\n    {\n      name: '📚 Cours',\n      value: data.course_name,\n      inline: true\n    },\n    {\n      name: '📆 Date d\\'expiration',\n      value: formattedDate,\n      inline: true\n    },\n    {\n      name: '💡 Que faire ?',\n      value: 'Renouvelle ton accès pour continuer à apprendre !\\nUtilise `/cours` pour voir les options.',\n      inline: false\n    }\n  ],\n  footer: {\n    text: 'Ne perds pas ta progression !'\n  },\n  timestamp: data.timestamp\n};\n\nreturn {\n  discord_id: data.discord_id,\n  guild_id: data.guild_id,\n  embed: embed,\n  content: `<@${data.discord_id}>`,\n  event_id: data.event_id,\n  urgency: data.days_until_expiration <= 1 ? 'critical' : (data.days_until_expiration <= 3 ? 'warning' : 'info')\n};"
+        "jsCode": "// ============================================\n// PREPARE EXPIRING REMINDER EMBED\n// ============================================\n\nconst data = $input.first().json;\n\n// Format expiration date\nconst expiresAt = data.expires_at ? new Date(data.expires_at) : null;\nconst formattedDate = expiresAt \n  ? expiresAt.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })\n  : 'bientôt';\n\n// Urgency based on days remaining\nlet urgencyEmoji = '📅';\nlet urgencyColor = 0x3498DB; // Blue\nlet urgencyText = `dans ${data.days_until_expiration} jours`;\n\nif (data.days_until_expiration <= 1) {\n  urgencyEmoji = '🚨';\n  urgencyColor = 0xE74C3C; // Red\n  urgencyText = 'DEMAIN';\n} else if (data.days_until_expiration <= 3) {\n  urgencyEmoji = '⚠️';\n  urgencyColor = 0xF39C12; // Orange\n  urgencyText = `dans ${data.days_until_expiration} jours`;\n}\n\nconst embed = {\n  title: `${urgencyEmoji} Ton accès expire ${urgencyText}`,\n  description: `Ton accès au cours **${data.course_name}** arrive à expiration.`,\n  color: urgencyColor,\n  fields: [\n    {\n      name: '📚 Cours',\n      value: data.course_name,\n      inline: true\n    },\n    {\n      name: '📆 Date d\\'expiration',\n      value: formattedDate,\n      inline: true\n    },\n    {\n      name: '💡 Que faire ?',\n      value: 'Renouvelle ton accès pour continuer à apprendre !\\nUtilise `/cours` pour voir les options.',\n      inline: false\n    }\n  ],\n  footer: {\n    text: 'Ne perds pas ta progression !'\n  },\n  timestamp: data.timestamp\n};\n\nconst urgency = data.days_until_expiration <= 1 ? 'critical' : (data.days_until_expiration <= 3 ? 'warning' : 'info');\n\n// RFC-030: Format pour notifications:stream\nreturn {\n  type: 'dm',\n  guild_id: data.guild_id,\n  discord_id: data.discord_id,\n  content: `<@${data.discord_id}>`,\n  embed: embed,\n  notification_type: 'course_expiring',\n  urgency: urgency,\n  source: 'n8n:NOTIF-Course-Expiring',\n  event_id: data.event_id,\n  timestamp: new Date().toISOString()\n};"
       },
       "id": "notif-course-0004",
-      "name": "Prepare Reminder Embed",
+      "name": "Prepare Notification Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -102,37 +102,72 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.CHATBOT_CORE_URL }}/api/notifications/dm",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
+        "operation": "xAdd",
+        "key": "notifications:stream",
+        "fieldsUi": {
+          "fieldValues": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
+              "fieldName": "type",
+              "fieldValue": "={{ $json.type }}"
+            },
+            {
+              "fieldName": "guild_id",
+              "fieldValue": "={{ $json.guild_id }}"
+            },
+            {
+              "fieldName": "discord_id",
+              "fieldValue": "={{ $json.discord_id }}"
+            },
+            {
+              "fieldName": "content",
+              "fieldValue": "={{ $json.content }}"
+            },
+            {
+              "fieldName": "embed",
+              "fieldValue": "={{ JSON.stringify($json.embed) }}"
+            },
+            {
+              "fieldName": "notification_type",
+              "fieldValue": "={{ $json.notification_type }}"
+            },
+            {
+              "fieldName": "urgency",
+              "fieldValue": "={{ $json.urgency }}"
+            },
+            {
+              "fieldName": "source",
+              "fieldValue": "={{ $json.source }}"
+            },
+            {
+              "fieldName": "event_id",
+              "fieldValue": "={{ $json.event_id }}"
+            },
+            {
+              "fieldName": "timestamp",
+              "fieldValue": "={{ $json.timestamp }}"
             }
           ]
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  discord_id: $json.discord_id,\n  guild_id: $json.guild_id,\n  content: $json.content,\n  embed: $json.embed,\n  notification_type: 'course_expiring',\n  urgency: $json.urgency\n}) }}",
-        "options": {
-          "timeout": 10000
-        }
+        "options": {}
       },
       "id": "notif-course-0005",
-      "name": "Send DM via Chatbot-Core",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "name": "Publish to notifications:stream",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
       "position": [
         1080,
         200
       ],
-      "onError": "continueRegularOutput"
+      "credentials": {
+        "redis": {
+          "id": "notifications-redis",
+          "name": "Redis Notifications (DB 5)"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// LOG NOTIFICATION RESULT\n// ============================================\n\nconst response = $input.first().json;\nconst prepData = $('Prepare Reminder Embed').first().json;\n\nconst success = !response.error && response.statusCode !== 500;\n\nconsole.log(`Course expiring notification ${success ? 'sent' : 'failed'} for user ${prepData.discord_id} (urgency: ${prepData.urgency})`);\n\nreturn {\n  success: success,\n  event_id: prepData.event_id,\n  discord_id: prepData.discord_id,\n  notification_type: 'course_expiring',\n  urgency: prepData.urgency\n};"
+        "jsCode": "// ============================================\n// LOG NOTIFICATION PUBLISHED\n// ============================================\n\nconst response = $input.first().json;\nconst prepData = $('Prepare Notification Payload').first().json;\n\nconsole.log(`Course expiring notification published to stream for user ${prepData.discord_id} (urgency: ${prepData.urgency})`);\n\nreturn {\n  success: true,\n  event_id: prepData.event_id,\n  discord_id: prepData.discord_id,\n  guild_id: prepData.guild_id,\n  notification_type: 'course_expiring',\n  urgency: prepData.urgency,\n  stream: 'notifications:stream'\n};"
       },
       "id": "notif-course-0006",
       "name": "Log Result",
@@ -182,7 +217,7 @@
       "main": [
         [
           {
-            "node": "Prepare Reminder Embed",
+            "node": "Prepare Notification Payload",
             "type": "main",
             "index": 0
           }
@@ -196,18 +231,18 @@
         ]
       ]
     },
-    "Prepare Reminder Embed": {
+    "Prepare Notification Payload": {
       "main": [
         [
           {
-            "node": "Send DM via Chatbot-Core",
+            "node": "Publish to notifications:stream",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send DM via Chatbot-Core": {
+    "Publish to notifications:stream": {
       "main": [
         [
           {
@@ -228,7 +263,7 @@
       "name": "notification"
     },
     {
-      "name": "rfc-027"
+      "name": "rfc-030"
     },
     {
       "name": "course"
