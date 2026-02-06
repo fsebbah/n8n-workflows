@@ -4,8 +4,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## NOTIF - Badge Earned\n\n**Trigger:** Redis event `badge:earned`\n\n**Source:** RFC-027 (Option B)\n\n**Description:**\nEnvoie une notification Discord quand\nun utilisateur débloque un badge.\n\n**Stream:** `xp:events:stream`\n**Consumer Group:** `n8n-notifications`",
-        "height": 260,
+        "content": "## NOTIF - Badge Earned\n\n**Trigger:** Redis event `badge:earned`\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPublie une notification Discord quand\nun utilisateur débloque un badge.\n\n**Input Stream:** `xp:events:stream`\n**Output Stream:** `notifications:stream`\n**Redis DB:** REDIS_DB_NOTIFICATION (5)",
+        "height": 280,
         "width": 320,
         "color": 5
       },
@@ -89,10 +89,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PREPARE BADGE EMBED\n// ============================================\n\nconst data = $input.first().json;\n\n// Rarity colors\nconst rarityColors = {\n  common: 0x95A5A6,      // Gray\n  uncommon: 0x2ECC71,    // Green\n  rare: 0x3498DB,        // Blue\n  epic: 0x9B59B6,        // Purple\n  legendary: 0xF39C12,   // Orange\n  mythic: 0xE74C3C       // Red\n};\n\nconst rarityLabels = {\n  common: 'Commun',\n  uncommon: 'Peu commun',\n  rare: 'Rare',\n  epic: 'Épique',\n  legendary: 'Légendaire',\n  mythic: 'Mythique'\n};\n\nconst color = rarityColors[data.badge_rarity] || 0x95A5A6;\nconst rarityLabel = rarityLabels[data.badge_rarity] || 'Commun';\n\nconst embed = {\n  title: `${data.badge_emoji} Nouveau Badge Débloqué !`,\n  description: `Tu as obtenu le badge **${data.badge_name}** !`,\n  color: color,\n  fields: [\n    {\n      name: '📋 Description',\n      value: data.badge_description || 'Un badge spécial !',\n      inline: false\n    },\n    {\n      name: '💎 Rareté',\n      value: rarityLabel,\n      inline: true\n    }\n  ],\n  footer: {\n    text: 'Consulte ta collection avec /progression'\n  },\n  timestamp: data.timestamp\n};\n\n// Add thumbnail if badge has an image\nif (data.badge_image_url) {\n  embed.thumbnail = { url: data.badge_image_url };\n}\n\nreturn {\n  discord_id: data.discord_id,\n  guild_id: data.guild_id,\n  embed: embed,\n  content: `<@${data.discord_id}> 🎊`,\n  event_id: data.event_id\n};"
+        "jsCode": "// ============================================\n// PREPARE BADGE EMBED\n// ============================================\n\nconst data = $input.first().json;\n\n// Rarity colors\nconst rarityColors = {\n  common: 0x95A5A6,      // Gray\n  uncommon: 0x2ECC71,    // Green\n  rare: 0x3498DB,        // Blue\n  epic: 0x9B59B6,        // Purple\n  legendary: 0xF39C12,   // Orange\n  mythic: 0xE74C3C       // Red\n};\n\nconst rarityLabels = {\n  common: 'Commun',\n  uncommon: 'Peu commun',\n  rare: 'Rare',\n  epic: 'Épique',\n  legendary: 'Légendaire',\n  mythic: 'Mythique'\n};\n\nconst color = rarityColors[data.badge_rarity] || 0x95A5A6;\nconst rarityLabel = rarityLabels[data.badge_rarity] || 'Commun';\n\nconst embed = {\n  title: `${data.badge_emoji} Nouveau Badge Débloqué !`,\n  description: `Tu as obtenu le badge **${data.badge_name}** !`,\n  color: color,\n  fields: [\n    {\n      name: '📋 Description',\n      value: data.badge_description || 'Un badge spécial !',\n      inline: false\n    },\n    {\n      name: '💎 Rareté',\n      value: rarityLabel,\n      inline: true\n    }\n  ],\n  footer: {\n    text: 'Consulte ta collection avec /progression'\n  },\n  timestamp: data.timestamp\n};\n\n// Add thumbnail if badge has an image\nif (data.badge_image_url) {\n  embed.thumbnail = { url: data.badge_image_url };\n}\n\n// RFC-030: Format pour notifications:stream\nreturn {\n  type: 'dm',\n  guild_id: data.guild_id,\n  discord_id: data.discord_id,\n  content: `<@${data.discord_id}> 🎊`,\n  embed: embed,\n  notification_type: 'badge_earned',\n  source: 'n8n:NOTIF-Badge-Earned',\n  event_id: data.event_id,\n  timestamp: new Date().toISOString()\n};"
       },
       "id": "notif-badge-0004",
-      "name": "Prepare Badge Embed",
+      "name": "Prepare Notification Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -102,37 +102,68 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.CHATBOT_CORE_URL }}/api/notifications/dm",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
+        "operation": "xAdd",
+        "key": "notifications:stream",
+        "fieldsUi": {
+          "fieldValues": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
+              "fieldName": "type",
+              "fieldValue": "={{ $json.type }}"
+            },
+            {
+              "fieldName": "guild_id",
+              "fieldValue": "={{ $json.guild_id }}"
+            },
+            {
+              "fieldName": "discord_id",
+              "fieldValue": "={{ $json.discord_id }}"
+            },
+            {
+              "fieldName": "content",
+              "fieldValue": "={{ $json.content }}"
+            },
+            {
+              "fieldName": "embed",
+              "fieldValue": "={{ JSON.stringify($json.embed) }}"
+            },
+            {
+              "fieldName": "notification_type",
+              "fieldValue": "={{ $json.notification_type }}"
+            },
+            {
+              "fieldName": "source",
+              "fieldValue": "={{ $json.source }}"
+            },
+            {
+              "fieldName": "event_id",
+              "fieldValue": "={{ $json.event_id }}"
+            },
+            {
+              "fieldName": "timestamp",
+              "fieldValue": "={{ $json.timestamp }}"
             }
           ]
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  discord_id: $json.discord_id,\n  guild_id: $json.guild_id,\n  content: $json.content,\n  embed: $json.embed,\n  notification_type: 'badge_earned'\n}) }}",
-        "options": {
-          "timeout": 10000
-        }
+        "options": {}
       },
       "id": "notif-badge-0005",
-      "name": "Send DM via Chatbot-Core",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "name": "Publish to notifications:stream",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
       "position": [
         1080,
         200
       ],
-      "onError": "continueRegularOutput"
+      "credentials": {
+        "redis": {
+          "id": "notifications-redis",
+          "name": "Redis Notifications (DB 5)"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// LOG NOTIFICATION RESULT\n// ============================================\n\nconst response = $input.first().json;\nconst prepData = $('Prepare Badge Embed').first().json;\n\nconst success = !response.error && response.statusCode !== 500;\n\nconsole.log(`Badge notification ${success ? 'sent' : 'failed'} for user ${prepData.discord_id}`);\n\nreturn {\n  success: success,\n  event_id: prepData.event_id,\n  discord_id: prepData.discord_id,\n  notification_type: 'badge_earned'\n};"
+        "jsCode": "// ============================================\n// LOG NOTIFICATION PUBLISHED\n// ============================================\n\nconst response = $input.first().json;\nconst prepData = $('Prepare Notification Payload').first().json;\n\nconsole.log(`Badge notification published to stream for user ${prepData.discord_id} in guild ${prepData.guild_id}`);\n\nreturn {\n  success: true,\n  event_id: prepData.event_id,\n  discord_id: prepData.discord_id,\n  guild_id: prepData.guild_id,\n  notification_type: 'badge_earned',\n  stream: 'notifications:stream'\n};"
       },
       "id": "notif-badge-0006",
       "name": "Log Result",
@@ -182,7 +213,7 @@
       "main": [
         [
           {
-            "node": "Prepare Badge Embed",
+            "node": "Prepare Notification Payload",
             "type": "main",
             "index": 0
           }
@@ -196,18 +227,18 @@
         ]
       ]
     },
-    "Prepare Badge Embed": {
+    "Prepare Notification Payload": {
       "main": [
         [
           {
-            "node": "Send DM via Chatbot-Core",
+            "node": "Publish to notifications:stream",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send DM via Chatbot-Core": {
+    "Publish to notifications:stream": {
       "main": [
         [
           {
@@ -228,7 +259,7 @@
       "name": "notification"
     },
     {
-      "name": "rfc-027"
+      "name": "rfc-030"
     },
     {
       "name": "badge"
