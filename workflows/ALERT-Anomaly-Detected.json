@@ -1,13 +1,13 @@
 {
-  "name": "ALERT---Anomaly-Detected",
+  "name": "ALERT - Anomaly Detected",
   "active": true,
   "nodes": [
     {
       "parameters": {
-        "content": "## ALERT - Anomaly Detected\n\n**Trigger:** Redis event `reconciliation.anomaly`\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPublie une alerte admin sur le stream Redis\nquand une anomalie est détectée.\n\n**Input Stream:** `system:events:stream`\n**Output Stream:** `notifications:stream`\n**Redis DB:** REDIS_DB_NOTIFICATION (5)\n\n**Type:** `webhook` (pour admin channel)",
-        "height": 300,
+        "content": "## ALERT - Anomaly Detected\n\n**Trigger:** Cron every 10 seconds\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPolls Redis Stream for reconciliation.anomaly events\nand publishes admin alerts to Discord.\n\n**Input Stream:** `system:events:stream`\n**Output Stream:** `notifications:stream`\n**Type:** webhook (admin channel)",
+        "height": 280,
         "width": 320,
-        "color": 1
+        "color": 4
       },
       "id": "alert-anomaly-0000",
       "name": "Documentation",
@@ -20,19 +20,39 @@
     },
     {
       "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "alert-anomaly-trigger",
+      "name": "Every 10 Seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        60,
+        300
+      ]
+    },
+    {
+      "parameters": {
         "operation": "xRead",
         "key": "system:events:stream",
         "options": {
-          "block": 5000,
+          "block": 0,
           "count": 10
         }
       },
       "id": "alert-anomaly-0001",
-      "name": "Redis Subscribe",
+      "name": "Redis xRead",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
       "position": [
-        200,
+        280,
         300
       ],
       "credentials": {
@@ -44,14 +64,14 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FILTER ANOMALY EVENTS\n// ============================================\n\nconst items = $input.all();\nconst anomalyEvents = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Parse event if stringified\n  let event = data.event || data;\n  if (typeof event === 'string') {\n    try {\n      event = JSON.parse(event);\n    } catch (e) {\n      continue;\n    }\n  }\n  \n  // Filter only reconciliation.anomaly events\n  if (event.event === 'reconciliation.anomaly' || event.type === 'reconciliation.anomaly') {\n    anomalyEvents.push({\n      json: {\n        event_id: data.id || `anomaly_${Date.now()}`,\n        event_type: 'reconciliation.anomaly',\n        guild_id: event.guild_id,\n        anomaly_type: event.data?.anomaly_type || 'unknown',\n        severity: event.data?.severity || 'warning',\n        source: event.data?.source || 'reconciliation',\n        description: event.data?.description || 'Anomalie détectée',\n        details: event.data?.details || {},\n        affected_user_id: event.data?.affected_user_id,\n        affected_discord_id: event.data?.affected_discord_id,\n        expected_value: event.data?.expected_value,\n        actual_value: event.data?.actual_value,\n        timestamp: event.timestamp || new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn anomalyEvents.length > 0 ? anomalyEvents : [];"
+        "jsCode": "// ============================================\n// FILTER ANOMALY EVENTS\n// ============================================\n\nconst items = $input.all();\nconst anomalyEvents = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  let event = data.event || data;\n  if (typeof event === 'string') {\n    try {\n      event = JSON.parse(event);\n    } catch (e) {\n      continue;\n    }\n  }\n  \n  if (event.event === 'reconciliation.anomaly' || event.type === 'reconciliation.anomaly') {\n    anomalyEvents.push({\n      json: {\n        event_id: data.id || `anomaly_${Date.now()}`,\n        event_type: 'reconciliation.anomaly',\n        guild_id: event.guild_id,\n        anomaly_type: event.data?.anomaly_type || event.anomaly_type || 'unknown',\n        severity: event.data?.severity || event.severity || 'warning',\n        description: event.data?.description || event.description || 'Anomalie detectee',\n        affected_users: event.data?.affected_users || [],\n        details: event.data?.details || {},\n        timestamp: event.timestamp || new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn anomalyEvents.length > 0 ? anomalyEvents : [];"
       },
       "id": "alert-anomaly-0002",
       "name": "Filter Anomaly Events",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        420,
+        500,
         300
       ]
     },
@@ -83,20 +103,20 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        640,
+        720,
         300
       ]
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PREPARE ADMIN ALERT PAYLOAD\n// ============================================\n\nconst data = $input.first().json;\n\n// Severity colors and emojis\nconst severityConfig = {\n  critical: { color: 0xE74C3C, emoji: '🚨', label: 'CRITIQUE' },\n  error: { color: 0xE74C3C, emoji: '❌', label: 'ERREUR' },\n  warning: { color: 0xF39C12, emoji: '⚠️', label: 'ATTENTION' },\n  info: { color: 0x3498DB, emoji: 'ℹ️', label: 'INFO' }\n};\n\nconst config = severityConfig[data.severity] || severityConfig.warning;\n\n// Anomaly type labels\nconst anomalyTypeLabels = {\n  subscription_mismatch: 'Désynchronisation abonnement',\n  payment_missing: 'Paiement manquant',\n  access_without_subscription: 'Accès sans abonnement',\n  subscription_without_access: 'Abonnement sans accès',\n  duplicate_subscription: 'Abonnement dupliqué',\n  expired_access_active: 'Accès expiré encore actif',\n  data_inconsistency: 'Incohérence de données',\n  unknown: 'Anomalie inconnue'\n};\n\nconst anomalyLabel = anomalyTypeLabels[data.anomaly_type] || data.anomaly_type;\n\n// Build fields\nconst fields = [\n  {\n    name: '📋 Type',\n    value: anomalyLabel,\n    inline: true\n  },\n  {\n    name: '📊 Source',\n    value: data.source,\n    inline: true\n  },\n  {\n    name: '⏰ Détecté à',\n    value: new Date(data.timestamp).toLocaleString('fr-FR'),\n    inline: true\n  }\n];\n\n// Add affected user if present\nif (data.affected_discord_id) {\n  fields.push({\n    name: '👤 Utilisateur affecté',\n    value: `<@${data.affected_discord_id}>`,\n    inline: true\n  });\n}\n\n// Add expected vs actual if present\nif (data.expected_value !== undefined && data.actual_value !== undefined) {\n  fields.push({\n    name: '📌 Valeur attendue',\n    value: String(data.expected_value),\n    inline: true\n  });\n  fields.push({\n    name: '📍 Valeur actuelle',\n    value: String(data.actual_value),\n    inline: true\n  });\n}\n\n// Add details if present\nif (data.details && Object.keys(data.details).length > 0) {\n  const detailsStr = Object.entries(data.details)\n    .map(([k, v]) => `**${k}:** ${v}`)\n    .join('\\n');\n  fields.push({\n    name: '🔍 Détails',\n    value: detailsStr.substring(0, 1024),\n    inline: false\n  });\n}\n\nconst embed = {\n  title: `${config.emoji} [${config.label}] Anomalie Détectée`,\n  description: data.description,\n  color: config.color,\n  fields: fields,\n  footer: {\n    text: `Event ID: ${data.event_id}`\n  },\n  timestamp: data.timestamp\n};\n\n// RFC-030: Format pour notifications:stream\nreturn {\n  type: 'webhook',  // Pour admin channel, pas DM\n  guild_id: data.guild_id,\n  target: 'admin',  // Indique que c'est pour le channel admin\n  content: data.severity === 'critical' ? '@here' : null,\n  embed: embed,\n  notification_type: 'admin_alert',\n  severity: data.severity,\n  anomaly_type: data.anomaly_type,\n  source: 'n8n:ALERT-Anomaly-Detected',\n  event_id: data.event_id,\n  timestamp: new Date().toISOString()\n};"
+        "jsCode": "// ============================================\n// PREPARE ADMIN ALERT EMBED\n// ============================================\n\nconst data = $input.first().json;\n\nconst severityConfig = {\n  critical: { color: 0xE74C3C, icon: '🚨', title: 'ALERTE CRITIQUE' },\n  warning: { color: 0xE67E22, icon: '⚠️', title: 'Alerte' },\n  info: { color: 0x3498DB, icon: 'ℹ️', title: 'Information' }\n};\n\nconst config = severityConfig[data.severity] || severityConfig.warning;\n\nconst embed = {\n  title: `${config.icon} ${config.title}: ${data.anomaly_type}`,\n  description: data.description,\n  color: config.color,\n  fields: [\n    {\n      name: 'Type',\n      value: data.anomaly_type,\n      inline: true\n    },\n    {\n      name: 'Severite',\n      value: data.severity.toUpperCase(),\n      inline: true\n    },\n    {\n      name: 'Utilisateurs affectes',\n      value: data.affected_users.length > 0 ? data.affected_users.length.toString() : 'N/A',\n      inline: true\n    }\n  ],\n  footer: { text: 'Systeme de reconciliation' },\n  timestamp: data.timestamp\n};\n\nif (Object.keys(data.details).length > 0) {\n  embed.fields.push({\n    name: 'Details',\n    value: '```json\\n' + JSON.stringify(data.details, null, 2).substring(0, 900) + '\\n```',\n    inline: false\n  });\n}\n\nreturn {\n  type: 'webhook',\n  guild_id: data.guild_id,\n  target: 'admin',\n  content: data.severity === 'critical' ? '@here' : null,\n  embed: embed,\n  notification_type: 'admin_alert',\n  severity: data.severity,\n  source: 'n8n:ALERT-Anomaly-Detected',\n  event_id: data.event_id,\n  timestamp: new Date().toISOString()\n};"
       },
       "id": "alert-anomaly-0004",
-      "name": "Prepare Notification Payload",
+      "name": "Prepare Alert Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        860,
+        940,
         200
       ]
     },
@@ -135,10 +155,6 @@
               "fieldValue": "={{ $json.severity }}"
             },
             {
-              "fieldName": "anomaly_type",
-              "fieldValue": "={{ $json.anomaly_type }}"
-            },
-            {
               "fieldName": "source",
               "fieldValue": "={{ $json.source }}"
             },
@@ -159,7 +175,7 @@
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
       "position": [
-        1080,
+        1160,
         200
       ],
       "credentials": {
@@ -170,32 +186,30 @@
       }
     },
     {
-      "parameters": {
-        "jsCode": "// ============================================\n// LOG ALERT PUBLISHED\n// ============================================\n\nconst response = $input.first().json;\nconst prepData = $('Prepare Notification Payload').first().json;\n\nconsole.log(`Admin alert published to stream - ${prepData.anomaly_type} (severity: ${prepData.severity})`);\n\nreturn {\n  success: true,\n  event_id: prepData.event_id,\n  anomaly_type: prepData.anomaly_type,\n  severity: prepData.severity,\n  notification_type: 'admin_alert',\n  stream: 'notifications:stream'\n};"
-      },
-      "id": "alert-anomaly-0006",
-      "name": "Log Result",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1300,
-        200
-      ]
-    },
-    {
       "parameters": {},
       "id": "alert-anomaly-0007",
       "name": "No Events",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        860,
+        940,
         400
       ]
     }
   ],
   "connections": {
-    "Redis Subscribe": {
+    "Every 10 Seconds": {
+      "main": [
+        [
+          {
+            "node": "Redis xRead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis xRead": {
       "main": [
         [
           {
@@ -221,7 +235,7 @@
       "main": [
         [
           {
-            "node": "Prepare Notification Payload",
+            "node": "Prepare Alert Payload",
             "type": "main",
             "index": 0
           }
@@ -235,7 +249,7 @@
         ]
       ]
     },
-    "Prepare Notification Payload": {
+    "Prepare Alert Payload": {
       "main": [
         [
           {
@@ -245,32 +259,281 @@
           }
         ]
       ]
-    },
-    "Publish to notifications:stream": {
-      "main": [
-        [
-          {
-            "node": "Log Result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
-  "tags": [
-    {
-      "name": "alert"
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-06T14:29:44.949Z",
+    "createdAt": "2026-02-06T14:29:44.949Z",
+    "versionId": "1e773d77-29b0-45bb-a3b7-0ed3850e97d8",
+    "workflowId": "KKux2QAmZZ0n3zar",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## ALERT - Anomaly Detected\n\n**Trigger:** Cron every 10 seconds\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPolls Redis Stream for reconciliation.anomaly events\nand publishes admin alerts to Discord.\n\n**Input Stream:** `system:events:stream`\n**Output Stream:** `notifications:stream`\n**Type:** webhook (admin channel)",
+          "height": 280,
+          "width": 320,
+          "color": 4
+        },
+        "id": "alert-anomaly-0000",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -200,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "seconds",
+                "secondsInterval": 10
+              }
+            ]
+          }
+        },
+        "id": "alert-anomaly-trigger",
+        "name": "Every 10 Seconds",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          60,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "xRead",
+          "key": "system:events:stream",
+          "options": {
+            "block": 0,
+            "count": 10
+          }
+        },
+        "id": "alert-anomaly-0001",
+        "name": "Redis xRead",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          280,
+          300
+        ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FILTER ANOMALY EVENTS\n// ============================================\n\nconst items = $input.all();\nconst anomalyEvents = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  let event = data.event || data;\n  if (typeof event === 'string') {\n    try {\n      event = JSON.parse(event);\n    } catch (e) {\n      continue;\n    }\n  }\n  \n  if (event.event === 'reconciliation.anomaly' || event.type === 'reconciliation.anomaly') {\n    anomalyEvents.push({\n      json: {\n        event_id: data.id || `anomaly_${Date.now()}`,\n        event_type: 'reconciliation.anomaly',\n        guild_id: event.guild_id,\n        anomaly_type: event.data?.anomaly_type || event.anomaly_type || 'unknown',\n        severity: event.data?.severity || event.severity || 'warning',\n        description: event.data?.description || event.description || 'Anomalie detectee',\n        affected_users: event.data?.affected_users || [],\n        details: event.data?.details || {},\n        timestamp: event.timestamp || new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn anomalyEvents.length > 0 ? anomalyEvents : [];"
+        },
+        "id": "alert-anomaly-0002",
+        "name": "Filter Anomaly Events",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          500,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "has-events",
+                "leftValue": "={{ $json.event_type }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "alert-anomaly-0003",
+        "name": "Has Events?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          720,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PREPARE ADMIN ALERT EMBED\n// ============================================\n\nconst data = $input.first().json;\n\nconst severityConfig = {\n  critical: { color: 0xE74C3C, icon: '🚨', title: 'ALERTE CRITIQUE' },\n  warning: { color: 0xE67E22, icon: '⚠️', title: 'Alerte' },\n  info: { color: 0x3498DB, icon: 'ℹ️', title: 'Information' }\n};\n\nconst config = severityConfig[data.severity] || severityConfig.warning;\n\nconst embed = {\n  title: `${config.icon} ${config.title}: ${data.anomaly_type}`,\n  description: data.description,\n  color: config.color,\n  fields: [\n    {\n      name: 'Type',\n      value: data.anomaly_type,\n      inline: true\n    },\n    {\n      name: 'Severite',\n      value: data.severity.toUpperCase(),\n      inline: true\n    },\n    {\n      name: 'Utilisateurs affectes',\n      value: data.affected_users.length > 0 ? data.affected_users.length.toString() : 'N/A',\n      inline: true\n    }\n  ],\n  footer: { text: 'Systeme de reconciliation' },\n  timestamp: data.timestamp\n};\n\nif (Object.keys(data.details).length > 0) {\n  embed.fields.push({\n    name: 'Details',\n    value: '```json\\n' + JSON.stringify(data.details, null, 2).substring(0, 900) + '\\n```',\n    inline: false\n  });\n}\n\nreturn {\n  type: 'webhook',\n  guild_id: data.guild_id,\n  target: 'admin',\n  content: data.severity === 'critical' ? '@here' : null,\n  embed: embed,\n  notification_type: 'admin_alert',\n  severity: data.severity,\n  source: 'n8n:ALERT-Anomaly-Detected',\n  event_id: data.event_id,\n  timestamp: new Date().toISOString()\n};"
+        },
+        "id": "alert-anomaly-0004",
+        "name": "Prepare Alert Payload",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          940,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "xAdd",
+          "key": "notifications:stream",
+          "fieldsUi": {
+            "fieldValues": [
+              {
+                "fieldName": "type",
+                "fieldValue": "={{ $json.type }}"
+              },
+              {
+                "fieldName": "guild_id",
+                "fieldValue": "={{ $json.guild_id }}"
+              },
+              {
+                "fieldName": "target",
+                "fieldValue": "={{ $json.target }}"
+              },
+              {
+                "fieldName": "content",
+                "fieldValue": "={{ $json.content }}"
+              },
+              {
+                "fieldName": "embed",
+                "fieldValue": "={{ JSON.stringify($json.embed) }}"
+              },
+              {
+                "fieldName": "notification_type",
+                "fieldValue": "={{ $json.notification_type }}"
+              },
+              {
+                "fieldName": "severity",
+                "fieldValue": "={{ $json.severity }}"
+              },
+              {
+                "fieldName": "source",
+                "fieldValue": "={{ $json.source }}"
+              },
+              {
+                "fieldName": "event_id",
+                "fieldValue": "={{ $json.event_id }}"
+              },
+              {
+                "fieldName": "timestamp",
+                "fieldValue": "={{ $json.timestamp }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "alert-anomaly-0005",
+        "name": "Publish to notifications:stream",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1160,
+          200
+        ],
+        "credentials": {
+          "redis": {
+            "id": "notifications-redis",
+            "name": "Redis Notifications (DB 5)"
+          }
+        }
+      },
+      {
+        "parameters": {},
+        "id": "alert-anomaly-0007",
+        "name": "No Events",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          940,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Every 10 Seconds": {
+        "main": [
+          [
+            {
+              "node": "Redis xRead",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Redis xRead": {
+        "main": [
+          [
+            {
+              "node": "Filter Anomaly Events",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Filter Anomaly Events": {
+        "main": [
+          [
+            {
+              "node": "Has Events?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Events?": {
+        "main": [
+          [
+            {
+              "node": "Prepare Alert Payload",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "No Events",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Alert Payload": {
+        "main": [
+          [
+            {
+              "node": "Publish to notifications:stream",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
     },
-    {
-      "name": "rfc-030"
-    },
-    {
-      "name": "admin"
-    }
-  ]
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
 }

@@ -7,7 +7,8 @@
         "rule": {
           "interval": [
             {
-              "field": "minutes"
+              "field": "minutes",
+              "minutesInterval": 15
             }
           ]
         }
@@ -23,24 +24,34 @@
     },
     {
       "parameters": {
-        "command": "cat /var/log/n8n/pending_channels.log 2>/dev/null || echo ''"
+        "operation": "get",
+        "propertyName": "pending_list",
+        "key": "n8n:pending_channels",
+        "keyType": "list",
+        "options": {}
       },
       "id": "channel-recovery-0002",
-      "name": "Read Log File",
-      "type": "n8n-nodes-base.executeCommand",
+      "name": "Read Pending Queue",
+      "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
       "position": [
         224,
         304
       ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      },
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PARSE JSONL LOG FILE\n// ============================================\n\nconst output = $input.first().json.stdout || '';\n\nif (!output.trim()) {\n  return {\n    has_entries: false,\n    entries: [],\n    message: 'No pending channels to process'\n  };\n}\n\n// Parse JSONL (one JSON per line)\nconst lines = output.trim().split('\\n').filter(line => line.trim());\nconst entries = [];\n\nfor (const line of lines) {\n  try {\n    const entry = JSON.parse(line);\n    entries.push(entry);\n  } catch (e) {\n    // Skip invalid JSON lines\n    console.log('Invalid JSON line:', line);\n  }\n}\n\nreturn {\n  has_entries: entries.length > 0,\n  entries: entries,\n  count: entries.length\n};"
+        "jsCode": "// Parse Redis list entries\n\nconst input = $input.first().json;\nconst pendingList = input.pending_list || [];\n\nif (!pendingList || pendingList.length === 0) {\n  return {\n    has_entries: false,\n    entries: [],\n    message: \"No pending channels to process\"\n  };\n}\n\n// Parse each JSON string from Redis list\nconst entries = [];\nfor (const item of pendingList) {\n  try {\n    const entry = typeof item === \"string\" ? JSON.parse(item) : item;\n    entries.push(entry);\n  } catch (e) {\n    console.log(\"Invalid JSON:\", item);\n  }\n}\n\nreturn {\n  has_entries: entries.length > 0,\n  entries: entries,\n  count: entries.length\n};"
       },
       "id": "channel-recovery-0003",
-      "name": "Parse JSONL",
+      "name": "Parse Redis Entries",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -174,16 +185,23 @@
     },
     {
       "parameters": {
-        "command": "rm /var/log/n8n/pending_channels.log 2>/dev/null || true"
+        "operation": "delete",
+        "key": "n8n:pending_channels"
       },
       "id": "channel-recovery-0009",
-      "name": "Clear Log File",
-      "type": "n8n-nodes-base.executeCommand",
+      "name": "Clear Pending Queue",
+      "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
       "position": [
         1792,
         256
       ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      },
       "onError": "continueRegularOutput"
     },
     {
@@ -201,17 +219,16 @@
     },
     {
       "parameters": {
-        "command": "={{ $json.new_log_content ? 'echo ' + JSON.stringify($json.new_log_content) + ' > /var/log/n8n/pending_channels.log' : 'rm /var/log/n8n/pending_channels.log 2>/dev/null || true' }}"
+        "jsCode": "// Requeue failed channels to Redis\nconst results = $(\"Collect Results\").first().json;\nconst originalEntries = $(\"Parse Redis Entries\").first().json.entries || [];\n\n// Keep only entries that failed\nconst failedChannelIds = results.failures.map(f => f.channel_id);\nconst entriesToKeep = originalEntries.filter(e =>\n  failedChannelIds.includes(e.channel_id)\n);\n\n// Return entries to requeue (will be pushed back to Redis)\nreturn entriesToKeep.map(e => ({\n  json: { entry_json: JSON.stringify(e) }\n}));"
       },
       "id": "channel-recovery-0011",
-      "name": "Update Log File",
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
+      "name": "Prepare Failed Entries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1984,
         80
-      ],
-      "onError": "continueRegularOutput"
+      ]
     },
     {
       "parameters": {
@@ -222,39 +239,47 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
-        400
+        896,
+        32
       ]
+    },
+    {
+      "parameters": {
+        "operation": "push",
+        "list": "n8n:pending_channels",
+        "messageData": "={{ $json.entry_json }}",
+        "tail": true
+      },
+      "id": "channel-recovery-0013",
+      "name": "Requeue Failed",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2208,
+        80
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
-    "Schedule Trigger": {
+    "All Success?": {
       "main": [
         [
           {
-            "node": "Read Log File",
+            "node": "Prepare Updated Log",
             "type": "main",
             "index": 0
           }
-        ]
-      ]
-    },
-    "Read Log File": {
-      "main": [
+        ],
         [
           {
-            "node": "Parse JSONL",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse JSONL": {
-      "main": [
-        [
-          {
-            "node": "Has Entries?",
+            "node": "Clear Pending Queue",
             "type": "main",
             "index": 0
           }
@@ -290,17 +315,6 @@
         ]
       ]
     },
-    "Retry Register Channel": {
-      "main": [
-        [
-          {
-            "node": "Collect Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Collect Results": {
       "main": [
         [
@@ -312,18 +326,33 @@
         ]
       ]
     },
-    "All Success?": {
+    "Schedule Trigger": {
       "main": [
         [
           {
-            "node": "Prepare Updated Log",
+            "node": "Read Pending Queue",
             "type": "main",
             "index": 0
           }
-        ],
+        ]
+      ]
+    },
+    "Read Pending Queue": {
+      "main": [
         [
           {
-            "node": "Clear Log File",
+            "node": "Parse Redis Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Redis Entries": {
+      "main": [
+        [
+          {
+            "node": "Has Entries?",
             "type": "main",
             "index": 0
           }
@@ -334,7 +363,29 @@
       "main": [
         [
           {
-            "node": "Update Log File",
+            "node": "Prepare Failed Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Failed Entries": {
+      "main": [
+        [
+          {
+            "node": "Requeue Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Register Channel": {
+      "main": [
+        [
+          {
+            "node": "Collect Results",
             "type": "main",
             "index": 0
           }
@@ -349,9 +400,9 @@
   },
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-01-20T20:05:55.512Z",
-    "createdAt": "2026-01-20T20:05:55.512Z",
-    "versionId": "60cd51ee-fff5-44be-ad49-72882677840e",
+    "updatedAt": "2026-02-03T15:13:22.701Z",
+    "createdAt": "2026-02-03T15:13:19.267Z",
+    "versionId": "621d5b4c-230a-48ec-9641-4bf37fd284ea",
     "workflowId": "O4Copm1QQ8Ih9lCB",
     "nodes": [
       {
@@ -359,7 +410,8 @@
           "rule": {
             "interval": [
               {
-                "field": "minutes"
+                "field": "minutes",
+                "minutesInterval": 15
               }
             ]
           }
@@ -375,24 +427,34 @@
       },
       {
         "parameters": {
-          "command": "cat /var/log/n8n/pending_channels.log 2>/dev/null || echo ''"
+          "operation": "get",
+          "propertyName": "pending_list",
+          "key": "n8n:pending_channels",
+          "keyType": "list",
+          "options": {}
         },
         "id": "channel-recovery-0002",
-        "name": "Read Log File",
-        "type": "n8n-nodes-base.executeCommand",
+        "name": "Read Pending Queue",
+        "type": "n8n-nodes-base.redis",
         "typeVersion": 1,
         "position": [
           224,
           304
         ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        },
         "onError": "continueRegularOutput"
       },
       {
         "parameters": {
-          "jsCode": "// ============================================\n// PARSE JSONL LOG FILE\n// ============================================\n\nconst output = $input.first().json.stdout || '';\n\nif (!output.trim()) {\n  return {\n    has_entries: false,\n    entries: [],\n    message: 'No pending channels to process'\n  };\n}\n\n// Parse JSONL (one JSON per line)\nconst lines = output.trim().split('\\n').filter(line => line.trim());\nconst entries = [];\n\nfor (const line of lines) {\n  try {\n    const entry = JSON.parse(line);\n    entries.push(entry);\n  } catch (e) {\n    // Skip invalid JSON lines\n    console.log('Invalid JSON line:', line);\n  }\n}\n\nreturn {\n  has_entries: entries.length > 0,\n  entries: entries,\n  count: entries.length\n};"
+          "jsCode": "// Parse Redis list entries\n\nconst input = $input.first().json;\nconst pendingList = input.pending_list || [];\n\nif (!pendingList || pendingList.length === 0) {\n  return {\n    has_entries: false,\n    entries: [],\n    message: \"No pending channels to process\"\n  };\n}\n\n// Parse each JSON string from Redis list\nconst entries = [];\nfor (const item of pendingList) {\n  try {\n    const entry = typeof item === \"string\" ? JSON.parse(item) : item;\n    entries.push(entry);\n  } catch (e) {\n    console.log(\"Invalid JSON:\", item);\n  }\n}\n\nreturn {\n  has_entries: entries.length > 0,\n  entries: entries,\n  count: entries.length\n};"
         },
         "id": "channel-recovery-0003",
-        "name": "Parse JSONL",
+        "name": "Parse Redis Entries",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
@@ -526,16 +588,23 @@
       },
       {
         "parameters": {
-          "command": "rm /var/log/n8n/pending_channels.log 2>/dev/null || true"
+          "operation": "delete",
+          "key": "n8n:pending_channels"
         },
         "id": "channel-recovery-0009",
-        "name": "Clear Log File",
-        "type": "n8n-nodes-base.executeCommand",
+        "name": "Clear Pending Queue",
+        "type": "n8n-nodes-base.redis",
         "typeVersion": 1,
         "position": [
           1792,
           256
         ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        },
         "onError": "continueRegularOutput"
       },
       {
@@ -553,17 +622,16 @@
       },
       {
         "parameters": {
-          "command": "={{ $json.new_log_content ? 'echo ' + JSON.stringify($json.new_log_content) + ' > /var/log/n8n/pending_channels.log' : 'rm /var/log/n8n/pending_channels.log 2>/dev/null || true' }}"
+          "jsCode": "// Requeue failed channels to Redis\nconst results = $(\"Collect Results\").first().json;\nconst originalEntries = $(\"Parse Redis Entries\").first().json.entries || [];\n\n// Keep only entries that failed\nconst failedChannelIds = results.failures.map(f => f.channel_id);\nconst entriesToKeep = originalEntries.filter(e =>\n  failedChannelIds.includes(e.channel_id)\n);\n\n// Return entries to requeue (will be pushed back to Redis)\nreturn entriesToKeep.map(e => ({\n  json: { entry_json: JSON.stringify(e) }\n}));"
         },
         "id": "channel-recovery-0011",
-        "name": "Update Log File",
-        "type": "n8n-nodes-base.executeCommand",
-        "typeVersion": 1,
+        "name": "Prepare Failed Entries",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
         "position": [
           1984,
           80
-        ],
-        "onError": "continueRegularOutput"
+        ]
       },
       {
         "parameters": {
@@ -574,39 +642,47 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          880,
-          400
+          896,
+          32
         ]
+      },
+      {
+        "parameters": {
+          "operation": "push",
+          "list": "n8n:pending_channels",
+          "messageData": "={{ $json.entry_json }}",
+          "tail": true
+        },
+        "id": "channel-recovery-0013",
+        "name": "Requeue Failed",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          2208,
+          80
+        ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        },
+        "onError": "continueRegularOutput"
       }
     ],
     "connections": {
-      "Schedule Trigger": {
+      "All Success?": {
         "main": [
           [
             {
-              "node": "Read Log File",
+              "node": "Prepare Updated Log",
               "type": "main",
               "index": 0
             }
-          ]
-        ]
-      },
-      "Read Log File": {
-        "main": [
+          ],
           [
             {
-              "node": "Parse JSONL",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Parse JSONL": {
-        "main": [
-          [
-            {
-              "node": "Has Entries?",
+              "node": "Clear Pending Queue",
               "type": "main",
               "index": 0
             }
@@ -642,17 +718,6 @@
           ]
         ]
       },
-      "Retry Register Channel": {
-        "main": [
-          [
-            {
-              "node": "Collect Results",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
       "Collect Results": {
         "main": [
           [
@@ -664,18 +729,33 @@
           ]
         ]
       },
-      "All Success?": {
+      "Schedule Trigger": {
         "main": [
           [
             {
-              "node": "Prepare Updated Log",
+              "node": "Read Pending Queue",
               "type": "main",
               "index": 0
             }
-          ],
+          ]
+        ]
+      },
+      "Read Pending Queue": {
+        "main": [
           [
             {
-              "node": "Clear Log File",
+              "node": "Parse Redis Entries",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Redis Entries": {
+        "main": [
+          [
+            {
+              "node": "Has Entries?",
               "type": "main",
               "index": 0
             }
@@ -686,7 +766,29 @@
         "main": [
           [
             {
-              "node": "Update Log File",
+              "node": "Prepare Failed Entries",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Failed Entries": {
+        "main": [
+          [
+            {
+              "node": "Requeue Failed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Retry Register Channel": {
+        "main": [
+          [
+            {
+              "node": "Collect Results",
               "type": "main",
               "index": 0
             }
@@ -694,8 +796,8 @@
         ]
       }
     },
-    "authors": "Franck Sebbah",
-    "name": null,
-    "description": null
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": "Version 621d5b4c",
+    "description": ""
   }
 }

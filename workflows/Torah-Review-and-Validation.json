@@ -40,7 +40,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Preparer la traduction pour revision Discord\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst translation_id = body.translation_id || `tr_${Date.now()}`;\nconst reference = body.reference || 'Unknown Reference';\n\n// Construire le texte source (tronque si trop long)\nlet sourceText = body.source_text || body.hebrew_text || '';\nif (sourceText.length > 500) {\n  sourceText = sourceText.substring(0, 500) + '...';\n}\n\n// Construire la traduction (tronque si trop long)\nlet translationText = body.translation || body.translated_text || '';\nif (translationText.length > 800) {\n  translationText = translationText.substring(0, 800) + '...';\n}\n\n// Commentaires traduits\nconst commentaries = body.commentaries || [];\nconst commentaryFields = commentaries.slice(0, 3).map((c, i) => ({\n  name: c.commentator || `Commentaire ${i + 1}`,\n  value: (c.translation || c.text || '').substring(0, 200) + (c.translation?.length > 200 ? '...' : ''),\n  inline: false\n}));\n\n// URLs de callback pour les actions\nconst baseUrl = 'http://pi6.local:5678/webhook/torah-review-action';\nconst approveUrl = `${baseUrl}?translation_id=${translation_id}&action=approve`;\nconst rejectUrl = `${baseUrl}?translation_id=${translation_id}&action=reject`;\nconst retranslateUrl = `${baseUrl}?translation_id=${translation_id}&action=retranslate`;\n\nreturn [{\n  json: {\n    translation_id,\n    reference,\n    sourceText,\n    translationText,\n    commentaryFields,\n    commentariesCount: commentaries.length,\n    approveUrl,\n    rejectUrl,\n    retranslateUrl,\n    submittedAt: new Date().toISOString()\n  }\n}];"
+        "jsCode": "// Preparer la traduction pour revision Discord\nconst input = $input.first().json;\nconst body = input.body || input;\nconst webhook = $env.N8N_BASE_URL;\nconst webhookBase = $env.N8N_WEBHOOK_BASE_URL;\nconst apiUrl = $env.API_URL;\n\nconst translation_id = body.translation_id || `tr_${Date.now()}`;\nconst reference = body.reference || 'Unknown Reference';\n\n// Construire le texte source (tronque si trop long)\nlet sourceText = body.source_text || body.hebrew_text || '';\nif (sourceText.length > 500) {\n  sourceText = sourceText.substring(0, 500) + '...';\n}\n\n// Construire la traduction (tronque si trop long)\nlet translationText = body.translation || body.translated_text || '';\nif (translationText.length > 800) {\n  translationText = translationText.substring(0, 800) + '...';\n}\n\n// Commentaires traduits\nconst commentaries = body.commentaries || [];\nconst commentaryFields = commentaries.slice(0, 3).map((c, i) => ({\n  name: c.commentator || `Commentaire ${i + 1}`,\n  value: (c.translation || c.text || '').substring(0, 200) + (c.translation?.length > 200 ? '...' : ''),\n  inline: false\n}));\n\n// URLs de callback pour les actions\nconst baseUrl = webhookBase + '/torah-review-action';\nconst approveUrl = `${baseUrl}?translation_id=${translation_id}&action=approve`;\nconst rejectUrl = `${baseUrl}?translation_id=${translation_id}&action=reject`;\nconst retranslateUrl = `${baseUrl}?translation_id=${translation_id}&action=retranslate`;\n\nreturn [{\n  json: {\n    translation_id,\n    reference,\n    sourceText,\n    translationText,\n    commentaryFields,\n    commentariesCount: commentaries.length,\n    approveUrl,\n    rejectUrl,\n    retranslateUrl,\n    submittedAt: new Date().toISOString()\n  }\n}];"
       },
       "id": "prepare-review",
       "name": "Prepare Review Data",
@@ -54,7 +54,16 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+        "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "=Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Revision Requise: {{ $json.reference }}\",\n    \"description\": \"Une nouvelle traduction necessite votre revision.\",\n    \"color\": 15844367,\n    \"fields\": [\n      {\"name\": \"ID\", \"value\": \"`{{ $json.translation_id }}`\", \"inline\": true},\n      {\"name\": \"Commentaires\", \"value\": \"{{ $json.commentariesCount }}\", \"inline\": true},\n      {\"name\": \"Texte Source (Hebreu)\", \"value\": \"{{ $json.sourceText || '(non disponible)' }}\", \"inline\": false},\n      {\"name\": \"Traduction\", \"value\": \"{{ $json.translationText || '(non disponible)' }}\", \"inline\": false}\n    ],\n    \"footer\": {\"text\": \"Torah Review System\"},\n    \"timestamp\": \"{{ $json.submittedAt }}\"\n  }]\n}",
@@ -72,10 +81,25 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+        "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "=Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"content\": \"**Actions disponibles pour `{{ $json.translation_id }}`:**\\n\\nPour valider, utilisez curl ou un client HTTP:\\n```bash\\ncurl -X POST 'http://pi6.local:5678/webhook/torah-review-action' \\\\\\n  -H 'Content-Type: application/json' \\\\\\n  -d '{\\\"translation_id\\\": \\\"{{ $json.translation_id }}\\\", \\\"action\\\": \\\"approve\\\", \\\"reviewer\\\": \\\"VotreNom\\\"}'\\n```\\n\\nActions: `approve` | `reject` | `retranslate`\"\n}",
+        "jsonBody": "={\"content\": \"**Actions disponibles pour `{{ $json.translation_id }}`:**\\n\\nPour valider, utilisez curl ou un client HTTP:\\n```bash\\ncurl -X POST '{{$env.N8N_WEBHOOK_BASE_URL }}/torah-review-action' \\\\\\n  -H 'Content-Type: application/json' \\\\\\n  -d '{\\\"translation_id\\\": \\\"{{ $json.translation_id }}\\\", \\\"action\\\": \\\"approve\\\", \\\"reviewer\\\":\\\"VotreNom\\\"}'\\n```\\n\\nActions: `approve` |`reject` | `retranslate`\"}",
         "options": {}
       },
       "id": "discord-actions-help",
@@ -171,7 +195,16 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+        "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "=Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"{{ $('Process Review Action').first().json.emoji }} Revision: {{ $('Process Review Action').first().json.action | capitalize }}\",\n    \"description\": \"Traduction `{{ $('Process Review Action').first().json.translation_id }}` {{ $('Process Review Action').first().json.action === 'approve' ? 'approuvee' : ($('Process Review Action').first().json.action === 'reject' ? 'rejetee' : 'a re-traduire') }}\",\n    \"color\": {{ $('Process Review Action').first().json.color }},\n    \"fields\": [\n      {\"name\": \"Reviseur\", \"value\": \"{{ $('Process Review Action').first().json.reviewer }}\", \"inline\": true},\n      {\"name\": \"Statut\", \"value\": \"{{ $('Process Review Action').first().json.status }}\", \"inline\": true},\n      {\"name\": \"Feedback\", \"value\": \"{{ $('Process Review Action').first().json.feedback || '(aucun)' }}\", \"inline\": false}\n    ],\n    \"footer\": {\"text\": \"Torah Review System\"},\n    \"timestamp\": \"{{ $('Process Review Action').first().json.processedAt }}\"\n  }]\n}",
@@ -416,9 +449,9 @@
   },
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-01-20T19:31:32.783Z",
-    "createdAt": "2026-01-20T19:31:32.783Z",
-    "versionId": "8679bbad-012b-4936-895c-dfc34b59cca4",
+    "updatedAt": "2026-02-03T10:42:52.789Z",
+    "createdAt": "2026-02-03T10:42:45.112Z",
+    "versionId": "ac6fc02f-6b13-4c7b-a8a4-2ff742a517c1",
     "workflowId": "Q8AVO0u6trXceUGC",
     "nodes": [
       {
@@ -459,7 +492,7 @@
       },
       {
         "parameters": {
-          "jsCode": "// Preparer la traduction pour revision Discord\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst translation_id = body.translation_id || `tr_${Date.now()}`;\nconst reference = body.reference || 'Unknown Reference';\n\n// Construire le texte source (tronque si trop long)\nlet sourceText = body.source_text || body.hebrew_text || '';\nif (sourceText.length > 500) {\n  sourceText = sourceText.substring(0, 500) + '...';\n}\n\n// Construire la traduction (tronque si trop long)\nlet translationText = body.translation || body.translated_text || '';\nif (translationText.length > 800) {\n  translationText = translationText.substring(0, 800) + '...';\n}\n\n// Commentaires traduits\nconst commentaries = body.commentaries || [];\nconst commentaryFields = commentaries.slice(0, 3).map((c, i) => ({\n  name: c.commentator || `Commentaire ${i + 1}`,\n  value: (c.translation || c.text || '').substring(0, 200) + (c.translation?.length > 200 ? '...' : ''),\n  inline: false\n}));\n\n// URLs de callback pour les actions\nconst baseUrl = 'http://pi6.local:5678/webhook/torah-review-action';\nconst approveUrl = `${baseUrl}?translation_id=${translation_id}&action=approve`;\nconst rejectUrl = `${baseUrl}?translation_id=${translation_id}&action=reject`;\nconst retranslateUrl = `${baseUrl}?translation_id=${translation_id}&action=retranslate`;\n\nreturn [{\n  json: {\n    translation_id,\n    reference,\n    sourceText,\n    translationText,\n    commentaryFields,\n    commentariesCount: commentaries.length,\n    approveUrl,\n    rejectUrl,\n    retranslateUrl,\n    submittedAt: new Date().toISOString()\n  }\n}];"
+          "jsCode": "// Preparer la traduction pour revision Discord\nconst input = $input.first().json;\nconst body = input.body || input;\nconst webhook = $env.N8N_BASE_URL;\nconst webhookBase = $env.N8N_WEBHOOK_BASE_URL;\nconst apiUrl = $env.API_URL;\n\nconst translation_id = body.translation_id || `tr_${Date.now()}`;\nconst reference = body.reference || 'Unknown Reference';\n\n// Construire le texte source (tronque si trop long)\nlet sourceText = body.source_text || body.hebrew_text || '';\nif (sourceText.length > 500) {\n  sourceText = sourceText.substring(0, 500) + '...';\n}\n\n// Construire la traduction (tronque si trop long)\nlet translationText = body.translation || body.translated_text || '';\nif (translationText.length > 800) {\n  translationText = translationText.substring(0, 800) + '...';\n}\n\n// Commentaires traduits\nconst commentaries = body.commentaries || [];\nconst commentaryFields = commentaries.slice(0, 3).map((c, i) => ({\n  name: c.commentator || `Commentaire ${i + 1}`,\n  value: (c.translation || c.text || '').substring(0, 200) + (c.translation?.length > 200 ? '...' : ''),\n  inline: false\n}));\n\n// URLs de callback pour les actions\nconst baseUrl = webhookBase + '/torah-review-action';\nconst approveUrl = `${baseUrl}?translation_id=${translation_id}&action=approve`;\nconst rejectUrl = `${baseUrl}?translation_id=${translation_id}&action=reject`;\nconst retranslateUrl = `${baseUrl}?translation_id=${translation_id}&action=retranslate`;\n\nreturn [{\n  json: {\n    translation_id,\n    reference,\n    sourceText,\n    translationText,\n    commentaryFields,\n    commentariesCount: commentaries.length,\n    approveUrl,\n    rejectUrl,\n    retranslateUrl,\n    submittedAt: new Date().toISOString()\n  }\n}];"
         },
         "id": "prepare-review",
         "name": "Prepare Review Data",
@@ -473,7 +506,16 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+          "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "=Authorization",
+                "value": "={{ $env.DISCORD_TOKEN }}"
+              }
+            ]
+          },
           "sendBody": true,
           "specifyBody": "json",
           "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Revision Requise: {{ $json.reference }}\",\n    \"description\": \"Une nouvelle traduction necessite votre revision.\",\n    \"color\": 15844367,\n    \"fields\": [\n      {\"name\": \"ID\", \"value\": \"`{{ $json.translation_id }}`\", \"inline\": true},\n      {\"name\": \"Commentaires\", \"value\": \"{{ $json.commentariesCount }}\", \"inline\": true},\n      {\"name\": \"Texte Source (Hebreu)\", \"value\": \"{{ $json.sourceText || '(non disponible)' }}\", \"inline\": false},\n      {\"name\": \"Traduction\", \"value\": \"{{ $json.translationText || '(non disponible)' }}\", \"inline\": false}\n    ],\n    \"footer\": {\"text\": \"Torah Review System\"},\n    \"timestamp\": \"{{ $json.submittedAt }}\"\n  }]\n}",
@@ -491,10 +533,25 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+          "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "=Authorization",
+                "value": "={{ $env.DISCORD_TOKEN }}"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {}
+            ]
+          },
           "sendBody": true,
           "specifyBody": "json",
-          "jsonBody": "={\n  \"content\": \"**Actions disponibles pour `{{ $json.translation_id }}`:**\\n\\nPour valider, utilisez curl ou un client HTTP:\\n```bash\\ncurl -X POST 'http://pi6.local:5678/webhook/torah-review-action' \\\\\\n  -H 'Content-Type: application/json' \\\\\\n  -d '{\\\"translation_id\\\": \\\"{{ $json.translation_id }}\\\", \\\"action\\\": \\\"approve\\\", \\\"reviewer\\\": \\\"VotreNom\\\"}'\\n```\\n\\nActions: `approve` | `reject` | `retranslate`\"\n}",
+          "jsonBody": "={\"content\": \"**Actions disponibles pour `{{ $json.translation_id }}`:**\\n\\nPour valider, utilisez curl ou un client HTTP:\\n```bash\\ncurl -X POST '{{$env.N8N_WEBHOOK_BASE_URL }}/torah-review-action' \\\\\\n  -H 'Content-Type: application/json' \\\\\\n  -d '{\\\"translation_id\\\": \\\"{{ $json.translation_id }}\\\", \\\"action\\\": \\\"approve\\\", \\\"reviewer\\\":\\\"VotreNom\\\"}'\\n```\\n\\nActions: `approve` |`reject` | `retranslate`\"}",
           "options": {}
         },
         "id": "discord-actions-help",
@@ -590,7 +647,16 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+          "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "=Authorization",
+                "value": "={{ $env.DISCORD_TOKEN }}"
+              }
+            ]
+          },
           "sendBody": true,
           "specifyBody": "json",
           "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"{{ $('Process Review Action').first().json.emoji }} Revision: {{ $('Process Review Action').first().json.action | capitalize }}\",\n    \"description\": \"Traduction `{{ $('Process Review Action').first().json.translation_id }}` {{ $('Process Review Action').first().json.action === 'approve' ? 'approuvee' : ($('Process Review Action').first().json.action === 'reject' ? 'rejetee' : 'a re-traduire') }}\",\n    \"color\": {{ $('Process Review Action').first().json.color }},\n    \"fields\": [\n      {\"name\": \"Reviseur\", \"value\": \"{{ $('Process Review Action').first().json.reviewer }}\", \"inline\": true},\n      {\"name\": \"Statut\", \"value\": \"{{ $('Process Review Action').first().json.status }}\", \"inline\": true},\n      {\"name\": \"Feedback\", \"value\": \"{{ $('Process Review Action').first().json.feedback || '(aucun)' }}\", \"inline\": false}\n    ],\n    \"footer\": {\"text\": \"Torah Review System\"},\n    \"timestamp\": \"{{ $('Process Review Action').first().json.processedAt }}\"\n  }]\n}",
@@ -828,8 +894,8 @@
         ]
       }
     },
-    "authors": "Franck Sebbah",
-    "name": null,
-    "description": null
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": "Version ac6fc02f",
+    "description": ""
   }
 }

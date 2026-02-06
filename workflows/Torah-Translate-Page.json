@@ -37,7 +37,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Validation des paramètres\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst traite = body.traite || '';\nconst page = body.page || '';\nconst mode = body.mode || 'premium';\nconst targetLanguage = body.target_language || 'fr';\nconst apiKey = body.api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\nconst requestId = body.request_id || null;\nconst force = body.force === true || body.force === 'true';\n\n// Validation\nconst errors = [];\nif (!traite) errors.push('Le champ \"traite\" est requis');\nif (!page) errors.push('Le champ \"page\" est requis');\nif (!apiKey) errors.push('Le champ \"api_key\" (Anthropic) est requis');\nif (!openaiApiKey) errors.push('Le champ \"openai_api_key\" est requis');\n\n// Générer un job_id unique\nconst jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    jobId: jobId,\n    traite: traite,\n    page: page,\n    mode: mode,\n    targetLanguage: targetLanguage,\n    apiKey: apiKey,\n    openaiApiKey: openaiApiKey,\n    requestId: requestId,\n    force: force\n  }\n}];"
+        "jsCode": "  // Validation des paramètres\n  const input = $input.first().json;\n  const body = input.body || input;\n\n  const traite = body.traite || '';\n  const page = body.page || '';\n  const mode = body.mode || 'premium';\n  const targetLanguage = body.target_language || 'fr';\n  const apiKey = body.api_key || '';\n  const openaiApiKey = body.openai_api_key || '';\n  const requestId = body.request_id || null;\n  const force = body.force === true || body.force === 'true';\n  const headers = input.headers || {};  // ← AJOUTER\n  // Extraire projectId depuis le HEADER ou le body\n  const projectId = headers['x-project-id'] || body.project_id || body.projectId;\n  const jobType = body.job_type || body.jobType;\n \n  // Validation\n  const errors = [];\n  if (!traite) errors.push('Le champ \"traite\" est requis');\n  if (!page) errors.push('Le champ \"page\" est requis');\n  if (!apiKey) errors.push('Le champ \"api_key\" (Anthropic) est requis');\n  if (!openaiApiKey) errors.push('Le champ \"openai_api_key\" est requis');\n  if (!jobType) errors.push('Le champ \"job_type\" est requis');\n  \n// Générer un job_id unique\n  const jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\n  return [{\n    json: {\n      valid: errors.length === 0,\n      errors: errors,\n      jobId: jobId,\n      jobType: jobType,  // ← AJOUTER,\n      projectId: projectId,\n      traite: traite,\n      page: page,\n      mode: mode,\n      targetLanguage: targetLanguage,\n      apiKey: apiKey,\n      openaiApiKey: openaiApiKey,\n      requestId: requestId,\n      force: force\n    }\n  }];"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -54,7 +54,8 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 2
           },
           "conditions": [
             {
@@ -121,7 +122,8 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 2
           },
           "conditions": [
             {
@@ -209,7 +211,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extraire les segments de la page\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier les erreurs\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Extraire les segments depuis extra_data.versions[0].text\nlet segments = [];\nif (data.extra_data?.versions?.[0]?.text) {\n  segments = data.extra_data.versions[0].text;\n} else if (data.segments) {\n  segments = data.segments;\n}\n\nif (segments.length === 0) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: 'Aucun segment trouvé pour cette page',\n        status: 'NO_SEGMENTS'\n      }\n    }\n  }];\n}\n\n// Estimation du temps (~7 secondes par segment)\nconst estimatedSeconds = Math.ceil(segments.length * 7);\n\nreturn [{\n  json: {\n    success: true,\n    jobId: prevData.jobId,\n    traite: prevData.traite,\n    page: prevData.page,\n    mode: prevData.mode,\n    targetLanguage: prevData.targetLanguage,\n    apiKey: prevData.apiKey,\n    openaiApiKey: prevData.openaiApiKey,\n    requestId: prevData.requestId,\n    sourceTextId: data.id || null,\n    reference: data.reference || `${prevData.traite} ${prevData.page}`,\n    segments: segments,\n    segmentsCount: segments.length,\n    estimatedSeconds: estimatedSeconds\n  }\n}];"
+        "jsCode": "// Extraire les segments de la page\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier les erreurs\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Extraire les segments depuis extra_data.versions[0].text\nlet segments = [];\nif (data.extra_data?.versions?.[0]?.text) {\n  segments = data.extra_data.versions[0].text;\n} else if (data.segments) {\n  segments = data.segments;\n}\n\nif (segments.length === 0) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: 'Aucun segment trouvé pour cette page',\n        status: 'NO_SEGMENTS'\n      }\n    }\n  }];\n}\n\n// Estimation du temps (~7 secondes par segment)\nconst estimatedSeconds = Math.ceil(segments.length * 7);\n\nreturn [{\n  json: {\n    success: true,\n    jobId: prevData.jobId,\n    jobType: prevData.jobType,      // ← AJOUTER\n    projectId: prevData.projectId,  // ← AJOUTER    \n    traite: prevData.traite,\n    page: prevData.page,\n    mode: prevData.mode,\n    targetLanguage: prevData.targetLanguage,\n    apiKey: prevData.apiKey,\n    openaiApiKey: prevData.openaiApiKey,\n    requestId: prevData.requestId,\n    sourceTextId: data.id || null,\n    reference: data.reference || `${prevData.traite} ${prevData.page}`,\n    segments: segments,\n    segmentsCount: segments.length,\n    estimatedSeconds: estimatedSeconds\n  }\n}];"
       },
       "id": "extract-segments",
       "name": "Extract Segments",
@@ -226,7 +228,8 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 2
           },
           "conditions": [
             {
@@ -256,9 +259,18 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $env.API_URL }}/api/v2/jobs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "= X-Project-ID",
+              "value": "={{ $json.projectId }}"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ job_type: 'page_translation', traite: $json.traite, page: $json.page, target_language: $json.targetLanguage, mode: $json.mode, segments_count: $json.segmentsCount, metadata: { requested_by: 'n8n_workflow', source_text_id: $json.sourceTextId, reference: $json.reference } }) }}",
+        "jsonBody": "={{ JSON.stringify({ job_type: $json.jobType, input: { traite: $json.traite, page: $json.page, target_language:\n  $json.targetLanguage, mode: $json.mode, segments_count: $json.segmentsCount, metadata: { requested_by: 'n8n_workflow',\n  source_text_id: $json.sourceTextId, reference: $json.reference } } }) }}",
         "options": {
           "response": {
             "response": {
@@ -280,7 +292,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extraire le job_id de la réponse API\nconst input = $input.first().json;\nconst prevData = $('Extract Segments').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur création job',\n        status: 'JOB_CREATION_ERROR'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    jobId: data.job_id,\n    jobCreated: true\n  }\n}];"
+        "jsCode": "// Extraire le job_id de la réponse API\nconst input = $input.first().json;\nconst prevData = $('Extract Segments').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur création job',\n        status: 'JOB_CREATION_ERROR'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n     jobId: data.job_id || data.jobId,\n    jobCreated: true\n  }\n}];"
       },
       "id": "extract-job-id",
       "name": "Extract Job ID",
@@ -633,9 +645,9 @@
   },
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-01-20T19:19:19.939Z",
-    "createdAt": "2026-01-20T19:19:19.939Z",
-    "versionId": "8fe0a2cc-0a6d-49c8-89be-1f3397e57a72",
+    "updatedAt": "2026-02-04T17:19:35.080Z",
+    "createdAt": "2026-02-04T17:19:35.080Z",
+    "versionId": "883e9bb8-61b3-4dd6-9007-de52c5ad1c87",
     "workflowId": "jCDI1KPDjJ6wsizI",
     "nodes": [
       {
@@ -673,7 +685,7 @@
       },
       {
         "parameters": {
-          "jsCode": "// Validation des paramètres\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst traite = body.traite || '';\nconst page = body.page || '';\nconst mode = body.mode || 'premium';\nconst targetLanguage = body.target_language || 'fr';\nconst apiKey = body.api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\nconst requestId = body.request_id || null;\nconst force = body.force === true || body.force === 'true';\n\n// Validation\nconst errors = [];\nif (!traite) errors.push('Le champ \"traite\" est requis');\nif (!page) errors.push('Le champ \"page\" est requis');\nif (!apiKey) errors.push('Le champ \"api_key\" (Anthropic) est requis');\nif (!openaiApiKey) errors.push('Le champ \"openai_api_key\" est requis');\n\n// Générer un job_id unique\nconst jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    jobId: jobId,\n    traite: traite,\n    page: page,\n    mode: mode,\n    targetLanguage: targetLanguage,\n    apiKey: apiKey,\n    openaiApiKey: openaiApiKey,\n    requestId: requestId,\n    force: force\n  }\n}];"
+          "jsCode": "  // Validation des paramètres\n  const input = $input.first().json;\n  const body = input.body || input;\n\n  const traite = body.traite || '';\n  const page = body.page || '';\n  const mode = body.mode || 'premium';\n  const targetLanguage = body.target_language || 'fr';\n  const apiKey = body.api_key || '';\n  const openaiApiKey = body.openai_api_key || '';\n  const requestId = body.request_id || null;\n  const force = body.force === true || body.force === 'true';\n  const headers = input.headers || {};  // ← AJOUTER\n  // Extraire projectId depuis le HEADER ou le body\n  const projectId = headers['x-project-id'] || body.project_id || body.projectId;\n  const jobType = body.job_type || body.jobType;\n \n  // Validation\n  const errors = [];\n  if (!traite) errors.push('Le champ \"traite\" est requis');\n  if (!page) errors.push('Le champ \"page\" est requis');\n  if (!apiKey) errors.push('Le champ \"api_key\" (Anthropic) est requis');\n  if (!openaiApiKey) errors.push('Le champ \"openai_api_key\" est requis');\n  if (!jobType) errors.push('Le champ \"job_type\" est requis');\n  \n// Générer un job_id unique\n  const jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\n  return [{\n    json: {\n      valid: errors.length === 0,\n      errors: errors,\n      jobId: jobId,\n      jobType: jobType,  // ← AJOUTER,\n      projectId: projectId,\n      traite: traite,\n      page: page,\n      mode: mode,\n      targetLanguage: targetLanguage,\n      apiKey: apiKey,\n      openaiApiKey: openaiApiKey,\n      requestId: requestId,\n      force: force\n    }\n  }];"
         },
         "id": "validate-input",
         "name": "Validate Input",
@@ -690,7 +702,8 @@
             "options": {
               "caseSensitive": true,
               "leftValue": "",
-              "typeValidation": "strict"
+              "typeValidation": "strict",
+              "version": 2
             },
             "conditions": [
               {
@@ -757,7 +770,8 @@
             "options": {
               "caseSensitive": true,
               "leftValue": "",
-              "typeValidation": "strict"
+              "typeValidation": "strict",
+              "version": 2
             },
             "conditions": [
               {
@@ -845,7 +859,7 @@
       },
       {
         "parameters": {
-          "jsCode": "// Extraire les segments de la page\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier les erreurs\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Extraire les segments depuis extra_data.versions[0].text\nlet segments = [];\nif (data.extra_data?.versions?.[0]?.text) {\n  segments = data.extra_data.versions[0].text;\n} else if (data.segments) {\n  segments = data.segments;\n}\n\nif (segments.length === 0) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: 'Aucun segment trouvé pour cette page',\n        status: 'NO_SEGMENTS'\n      }\n    }\n  }];\n}\n\n// Estimation du temps (~7 secondes par segment)\nconst estimatedSeconds = Math.ceil(segments.length * 7);\n\nreturn [{\n  json: {\n    success: true,\n    jobId: prevData.jobId,\n    traite: prevData.traite,\n    page: prevData.page,\n    mode: prevData.mode,\n    targetLanguage: prevData.targetLanguage,\n    apiKey: prevData.apiKey,\n    openaiApiKey: prevData.openaiApiKey,\n    requestId: prevData.requestId,\n    sourceTextId: data.id || null,\n    reference: data.reference || `${prevData.traite} ${prevData.page}`,\n    segments: segments,\n    segmentsCount: segments.length,\n    estimatedSeconds: estimatedSeconds\n  }\n}];"
+          "jsCode": "// Extraire les segments de la page\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier les erreurs\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Extraire les segments depuis extra_data.versions[0].text\nlet segments = [];\nif (data.extra_data?.versions?.[0]?.text) {\n  segments = data.extra_data.versions[0].text;\n} else if (data.segments) {\n  segments = data.segments;\n}\n\nif (segments.length === 0) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: 'Aucun segment trouvé pour cette page',\n        status: 'NO_SEGMENTS'\n      }\n    }\n  }];\n}\n\n// Estimation du temps (~7 secondes par segment)\nconst estimatedSeconds = Math.ceil(segments.length * 7);\n\nreturn [{\n  json: {\n    success: true,\n    jobId: prevData.jobId,\n    jobType: prevData.jobType,      // ← AJOUTER\n    projectId: prevData.projectId,  // ← AJOUTER    \n    traite: prevData.traite,\n    page: prevData.page,\n    mode: prevData.mode,\n    targetLanguage: prevData.targetLanguage,\n    apiKey: prevData.apiKey,\n    openaiApiKey: prevData.openaiApiKey,\n    requestId: prevData.requestId,\n    sourceTextId: data.id || null,\n    reference: data.reference || `${prevData.traite} ${prevData.page}`,\n    segments: segments,\n    segmentsCount: segments.length,\n    estimatedSeconds: estimatedSeconds\n  }\n}];"
         },
         "id": "extract-segments",
         "name": "Extract Segments",
@@ -862,7 +876,8 @@
             "options": {
               "caseSensitive": true,
               "leftValue": "",
-              "typeValidation": "strict"
+              "typeValidation": "strict",
+              "version": 2
             },
             "conditions": [
               {
@@ -892,9 +907,18 @@
         "parameters": {
           "method": "POST",
           "url": "={{ $env.API_URL }}/api/v2/jobs",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "= X-Project-ID",
+                "value": "={{ $json.projectId }}"
+              }
+            ]
+          },
           "sendBody": true,
           "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify({ job_type: 'page_translation', traite: $json.traite, page: $json.page, target_language: $json.targetLanguage, mode: $json.mode, segments_count: $json.segmentsCount, metadata: { requested_by: 'n8n_workflow', source_text_id: $json.sourceTextId, reference: $json.reference } }) }}",
+          "jsonBody": "={{ JSON.stringify({ job_type: $json.jobType, input: { traite: $json.traite, page: $json.page, target_language:\n  $json.targetLanguage, mode: $json.mode, segments_count: $json.segmentsCount, metadata: { requested_by: 'n8n_workflow',\n  source_text_id: $json.sourceTextId, reference: $json.reference } } }) }}",
           "options": {
             "response": {
               "response": {
@@ -916,7 +940,7 @@
       },
       {
         "parameters": {
-          "jsCode": "// Extraire le job_id de la réponse API\nconst input = $input.first().json;\nconst prevData = $('Extract Segments').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur création job',\n        status: 'JOB_CREATION_ERROR'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    jobId: data.job_id,\n    jobCreated: true\n  }\n}];"
+          "jsCode": "// Extraire le job_id de la réponse API\nconst input = $input.first().json;\nconst prevData = $('Extract Segments').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur création job',\n        status: 'JOB_CREATION_ERROR'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n     jobId: data.job_id || data.jobId,\n    jobCreated: true\n  }\n}];"
         },
         "id": "extract-job-id",
         "name": "Extract Job ID",
@@ -1262,7 +1286,7 @@
         ]
       }
     },
-    "authors": "Franck Sebbah",
+    "authors": "Sebbah fsebbah@azy.solutions",
     "name": null,
     "description": null
   }
