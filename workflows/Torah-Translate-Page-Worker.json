@@ -76,7 +76,13 @@
     {
       "parameters": {
         "method": "PATCH",
-        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $('Parse Input').first().json.jobId }}",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'processing' }) }}",
@@ -296,7 +302,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Préparer les données pour la mise à jour\nconst input = $input.first().json;\nconst prevData = $('Extract GPT').first().json;\n\nconst segmentIndex = prevData.segmentIndex;\nconst totalSegments = prevData.totalSegments;\nconst isComplete = segmentIndex + 1 >= totalSegments;\n\n// Récupérer les tokens Claude et GPT\nconst claudeUsage = prevData.claudeUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\nconst gptUsage = prevData.gptUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n\n// Construire l objet tokens avec détail par provider\nconst tokens = {\n  claude: {\n    input_tokens: claudeUsage.input_tokens || 0,\n    output_tokens: claudeUsage.output_tokens || 0,\n    total_tokens: claudeUsage.total_tokens || 0\n  },\n  gpt: {\n    input_tokens: gptUsage.input_tokens || 0,\n    output_tokens: gptUsage.output_tokens || 0,\n    total_tokens: gptUsage.total_tokens || 0\n  },\n  total: {\n    input_tokens: (claudeUsage.input_tokens || 0) + (gptUsage.input_tokens || 0),\n    output_tokens: (claudeUsage.output_tokens || 0) + (gptUsage.output_tokens || 0),\n    total_tokens: (claudeUsage.total_tokens || 0) + (gptUsage.total_tokens || 0)\n  }\n};\n\n// Calculer le pourcentage de progression\nconst current = segmentIndex + 1;\nconst percentage = Math.round((current / totalSegments) * 100);\n\nreturn [{\n  json: {\n    ...prevData,\n    isComplete: isComplete,\n    updatePayload: isComplete ? {\n      status: 'completed',\n      progress: {\n        current: current,\n        total: totalSegments,\n        percentage: 100,\n        step: 'completed'\n      },\n      output: {\n        translations_saved: current,\n        tokens: tokens\n      }\n    } : {\n      status: 'processing',\n      progress: {\n        current: current,\n        total: totalSegments,\n        percentage: percentage,\n        step: 'translating'\n      },\n      output: {\n        current_segment_text: prevData.segmentText.substring(0, 100),\n        translations_saved: current,\n        tokens: tokens\n      }\n    }\n  }\n}];"
+        "jsCode": "  // Préparer les données pour la mise à jour\n  const input = $input.first().json;\n  const prevData = $('Extract GPT').first().json;\n\n  const segmentIndex = prevData.segmentIndex;\n  const totalSegments = prevData.totalSegments;\n  const isComplete = segmentIndex + 1 >= totalSegments;\n\n  // Récupérer les tokens Claude et GPT\n  const claudeUsage = prevData.claudeUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n  const gptUsage = prevData.gptUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n\n  // Construire l'objet tokens avec détail par provider\n  const tokens = {\n    claude: {\n      input_tokens: claudeUsage.input_tokens || 0,\n      output_tokens: claudeUsage.output_tokens || 0,\n      total_tokens: claudeUsage.total_tokens || 0\n    },\n    gpt: {\n      input_tokens: gptUsage.input_tokens || 0,\n      output_tokens: gptUsage.output_tokens || 0,\n      total_tokens: gptUsage.total_tokens || 0\n    },\n    total: {\n      input_tokens: (claudeUsage.input_tokens || 0) + (gptUsage.input_tokens || 0),\n      output_tokens: (claudeUsage.output_tokens || 0) + (gptUsage.output_tokens || 0),\n      total_tokens: (claudeUsage.total_tokens || 0) + (gptUsage.total_tokens || 0)\n    }\n  };\n\n  // Calculer le pourcentage de progression\n  const current = segmentIndex + 1;\n  const percentage = Math.round((current / totalSegments) * 100);\n\n  return [{\n    json: {\n      ...prevData,\n      isComplete: isComplete,\n      updatePayload: isComplete ? {\n        status: 'completed',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: 100,\n          step: 'completed'\n        },\n        output: {\n          translations_saved: current,\n          tokens: tokens\n        }\n      } : {\n        status: 'processing',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: percentage,\n          step: 'translating'\n        },\n        output: {\n          current_segment_text: prevData.segmentText.substring(0, 100),\n          translations_saved: current,\n          tokens: tokens\n        }\n      }\n    }\n  }];"
       },
       "id": "prepare-update",
       "name": "Prepare Update",
@@ -330,7 +336,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Préparer la mise à jour pour erreur\nconst input = $input.first().json;\n\nconst segmentIndex = input.segmentIndex;\nconst totalSegments = input.totalSegments;\nconst isComplete = segmentIndex + 1 >= totalSegments;\nconst current = segmentIndex + 1;\nconst percentage = Math.round((current / totalSegments) * 100);\n\nreturn [{\n  json: {\n    ...input,\n    isComplete: isComplete,\n    updatePayload: isComplete ? {\n      status: 'completed',\n      progress: {\n        current: current,\n        total: totalSegments,\n        percentage: 100,\n        step: 'completed_with_errors'\n      },\n      output: {\n        translations_saved: segmentIndex,\n        error: input.claudeError || 'Translation failed'\n      }\n    } : {\n      status: 'processing',\n      progress: {\n        current: current,\n        total: totalSegments,\n        percentage: percentage,\n        step: 'error_recovery'\n      },\n      output: {\n        translations_saved: segmentIndex,\n        error: input.claudeError || 'Translation failed'\n      }\n    }\n  }\n}];"
+        "jsCode": "  // Préparer la mise à jour pour erreur\n  const input = $input.first().json;\n\n  const segmentIndex = input.segmentIndex;\n  const totalSegments = input.totalSegments;\n  const isComplete = segmentIndex + 1 >= totalSegments;\n  const current = segmentIndex + 1;\n  const percentage = Math.round((current / totalSegments) * 100);\n\n  return [{\n    json: {\n      ...input,\n      isComplete: isComplete,\n      updatePayload: isComplete ? {\n        status: 'completed',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: 100,\n          step: 'completed_with_errors'\n        },\n        output: {\n          translations_saved: segmentIndex,\n          error: input.claudeError || 'Translation failed'\n        }\n      } : {\n        status: 'processing',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: percentage,\n          step: 'error_recovery'\n        },\n        output: {\n          translations_saved: segmentIndex,\n          error: input.claudeError || 'Translation failed'\n        }\n      }\n    }\n  }];"
       },
       "id": "prepare-error-update",
       "name": "Prepare Error Update",
@@ -606,9 +612,9 @@
   },
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-01-20T19:05:17.169Z",
-    "createdAt": "2026-01-20T19:05:17.169Z",
-    "versionId": "1418b136-f442-4b13-8db4-efee1071fda0",
+    "updatedAt": "2026-02-04T17:44:05.258Z",
+    "createdAt": "2026-02-04T17:44:05.258Z",
+    "versionId": "60fdae72-8aec-4f5d-aa55-1e5efbd2a7f6",
     "workflowId": "P0mu8wW6IawH4bVR",
     "nodes": [
       {
@@ -685,7 +691,13 @@
       {
         "parameters": {
           "method": "PATCH",
-          "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $('Parse Input').first().json.jobId }}",
+          "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {}
+            ]
+          },
           "sendBody": true,
           "specifyBody": "json",
           "jsonBody": "={{ JSON.stringify({ status: 'processing' }) }}",
@@ -905,7 +917,7 @@
       },
       {
         "parameters": {
-          "jsCode": "// Préparer les données pour la mise à jour\nconst input = $input.first().json;\nconst prevData = $('Extract GPT').first().json;\n\nconst segmentIndex = prevData.segmentIndex;\nconst totalSegments = prevData.totalSegments;\nconst isComplete = segmentIndex + 1 >= totalSegments;\n\n// Récupérer les tokens Claude et GPT\nconst claudeUsage = prevData.claudeUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\nconst gptUsage = prevData.gptUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n\n// Construire l objet tokens avec détail par provider\nconst tokens = {\n  claude: {\n    input_tokens: claudeUsage.input_tokens || 0,\n    output_tokens: claudeUsage.output_tokens || 0,\n    total_tokens: claudeUsage.total_tokens || 0\n  },\n  gpt: {\n    input_tokens: gptUsage.input_tokens || 0,\n    output_tokens: gptUsage.output_tokens || 0,\n    total_tokens: gptUsage.total_tokens || 0\n  },\n  total: {\n    input_tokens: (claudeUsage.input_tokens || 0) + (gptUsage.input_tokens || 0),\n    output_tokens: (claudeUsage.output_tokens || 0) + (gptUsage.output_tokens || 0),\n    total_tokens: (claudeUsage.total_tokens || 0) + (gptUsage.total_tokens || 0)\n  }\n};\n\n// Calculer le pourcentage de progression\nconst current = segmentIndex + 1;\nconst percentage = Math.round((current / totalSegments) * 100);\n\nreturn [{\n  json: {\n    ...prevData,\n    isComplete: isComplete,\n    updatePayload: isComplete ? {\n      status: 'completed',\n      progress: {\n        current: current,\n        total: totalSegments,\n        percentage: 100,\n        step: 'completed'\n      },\n      output: {\n        translations_saved: current,\n        tokens: tokens\n      }\n    } : {\n      status: 'processing',\n      progress: {\n        current: current,\n        total: totalSegments,\n        percentage: percentage,\n        step: 'translating'\n      },\n      output: {\n        current_segment_text: prevData.segmentText.substring(0, 100),\n        translations_saved: current,\n        tokens: tokens\n      }\n    }\n  }\n}];"
+          "jsCode": "  // Préparer les données pour la mise à jour\n  const input = $input.first().json;\n  const prevData = $('Extract GPT').first().json;\n\n  const segmentIndex = prevData.segmentIndex;\n  const totalSegments = prevData.totalSegments;\n  const isComplete = segmentIndex + 1 >= totalSegments;\n\n  // Récupérer les tokens Claude et GPT\n  const claudeUsage = prevData.claudeUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n  const gptUsage = prevData.gptUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n\n  // Construire l'objet tokens avec détail par provider\n  const tokens = {\n    claude: {\n      input_tokens: claudeUsage.input_tokens || 0,\n      output_tokens: claudeUsage.output_tokens || 0,\n      total_tokens: claudeUsage.total_tokens || 0\n    },\n    gpt: {\n      input_tokens: gptUsage.input_tokens || 0,\n      output_tokens: gptUsage.output_tokens || 0,\n      total_tokens: gptUsage.total_tokens || 0\n    },\n    total: {\n      input_tokens: (claudeUsage.input_tokens || 0) + (gptUsage.input_tokens || 0),\n      output_tokens: (claudeUsage.output_tokens || 0) + (gptUsage.output_tokens || 0),\n      total_tokens: (claudeUsage.total_tokens || 0) + (gptUsage.total_tokens || 0)\n    }\n  };\n\n  // Calculer le pourcentage de progression\n  const current = segmentIndex + 1;\n  const percentage = Math.round((current / totalSegments) * 100);\n\n  return [{\n    json: {\n      ...prevData,\n      isComplete: isComplete,\n      updatePayload: isComplete ? {\n        status: 'completed',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: 100,\n          step: 'completed'\n        },\n        output: {\n          translations_saved: current,\n          tokens: tokens\n        }\n      } : {\n        status: 'processing',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: percentage,\n          step: 'translating'\n        },\n        output: {\n          current_segment_text: prevData.segmentText.substring(0, 100),\n          translations_saved: current,\n          tokens: tokens\n        }\n      }\n    }\n  }];"
         },
         "id": "prepare-update",
         "name": "Prepare Update",
@@ -939,7 +951,7 @@
       },
       {
         "parameters": {
-          "jsCode": "// Préparer la mise à jour pour erreur\nconst input = $input.first().json;\n\nconst segmentIndex = input.segmentIndex;\nconst totalSegments = input.totalSegments;\nconst isComplete = segmentIndex + 1 >= totalSegments;\nconst current = segmentIndex + 1;\nconst percentage = Math.round((current / totalSegments) * 100);\n\nreturn [{\n  json: {\n    ...input,\n    isComplete: isComplete,\n    updatePayload: isComplete ? {\n      status: 'completed',\n      progress: {\n        current: current,\n        total: totalSegments,\n        percentage: 100,\n        step: 'completed_with_errors'\n      },\n      output: {\n        translations_saved: segmentIndex,\n        error: input.claudeError || 'Translation failed'\n      }\n    } : {\n      status: 'processing',\n      progress: {\n        current: current,\n        total: totalSegments,\n        percentage: percentage,\n        step: 'error_recovery'\n      },\n      output: {\n        translations_saved: segmentIndex,\n        error: input.claudeError || 'Translation failed'\n      }\n    }\n  }\n}];"
+          "jsCode": "  // Préparer la mise à jour pour erreur\n  const input = $input.first().json;\n\n  const segmentIndex = input.segmentIndex;\n  const totalSegments = input.totalSegments;\n  const isComplete = segmentIndex + 1 >= totalSegments;\n  const current = segmentIndex + 1;\n  const percentage = Math.round((current / totalSegments) * 100);\n\n  return [{\n    json: {\n      ...input,\n      isComplete: isComplete,\n      updatePayload: isComplete ? {\n        status: 'completed',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: 100,\n          step: 'completed_with_errors'\n        },\n        output: {\n          translations_saved: segmentIndex,\n          error: input.claudeError || 'Translation failed'\n        }\n      } : {\n        status: 'processing',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: percentage,\n          step: 'error_recovery'\n        },\n        output: {\n          translations_saved: segmentIndex,\n          error: input.claudeError || 'Translation failed'\n        }\n      }\n    }\n  }];"
         },
         "id": "prepare-error-update",
         "name": "Prepare Error Update",
@@ -1208,7 +1220,7 @@
         ]
       }
     },
-    "authors": "Franck Sebbah",
+    "authors": "Sebbah fsebbah@azy.solutions",
     "name": null,
     "description": null
   }
