@@ -3,8 +3,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Intent Events Consumer\n\n**Issue:** #285\n**RFC:** RFC-031 (Section 17.4)\n\n**Description:**\nConsomme le Redis Stream `intent:events` et insère dans MongoDB `intent_history` pour les agrégations batch.\n\n**Architecture:** Option C (Hybride)\n- chatbot-core écrit dans Qdrant (sync) + Redis Stream (async)\n- n8n consomme le stream et écrit dans MongoDB\n\n**Flux:**\n1. XREAD intent:events (polling)\n2. Transform JSON\n3. INSERT MongoDB\n4. XACK confirm",
-        "height": 340,
+        "content": "## Intent Events Consumer\n\n**Issue:** #285\n**RFC:** RFC-031 (Section 17.4)\n\n**Description:**\nConsomme le Redis Stream `intent:events` et insère dans MongoDB `intent_history` pour les agrégations batch.\n\n**Architecture:** Option C (Hybride)\n- chatbot-core écrit dans Qdrant (sync) + Redis Stream (async)\n- n8n consomme le stream et écrit dans MongoDB\n\n**Flux:**\n1. XREAD intent:events (polling)\n2. Transform JSON\n3. INSERT MongoDB (continueOnFail)\n4. Check Insert Success\n5. SUCCESS → XACK | FAIL → DLQ",
+        "height": 360,
         "width": 360,
         "color": 5
       },
@@ -95,7 +95,7 @@
       "parameters": {
         "operation": "insert",
         "collection": "intent_history",
-        "fields": "message,tokens,domain,was_validated,validation_type,confidence_at_prediction,user_id,guild_id,tool_used,original_timestamp,created_at"
+        "fields": "stream_id,message,tokens,domain,was_validated,validation_type,confidence_at_prediction,user_id,guild_id,tool_used,original_timestamp,created_at"
       },
       "id": "mongodb-insert",
       "name": "MongoDB Insert",
@@ -107,7 +107,37 @@
           "id": "mongodb-intent",
           "name": "MongoDB Intent"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-no-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-insert-success",
+      "name": "Insert Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1160, 200]
     },
     {
       "parameters": {
@@ -120,7 +150,7 @@
       "name": "Redis XACK",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
-      "position": [1160, 200],
+      "position": [1380, 100],
       "credentials": {
         "redis": {
           "id": "redis-intent",
@@ -130,16 +160,16 @@
     },
     {
       "parameters": {
-        "content": "## Error Handling\n\nSi MongoDB échoue après 3 retries :\n→ XADD vers `intent:dlq`\n\nLe workflow ALERT-DLQ-Monitor surveille cette queue.",
-        "height": 140,
-        "width": 280,
+        "content": "## Error Handling\n\nMongoDB Insert avec `onError: continueRegularOutput`\n→ Si erreur, le flux continue avec $json.error\n→ IF check success/fail\n→ FAIL: XADD vers `intent:dlq`\n\nLe workflow ALERT-DLQ-Monitor surveille cette queue.",
+        "height": 180,
+        "width": 300,
         "color": 3
       },
       "id": "note-error",
       "name": "Error Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [1380, 60]
+      "position": [1380, 220]
     },
     {
       "parameters": {
@@ -149,11 +179,11 @@
           "fieldValue": [
             {
               "field": "original_stream_id",
-              "value": "={{ $json.stream_id }}"
+              "value": "={{ $('Transform Events').item.json.stream_id }}"
             },
             {
               "field": "message",
-              "value": "={{ $json.message }}"
+              "value": "={{ $('Transform Events').item.json.message }}"
             },
             {
               "field": "error",
@@ -161,7 +191,7 @@
             },
             {
               "field": "retry_count",
-              "value": "3"
+              "value": "0"
             },
             {
               "field": "failed_at",
@@ -174,7 +204,7 @@
       "name": "Redis DLQ",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
-      "position": [1380, 300],
+      "position": [1380, 400],
       "credentials": {
         "redis": {
           "id": "redis-intent",
@@ -247,7 +277,25 @@
       "main": [
         [
           {
+            "node": "Insert Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Success?": {
+      "main": [
+        [
+          {
             "node": "Redis XACK",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Redis DLQ",
             "type": "main",
             "index": 0
           }
