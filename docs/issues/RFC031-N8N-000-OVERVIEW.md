@@ -4,7 +4,7 @@
 |----------|---------|
 | **Équipe** | n8n-workflows |
 | **RFC** | RFC-031 - Classification d'Intention Hybride |
-| **Status** | In Progress |
+| **Status** | ✅ Complete |
 | **Date** | 2026-02-09 |
 
 ---
@@ -26,7 +26,7 @@ La RFC-031 introduit un système de classification d'intention hybride (Keywords
 | 1 | #285 | Intent Events Consumer | Stream Consumer | P1 | #291 | Merged |
 | 2 | #286 | CRON Intent Keywords Sync | Cron Daily | P1 | #292 | Merged |
 | 3 | #287 | CRON Intent Stats Daily | Cron Daily | P2 | #293 | Merged |
-| 4 | #288 | ALERT Clarification High | Cron Hourly | P2 | #294 | Open |
+| 4 | #288 | ALERT Clarification High | Cron Hourly | P2 | #294 | Merged |
 | 5 | #289 | ALERT DLQ Monitor | Cron 15min | P2 | #295 | Merged |
 | 6 | #290 | (Réservé) | - | - | - | - |
 
