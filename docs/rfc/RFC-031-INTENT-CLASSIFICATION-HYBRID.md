@@ -1118,7 +1118,7 @@ L'équipe n8n-workflows fournira les workflows suivants :
 
 **Recommandation** : Utiliser **MongoDB** pour les agrégations batch (job CRON). **Qdrant obligatoire** pour la recherche vectorielle temps réel.
 
-**Architecture dual-storage** :
+**Architecture Option C (Hybride)** :
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -1129,9 +1129,14 @@ L'équipe n8n-workflows fournira les workflows suivants :
 │         → Qdrant vector search (similarité)                     │
 │         → Classification hybride                                │
 │                                                                  │
-│  record() dual write:                                           │
-│    → Qdrant : embedding + payload (vector search)               │
-│    → MongoDB : metadata + tokens (agrégation batch)             │
+│  record() :                                                     │
+│    → Qdrant : embedding + payload (synchrone)                   │
+│    → Redis Stream : event pour MongoDB (async)                  │
+│                                                                  │
+│  n8n CONSUMER (async, ~1-5s)                                    │
+│  ───────────────────────────                                    │
+│                                                                  │
+│  Redis Stream → n8n consumer → MongoDB insert                   │
 │                                                                  │
 │  BATCH (CRON daily)                                             │
 │  ──────────────────                                             │
@@ -1142,10 +1147,12 @@ L'équipe n8n-workflows fournira les workflows suivants :
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-Le `record()` écrit dans les deux :
+Le `record()` dans chatbot-core :
 
-- **Qdrant** : embedding vector + payload complet (pour vector search)
-- **MongoDB** : metadata + tokens uniquement (pour agrégation, pas de vector)
+- **Qdrant** : embedding vector + payload complet (synchrone, pour vector search)
+- **Redis Stream** : event `intent:events` (async, consommé par n8n)
+
+**chatbot-core n'accède JAMAIS directement à MongoDB.** C'est n8n qui consomme le stream et écrit dans MongoDB.
 
 ### 14.3 Latence : mesure obligatoire
 
@@ -1228,7 +1235,8 @@ Cela respecte la séparation des responsabilités de RFC-030.
 | Embedding model | `text-embedding-3-small` (OpenAI) |
 | Vector search | **Qdrant** (obligatoire, MongoDB 4.4 ne supporte pas) |
 | Agrégation batch | **MongoDB 4.4** (pour `$group`, `$unwind`) |
-| Stockage | Dual write : Qdrant (vectors) + MongoDB (metadata) |
+| Architecture stockage | **Option C (Hybride)** : Qdrant direct + Redis Stream → n8n → MongoDB |
+| Accès MongoDB | **Via n8n uniquement** (chatbot-core n'accède jamais à MongoDB) |
 | Rétention | TTL 6 mois |
 | Multi-guild | Global + boost same-guild |
 | Cold start | Keywords-only, puis hybride après 50 messages |
@@ -1260,19 +1268,19 @@ L'architecture proposée est cohérente avec le rôle de chatbot-core : fournir 
 
 | # | Point | Analyse |
 |---|-------|---------|
-| 1 | **Nouvelles dépendances** | `qdrant-client`, `openai`, `motor` seront en **optional dependencies** (`[intent]`). Les plugins qui n'utilisent pas l'intent classification n'auront pas ces dépendances. |
-| 2 | **MongoDB client** | Qui fournit le client MongoDB ? Si chatbot-core l'instancie, cela crée un couplage fort. **Recommandation** : le plugin passe le client en paramètre (injection de dépendance). |
+| 1 | **Nouvelles dépendances** | `qdrant-client`, `openai` seront en **optional dependencies** (`[intent]`). **Pas de `motor`** : chatbot-core n'accède pas à MongoDB (Option C). |
+| 2 | ~~**MongoDB client**~~ | ~~Qui fournit le client MongoDB ?~~ **RÉSOLU par Option C** : chatbot-core n'accède jamais à MongoDB. Seul n8n y accède. |
 | 3 | **Fallback Qdrant** | En cas d'indisponibilité Qdrant, je recommande **keywords-only** plutôt qu'une erreur. L'UX dégradée est préférable à une erreur bloquante. Le plugin doit être notifié du mode dégradé. |
 | 4 | **Configuration externalisée** | Tous les seuils (`CONFIDENCE_THRESHOLD`, `DOMINANCE_THRESHOLD`, etc.) doivent être dans `IntentConfig`, jamais hardcodés. Cela permet aux plugins de les ajuster sans modifier chatbot-core. |
 | 5 | **Interface embedder** | L'`embedder` doit être une **interface abstraite**. OpenAI est l'implémentation par défaut, mais un plugin pourrait vouloir utiliser un autre provider (Anthropic, local). |
-| 6 | **Dual write atomicité** | Le dual write Qdrant + MongoDB n'est pas transactionnel. Si un write échoue, on peut avoir des incohérences. **Recommandation** : write Qdrant d'abord (critique), MongoDB en best-effort avec retry async. |
+| 6 | ~~**Dual write atomicité**~~ | ~~Le dual write Qdrant + MongoDB n'est pas transactionnel.~~ **RÉSOLU par Option C** : chatbot-core écrit Qdrant + Redis Stream. n8n gère MongoDB avec retry. Pas de risque d'incohérence transactionnelle. |
 | 7 | **Latence breakdown** | J'ajoute `latency_breakdown` dans `IntentResolution` pour le debugging. Chaque étape (keywords, embedding, qdrant, fusion) sera mesurée. |
 
 ### 15.3 Questions pour les autres équipes
 
 | # | Question | Pour |
 |---|----------|------|
-| 1 | Le client MongoDB est-il partagé avec d'autres composants ou dédié à l'intent ? | api-backend |
+| 1 | ~~Le client MongoDB est-il partagé ?~~ | ~~api-backend~~ **N/A - Option C** |
 | 2 | Format du cache embedding : Redis STRING avec JSON ou HASH ? | n8n-workflows |
 | 3 | Qdrant est-il déjà déployé ou à provisionner ? | infra |
 
@@ -1281,7 +1289,8 @@ L'architecture proposée est cohérente avec le rôle de chatbot-core : fournir 
 Je valide les décisions de la section 14.7 :
 
 - ✅ `text-embedding-3-small` (OpenAI)
-- ✅ Dual storage Qdrant + MongoDB
+- ✅ **Option C** : Qdrant direct + Redis Stream → n8n → MongoDB
+- ✅ chatbot-core n'accède **jamais** à MongoDB
 - ✅ TTL 6 mois
 - ✅ Domains dynamiques (Redis)
 - ✅ Latence < 100ms (cache) / < 250ms (cold)
@@ -1506,13 +1515,13 @@ Le module `chatbot_core/intent/` peut être implémenté. Le plan détaillé est
 │                             │                                                            │
 │                             ▼                                                            │
 │  ┌──────────────────────────────────────────────────────────────────────────┐            │
-│  │ IntentClassifier.record() - DUAL WRITE                                   │            │
+│  │ IntentClassifier.record() - Option C (Qdrant + Redis Stream)            │            │
 │  │                                                                          │            │
 │  │ async def record(self, message, domain, ...):                           │            │
 │  │     # 1. Générer embedding (ou récupérer du cache)                      │            │
 │  │     vector = await self.get_or_create_embedding(message)                │            │
 │  │                                                                          │            │
-│  │     # 2. WRITE QDRANT (critique pour vector search)                     │            │
+│  │     # 2. WRITE QDRANT (synchrone, critique pour vector search)          │            │
 │  │     point = PointStruct(                                                │            │
 │  │         id=str(uuid.uuid4()),                                           │            │
 │  │         vector=vector,                                                   │            │
@@ -1530,17 +1539,35 @@ Le module `chatbot_core/intent/` peut être implémenté. Le plan détaillé est
 │  │     )                                                                    │            │
 │  │     await self.qdrant.upsert("intent_history", [point])                 │            │
 │  │                                                                          │            │
-│  │     # 3. WRITE MONGODB (best-effort pour agrégation batch)              │            │
+│  │     # 3. PUBLISH REDIS STREAM (async, n8n consomme et écrit MongoDB)    │            │
 │  │     tokens = self._tokenize(message)                                    │            │
-│  │     doc = {                                                              │            │
+│  │     event = {                                                            │            │
 │  │         "message": message,                                              │            │
-│  │         "tokens": tokens,  # Pour $unwind dans batch job                │            │
+│  │         "tokens": json.dumps(tokens),                                   │            │
 │  │         "domain": domain,                                                │            │
-│  │         "was_validated": validated,                                      │            │
-│  │         "confidence_at_prediction": confidence,                         │            │
-│  │         "created_at": datetime.utcnow(),                                │            │
+│  │         "was_validated": str(validated),                                │            │
+│  │         "confidence": str(confidence),                                  │            │
+│  │         "timestamp": datetime.utcnow().isoformat(),                     │            │
 │  │     }                                                                    │            │
-│  │     await self.mongodb.intent_history.insert_one(doc)                   │            │
+│  │     await self.redis.xadd("intent:events", event, maxlen=100000)        │            │
+│  │                                                                          │            │
+│  │     # NOTE: chatbot-core n'accède JAMAIS directement à MongoDB          │            │
+│  │     # Le consumer n8n lit le stream et écrit dans MongoDB               │            │
+│  │                                                                          │            │
+│  └──────────────────────────────────────────────────────────────────────────┘            │
+│                                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────────────┐            │
+│  │ ÉTAPE 6b: n8n Consumer (async, ~1-5s après)                              │            │
+│  │                                                                          │            │
+│  │ # Consomme Redis Stream → écrit MongoDB                                 │            │
+│  │ event = await redis.xread("intent:events", block=5000)                  │            │
+│  │ await mongodb.intent_history.insert_one({                               │            │
+│  │     "message": event["message"],                                        │            │
+│  │     "tokens": json.loads(event["tokens"]),                              │            │
+│  │     "domain": event["domain"],                                          │            │
+│  │     ...                                                                  │            │
+│  │ })                                                                       │            │
+│  │ await redis.xack("intent:events", "consumer-group", event_id)           │            │
 │  │                                                                          │            │
 │  └──────────────────────────────────────────────────────────────────────────┘            │
 │                                                                                          │
@@ -1579,7 +1606,7 @@ Le module `chatbot_core/intent/` peut être implémenté. Le plan détaillé est
 └─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 16.3 Résumé des étapes
+### 16.3 Résumé des étapes (Option C - Hybride)
 
 | # | Étape | Responsable | Stockage utilisé | Latence |
 |---|-------|-------------|------------------|---------|
@@ -1588,7 +1615,8 @@ Le module `chatbot_core/intent/` peut être implémenté. Le plan détaillé est
 | 3 | Clarification (si ambigu) | plugin-recipes | - | Attente user |
 | 4 | Traitement NLU/Dialog/NLG | azy_mcp | Redis (session) | ~200-500ms |
 | 5 | Exécution action | plugin-recipes | n8n/Discord API | Variable |
-| 6 | Apprentissage (dual write) | chatbot-core (IntentClassifier) | Qdrant + MongoDB | ~50ms |
+| 6 | Apprentissage | chatbot-core (IntentClassifier) | Qdrant (direct) + Redis Stream | ~20ms |
+| 6b | Sync MongoDB | n8n (consumer) | Redis Stream → MongoDB | async (~1-5s) |
 | 7 | Batch update keywords | n8n (CRON) | MongoDB → Redis | - |
 
 ### 16.4 Points clés
@@ -1597,7 +1625,7 @@ Le module `chatbot_core/intent/` peut être implémenté. Le plan détaillé est
 
 2. **Le plugin orchestre tout** : plugin-recipes appelle successivement HybridIntentResolver puis azy_mcp puis exécute l'action.
 
-3. **Dual write** : `record()` écrit dans Qdrant (vector search temps réel) ET MongoDB (agrégation batch).
+3. **Architecture hybride (Option C)** : `record()` écrit dans Qdrant (synchrone) + Redis Stream (async). n8n consomme le stream et écrit dans MongoDB. chatbot-core n'accède **jamais** directement à MongoDB.
 
 4. **Apprentissage continu** : Chaque interaction validée améliore le système via le job CRON.
 
@@ -1906,6 +1934,7 @@ class IntentClassifier:
 **Recommandation équipe azy_mcp : Option C (Hybride)**
 
 Raisons :
+
 1. Latence temps réel préservée (Qdrant direct)
 2. MongoDB non bloquant (via Redis Stream + n8n)
 3. Retry automatique et Dead Letter Queue

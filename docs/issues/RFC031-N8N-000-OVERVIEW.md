@@ -21,14 +21,14 @@ La RFC-031 introduit un système de classification d'intention hybride (Keywords
 
 ## Workflows à créer
 
-| # | GitHub | Workflow | Type | Priorité | Status |
-|---|--------|----------|------|----------|--------|
-| 1 | #285 | Intent Events Consumer | Stream Consumer | P1 | Open |
-| 2 | #286 | CRON Intent Keywords Sync | Cron Daily | P1 | Open |
-| 3 | #287 | CRON Intent Stats Daily | Cron Daily | P2 | Open |
-| 4 | #288 | ALERT Clarification High | Cron Hourly | P2 | Open |
-| 5 | #289 | ALERT DLQ Monitor | Cron 15min | P2 | Open |
-| 6 | #290 | (Réservé) | - | - | - |
+| # | GitHub | Workflow | Type | Priorité | PR | Status |
+|---|--------|----------|------|----------|-----|--------|
+| 1 | #285 | Intent Events Consumer | Stream Consumer | P1 | #291 | Merged |
+| 2 | #286 | CRON Intent Keywords Sync | Cron Daily | P1 | #292 | Merged |
+| 3 | #287 | CRON Intent Stats Daily | Cron Daily | P2 | #293 | Open |
+| 4 | #288 | ALERT Clarification High | Cron Hourly | P2 | #294 | Open |
+| 5 | #289 | ALERT DLQ Monitor | Cron 15min | P2 | #295 | Open |
+| 6 | #290 | (Réservé) | - | - | - | - |
 
 ## Décisions techniques
 
