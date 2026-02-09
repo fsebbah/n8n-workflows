@@ -1,0 +1,405 @@
+{
+  "name": "MCP - Text to Speech",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook-tts",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "text-to-speech-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "text-to-speech",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-text",
+              "leftValue": "={{ $json.body.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-text",
+      "name": "Error: No Text",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        680,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Text is required\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "openai-tts",
+      "name": "OpenAI TTS",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "resource": "audio",
+        "operation": "generate",
+        "input": "={{ $json.body.text }}",
+        "voice": "={{ $json.body.voice || 'alloy' }}",
+        "options": {
+          "model": "={{ $json.body.model || 'tts-1' }}",
+          "responseFormat": "={{ $json.body.format || 'mp3' }}",
+          "speed": "={{ $json.body.speed || 1 }}"
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ { \"success\": true, \"data\": { \"audio_base64\": $json.data, \"format\": $('Webhook').first().json.body.format || 'mp3', \"voice\": $('Webhook').first().json.body.voice || 'alloy' }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"model\": $('Webhook').first().json.body.model || 'tts-1' } } }}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 400,
+        "height": 180,
+        "content": "## MCP - Text to Speech\n\n**Endpoint:** POST /webhook/text-to-speech\n\n**Parameters:**\n- `text` (required): Text to convert\n- `voice`: alloy, echo, fable, onyx, nova, shimmer\n- `model`: tts-1 or tts-1-hd\n- `format`: mp3, opus, aac, flac\n- `speed`: 0.25 to 4.0"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI TTS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI TTS": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "5fc48cb5-fe72-4404-9264-1fb316cb153a",
+    "workflowId": "ygMdwJrg8sl5L0pG",
+    "nodes": [
+      {
+        "id": "webhook-tts",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "text-to-speech-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "text-to-speech",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-text",
+                "leftValue": "={{ $json.body.text }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-no-text",
+        "name": "Error: No Text",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          680,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Text is required\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "openai-tts",
+        "name": "OpenAI TTS",
+        "type": "n8n-nodes-base.openAi",
+        "typeVersion": 1.8,
+        "position": [
+          680,
+          300
+        ],
+        "parameters": {
+          "resource": "audio",
+          "operation": "generate",
+          "input": "={{ $json.body.text }}",
+          "voice": "={{ $json.body.voice || 'alloy' }}",
+          "options": {
+            "model": "={{ $json.body.model || 'tts-1' }}",
+            "responseFormat": "={{ $json.body.format || 'mp3' }}",
+            "speed": "={{ $json.body.speed || 1 }}"
+          }
+        },
+        "credentials": {
+          "openAiApi": {
+            "id": "openai-credentials",
+            "name": "OpenAI account"
+          }
+        }
+      },
+      {
+        "id": "format-output",
+        "name": "Format Output",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          900,
+          300
+        ],
+        "parameters": {
+          "mode": "raw",
+          "jsonOutput": "={{ { \"success\": true, \"data\": { \"audio_base64\": $json.data, \"format\": $('Webhook').first().json.body.format || 'mp3', \"voice\": $('Webhook').first().json.body.voice || 'alloy' }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"model\": $('Webhook').first().json.body.model || 'tts-1' } } }}"
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1120,
+          300
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          80
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 400,
+          "height": 180,
+          "content": "## MCP - Text to Speech\n\n**Endpoint:** POST /webhook/text-to-speech\n\n**Parameters:**\n- `text` (required): Text to convert\n- `voice`: alloy, echo, fable, onyx, nova, shimmer\n- `model`: tts-1 or tts-1-hd\n- `format`: mp3, opus, aac, flac\n- `speed`: 0.25 to 4.0"
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "OpenAI TTS",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: No Text",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI TTS": {
+        "main": [
+          [
+            {
+              "node": "Format Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

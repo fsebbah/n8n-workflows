@@ -1,0 +1,717 @@
+{
+  "name": "Stripe - Subscription Payment Failure",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Payment Failure Callback\n\n**Endpoint:** POST /webhook/torah-sub-failure\n\n**Triggered by:** Stripe webhook handler on `invoice.payment_failed`\n\n**Actions:**\n1. Update subscription_status to 'past_due'\n2. Send warning DM to user with payment update link\n3. Log failed payment in payment_history\n4. (Optional) Start grace period countdown\n\n**Input:**\n```json\n{\n  \"event_type\": \"invoice.payment_failed\",\n  \"data\": {\n    \"customer_id\": \"cus_xxx\",\n    \"subscription_id\": \"sub_xxx\",\n    \"amount_due\": 999,\n    \"attempt_count\": 1\n  }\n}\n```",
+        "height": 400,
+        "width": 380,
+        "color": 4
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        48,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stripe-subscription-failure",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        480,
+        304
+      ],
+      "webhookId": "torah-sub-failure"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract failure data\nconst input = $input.first().json;\nconst body = input.body || {};\nconst data = body.data || {};\n\nif (!data.subscription_id) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Missing subscription_id',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    stripe_subscription_id: data.subscription_id,\n    stripe_customer_id: data.customer_id,\n    invoice_id: data.invoice_id,\n    amount_due: data.amount_due || 0,\n    currency: data.currency || 'eur',\n    attempt_count: data.attempt_count || 1,\n    event_id: body.event_id\n  }\n}];"
+      },
+      "id": "extract-data",
+      "name": "Extract Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Data Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        928,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check result and prepare notification\nconst dbResult = $input.first().json;\nconst prevData = $('Extract Data').first().json;\n\nif (!dbResult || !dbResult.id) {\n  return [{\n    json: {\n      found: false,\n      success: true,\n      message: 'Subscription not found',\n      stripe_subscription_id: prevData.stripe_subscription_id\n    }\n  }];\n}\n\n// Format amount for display\nconst amountDisplay = (prevData.amount_due / 100).toFixed(2);\nconst currencySymbol = prevData.currency === 'eur' ? '€' : '$';\n\nreturn [{\n  json: {\n    found: true,\n    user_id: dbResult.id,\n    discord_user_id: dbResult.discord_user_id,\n    plan: dbResult.subscription_plan,\n    stripe_customer_id: dbResult.stripe_customer_id,\n    stripe_subscription_id: prevData.stripe_subscription_id,\n    amount_display: currencySymbol + amountDisplay,\n    amount_due: prevData.amount_due,\n    currency: prevData.currency,\n    attempt_count: prevData.attempt_count,\n    event_id: prevData.event_id\n  }\n}];"
+      },
+      "id": "check-result",
+      "name": "Check Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-found",
+      "name": "User Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1584,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/discord/send-dm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"user_id\": \"{{ $('Check Result').first().json.discord_user_id }}\",\n  \"embed\": {\n    \"title\": \"\\u26a0\\ufe0f Probl\\u00e8me de paiement\",\n    \"description\": \"Le paiement de votre abonnement Torah ({{ $('Check Result').first().json.amount_display }}) a \\u00e9chou\\u00e9.\\n\\n**Tentative:** {{ $('Check Result').first().json.attempt_count }}/4\\n\\nVeuillez mettre \\u00e0 jour votre moyen de paiement pour \\u00e9viter l'interruption de votre abonnement.\\n\\n[Mettre \\u00e0 jour le paiement](https://billing.stripe.com/p/login/test)\",\n    \"color\": 15158332,\n    \"footer\": {\n      \"text\": \"Contactez-nous si vous avez des questions\"\n    }\n  }\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-discord-dm",
+      "name": "Send Warning DM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2032,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, processed: true, discord_user_id: $('Check Result').first().json.discord_user_id, status: 'past_due', attempt: $('Check Result').first().json.attempt_count } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2240,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-not-found",
+      "name": "Respond Not Found (OK)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1808,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1152,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "{{ $env.API_URL }}/api/subscriptions/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{ stripe_subscription_id, status }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1136,
+        208
+      ],
+      "id": "101560da-b840-49df-bdd4-5a39ae0c1273",
+      "name": "Update status"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.API_URL }}/api/payments/log",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{ stripe_subscription_id, status }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1792,
+        112
+      ],
+      "id": "f03bb726-1196-41e2-9d3c-44ccd0bc929b",
+      "name": "Log Failure"
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Data": {
+      "main": [
+        [
+          {
+            "node": "Data Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Valid?": {
+      "main": [
+        [
+          {
+            "node": "Update status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Result": {
+      "main": [
+        [
+          {
+            "node": "User Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "User Found?": {
+      "main": [
+        [
+          {
+            "node": "Log Failure",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Found (OK)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Warning DM": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update status": {
+      "main": [
+        [
+          {
+            "node": "Check Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Failure": {
+      "main": [
+        [
+          {
+            "node": "Send Warning DM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "9b6ee720-d2b0-47ec-94ac-04c1709f8ae6",
+    "workflowId": "E7HQ6IRdTt2EivKE",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Torah Payment Failure Callback\n\n**Endpoint:** POST /webhook/torah-sub-failure\n\n**Triggered by:** Stripe webhook handler on `invoice.payment_failed`\n\n**Actions:**\n1. Update subscription_status to 'past_due'\n2. Send warning DM to user with payment update link\n3. Log failed payment in payment_history\n4. (Optional) Start grace period countdown\n\n**Input:**\n```json\n{\n  \"event_type\": \"invoice.payment_failed\",\n  \"data\": {\n    \"customer_id\": \"cus_xxx\",\n    \"subscription_id\": \"sub_xxx\",\n    \"amount_due\": 999,\n    \"attempt_count\": 1\n  }\n}\n```",
+          "height": 400,
+          "width": 380,
+          "color": 4
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          48,
+          48
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "stripe-subscription-failure",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          480,
+          304
+        ],
+        "webhookId": "torah-sub-failure"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Extract failure data\nconst input = $input.first().json;\nconst body = input.body || {};\nconst data = body.data || {};\n\nif (!data.subscription_id) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Missing subscription_id',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    stripe_subscription_id: data.subscription_id,\n    stripe_customer_id: data.customer_id,\n    invoice_id: data.invoice_id,\n    amount_due: data.amount_due || 0,\n    currency: data.currency || 'eur',\n    attempt_count: data.attempt_count || 1,\n    event_id: body.event_id\n  }\n}];"
+        },
+        "id": "extract-data",
+        "name": "Extract Data",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          704,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-valid",
+        "name": "Data Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          928,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Check result and prepare notification\nconst dbResult = $input.first().json;\nconst prevData = $('Extract Data').first().json;\n\nif (!dbResult || !dbResult.id) {\n  return [{\n    json: {\n      found: false,\n      success: true,\n      message: 'Subscription not found',\n      stripe_subscription_id: prevData.stripe_subscription_id\n    }\n  }];\n}\n\n// Format amount for display\nconst amountDisplay = (prevData.amount_due / 100).toFixed(2);\nconst currencySymbol = prevData.currency === 'eur' ? '€' : '$';\n\nreturn [{\n  json: {\n    found: true,\n    user_id: dbResult.id,\n    discord_user_id: dbResult.discord_user_id,\n    plan: dbResult.subscription_plan,\n    stripe_customer_id: dbResult.stripe_customer_id,\n    stripe_subscription_id: prevData.stripe_subscription_id,\n    amount_display: currencySymbol + amountDisplay,\n    amount_due: prevData.amount_due,\n    currency: prevData.currency,\n    attempt_count: prevData.attempt_count,\n    event_id: prevData.event_id\n  }\n}];"
+        },
+        "id": "check-result",
+        "name": "Check Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1360,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-found",
+                "leftValue": "={{ $json.found }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-found",
+        "name": "User Found?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1584,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/discord/send-dm",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Authorization",
+                "value": "Bearer {{ $env.API_KEY }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"user_id\": \"{{ $('Check Result').first().json.discord_user_id }}\",\n  \"embed\": {\n    \"title\": \"\\u26a0\\ufe0f Probl\\u00e8me de paiement\",\n    \"description\": \"Le paiement de votre abonnement Torah ({{ $('Check Result').first().json.amount_display }}) a \\u00e9chou\\u00e9.\\n\\n**Tentative:** {{ $('Check Result').first().json.attempt_count }}/4\\n\\nVeuillez mettre \\u00e0 jour votre moyen de paiement pour \\u00e9viter l'interruption de votre abonnement.\\n\\n[Mettre \\u00e0 jour le paiement](https://billing.stripe.com/p/login/test)\",\n    \"color\": 15158332,\n    \"footer\": {\n      \"text\": \"Contactez-nous si vous avez des questions\"\n    }\n  }\n}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "send-discord-dm",
+        "name": "Send Warning DM",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2032,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: true, processed: true, discord_user_id: $('Check Result').first().json.discord_user_id, status: 'past_due', attempt: $('Check Result').first().json.attempt_count } }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2240,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "respond-not-found",
+        "name": "Respond Not Found (OK)",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1808,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: $json.error } }}",
+          "options": {
+            "responseCode": 400
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1152,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "{{ $env.API_URL }}/api/subscriptions/status",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{ stripe_subscription_id, status }",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          1136,
+          208
+        ],
+        "id": "101560da-b840-49df-bdd4-5a39ae0c1273",
+        "name": "Update status"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "{{ $env.API_URL }}/api/payments/log",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{ stripe_subscription_id, status }",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          1792,
+          112
+        ],
+        "id": "f03bb726-1196-41e2-9d3c-44ccd0bc929b",
+        "name": "Log Failure"
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Extract Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Data": {
+        "main": [
+          [
+            {
+              "node": "Data Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Data Valid?": {
+        "main": [
+          [
+            {
+              "node": "Update status",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Result": {
+        "main": [
+          [
+            {
+              "node": "User Found?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "User Found?": {
+        "main": [
+          [
+            {
+              "node": "Log Failure",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Not Found (OK)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Warning DM": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update status": {
+        "main": [
+          [
+            {
+              "node": "Check Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Log Failure": {
+        "main": [
+          [
+            {
+              "node": "Send Warning DM",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

@@ -1,0 +1,1125 @@
+{
+  "name": "Torah Batch Translation with Commentaries",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-batch-translate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-batch",
+      "name": "Batch Translation Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        256,
+        304
+      ],
+      "webhookId": "torah-batch-translate",
+      "notes": "Payload: {book: 'Sukkah', chapter_start: '2a', chapter_end: '10b', config: {...}}"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valider et preparer les parametres de batch\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Configuration par defaut\nconst defaultConfig = {\n  target_language: 'fr',\n  translator: { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022' },\n  reviewer: { provider: 'openai', model: 'gpt-4o' },\n  apply_grammalecte: true,\n  include_commentaries: true,\n  max_commentaries_per_text: 10\n};\n\nconst config = { ...defaultConfig, ...body.config };\n\n// Validation\nconst errors = [];\nif (!body.book && !body.source_text_ids) {\n  errors.push('Specify either \"book\" (e.g., \"Sukkah\") or \"source_text_ids\" array');\n}\n\nif (body.book && !['Sukkah', 'Berakhot', 'Pesachim', 'Shabbat', 'Eruvin', 'Bekhorot'].includes(body.book)) {\n  errors.push('Invalid book. Available: Sukkah, Berakhot, Pesachim, Shabbat, Eruvin, Bekhorot');\n}\n\nconst result = {\n  valid: errors.length === 0,\n  errors: errors,\n  params: {\n    book: body.book || null,\n    chapter_start: body.chapter_start || '2a',\n    chapter_end: body.chapter_end || null,\n    source_text_ids: body.source_text_ids || [],\n    config: config,\n    batch_id: `batch_${Date.now()}`\n  }\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "validate-batch-params",
+      "name": "Validate Batch Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Parameters Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        704,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/source-texts?book={{ $json.params.book }}&limit=100",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "fetch-source-texts",
+      "name": "API - Fetch Source Texts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        912,
+        208
+      ],
+      "notes": "Recupere tous les textes sources du livre"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparer les items pour le traitement batch\nconst apiResponse = $input.first().json;\nconst params = $('Validate Batch Parameters').first().json.params;\n\n// Extraire les textes de la reponse API\nlet texts = [];\nif (apiResponse.items) {\n  texts = apiResponse.items;\n} else if (apiResponse.source_texts) {\n  texts = apiResponse.source_texts;\n} else if (Array.isArray(apiResponse)) {\n  texts = apiResponse;\n}\n\n// Filtrer par plage de chapitres si specifie\nif (params.chapter_start || params.chapter_end) {\n  const parseRef = (ref) => {\n    const match = ref.match(/(\\d+)([ab])/i);\n    if (!match) return { num: 0, side: 'a' };\n    return { num: parseInt(match[1]), side: match[2].toLowerCase() };\n  };\n  \n  const start = params.chapter_start ? parseRef(params.chapter_start) : { num: 0, side: 'a' };\n  const end = params.chapter_end ? parseRef(params.chapter_end) : { num: 999, side: 'b' };\n  \n  texts = texts.filter(t => {\n    const ref = parseRef(t.reference || t.ref || '');\n    const startVal = start.num * 2 + (start.side === 'b' ? 1 : 0);\n    const endVal = end.num * 2 + (end.side === 'b' ? 1 : 0);\n    const refVal = ref.num * 2 + (ref.side === 'b' ? 1 : 0);\n    return refVal >= startVal && refVal <= endVal;\n  });\n}\n\n// Limiter le nombre de textes si trop grand\nconst maxTexts = 50;\nif (texts.length > maxTexts) {\n  texts = texts.slice(0, maxTexts);\n}\n\n// Creer les items de batch\nconst batchItems = texts.map((text, index) => ({\n  json: {\n    source_text_id: text.uuid || text.id,\n    reference: text.reference || text.ref,\n    book: params.book,\n    index: index + 1,\n    total: texts.length,\n    batch_id: params.batch_id,\n    config: params.config\n  }\n}));\n\n// Si aucun texte, retourner un item vide avec erreur\nif (batchItems.length === 0) {\n  return [{ json: { error: 'Aucun texte trouve pour les criteres specifies', texts_count: 0 } }];\n}\n\nreturn batchItems;"
+      },
+      "id": "prepare-batch-items",
+      "name": "Prepare Batch Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1136,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "=Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Traduction Batch Demarree\",\n    \"description\": \"Batch ID: {{ $('Validate Batch Parameters').first().json.params.batch_id }}\",\n    \"color\": 3447003,\n    \"fields\": [\n      {\"name\": \"Livre\", \"value\": \"{{ $('Validate Batch Parameters').first().json.params.book || 'Selection' }}\", \"inline\": true},\n      {\"name\": \"Textes\", \"value\": \"{{ $json.length || $input.all().length }}\", \"inline\": true},\n      {\"name\": \"Langue\", \"value\": \"{{ $('Validate Batch Parameters').first().json.params.config.target_language }}\", \"inline\": true},\n      {\"name\": \"Provider\", \"value\": \"{{ $('Validate Batch Parameters').first().json.params.config.translator.provider }}\", \"inline\": true}\n    ],\n    \"footer\": {\"text\": \"Torah Batch Translator\"},\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-batch-start",
+      "name": "Discord - Batch Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "batch-loop",
+      "name": "Process Texts",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1584,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.API_URL }}/api/translate-with-comments",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"reference\": {\n    \"table\": \"source_texts\",\n    \"uuid\": \"{{ $json.source_text_id }}\"\n  },\n  \"target_language\": \"{{ $json.config.target_language }}\",\n  \"translator\": {{ JSON.stringify($json.config.translator) }},\n  \"reviewer\": {{ JSON.stringify($json.config.reviewer) }},\n  \"apply_grammalecte\": {{ $json.config.apply_grammalecte }},\n  \"max_commentaries\": {{ $json.config.max_commentaries_per_text || 10 }}\n}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "translate-text",
+      "name": "API - Translate Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        208
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gerer le resultat de traduction\nconst input = $input.first().json;\nconst batchItem = $('Process Texts').item.json;\n\nconst result = {\n  source_text_id: batchItem.source_text_id,\n  reference: batchItem.reference,\n  index: batchItem.index,\n  total: batchItem.total,\n  success: !input.error && !input.detail,\n  error: input.error || input.detail || null,\n  translation_id: input.translation_id || null,\n  comments_translated: input.comments_count || 0,\n  tokens_used: input.tokens_used || 0\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "process-result",
+      "name": "Process Translation Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-progress",
+              "leftValue": "={{ $json.index % 5 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "should-notify",
+      "name": "Notify Every 5?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "=Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": \"Progression: {{ $json.index }}/{{ $json.total }} textes traites ({{ Math.round($json.index / $json.total * 100) }}%)\"\n}",
+        "options": {}
+      },
+      "id": "discord-progress",
+      "name": "Discord - Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2464,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "passthrough"
+      },
+      "id": "merge-after-notify",
+      "name": "Continue",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2672,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate All Results",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        2896,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculer les statistiques finales\nconst results = $input.first().json.data || [];\n\nconst stats = {\n  batch_id: results[0]?.batch_id || 'unknown',\n  total_texts: results.length,\n  successful: results.filter(r => r.success).length,\n  failed: results.filter(r => !r.success).length,\n  total_comments_translated: results.reduce((sum, r) => sum + (r.comments_translated || 0), 0),\n  total_tokens: results.reduce((sum, r) => sum + (r.tokens_used || 0), 0),\n  errors: results.filter(r => r.error).map(r => ({ ref: r.reference, error: r.error }))\n};\n\nstats.success_rate = stats.total_texts > 0 \n  ? Math.round(stats.successful / stats.total_texts * 100) \n  : 0;\n\nreturn [{ json: { stats, results } }];"
+      },
+      "id": "calculate-final-stats",
+      "name": "Calculate Final Statistics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "=Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Traduction Batch Terminee\",\n    \"description\": \"Batch ID: {{ $json.stats.batch_id }}\",\n    \"color\": {{ $json.stats.failed === 0 ? 5763719 : 15105570 }},\n    \"fields\": [\n      {\"name\": \"Textes traduits\", \"value\": \"{{ $json.stats.successful }}/{{ $json.stats.total_texts }}\", \"inline\": true},\n      {\"name\": \"Taux de succes\", \"value\": \"{{ $json.stats.success_rate }}%\", \"inline\": true},\n      {\"name\": \"Commentaires\", \"value\": \"{{ $json.stats.total_comments_translated }}\", \"inline\": true},\n      {\"name\": \"Tokens utilises\", \"value\": \"{{ $json.stats.total_tokens.toLocaleString() }}\", \"inline\": true}\n    ],\n    \"footer\": {\"text\": \"Torah Batch Translator\"},\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-batch-complete",
+      "name": "Discord - Batch Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3344,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, stats: $json.stats } }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3552,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "=Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Erreur Batch Translation\",\n    \"description\": \"{{ $json.errors.join(', ') }}\",\n    \"color\": 15548997,\n    \"footer\": {\"text\": \"Torah Batch Translator\"}\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-error",
+      "name": "Discord - Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        912,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, errors: $json.errors } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1136,
+        432
+      ]
+    }
+  ],
+  "connections": {
+    "Batch Translation Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Batch Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Batch Parameters": {
+      "main": [
+        [
+          {
+            "node": "Parameters Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parameters Valid?": {
+      "main": [
+        [
+          {
+            "node": "API - Fetch Source Texts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Discord - Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API - Fetch Source Texts": {
+      "main": [
+        [
+          {
+            "node": "Prepare Batch Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Batch Items": {
+      "main": [
+        [
+          {
+            "node": "Discord - Batch Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - Batch Start": {
+      "main": [
+        [
+          {
+            "node": "Process Texts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Texts": {
+      "main": [
+        [
+          {
+            "node": "API - Translate Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Aggregate All Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API - Translate Text": {
+      "main": [
+        [
+          {
+            "node": "Process Translation Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Translation Result": {
+      "main": [
+        [
+          {
+            "node": "Notify Every 5?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Every 5?": {
+      "main": [
+        [
+          {
+            "node": "Discord - Progress",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Continue",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Discord - Progress": {
+      "main": [
+        [
+          {
+            "node": "Continue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue": {
+      "main": [
+        [
+          {
+            "node": "Process Texts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate All Results": {
+      "main": [
+        [
+          {
+            "node": "Calculate Final Statistics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Final Statistics": {
+      "main": [
+        [
+          {
+            "node": "Discord - Batch Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - Batch Complete": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "4dfd3f2e-1642-4306-84cd-181fd6789d3d",
+    "workflowId": "P8RPgMY3vdc6mRso",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "torah-batch-translate",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-batch",
+        "name": "Batch Translation Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          256,
+          304
+        ],
+        "webhookId": "torah-batch-translate",
+        "notes": "Payload: {book: 'Sukkah', chapter_start: '2a', chapter_end: '10b', config: {...}}"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Valider et preparer les parametres de batch\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Configuration par defaut\nconst defaultConfig = {\n  target_language: 'fr',\n  translator: { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022' },\n  reviewer: { provider: 'openai', model: 'gpt-4o' },\n  apply_grammalecte: true,\n  include_commentaries: true,\n  max_commentaries_per_text: 10\n};\n\nconst config = { ...defaultConfig, ...body.config };\n\n// Validation\nconst errors = [];\nif (!body.book && !body.source_text_ids) {\n  errors.push('Specify either \"book\" (e.g., \"Sukkah\") or \"source_text_ids\" array');\n}\n\nif (body.book && !['Sukkah', 'Berakhot', 'Pesachim', 'Shabbat', 'Eruvin', 'Bekhorot'].includes(body.book)) {\n  errors.push('Invalid book. Available: Sukkah, Berakhot, Pesachim, Shabbat, Eruvin, Bekhorot');\n}\n\nconst result = {\n  valid: errors.length === 0,\n  errors: errors,\n  params: {\n    book: body.book || null,\n    chapter_start: body.chapter_start || '2a',\n    chapter_end: body.chapter_end || null,\n    source_text_ids: body.source_text_ids || [],\n    config: config,\n    batch_id: `batch_${Date.now()}`\n  }\n};\n\nreturn [{ json: result }];"
+        },
+        "id": "validate-batch-params",
+        "name": "Validate Batch Parameters",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          480,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "is-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-valid",
+        "name": "Parameters Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          704,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/source-texts?book={{ $json.params.book }}&limit=100",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "fetch-source-texts",
+        "name": "API - Fetch Source Texts",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          912,
+          208
+        ],
+        "notes": "Recupere tous les textes sources du livre"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Preparer les items pour le traitement batch\nconst apiResponse = $input.first().json;\nconst params = $('Validate Batch Parameters').first().json.params;\n\n// Extraire les textes de la reponse API\nlet texts = [];\nif (apiResponse.items) {\n  texts = apiResponse.items;\n} else if (apiResponse.source_texts) {\n  texts = apiResponse.source_texts;\n} else if (Array.isArray(apiResponse)) {\n  texts = apiResponse;\n}\n\n// Filtrer par plage de chapitres si specifie\nif (params.chapter_start || params.chapter_end) {\n  const parseRef = (ref) => {\n    const match = ref.match(/(\\d+)([ab])/i);\n    if (!match) return { num: 0, side: 'a' };\n    return { num: parseInt(match[1]), side: match[2].toLowerCase() };\n  };\n  \n  const start = params.chapter_start ? parseRef(params.chapter_start) : { num: 0, side: 'a' };\n  const end = params.chapter_end ? parseRef(params.chapter_end) : { num: 999, side: 'b' };\n  \n  texts = texts.filter(t => {\n    const ref = parseRef(t.reference || t.ref || '');\n    const startVal = start.num * 2 + (start.side === 'b' ? 1 : 0);\n    const endVal = end.num * 2 + (end.side === 'b' ? 1 : 0);\n    const refVal = ref.num * 2 + (ref.side === 'b' ? 1 : 0);\n    return refVal >= startVal && refVal <= endVal;\n  });\n}\n\n// Limiter le nombre de textes si trop grand\nconst maxTexts = 50;\nif (texts.length > maxTexts) {\n  texts = texts.slice(0, maxTexts);\n}\n\n// Creer les items de batch\nconst batchItems = texts.map((text, index) => ({\n  json: {\n    source_text_id: text.uuid || text.id,\n    reference: text.reference || text.ref,\n    book: params.book,\n    index: index + 1,\n    total: texts.length,\n    batch_id: params.batch_id,\n    config: params.config\n  }\n}));\n\n// Si aucun texte, retourner un item vide avec erreur\nif (batchItems.length === 0) {\n  return [{ json: { error: 'Aucun texte trouve pour les criteres specifies', texts_count: 0 } }];\n}\n\nreturn batchItems;"
+        },
+        "id": "prepare-batch-items",
+        "name": "Prepare Batch Items",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1136,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "=Authorization",
+                "value": "={{ $env.DISCORD_TOKEN }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Traduction Batch Demarree\",\n    \"description\": \"Batch ID: {{ $('Validate Batch Parameters').first().json.params.batch_id }}\",\n    \"color\": 3447003,\n    \"fields\": [\n      {\"name\": \"Livre\", \"value\": \"{{ $('Validate Batch Parameters').first().json.params.book || 'Selection' }}\", \"inline\": true},\n      {\"name\": \"Textes\", \"value\": \"{{ $json.length || $input.all().length }}\", \"inline\": true},\n      {\"name\": \"Langue\", \"value\": \"{{ $('Validate Batch Parameters').first().json.params.config.target_language }}\", \"inline\": true},\n      {\"name\": \"Provider\", \"value\": \"{{ $('Validate Batch Parameters').first().json.params.config.translator.provider }}\", \"inline\": true}\n    ],\n    \"footer\": {\"text\": \"Torah Batch Translator\"},\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
+          "options": {}
+        },
+        "id": "discord-batch-start",
+        "name": "Discord - Batch Start",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1360,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "id": "batch-loop",
+        "name": "Process Texts",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          1584,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "{{ $env.API_URL }}/api/translate-with-comments",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"reference\": {\n    \"table\": \"source_texts\",\n    \"uuid\": \"{{ $json.source_text_id }}\"\n  },\n  \"target_language\": \"{{ $json.config.target_language }}\",\n  \"translator\": {{ JSON.stringify($json.config.translator) }},\n  \"reviewer\": {{ JSON.stringify($json.config.reviewer) }},\n  \"apply_grammalecte\": {{ $json.config.apply_grammalecte }},\n  \"max_commentaries\": {{ $json.config.max_commentaries_per_text || 10 }}\n}",
+          "options": {
+            "timeout": 300000
+          }
+        },
+        "id": "translate-text",
+        "name": "API - Translate Text",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1792,
+          208
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "jsCode": "// Gerer le resultat de traduction\nconst input = $input.first().json;\nconst batchItem = $('Process Texts').item.json;\n\nconst result = {\n  source_text_id: batchItem.source_text_id,\n  reference: batchItem.reference,\n  index: batchItem.index,\n  total: batchItem.total,\n  success: !input.error && !input.detail,\n  error: input.error || input.detail || null,\n  translation_id: input.translation_id || null,\n  comments_translated: input.comments_count || 0,\n  tokens_used: input.tokens_used || 0\n};\n\nreturn [{ json: result }];"
+        },
+        "id": "process-result",
+        "name": "Process Translation Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2016,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-progress",
+                "leftValue": "={{ $json.index % 5 }}",
+                "rightValue": 0,
+                "operator": {
+                  "type": "number",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "should-notify",
+        "name": "Notify Every 5?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2240,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "=Authorization",
+                "value": "={{ $env.DISCORD_TOKEN }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"content\": \"Progression: {{ $json.index }}/{{ $json.total }} textes traites ({{ Math.round($json.index / $json.total * 100) }}%)\"\n}",
+          "options": {}
+        },
+        "id": "discord-progress",
+        "name": "Discord - Progress",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2464,
+          128
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "passthrough"
+        },
+        "id": "merge-after-notify",
+        "name": "Continue",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3,
+        "position": [
+          2672,
+          336
+        ]
+      },
+      {
+        "parameters": {
+          "aggregate": "aggregateAllItemData",
+          "options": {}
+        },
+        "id": "aggregate-results",
+        "name": "Aggregate All Results",
+        "type": "n8n-nodes-base.aggregate",
+        "typeVersion": 1,
+        "position": [
+          2896,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Calculer les statistiques finales\nconst results = $input.first().json.data || [];\n\nconst stats = {\n  batch_id: results[0]?.batch_id || 'unknown',\n  total_texts: results.length,\n  successful: results.filter(r => r.success).length,\n  failed: results.filter(r => !r.success).length,\n  total_comments_translated: results.reduce((sum, r) => sum + (r.comments_translated || 0), 0),\n  total_tokens: results.reduce((sum, r) => sum + (r.tokens_used || 0), 0),\n  errors: results.filter(r => r.error).map(r => ({ ref: r.reference, error: r.error }))\n};\n\nstats.success_rate = stats.total_texts > 0 \n  ? Math.round(stats.successful / stats.total_texts * 100) \n  : 0;\n\nreturn [{ json: { stats, results } }];"
+        },
+        "id": "calculate-final-stats",
+        "name": "Calculate Final Statistics",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3120,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://discord.com/api/webhooks/1454872701331177606/0qZXNfqF45UU9epTnYbXJMd3nCWtUwfMU1p_E6sTQbnP7Ik-jzxW1Duq2jjHuMHPDC6o",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "=Authorization",
+                "value": "={{ $env.DISCORD_TOKEN }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Traduction Batch Terminee\",\n    \"description\": \"Batch ID: {{ $json.stats.batch_id }}\",\n    \"color\": {{ $json.stats.failed === 0 ? 5763719 : 15105570 }},\n    \"fields\": [\n      {\"name\": \"Textes traduits\", \"value\": \"{{ $json.stats.successful }}/{{ $json.stats.total_texts }}\", \"inline\": true},\n      {\"name\": \"Taux de succes\", \"value\": \"{{ $json.stats.success_rate }}%\", \"inline\": true},\n      {\"name\": \"Commentaires\", \"value\": \"{{ $json.stats.total_comments_translated }}\", \"inline\": true},\n      {\"name\": \"Tokens utilises\", \"value\": \"{{ $json.stats.total_tokens.toLocaleString() }}\", \"inline\": true}\n    ],\n    \"footer\": {\"text\": \"Torah Batch Translator\"},\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
+          "options": {}
+        },
+        "id": "discord-batch-complete",
+        "name": "Discord - Batch Complete",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3344,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: true, stats: $json.stats } }}",
+          "options": {}
+        },
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          3552,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "=Authorization",
+                "value": "={{ $env.DISCORD_TOKEN }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Erreur Batch Translation\",\n    \"description\": \"{{ $json.errors.join(', ') }}\",\n    \"color\": 15548997,\n    \"footer\": {\"text\": \"Torah Batch Translator\"}\n  }]\n}",
+          "options": {}
+        },
+        "id": "discord-error",
+        "name": "Discord - Error",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          912,
+          432
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, errors: $json.errors } }}",
+          "options": {
+            "responseCode": 400
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1136,
+          432
+        ]
+      }
+    ],
+    "connections": {
+      "Batch Translation Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Batch Parameters",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Batch Parameters": {
+        "main": [
+          [
+            {
+              "node": "Parameters Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parameters Valid?": {
+        "main": [
+          [
+            {
+              "node": "API - Fetch Source Texts",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Discord - Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "API - Fetch Source Texts": {
+        "main": [
+          [
+            {
+              "node": "Prepare Batch Items",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Batch Items": {
+        "main": [
+          [
+            {
+              "node": "Discord - Batch Start",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Discord - Batch Start": {
+        "main": [
+          [
+            {
+              "node": "Process Texts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Process Texts": {
+        "main": [
+          [
+            {
+              "node": "API - Translate Text",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Aggregate All Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "API - Translate Text": {
+        "main": [
+          [
+            {
+              "node": "Process Translation Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Process Translation Result": {
+        "main": [
+          [
+            {
+              "node": "Notify Every 5?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notify Every 5?": {
+        "main": [
+          [
+            {
+              "node": "Discord - Progress",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Continue",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Discord - Progress": {
+        "main": [
+          [
+            {
+              "node": "Continue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Continue": {
+        "main": [
+          [
+            {
+              "node": "Process Texts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Aggregate All Results": {
+        "main": [
+          [
+            {
+              "node": "Calculate Final Statistics",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Calculate Final Statistics": {
+        "main": [
+          [
+            {
+              "node": "Discord - Batch Complete",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Discord - Batch Complete": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Discord - Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

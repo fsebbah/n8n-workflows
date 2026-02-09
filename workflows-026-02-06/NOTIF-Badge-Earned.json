@@ -1,0 +1,531 @@
+{
+  "name": "NOTIF - Badge Earned",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## NOTIF - Badge Earned\n\n**Trigger:** Cron every 10 seconds\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPolls Redis Stream for badge:earned events\nand publishes notifications to Discord.\n\n**Input Stream:** `xp:events:stream`\n**Output Stream:** `notifications:stream`",
+        "height": 280,
+        "width": 320,
+        "color": 5
+      },
+      "id": "notif-badge-0000",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "notif-badge-trigger",
+      "name": "Every 10 Seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        60,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xRead",
+        "key": "xp:events:stream",
+        "options": {
+          "block": 0,
+          "count": 10
+        }
+      },
+      "id": "notif-badge-0001",
+      "name": "Redis xRead",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        280,
+        300
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FILTER BADGE EARNED EVENTS\n// ============================================\n\nconst items = $input.all();\nconst badgeEvents = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  let event = data.event || data;\n  if (typeof event === 'string') {\n    try {\n      event = JSON.parse(event);\n    } catch (e) {\n      continue;\n    }\n  }\n  \n  if (event.event === 'badge:earned' || event.type === 'badge:earned') {\n    badgeEvents.push({\n      json: {\n        event_id: data.id || `badge_${Date.now()}`,\n        event_type: 'badge:earned',\n        guild_id: event.guild_id,\n        user_id: event.data?.user_id || event.user_id,\n        discord_id: event.data?.discord_id || event.discord_id,\n        badge_id: event.data?.badge_id || event.badge_id,\n        badge_name: event.data?.badge_name || event.badge_name || 'Badge',\n        badge_icon: event.data?.badge_icon || event.badge_icon || '🏅',\n        badge_description: event.data?.badge_description || '',\n        timestamp: event.timestamp || new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn badgeEvents.length > 0 ? badgeEvents : [];"
+      },
+      "id": "notif-badge-0002",
+      "name": "Filter Badge Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-events",
+              "leftValue": "={{ $json.event_type }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "notif-badge-0003",
+      "name": "Has Events?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE BADGE EMBED\n// ============================================\n\nconst data = $input.first().json;\n\nconst embed = {\n  title: `${data.badge_icon} Nouveau Badge !`,\n  description: `Tu as obtenu le badge **${data.badge_name}** !`,\n  color: 0xFFD700,\n  fields: [\n    {\n      name: 'Badge',\n      value: `${data.badge_icon} ${data.badge_name}`,\n      inline: true\n    }\n  ],\n  footer: { text: 'Continue a collectionner !' },\n  timestamp: data.timestamp\n};\n\nif (data.badge_description) {\n  embed.fields.push({\n    name: 'Description',\n    value: data.badge_description,\n    inline: false\n  });\n}\n\nreturn {\n  type: 'dm',\n  guild_id: data.guild_id,\n  discord_id: data.discord_id,\n  content: `<@${data.discord_id}>`,\n  embed: embed,\n  notification_type: 'badge_earned',\n  source: 'n8n:NOTIF-Badge-Earned',\n  event_id: data.event_id,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "notif-badge-0004",
+      "name": "Prepare Notification Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xAdd",
+        "key": "notifications:stream",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldName": "type",
+              "fieldValue": "={{ $json.type }}"
+            },
+            {
+              "fieldName": "guild_id",
+              "fieldValue": "={{ $json.guild_id }}"
+            },
+            {
+              "fieldName": "discord_id",
+              "fieldValue": "={{ $json.discord_id }}"
+            },
+            {
+              "fieldName": "content",
+              "fieldValue": "={{ $json.content }}"
+            },
+            {
+              "fieldName": "embed",
+              "fieldValue": "={{ JSON.stringify($json.embed) }}"
+            },
+            {
+              "fieldName": "notification_type",
+              "fieldValue": "={{ $json.notification_type }}"
+            },
+            {
+              "fieldName": "source",
+              "fieldValue": "={{ $json.source }}"
+            },
+            {
+              "fieldName": "event_id",
+              "fieldValue": "={{ $json.event_id }}"
+            },
+            {
+              "fieldName": "timestamp",
+              "fieldValue": "={{ $json.timestamp }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notif-badge-0005",
+      "name": "Publish to notifications:stream",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1160,
+        200
+      ],
+      "credentials": {
+        "redis": {
+          "id": "notifications-redis",
+          "name": "Redis Notifications (DB 5)"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "notif-badge-0007",
+      "name": "No Events",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        940,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Every 10 Seconds": {
+      "main": [
+        [
+          {
+            "node": "Redis xRead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis xRead": {
+      "main": [
+        [
+          {
+            "node": "Filter Badge Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Badge Events": {
+      "main": [
+        [
+          {
+            "node": "Has Events?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Events?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Notification Payload": {
+      "main": [
+        [
+          {
+            "node": "Publish to notifications:stream",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-06T14:28:58.873Z",
+    "createdAt": "2026-02-06T14:28:58.873Z",
+    "versionId": "e99f9507-14c1-4624-86e5-32fb96d93a11",
+    "workflowId": "erNUjr4vLdqfCV9w",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## NOTIF - Badge Earned\n\n**Trigger:** Cron every 10 seconds\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPolls Redis Stream for badge:earned events\nand publishes notifications to Discord.\n\n**Input Stream:** `xp:events:stream`\n**Output Stream:** `notifications:stream`",
+          "height": 280,
+          "width": 320,
+          "color": 5
+        },
+        "id": "notif-badge-0000",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -200,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "seconds",
+                "secondsInterval": 10
+              }
+            ]
+          }
+        },
+        "id": "notif-badge-trigger",
+        "name": "Every 10 Seconds",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          60,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "xRead",
+          "key": "xp:events:stream",
+          "options": {
+            "block": 0,
+            "count": 10
+          }
+        },
+        "id": "notif-badge-0001",
+        "name": "Redis xRead",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          280,
+          300
+        ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FILTER BADGE EARNED EVENTS\n// ============================================\n\nconst items = $input.all();\nconst badgeEvents = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  let event = data.event || data;\n  if (typeof event === 'string') {\n    try {\n      event = JSON.parse(event);\n    } catch (e) {\n      continue;\n    }\n  }\n  \n  if (event.event === 'badge:earned' || event.type === 'badge:earned') {\n    badgeEvents.push({\n      json: {\n        event_id: data.id || `badge_${Date.now()}`,\n        event_type: 'badge:earned',\n        guild_id: event.guild_id,\n        user_id: event.data?.user_id || event.user_id,\n        discord_id: event.data?.discord_id || event.discord_id,\n        badge_id: event.data?.badge_id || event.badge_id,\n        badge_name: event.data?.badge_name || event.badge_name || 'Badge',\n        badge_icon: event.data?.badge_icon || event.badge_icon || '🏅',\n        badge_description: event.data?.badge_description || '',\n        timestamp: event.timestamp || new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn badgeEvents.length > 0 ? badgeEvents : [];"
+        },
+        "id": "notif-badge-0002",
+        "name": "Filter Badge Events",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          500,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "has-events",
+                "leftValue": "={{ $json.event_type }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "notif-badge-0003",
+        "name": "Has Events?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          720,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PREPARE BADGE EMBED\n// ============================================\n\nconst data = $input.first().json;\n\nconst embed = {\n  title: `${data.badge_icon} Nouveau Badge !`,\n  description: `Tu as obtenu le badge **${data.badge_name}** !`,\n  color: 0xFFD700,\n  fields: [\n    {\n      name: 'Badge',\n      value: `${data.badge_icon} ${data.badge_name}`,\n      inline: true\n    }\n  ],\n  footer: { text: 'Continue a collectionner !' },\n  timestamp: data.timestamp\n};\n\nif (data.badge_description) {\n  embed.fields.push({\n    name: 'Description',\n    value: data.badge_description,\n    inline: false\n  });\n}\n\nreturn {\n  type: 'dm',\n  guild_id: data.guild_id,\n  discord_id: data.discord_id,\n  content: `<@${data.discord_id}>`,\n  embed: embed,\n  notification_type: 'badge_earned',\n  source: 'n8n:NOTIF-Badge-Earned',\n  event_id: data.event_id,\n  timestamp: new Date().toISOString()\n};"
+        },
+        "id": "notif-badge-0004",
+        "name": "Prepare Notification Payload",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          940,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "xAdd",
+          "key": "notifications:stream",
+          "fieldsUi": {
+            "fieldValues": [
+              {
+                "fieldName": "type",
+                "fieldValue": "={{ $json.type }}"
+              },
+              {
+                "fieldName": "guild_id",
+                "fieldValue": "={{ $json.guild_id }}"
+              },
+              {
+                "fieldName": "discord_id",
+                "fieldValue": "={{ $json.discord_id }}"
+              },
+              {
+                "fieldName": "content",
+                "fieldValue": "={{ $json.content }}"
+              },
+              {
+                "fieldName": "embed",
+                "fieldValue": "={{ JSON.stringify($json.embed) }}"
+              },
+              {
+                "fieldName": "notification_type",
+                "fieldValue": "={{ $json.notification_type }}"
+              },
+              {
+                "fieldName": "source",
+                "fieldValue": "={{ $json.source }}"
+              },
+              {
+                "fieldName": "event_id",
+                "fieldValue": "={{ $json.event_id }}"
+              },
+              {
+                "fieldName": "timestamp",
+                "fieldValue": "={{ $json.timestamp }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "notif-badge-0005",
+        "name": "Publish to notifications:stream",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1160,
+          200
+        ],
+        "credentials": {
+          "redis": {
+            "id": "notifications-redis",
+            "name": "Redis Notifications (DB 5)"
+          }
+        }
+      },
+      {
+        "parameters": {},
+        "id": "notif-badge-0007",
+        "name": "No Events",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          940,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Every 10 Seconds": {
+        "main": [
+          [
+            {
+              "node": "Redis xRead",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Redis xRead": {
+        "main": [
+          [
+            {
+              "node": "Filter Badge Events",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Filter Badge Events": {
+        "main": [
+          [
+            {
+              "node": "Has Events?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Events?": {
+        "main": [
+          [
+            {
+              "node": "Prepare Notification Payload",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "No Events",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Notification Payload": {
+        "main": [
+          [
+            {
+              "node": "Publish to notifications:stream",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

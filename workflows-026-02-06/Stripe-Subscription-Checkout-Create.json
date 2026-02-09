@@ -1,0 +1,769 @@
+{
+  "name": "Stripe - Subscription Checkout Create",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Stripe Subscription Checkout Create\n\n**Endpoint:** POST /webhook/subscription-checkout-create\n\n**Purpose:** Creates a Stripe Checkout session for subscription signup.\nActs as a proxy - each project has its own Stripe account.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah\",\n  \"price_id\": \"price_xxx\",\n  \"customer_email\": \"user@example.com\",\n  \"callbacks\": {\n    \"success\": \"http://...\",\n    \"renewal\": \"http://...\"\n  },\n  \"urls\": {\n    \"success\": \"https://...\",\n    \"cancel\": \"https://...\"\n  },\n  \"metadata\": {},\n  \"options\": {\n    \"trial_days\": 7\n  }\n}\n```\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"checkout_url\": \"https://checkout.stripe.com/...\",\n  \"session_id\": \"cs_xxx\"\n}\n```\n\n**Setup:** Utilise Redis pour la config projet (cle: project:{project_id})",
+        "height": 580,
+        "width": 380,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        40,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "subscription-checkout-create",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate and extract input parameters\nconst input = $input.first().json;\nconst body = input.body || {};\n\n// Required fields\nconst requiredFields = ['project_id', 'price_id', 'customer_email', 'urls'];\nconst missing = requiredFields.filter(f => !body[f]);\n\nif (missing.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required fields: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Validate URLs\nif (!body.urls.success || !body.urls.cancel) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'urls.success and urls.cancel are required',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Extract and normalize data\nreturn [{\n  json: {\n    valid: true,\n    project_id: body.project_id,\n    price_id: body.price_id,\n    customer_email: body.customer_email,\n    callbacks: body.callbacks || {},\n    urls: body.urls,\n    metadata: body.metadata || {},\n    options: body.options || {},\n    redis_key: `project:${body.project_id}`\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "={{ $json.redis_key }}"
+      },
+      "id": "get-project-config",
+      "name": "Get Stripe Config (Redis)",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        200
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if project was found in Redis\nconst redisResult = $('Get Stripe Config (Redis)').first();\nconst inputData = $('Validate Input').first().json;\n\n// Redis retourne la valeur dans propertyName, value, ou directement\nconst redisJson = redisResult?.json || {};\nconst rawValue = redisJson.propertyName || redisJson.value || redisJson;\n\n// Verifier si Redis a retourne une erreur\nif (redisJson.error || JSON.stringify(redisJson).includes('ECONNREFUSED')) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 503,\n        message: 'Service Redis indisponible',\n        status: 'SERVICE_UNAVAILABLE'\n      }\n    }\n  }];\n}\n\nif (!rawValue || rawValue === null || rawValue === 'null') {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Project '${inputData.project_id}' not found. Call /stripe-register-project first.`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Parser le JSON stocke dans Redis\nlet project;\ntry {\n  project = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;\n} catch (e) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 500,\n        message: `Erreur parsing Redis: ${e.message}`,\n        status: 'INTERNAL_ERROR'\n      }\n    }\n  }];\n}\n\nif (!project.stripe_key) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Project '${inputData.project_id}' has no Stripe key configured`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Prepare body using manual encoding (URLSearchParams not available in n8n sandbox)\nconst encode = (str) => encodeURIComponent(String(str));\nconst parts = [];\n\nparts.push(`mode=subscription`);\nparts.push(`customer_email=${encode(inputData.customer_email)}`);\nparts.push(`line_items[0][price]=${encode(inputData.price_id)}`);\nparts.push(`line_items[0][quantity]=1`);\nparts.push(`success_url=${encode(inputData.urls.success + '?session_id={CHECKOUT_SESSION_ID}')}`);\nparts.push(`cancel_url=${encode(inputData.urls.cancel)}`);\nparts.push(`metadata[project_id]=${encode(inputData.project_id)}`);\n\n// Add callbacks to metadata\nif (inputData.callbacks.success) {\n  parts.push(`metadata[callback_success]=${encode(inputData.callbacks.success)}`);\n}\nif (inputData.callbacks.renewal) {\n  parts.push(`metadata[callback_renewal]=${encode(inputData.callbacks.renewal)}`);\n}\nif (inputData.callbacks.failure) {\n  parts.push(`metadata[callback_failure]=${encode(inputData.callbacks.failure)}`);\n}\nif (inputData.callbacks.cancel) {\n  parts.push(`metadata[callback_cancel]=${encode(inputData.callbacks.cancel)}`);\n}\n\n// Add custom metadata\nif (inputData.metadata) {\n  Object.entries(inputData.metadata).forEach(([key, value]) => {\n    parts.push(`metadata[${encode(key)}]=${encode(value)}`);\n  });\n}\n\n// Add trial if specified\nif (inputData.options.trial_days) {\n  parts.push(`subscription_data[trial_period_days]=${encode(inputData.options.trial_days)}`);\n}\n\n// Add coupon if specified\nif (inputData.options.coupon_code) {\n  parts.push(`discounts[0][coupon]=${encode(inputData.options.coupon_code)}`);\n}\n\n// Add promotion codes if enabled\nif (inputData.options.allow_promotion_codes) {\n  parts.push(`allow_promotion_codes=true`);\n}\n\nreturn [{\n  json: {\n    found: true,\n    stripe_key: project.stripe_key,\n    body_string: parts.join('&'),\n    project_id: inputData.project_id\n  }\n}];"
+      },
+      "id": "merge-project-data",
+      "name": "Check Project",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-project-found",
+      "name": "Project Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1580,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.stripe.com/v1/checkout/sessions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.stripe_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "body": "={{ $json.body_string }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "call-stripe-api",
+      "name": "Call Stripe API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format success response\nconst stripeResponse = $input.first().json;\n\nif (stripeResponse.statusCode === 200 && stripeResponse.body) {\n  const session = stripeResponse.body;\n  return [{\n    json: {\n      success: true,\n      checkout_url: session.url,\n      session_id: session.id,\n      expires_at: new Date(session.expires_at * 1000).toISOString()\n    }\n  }];\n}\n\n// Handle Stripe error\nconst error = stripeResponse.body?.error || {};\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: stripeResponse.statusCode || 500,\n      message: error.message || 'Failed to create checkout session',\n      type: error.type || 'api_error',\n      stripe_code: error.code || null\n    }\n  }\n}];"
+      },
+      "id": "format-success-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2240,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1140,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 404 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-project-not-found",
+      "name": "Respond Project Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1800,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Stripe Config (Redis)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Stripe Config (Redis)": {
+      "main": [
+        [
+          {
+            "node": "Check Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Project": {
+      "main": [
+        [
+          {
+            "node": "Project Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Found?": {
+      "main": [
+        [
+          {
+            "node": "Call Stripe API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Project Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Stripe API": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "ad9383e0-8dfb-4ea6-b21c-2f05ae77eb36",
+    "workflowId": "q36nyuiWrZ0ktCoA",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Stripe Subscription Checkout Create\n\n**Endpoint:** POST /webhook/subscription-checkout-create\n\n**Purpose:** Creates a Stripe Checkout session for subscription signup.\nActs as a proxy - each project has its own Stripe account.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah\",\n  \"price_id\": \"price_xxx\",\n  \"customer_email\": \"user@example.com\",\n  \"callbacks\": {\n    \"success\": \"http://...\",\n    \"renewal\": \"http://...\"\n  },\n  \"urls\": {\n    \"success\": \"https://...\",\n    \"cancel\": \"https://...\"\n  },\n  \"metadata\": {},\n  \"options\": {\n    \"trial_days\": 7\n  }\n}\n```\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"checkout_url\": \"https://checkout.stripe.com/...\",\n  \"session_id\": \"cs_xxx\"\n}\n```\n\n**Setup:** Utilise Redis pour la config projet (cle: project:{project_id})",
+          "height": 580,
+          "width": 380,
+          "color": 5
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          40,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "subscription-checkout-create",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          480,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Validate and extract input parameters\nconst input = $input.first().json;\nconst body = input.body || {};\n\n// Required fields\nconst requiredFields = ['project_id', 'price_id', 'customer_email', 'urls'];\nconst missing = requiredFields.filter(f => !body[f]);\n\nif (missing.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required fields: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Validate URLs\nif (!body.urls.success || !body.urls.cancel) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'urls.success and urls.cancel are required',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Extract and normalize data\nreturn [{\n  json: {\n    valid: true,\n    project_id: body.project_id,\n    price_id: body.price_id,\n    customer_email: body.customer_email,\n    callbacks: body.callbacks || {},\n    urls: body.urls,\n    metadata: body.metadata || {},\n    options: body.options || {},\n    redis_key: `project:${body.project_id}`\n  }\n}];"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          700,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-valid",
+        "name": "Input Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          920,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "get",
+          "key": "={{ $json.redis_key }}"
+        },
+        "id": "get-project-config",
+        "name": "Get Stripe Config (Redis)",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1140,
+          200
+        ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Check if project was found in Redis\nconst redisResult = $('Get Stripe Config (Redis)').first();\nconst inputData = $('Validate Input').first().json;\n\n// Redis retourne la valeur dans propertyName, value, ou directement\nconst redisJson = redisResult?.json || {};\nconst rawValue = redisJson.propertyName || redisJson.value || redisJson;\n\n// Verifier si Redis a retourne une erreur\nif (redisJson.error || JSON.stringify(redisJson).includes('ECONNREFUSED')) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 503,\n        message: 'Service Redis indisponible',\n        status: 'SERVICE_UNAVAILABLE'\n      }\n    }\n  }];\n}\n\nif (!rawValue || rawValue === null || rawValue === 'null') {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Project '${inputData.project_id}' not found. Call /stripe-register-project first.`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Parser le JSON stocke dans Redis\nlet project;\ntry {\n  project = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;\n} catch (e) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 500,\n        message: `Erreur parsing Redis: ${e.message}`,\n        status: 'INTERNAL_ERROR'\n      }\n    }\n  }];\n}\n\nif (!project.stripe_key) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Project '${inputData.project_id}' has no Stripe key configured`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Prepare body using manual encoding (URLSearchParams not available in n8n sandbox)\nconst encode = (str) => encodeURIComponent(String(str));\nconst parts = [];\n\nparts.push(`mode=subscription`);\nparts.push(`customer_email=${encode(inputData.customer_email)}`);\nparts.push(`line_items[0][price]=${encode(inputData.price_id)}`);\nparts.push(`line_items[0][quantity]=1`);\nparts.push(`success_url=${encode(inputData.urls.success + '?session_id={CHECKOUT_SESSION_ID}')}`);\nparts.push(`cancel_url=${encode(inputData.urls.cancel)}`);\nparts.push(`metadata[project_id]=${encode(inputData.project_id)}`);\n\n// Add callbacks to metadata\nif (inputData.callbacks.success) {\n  parts.push(`metadata[callback_success]=${encode(inputData.callbacks.success)}`);\n}\nif (inputData.callbacks.renewal) {\n  parts.push(`metadata[callback_renewal]=${encode(inputData.callbacks.renewal)}`);\n}\nif (inputData.callbacks.failure) {\n  parts.push(`metadata[callback_failure]=${encode(inputData.callbacks.failure)}`);\n}\nif (inputData.callbacks.cancel) {\n  parts.push(`metadata[callback_cancel]=${encode(inputData.callbacks.cancel)}`);\n}\n\n// Add custom metadata\nif (inputData.metadata) {\n  Object.entries(inputData.metadata).forEach(([key, value]) => {\n    parts.push(`metadata[${encode(key)}]=${encode(value)}`);\n  });\n}\n\n// Add trial if specified\nif (inputData.options.trial_days) {\n  parts.push(`subscription_data[trial_period_days]=${encode(inputData.options.trial_days)}`);\n}\n\n// Add coupon if specified\nif (inputData.options.coupon_code) {\n  parts.push(`discounts[0][coupon]=${encode(inputData.options.coupon_code)}`);\n}\n\n// Add promotion codes if enabled\nif (inputData.options.allow_promotion_codes) {\n  parts.push(`allow_promotion_codes=true`);\n}\n\nreturn [{\n  json: {\n    found: true,\n    stripe_key: project.stripe_key,\n    body_string: parts.join('&'),\n    project_id: inputData.project_id\n  }\n}];"
+        },
+        "id": "merge-project-data",
+        "name": "Check Project",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1360,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-found",
+                "leftValue": "={{ $json.found }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-project-found",
+        "name": "Project Found?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1580,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.stripe.com/v1/checkout/sessions",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.stripe_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "raw",
+          "body": "={{ $json.body_string }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            }
+          }
+        },
+        "id": "call-stripe-api",
+        "name": "Call Stripe API",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1800,
+          100
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Format success response\nconst stripeResponse = $input.first().json;\n\nif (stripeResponse.statusCode === 200 && stripeResponse.body) {\n  const session = stripeResponse.body;\n  return [{\n    json: {\n      success: true,\n      checkout_url: session.url,\n      session_id: session.id,\n      expires_at: new Date(session.expires_at * 1000).toISOString()\n    }\n  }];\n}\n\n// Handle Stripe error\nconst error = stripeResponse.body?.error || {};\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: stripeResponse.statusCode || 500,\n      message: error.message || 'Failed to create checkout session',\n      type: error.type || 'api_error',\n      stripe_code: error.code || null\n    }\n  }\n}];"
+        },
+        "id": "format-success-response",
+        "name": "Format Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2020,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2240,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.code || 400 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-validation-error",
+        "name": "Respond Validation Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1140,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.code || 404 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-project-not-found",
+        "name": "Respond Project Not Found",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1800,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Input Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Input Valid?": {
+        "main": [
+          [
+            {
+              "node": "Get Stripe Config (Redis)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Stripe Config (Redis)": {
+        "main": [
+          [
+            {
+              "node": "Check Project",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Project": {
+        "main": [
+          [
+            {
+              "node": "Project Found?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Project Found?": {
+        "main": [
+          [
+            {
+              "node": "Call Stripe API",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Project Not Found",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Stripe API": {
+        "main": [
+          [
+            {
+              "node": "Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

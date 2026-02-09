@@ -1,0 +1,1293 @@
+{
+  "name": "Torah Translate Page",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Page Translation - Start Job\n\n**Endpoint:** POST /webhook/torah-translate-page\n\n**Request:**\n```json\n{\n  \"traite\": \"Berakhot\",\n  \"page\": \"2a\",\n  \"mode\": \"premium\",\n  \"target_language\": \"fr\",\n  \"api_key\": \"...\",\n  \"openai_api_key\": \"...\",\n  \"force\": false\n}\n```\n\n**Parameters:**\n- `force`: Si true, force la retraduction même si existante\n\n**Response (already translated):**\n```json\n{\n  \"success\": true,\n  \"status\": \"already_translated\",\n  \"segments_count\": 14,\n  \"translated_count\": 14,\n  \"segments\": [...]\n}\n```\n\n**Response (started):**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_abc123\",\n  \"status\": \"started\",\n  \"segments_count\": 14,\n  \"estimated_seconds\": 100\n}\n```\n\n**Flow:**\n1. Validate input\n2. Check existing translations\n3. If translated & !force → return existing\n4. Else → Create job, launch worker",
+        "height": 420,
+        "width": 320,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-translate-page",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        400,
+        304
+      ],
+      "webhookId": "torah-translate-page"
+    },
+    {
+      "parameters": {
+        "jsCode": "  // Validation des paramètres\n  const input = $input.first().json;\n  const body = input.body || input;\n\n  const traite = body.traite || '';\n  const page = body.page || '';\n  const mode = body.mode || 'premium';\n  const targetLanguage = body.target_language || 'fr';\n  const apiKey = body.api_key || '';\n  const openaiApiKey = body.openai_api_key || '';\n  const requestId = body.request_id || null;\n  const force = body.force === true || body.force === 'true';\n  const headers = input.headers || {};  // ← AJOUTER\n  // Extraire projectId depuis le HEADER ou le body\n  const projectId = headers['x-project-id'] || body.project_id || body.projectId;\n  const jobType = body.job_type || body.jobType;\n \n  // Validation\n  const errors = [];\n  if (!traite) errors.push('Le champ \"traite\" est requis');\n  if (!page) errors.push('Le champ \"page\" est requis');\n  if (!apiKey) errors.push('Le champ \"api_key\" (Anthropic) est requis');\n  if (!openaiApiKey) errors.push('Le champ \"openai_api_key\" est requis');\n  if (!jobType) errors.push('Le champ \"job_type\" est requis');\n  \n// Générer un job_id unique\n  const jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\n  return [{\n    json: {\n      valid: errors.length === 0,\n      errors: errors,\n      jobId: jobId,\n      jobType: jobType,  // ← AJOUTER,\n      projectId: projectId,\n      traite: traite,\n      page: page,\n      mode: mode,\n      targetLanguage: targetLanguage,\n      apiKey: apiKey,\n      openaiApiKey: openaiApiKey,\n      requestId: requestId,\n      force: force\n    }\n  }];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-validation",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/talmud/page/{{ encodeURIComponent($json.traite) }}/{{ encodeURIComponent($json.page) }}/segments",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "check-existing",
+      "name": "Check Existing Translations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1072,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Analyser les traductions existantes\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Si erreur API (page non trouvée), continuer vers la traduction\nif (statusCode >= 400) {\n  return [{\n    json: {\n      ...prevData,\n      hasExisting: false,\n      needsTranslation: true\n    }\n  }];\n}\n\nconst segmentsCount = data.segments_count || 0;\nconst translatedCount = data.translated_count || 0;\nconst isFullyTranslated = segmentsCount > 0 && translatedCount === segmentsCount;\n\n// Si force=true, toujours retraduire\nif (prevData.force) {\n  return [{\n    json: {\n      ...prevData,\n      hasExisting: isFullyTranslated,\n      needsTranslation: true\n    }\n  }];\n}\n\n// Si déjà traduit et pas force, retourner les existantes\nif (isFullyTranslated) {\n  return [{\n    json: {\n      ...prevData,\n      hasExisting: true,\n      needsTranslation: false,\n      existingData: data\n    }\n  }];\n}\n\n// Sinon, besoin de traduire\nreturn [{\n  json: {\n    ...prevData,\n    hasExisting: false,\n    needsTranslation: true,\n    existingSegmentsCount: segmentsCount,\n    existingTranslatedCount: translatedCount\n  }\n}];"
+      },
+      "id": "analyze-existing",
+      "name": "Analyze Existing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-needs-translation",
+              "leftValue": "={{ $json.needsTranslation }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-needs-translation",
+      "name": "Needs Translation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1504,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la réponse pour les traductions existantes\nconst input = $input.first().json;\nconst data = input.existingData;\n\nreturn [{\n  json: {\n    success: true,\n    status: 'already_translated',\n    traite: data.traite,\n    page: data.page,\n    reference: data.reference,\n    segments_count: data.segments_count,\n    translated_count: data.translated_count,\n    segments: data.segments\n  }\n}];"
+      },
+      "id": "format-existing",
+      "name": "Format Existing Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1728,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-existing",
+      "name": "Respond Existing",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1952,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/talmud/text/{{ encodeURIComponent($json.traite) }}/{{ encodeURIComponent($json.page) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "fetch-page",
+      "name": "Fetch Page Segments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1072,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire les segments de la page\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier les erreurs\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Extraire les segments depuis extra_data.versions[0].text\nlet segments = [];\nif (data.extra_data?.versions?.[0]?.text) {\n  segments = data.extra_data.versions[0].text;\n} else if (data.segments) {\n  segments = data.segments;\n}\n\nif (segments.length === 0) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: 'Aucun segment trouvé pour cette page',\n        status: 'NO_SEGMENTS'\n      }\n    }\n  }];\n}\n\n// Estimation du temps (~7 secondes par segment)\nconst estimatedSeconds = Math.ceil(segments.length * 7);\n\nreturn [{\n  json: {\n    success: true,\n    jobId: prevData.jobId,\n    jobType: prevData.jobType,      // ← AJOUTER\n    projectId: prevData.projectId,  // ← AJOUTER    \n    traite: prevData.traite,\n    page: prevData.page,\n    mode: prevData.mode,\n    targetLanguage: prevData.targetLanguage,\n    apiKey: prevData.apiKey,\n    openaiApiKey: prevData.openaiApiKey,\n    requestId: prevData.requestId,\n    sourceTextId: data.id || null,\n    reference: data.reference || `${prevData.traite} ${prevData.page}`,\n    segments: segments,\n    segmentsCount: segments.length,\n    estimatedSeconds: estimatedSeconds\n  }\n}];"
+      },
+      "id": "extract-segments",
+      "name": "Extract Segments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-segments",
+      "name": "Segments Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1504,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/v2/jobs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "= X-Project-ID",
+              "value": "={{ $json.projectId }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_type: $json.jobType, input: { traite: $json.traite, page: $json.page, target_language:\n  $json.targetLanguage, mode: $json.mode, segments_count: $json.segmentsCount, metadata: { requested_by: 'n8n_workflow',\n  source_text_id: $json.sourceTextId, reference: $json.reference } } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "create-job-api",
+      "name": "Create Job (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1728,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire le job_id de la réponse API\nconst input = $input.first().json;\nconst prevData = $('Extract Segments').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur création job',\n        status: 'JOB_CREATION_ERROR'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n     jobId: data.job_id || data.jobId,\n    jobCreated: true\n  }\n}];"
+      },
+      "id": "extract-job-id",
+      "name": "Extract Job ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Préparer le payload pour le worker\nconst data = $input.first().json;\n\nreturn [{\n  json: {\n    workerPayload: {\n      job_id: data.jobId,\n      traite: data.traite,\n      page: data.page,\n      mode: data.mode,\n      target_language: data.targetLanguage,\n      api_key: data.apiKey,\n      openai_api_key: data.openaiApiKey,\n      source_text_id: data.sourceTextId,\n      reference: data.reference,\n      segments: data.segments,\n      request_id: data.requestId\n    },\n    // Garder les autres données pour Format Response\n    jobId: data.jobId,\n    traite: data.traite,\n    page: data.page,\n    segmentsCount: data.segmentsCount,\n    estimatedSeconds: data.estimatedSeconds\n  }\n}];"
+      },
+      "id": "prepare-worker-payload",
+      "name": "Prepare Worker Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-translate-page-worker",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.workerPayload) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "launch-worker",
+      "name": "Launch Worker (async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2272,
+        256
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Préparer la réponse immédiate\nconst input = $('Prepare Worker Payload').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    job_id: input.jobId,\n    status: 'started',\n    traite: input.traite,\n    page: input.page,\n    segments_count: input.segmentsCount,\n    estimated_seconds: input.estimatedSeconds\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2208,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2384,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construire la réponse d'erreur de validation\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+      },
+      "id": "build-validation-error",
+      "name": "Build Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 500 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-page-error",
+      "name": "Respond Page Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1728,
+        304
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Check Existing Translations",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing Translations": {
+      "main": [
+        [
+          {
+            "node": "Analyze Existing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Existing": {
+      "main": [
+        [
+          {
+            "node": "Needs Translation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Translation?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Page Segments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Existing Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Existing Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Existing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Page Segments": {
+      "main": [
+        [
+          {
+            "node": "Extract Segments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Segments": {
+      "main": [
+        [
+          {
+            "node": "Segments Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Segments Found?": {
+      "main": [
+        [
+          {
+            "node": "Create Job (API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Page Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Job (API)": {
+      "main": [
+        [
+          {
+            "node": "Extract Job ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Job ID": {
+      "main": [
+        [
+          {
+            "node": "Prepare Worker Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Worker Payload": {
+      "main": [
+        [
+          {
+            "node": "Launch Worker (async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Launch Worker (async)": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-04T17:19:35.080Z",
+    "createdAt": "2026-02-04T17:19:35.080Z",
+    "versionId": "883e9bb8-61b3-4dd6-9007-de52c5ad1c87",
+    "workflowId": "jCDI1KPDjJ6wsizI",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Torah Page Translation - Start Job\n\n**Endpoint:** POST /webhook/torah-translate-page\n\n**Request:**\n```json\n{\n  \"traite\": \"Berakhot\",\n  \"page\": \"2a\",\n  \"mode\": \"premium\",\n  \"target_language\": \"fr\",\n  \"api_key\": \"...\",\n  \"openai_api_key\": \"...\",\n  \"force\": false\n}\n```\n\n**Parameters:**\n- `force`: Si true, force la retraduction même si existante\n\n**Response (already translated):**\n```json\n{\n  \"success\": true,\n  \"status\": \"already_translated\",\n  \"segments_count\": 14,\n  \"translated_count\": 14,\n  \"segments\": [...]\n}\n```\n\n**Response (started):**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_abc123\",\n  \"status\": \"started\",\n  \"segments_count\": 14,\n  \"estimated_seconds\": 100\n}\n```\n\n**Flow:**\n1. Validate input\n2. Check existing translations\n3. If translated & !force → return existing\n4. Else → Create job, launch worker",
+          "height": 420,
+          "width": 320,
+          "color": 6
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          64,
+          64
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "torah-translate-page",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          400,
+          304
+        ],
+        "webhookId": "torah-translate-page"
+      },
+      {
+        "parameters": {
+          "jsCode": "  // Validation des paramètres\n  const input = $input.first().json;\n  const body = input.body || input;\n\n  const traite = body.traite || '';\n  const page = body.page || '';\n  const mode = body.mode || 'premium';\n  const targetLanguage = body.target_language || 'fr';\n  const apiKey = body.api_key || '';\n  const openaiApiKey = body.openai_api_key || '';\n  const requestId = body.request_id || null;\n  const force = body.force === true || body.force === 'true';\n  const headers = input.headers || {};  // ← AJOUTER\n  // Extraire projectId depuis le HEADER ou le body\n  const projectId = headers['x-project-id'] || body.project_id || body.projectId;\n  const jobType = body.job_type || body.jobType;\n \n  // Validation\n  const errors = [];\n  if (!traite) errors.push('Le champ \"traite\" est requis');\n  if (!page) errors.push('Le champ \"page\" est requis');\n  if (!apiKey) errors.push('Le champ \"api_key\" (Anthropic) est requis');\n  if (!openaiApiKey) errors.push('Le champ \"openai_api_key\" est requis');\n  if (!jobType) errors.push('Le champ \"job_type\" est requis');\n  \n// Générer un job_id unique\n  const jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\n  return [{\n    json: {\n      valid: errors.length === 0,\n      errors: errors,\n      jobId: jobId,\n      jobType: jobType,  // ← AJOUTER,\n      projectId: projectId,\n      traite: traite,\n      page: page,\n      mode: mode,\n      targetLanguage: targetLanguage,\n      apiKey: apiKey,\n      openaiApiKey: openaiApiKey,\n      requestId: requestId,\n      force: force\n    }\n  }];"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          624,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-validation",
+        "name": "Input Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          848,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/talmud/page/{{ encodeURIComponent($json.traite) }}/{{ encodeURIComponent($json.page) }}/segments",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 30000
+          }
+        },
+        "id": "check-existing",
+        "name": "Check Existing Translations",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1072,
+          0
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Analyser les traductions existantes\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Si erreur API (page non trouvée), continuer vers la traduction\nif (statusCode >= 400) {\n  return [{\n    json: {\n      ...prevData,\n      hasExisting: false,\n      needsTranslation: true\n    }\n  }];\n}\n\nconst segmentsCount = data.segments_count || 0;\nconst translatedCount = data.translated_count || 0;\nconst isFullyTranslated = segmentsCount > 0 && translatedCount === segmentsCount;\n\n// Si force=true, toujours retraduire\nif (prevData.force) {\n  return [{\n    json: {\n      ...prevData,\n      hasExisting: isFullyTranslated,\n      needsTranslation: true\n    }\n  }];\n}\n\n// Si déjà traduit et pas force, retourner les existantes\nif (isFullyTranslated) {\n  return [{\n    json: {\n      ...prevData,\n      hasExisting: true,\n      needsTranslation: false,\n      existingData: data\n    }\n  }];\n}\n\n// Sinon, besoin de traduire\nreturn [{\n  json: {\n    ...prevData,\n    hasExisting: false,\n    needsTranslation: true,\n    existingSegmentsCount: segmentsCount,\n    existingTranslatedCount: translatedCount\n  }\n}];"
+        },
+        "id": "analyze-existing",
+        "name": "Analyze Existing",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1280,
+          16
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "check-needs-translation",
+                "leftValue": "={{ $json.needsTranslation }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-needs-translation",
+        "name": "Needs Translation?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1504,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Formater la réponse pour les traductions existantes\nconst input = $input.first().json;\nconst data = input.existingData;\n\nreturn [{\n  json: {\n    success: true,\n    status: 'already_translated',\n    traite: data.traite,\n    page: data.page,\n    reference: data.reference,\n    segments_count: data.segments_count,\n    translated_count: data.translated_count,\n    segments: data.segments\n  }\n}];"
+        },
+        "id": "format-existing",
+        "name": "Format Existing Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1728,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 200,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-existing",
+        "name": "Respond Existing",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1952,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/talmud/text/{{ encodeURIComponent($json.traite) }}/{{ encodeURIComponent($json.page) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 30000
+          }
+        },
+        "id": "fetch-page",
+        "name": "Fetch Page Segments",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1072,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Extraire les segments de la page\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier les erreurs\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Extraire les segments depuis extra_data.versions[0].text\nlet segments = [];\nif (data.extra_data?.versions?.[0]?.text) {\n  segments = data.extra_data.versions[0].text;\n} else if (data.segments) {\n  segments = data.segments;\n}\n\nif (segments.length === 0) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: 'Aucun segment trouvé pour cette page',\n        status: 'NO_SEGMENTS'\n      }\n    }\n  }];\n}\n\n// Estimation du temps (~7 secondes par segment)\nconst estimatedSeconds = Math.ceil(segments.length * 7);\n\nreturn [{\n  json: {\n    success: true,\n    jobId: prevData.jobId,\n    jobType: prevData.jobType,      // ← AJOUTER\n    projectId: prevData.projectId,  // ← AJOUTER    \n    traite: prevData.traite,\n    page: prevData.page,\n    mode: prevData.mode,\n    targetLanguage: prevData.targetLanguage,\n    apiKey: prevData.apiKey,\n    openaiApiKey: prevData.openaiApiKey,\n    requestId: prevData.requestId,\n    sourceTextId: data.id || null,\n    reference: data.reference || `${prevData.traite} ${prevData.page}`,\n    segments: segments,\n    segmentsCount: segments.length,\n    estimatedSeconds: estimatedSeconds\n  }\n}];"
+        },
+        "id": "extract-segments",
+        "name": "Extract Segments",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1280,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "check-success",
+                "leftValue": "={{ $json.success }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-segments",
+        "name": "Segments Found?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1504,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/v2/jobs",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "= X-Project-ID",
+                "value": "={{ $json.projectId }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ job_type: $json.jobType, input: { traite: $json.traite, page: $json.page, target_language:\n  $json.targetLanguage, mode: $json.mode, segments_count: $json.segmentsCount, metadata: { requested_by: 'n8n_workflow',\n  source_text_id: $json.sourceTextId, reference: $json.reference } } }) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 10000
+          }
+        },
+        "id": "create-job-api",
+        "name": "Create Job (API)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1728,
+          112
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Extraire le job_id de la réponse API\nconst input = $input.first().json;\nconst prevData = $('Extract Segments').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur création job',\n        status: 'JOB_CREATION_ERROR'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n     jobId: data.job_id || data.jobId,\n    jobCreated: true\n  }\n}];"
+        },
+        "id": "extract-job-id",
+        "name": "Extract Job ID",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1952,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Préparer le payload pour le worker\nconst data = $input.first().json;\n\nreturn [{\n  json: {\n    workerPayload: {\n      job_id: data.jobId,\n      traite: data.traite,\n      page: data.page,\n      mode: data.mode,\n      target_language: data.targetLanguage,\n      api_key: data.apiKey,\n      openai_api_key: data.openaiApiKey,\n      source_text_id: data.sourceTextId,\n      reference: data.reference,\n      segments: data.segments,\n      request_id: data.requestId\n    },\n    // Garder les autres données pour Format Response\n    jobId: data.jobId,\n    traite: data.traite,\n    page: data.page,\n    segmentsCount: data.segmentsCount,\n    estimatedSeconds: data.estimatedSeconds\n  }\n}];"
+        },
+        "id": "prepare-worker-payload",
+        "name": "Prepare Worker Payload",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2112,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-translate-page-worker",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.workerPayload) }}",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "launch-worker",
+        "name": "Launch Worker (async)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2272,
+          256
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Préparer la réponse immédiate\nconst input = $('Prepare Worker Payload').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    job_id: input.jobId,\n    status: 'started',\n    traite: input.traite,\n    page: input.page,\n    segments_count: input.segmentsCount,\n    estimated_seconds: input.estimatedSeconds\n  }\n}];"
+        },
+        "id": "format-response",
+        "name": "Format Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2208,
+          -96
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 200,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2384,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Construire la réponse d'erreur de validation\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+        },
+        "id": "build-validation-error",
+        "name": "Build Validation Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1072,
+          432
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-validation-error",
+        "name": "Respond Validation Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1280,
+          432
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.code || 500 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-page-error",
+        "name": "Respond Page Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1728,
+          304
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Input Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Input Valid?": {
+        "main": [
+          [
+            {
+              "node": "Check Existing Translations",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Existing Translations": {
+        "main": [
+          [
+            {
+              "node": "Analyze Existing",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Analyze Existing": {
+        "main": [
+          [
+            {
+              "node": "Needs Translation?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Needs Translation?": {
+        "main": [
+          [
+            {
+              "node": "Fetch Page Segments",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Format Existing Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Existing Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Existing",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Page Segments": {
+        "main": [
+          [
+            {
+              "node": "Extract Segments",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Segments": {
+        "main": [
+          [
+            {
+              "node": "Segments Found?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Segments Found?": {
+        "main": [
+          [
+            {
+              "node": "Create Job (API)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Page Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Job (API)": {
+        "main": [
+          [
+            {
+              "node": "Extract Job ID",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Job ID": {
+        "main": [
+          [
+            {
+              "node": "Prepare Worker Payload",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Worker Payload": {
+        "main": [
+          [
+            {
+              "node": "Launch Worker (async)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Launch Worker (async)": {
+        "main": [
+          [
+            {
+              "node": "Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

@@ -1,0 +1,1071 @@
+{
+  "name": "JOBS---User-Cleanup",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jobs/user-cleanup",
+        "options": {
+          "responseMode": "responseNode"
+        }
+      },
+      "id": "jobs-clean-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "jobs-user-cleanup-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extraction Project ID ---\nconst projectId = headers['x-project-id'] \n  || headers['X-Project-ID'] \n  || headers['X-Project-Id']\n  || 'unknown';\n\n// --- Validation discord_user_id ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis'\n  };\n}\n\n// --- Optional: max_age_minutes (default 15) ---\nconst maxAgeMinutes = body.max_age_minutes || 15;\n\n// --- Optional: dry_run (default false) ---\nconst dryRun = body.dry_run === true;\n\n// --- Retour des donnees validees ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: String(body.discord_user_id),\n    max_age_minutes: maxAgeMinutes,\n    dry_run: dryRun,\n    project_id: projectId\n  }\n};"
+      },
+      "id": "jobs-clean-0002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "jobs-clean-0003",
+      "name": "Check Validation Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/admin/document-jobs/stats?max_age_minutes={{ $json.data.max_age_minutes }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.data.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "jobs-clean-0004",
+      "name": "Get Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        200
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FILTER STATS FOR USER & PREPARE CLEANUP\n// ============================================\n\nconst stats = $input.first().json;\nconst userData = $('Validate Input').first().json.data;\nconst userId = userData.discord_user_id;\n\n// --- Check API errors ---\nif (!stats.success) {\n  return {\n    error: true,\n    error_code: 'STATS_API_ERROR',\n    message: stats.error?.message || 'Erreur lors de la récupération des stats'\n  };\n}\n\n// --- Get user's job count ---\nconst userJobCount = stats.jobs_by_user?.[userId] || 0;\n\n// --- Return filtered stats ---\nreturn {\n  error: false,\n  user_stats: {\n    discord_user_id: userId,\n    total_jobs: userJobCount,\n    zombie_jobs_global: stats.zombie_jobs || 0\n  },\n  global_stats: {\n    total_jobs: stats.total_jobs,\n    active_jobs: stats.active_jobs,\n    zombie_jobs: stats.zombie_jobs,\n    jobs_by_status: stats.jobs_by_status\n  },\n  should_cleanup: stats.zombie_jobs > 0,\n  dry_run: userData.dry_run,\n  max_age_minutes: userData.max_age_minutes,\n  project_id: userData.project_id\n};"
+      },
+      "id": "jobs-clean-0005",
+      "name": "Filter User Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-cleanup",
+              "leftValue": "={{ $json.should_cleanup }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "jobs-clean-0006",
+      "name": "Has Zombies?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/admin/document-jobs/cleanup?max_age_minutes={{ $json.max_age_minutes }}&dry_run={{ $json.dry_run }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "jobs-clean-0007",
+      "name": "Call Cleanup API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        100
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESS CLEANUP & CHECK REFUND\n// ============================================\n\nconst cleanupResult = $input.first().json;\nconst statsData = $('Filter User Stats').first().json;\n\n// --- Check API errors ---\nif (!cleanupResult.success) {\n  return {\n    error: true,\n    error_code: 'CLEANUP_API_ERROR',\n    message: cleanupResult.error?.message || 'Erreur lors du cleanup'\n  };\n}\n\n// --- Extract refund details ---\nconst refundDetails = cleanupResult.refund_details || [];\n\nreturn {\n  error: false,\n  dry_run: statsData.dry_run,\n  stats_before: statsData.global_stats,\n  cleaned_count: cleanupResult.cleaned_count || 0,\n  refund_required: cleanupResult.refund_required === true && refundDetails.length > 0 && !statsData.dry_run,\n  refund_details: refundDetails,\n  cleaned_jobs: cleanupResult.cleaned_jobs || []\n};"
+      },
+      "id": "jobs-clean-0008",
+      "name": "Process Cleanup Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-refund",
+              "leftValue": "={{ $json.refund_required }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "jobs-clean-0009",
+      "name": "Refund Required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE REFUND ITEMS\n// ============================================\n\nconst data = $input.first().json;\nconst refundDetails = data.refund_details || [];\n\n// --- Store cleanup data for later ---\nconst cleanupData = {\n  dry_run: data.dry_run,\n  stats_before: data.stats_before,\n  cleaned_count: data.cleaned_count,\n  cleaned_jobs: data.cleaned_jobs\n};\n\n// --- Return array of refund items for loop ---\nreturn refundDetails.map(item => ({\n  user_id: item.user_id,\n  job_id: item.job_id,\n  guild_id: item.guild_id,\n  filename: item.filename,\n  age_minutes: item.age_minutes,\n  credits_to_refund: item.credits_to_refund || 1,\n  _cleanup_data: cleanupData\n}));"
+      },
+      "id": "jobs-clean-0010",
+      "name": "Prepare Refund Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/webhook/account/credit",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  discord_user_id: $json.user_id,\n  guild_id: $json.guild_id,\n  amount: $json.credits_to_refund,\n  reason: 'Refund job zombie: ' + $json.filename + ' (age: ' + Math.round($json.age_minutes) + ' min)'\n}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "jobs-clean-0011",
+      "name": "Refund Credits",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// AGGREGATE REFUND RESULTS\n// ============================================\n\nconst items = $input.all();\nconst refundItems = $('Prepare Refund Items').all();\n\nlet totalRefunded = 0;\nconst refundResults = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const result = items[i].json;\n  const original = refundItems[i]?.json || {};\n  \n  const success = result.success !== false;\n  if (success) {\n    totalRefunded += original.credits_to_refund || 1;\n  }\n  \n  refundResults.push({\n    user_id: original.user_id,\n    credits: original.credits_to_refund || 1,\n    success: success\n  });\n}\n\n// --- Get cleanup data from first item ---\nconst cleanupData = refundItems[0]?.json?._cleanup_data || {};\n\nreturn {\n  success: true,\n  message: 'Jobs zombies nettoyés avec remboursement',\n  dry_run: false,\n  stats_before: cleanupData.stats_before,\n  cleanup_result: {\n    cleaned_count: cleanupData.cleaned_count || 0,\n    refunds_processed: refundResults.length,\n    total_credits_refunded: totalRefunded,\n    refund_details: refundResults\n  }\n};"
+      },
+      "id": "jobs-clean-0012",
+      "name": "Aggregate Refund Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT NO REFUND RESPONSE\n// ============================================\n\nconst data = $input.first().json;\n\nreturn {\n  success: true,\n  message: data.dry_run ? 'Prévisualisation du nettoyage' : 'Jobs zombies nettoyés (pas de remboursement nécessaire)',\n  dry_run: data.dry_run,\n  stats_before: data.stats_before,\n  cleanup_result: {\n    cleaned_count: data.cleaned_count || 0,\n    refunds_processed: 0,\n    total_credits_refunded: 0\n  }\n};"
+      },
+      "id": "jobs-clean-0013",
+      "name": "Format No Refund Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT NO ZOMBIES RESPONSE\n// ============================================\n\nconst statsData = $input.first().json;\n\nreturn {\n  success: true,\n  message: 'Aucun job zombie à nettoyer',\n  user_stats: statsData.user_stats,\n  global_stats: statsData.global_stats,\n  cleanup_result: {\n    cleaned_count: 0,\n    refunds_processed: 0,\n    total_credits_refunded: 0\n  }\n};"
+      },
+      "id": "jobs-clean-0014",
+      "name": "Format No Zombies Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT ERROR RESPONSE (Validation)\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation',\n    http_status: 400\n  }\n};"
+      },
+      "id": "jobs-clean-0015",
+      "name": "Format Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "jobs-clean-0016",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.http_status || 400 }}"
+        }
+      },
+      "id": "jobs-clean-0017",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Check Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Format Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Stats": {
+      "main": [
+        [
+          {
+            "node": "Filter User Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter User Stats": {
+      "main": [
+        [
+          {
+            "node": "Has Zombies?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Zombies?": {
+      "main": [
+        [
+          {
+            "node": "Call Cleanup API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format No Zombies Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Cleanup API": {
+      "main": [
+        [
+          {
+            "node": "Process Cleanup Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Cleanup Result": {
+      "main": [
+        [
+          {
+            "node": "Refund Required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund Required?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Refund Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format No Refund Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Refund Items": {
+      "main": [
+        [
+          {
+            "node": "Refund Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund Credits": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Refund Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Refund Results": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format No Refund Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format No Zombies Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "7d0624b7-ab19-41e1-a9ae-2655d523ee7c",
+    "workflowId": "uIJynqZpM2V18xst",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "jobs/user-cleanup",
+          "options": {
+            "responseMode": "responseNode"
+          }
+        },
+        "id": "jobs-clean-0001",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          300
+        ],
+        "webhookId": "jobs-user-cleanup-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extraction Project ID ---\nconst projectId = headers['x-project-id'] \n  || headers['X-Project-ID'] \n  || headers['X-Project-Id']\n  || 'unknown';\n\n// --- Validation discord_user_id ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis'\n  };\n}\n\n// --- Optional: max_age_minutes (default 15) ---\nconst maxAgeMinutes = body.max_age_minutes || 15;\n\n// --- Optional: dry_run (default false) ---\nconst dryRun = body.dry_run === true;\n\n// --- Retour des donnees validees ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: String(body.discord_user_id),\n    max_age_minutes: maxAgeMinutes,\n    dry_run: dryRun,\n    project_id: projectId\n  }\n};"
+        },
+        "id": "jobs-clean-0002",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          220,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-error",
+                "leftValue": "={{ $json.error }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "jobs-clean-0003",
+        "name": "Check Validation Error",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          440,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $env.API_URL }}/api/admin/document-jobs/stats?max_age_minutes={{ $json.data.max_age_minutes }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Project-ID",
+                "value": "={{ $json.data.project_id }}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "jobs-clean-0004",
+        "name": "Get Stats",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          660,
+          200
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FILTER STATS FOR USER & PREPARE CLEANUP\n// ============================================\n\nconst stats = $input.first().json;\nconst userData = $('Validate Input').first().json.data;\nconst userId = userData.discord_user_id;\n\n// --- Check API errors ---\nif (!stats.success) {\n  return {\n    error: true,\n    error_code: 'STATS_API_ERROR',\n    message: stats.error?.message || 'Erreur lors de la récupération des stats'\n  };\n}\n\n// --- Get user's job count ---\nconst userJobCount = stats.jobs_by_user?.[userId] || 0;\n\n// --- Return filtered stats ---\nreturn {\n  error: false,\n  user_stats: {\n    discord_user_id: userId,\n    total_jobs: userJobCount,\n    zombie_jobs_global: stats.zombie_jobs || 0\n  },\n  global_stats: {\n    total_jobs: stats.total_jobs,\n    active_jobs: stats.active_jobs,\n    zombie_jobs: stats.zombie_jobs,\n    jobs_by_status: stats.jobs_by_status\n  },\n  should_cleanup: stats.zombie_jobs > 0,\n  dry_run: userData.dry_run,\n  max_age_minutes: userData.max_age_minutes,\n  project_id: userData.project_id\n};"
+        },
+        "id": "jobs-clean-0005",
+        "name": "Filter User Stats",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-cleanup",
+                "leftValue": "={{ $json.should_cleanup }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "jobs-clean-0006",
+        "name": "Has Zombies?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/admin/document-jobs/cleanup?max_age_minutes={{ $json.max_age_minutes }}&dry_run={{ $json.dry_run }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Project-ID",
+                "value": "={{ $json.project_id }}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "jobs-clean-0007",
+        "name": "Call Cleanup API",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1320,
+          100
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PROCESS CLEANUP & CHECK REFUND\n// ============================================\n\nconst cleanupResult = $input.first().json;\nconst statsData = $('Filter User Stats').first().json;\n\n// --- Check API errors ---\nif (!cleanupResult.success) {\n  return {\n    error: true,\n    error_code: 'CLEANUP_API_ERROR',\n    message: cleanupResult.error?.message || 'Erreur lors du cleanup'\n  };\n}\n\n// --- Extract refund details ---\nconst refundDetails = cleanupResult.refund_details || [];\n\nreturn {\n  error: false,\n  dry_run: statsData.dry_run,\n  stats_before: statsData.global_stats,\n  cleaned_count: cleanupResult.cleaned_count || 0,\n  refund_required: cleanupResult.refund_required === true && refundDetails.length > 0 && !statsData.dry_run,\n  refund_details: refundDetails,\n  cleaned_jobs: cleanupResult.cleaned_jobs || []\n};"
+        },
+        "id": "jobs-clean-0008",
+        "name": "Process Cleanup Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1540,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-refund",
+                "leftValue": "={{ $json.refund_required }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "jobs-clean-0009",
+        "name": "Refund Required?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1760,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PREPARE REFUND ITEMS\n// ============================================\n\nconst data = $input.first().json;\nconst refundDetails = data.refund_details || [];\n\n// --- Store cleanup data for later ---\nconst cleanupData = {\n  dry_run: data.dry_run,\n  stats_before: data.stats_before,\n  cleaned_count: data.cleaned_count,\n  cleaned_jobs: data.cleaned_jobs\n};\n\n// --- Return array of refund items for loop ---\nreturn refundDetails.map(item => ({\n  user_id: item.user_id,\n  job_id: item.job_id,\n  guild_id: item.guild_id,\n  filename: item.filename,\n  age_minutes: item.age_minutes,\n  credits_to_refund: item.credits_to_refund || 1,\n  _cleanup_data: cleanupData\n}));"
+        },
+        "id": "jobs-clean-0010",
+        "name": "Prepare Refund Items",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1980,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/webhook/account/credit",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  discord_user_id: $json.user_id,\n  guild_id: $json.guild_id,\n  amount: $json.credits_to_refund,\n  reason: 'Refund job zombie: ' + $json.filename + ' (age: ' + Math.round($json.age_minutes) + ' min)'\n}) }}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "jobs-clean-0011",
+        "name": "Refund Credits",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2200,
+          0
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// AGGREGATE REFUND RESULTS\n// ============================================\n\nconst items = $input.all();\nconst refundItems = $('Prepare Refund Items').all();\n\nlet totalRefunded = 0;\nconst refundResults = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const result = items[i].json;\n  const original = refundItems[i]?.json || {};\n  \n  const success = result.success !== false;\n  if (success) {\n    totalRefunded += original.credits_to_refund || 1;\n  }\n  \n  refundResults.push({\n    user_id: original.user_id,\n    credits: original.credits_to_refund || 1,\n    success: success\n  });\n}\n\n// --- Get cleanup data from first item ---\nconst cleanupData = refundItems[0]?.json?._cleanup_data || {};\n\nreturn {\n  success: true,\n  message: 'Jobs zombies nettoyés avec remboursement',\n  dry_run: false,\n  stats_before: cleanupData.stats_before,\n  cleanup_result: {\n    cleaned_count: cleanupData.cleaned_count || 0,\n    refunds_processed: refundResults.length,\n    total_credits_refunded: totalRefunded,\n    refund_details: refundResults\n  }\n};"
+        },
+        "id": "jobs-clean-0012",
+        "name": "Aggregate Refund Results",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2420,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT NO REFUND RESPONSE\n// ============================================\n\nconst data = $input.first().json;\n\nreturn {\n  success: true,\n  message: data.dry_run ? 'Prévisualisation du nettoyage' : 'Jobs zombies nettoyés (pas de remboursement nécessaire)',\n  dry_run: data.dry_run,\n  stats_before: data.stats_before,\n  cleanup_result: {\n    cleaned_count: data.cleaned_count || 0,\n    refunds_processed: 0,\n    total_credits_refunded: 0\n  }\n};"
+        },
+        "id": "jobs-clean-0013",
+        "name": "Format No Refund Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1980,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT NO ZOMBIES RESPONSE\n// ============================================\n\nconst statsData = $input.first().json;\n\nreturn {\n  success: true,\n  message: 'Aucun job zombie à nettoyer',\n  user_stats: statsData.user_stats,\n  global_stats: statsData.global_stats,\n  cleanup_result: {\n    cleaned_count: 0,\n    refunds_processed: 0,\n    total_credits_refunded: 0\n  }\n};"
+        },
+        "id": "jobs-clean-0014",
+        "name": "Format No Zombies Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT ERROR RESPONSE (Validation)\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation',\n    http_status: 400\n  }\n};"
+        },
+        "id": "jobs-clean-0015",
+        "name": "Format Validation Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "jobs-clean-0016",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2640,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.http_status || 400 }}"
+          }
+        },
+        "id": "jobs-clean-0017",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          880,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Check Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Format Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Get Stats",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Stats": {
+        "main": [
+          [
+            {
+              "node": "Filter User Stats",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Filter User Stats": {
+        "main": [
+          [
+            {
+              "node": "Has Zombies?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Zombies?": {
+        "main": [
+          [
+            {
+              "node": "Call Cleanup API",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Format No Zombies Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Cleanup API": {
+        "main": [
+          [
+            {
+              "node": "Process Cleanup Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Process Cleanup Result": {
+        "main": [
+          [
+            {
+              "node": "Refund Required?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Refund Required?": {
+        "main": [
+          [
+            {
+              "node": "Prepare Refund Items",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Format No Refund Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Refund Items": {
+        "main": [
+          [
+            {
+              "node": "Refund Credits",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Refund Credits": {
+        "main": [
+          [
+            {
+              "node": "Aggregate Refund Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Aggregate Refund Results": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format No Refund Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format No Zombies Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

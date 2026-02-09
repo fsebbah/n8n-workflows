@@ -1,0 +1,417 @@
+{
+  "name": "MCP - Image Generator",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook-imagegen",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "image-generator-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "image-generator",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.prompt }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-prompt",
+      "name": "Error: No Prompt",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: prompt\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "dalle-generate",
+      "name": "DALL-E Generate Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/generations",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.body.options?.model || 'dall-e-3' }}\",\n  \"prompt\": \"{{ $json.body.prompt }}\",\n  \"n\": {{ $json.body.options?.n || 1 }},\n  \"size\": \"{{ $json.body.options?.size || '1024x1024' }}\",\n  \"quality\": \"{{ $json.body.options?.quality || 'standard' }}\",\n  \"style\": \"{{ $json.body.options?.style || 'vivid' }}\",\n  \"response_format\": \"{{ $json.body.options?.response_format || 'url' }}\"\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst PRICING = {\n  'dall-e-3': {\n    'standard': { '1024x1024': 0.04, '1792x1024': 0.08, '1024x1792': 0.08 },\n    'hd': { '1024x1024': 0.08, '1792x1024': 0.12, '1024x1792': 0.12 }\n  },\n  'dall-e-2': {\n    'standard': { '256x256': 0.016, '512x512': 0.018, '1024x1024': 0.02 }\n  }\n};\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Unknown error',\n          status: item.json.error.type || 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n\n  const model = webhookData.body.options?.model || 'dall-e-3';\n  const quality = webhookData.body.options?.quality || 'standard';\n  const size = webhookData.body.options?.size || '1024x1024';\n  const n = webhookData.body.options?.n || 1;\n  \n  const unitPrice = PRICING[model]?.[quality]?.[size] || 0.04;\n  const costEstimate = unitPrice * n;\n\n  const images = (item.json.data || []).map(img => ({\n    url: img.url || null,\n    b64_json: img.b64_json || null,\n    revised_prompt: img.revised_prompt || null,\n    size: size\n  }));\n\n  return {\n    json: {\n      success: true,\n      data: {\n        images: images,\n        prompt_original: webhookData.body.prompt,\n        prompt_revised: images[0]?.revised_prompt || null\n      },\n      meta: {\n        provider: 'openai',\n        model: model,\n        execution_mode: webhookData.body.execution_mode || 'online',\n        cost_estimate_usd: costEstimate\n      }\n    }\n  };\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 600,
+        "height": 280,
+        "content": "## MCP - Image Generator (DALL-E)\n\n**Endpoint:** POST /webhook/image-generator\n\n**Parameters:**\n- `prompt` (required): Image generation prompt\n- `openai_api_key` (required): OpenAI API key\n- `options.model` (optional): dall-e-3 | dall-e-2 (default: dall-e-3)\n- `options.size` (optional): 1024x1024 | 1792x1024 | 1024x1792 (default: 1024x1024)\n- `options.quality` (optional): standard | hd (default: standard)\n- `options.style` (optional): vivid | natural (default: vivid)\n- `options.n` (optional): Number of images (default: 1)\n- `options.response_format` (optional): url | b64_json (default: url)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Generated image URL(s) or base64, revised prompt, cost estimate\n\n**Pricing (DALL-E 3):** Standard $0.04-0.08, HD $0.08-0.12 per image"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "DALL-E Generate Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DALL-E Generate Image": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "12989a77-9eb9-48d3-9056-a2ee55769df5",
+    "workflowId": "jXnW0TwAF98ZJ7vq",
+    "nodes": [
+      {
+        "id": "webhook-imagegen",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "image-generator-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "image-generator",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.body.prompt }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-no-prompt",
+        "name": "Error: No Prompt",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          700,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: prompt\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "dalle-generate",
+        "name": "DALL-E Generate Image",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          700,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/images/generations",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.body.openai_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"{{ $json.body.options?.model || 'dall-e-3' }}\",\n  \"prompt\": \"{{ $json.body.prompt }}\",\n  \"n\": {{ $json.body.options?.n || 1 }},\n  \"size\": \"{{ $json.body.options?.size || '1024x1024' }}\",\n  \"quality\": \"{{ $json.body.options?.quality || 'standard' }}\",\n  \"style\": \"{{ $json.body.options?.style || 'vivid' }}\",\n  \"response_format\": \"{{ $json.body.options?.response_format || 'url' }}\"\n}",
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "format-output",
+        "name": "Format Output",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          920,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst PRICING = {\n  'dall-e-3': {\n    'standard': { '1024x1024': 0.04, '1792x1024': 0.08, '1024x1792': 0.08 },\n    'hd': { '1024x1024': 0.08, '1792x1024': 0.12, '1024x1792': 0.12 }\n  },\n  'dall-e-2': {\n    'standard': { '256x256': 0.016, '512x512': 0.018, '1024x1024': 0.02 }\n  }\n};\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Unknown error',\n          status: item.json.error.type || 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n\n  const model = webhookData.body.options?.model || 'dall-e-3';\n  const quality = webhookData.body.options?.quality || 'standard';\n  const size = webhookData.body.options?.size || '1024x1024';\n  const n = webhookData.body.options?.n || 1;\n  \n  const unitPrice = PRICING[model]?.[quality]?.[size] || 0.04;\n  const costEstimate = unitPrice * n;\n\n  const images = (item.json.data || []).map(img => ({\n    url: img.url || null,\n    b64_json: img.b64_json || null,\n    revised_prompt: img.revised_prompt || null,\n    size: size\n  }));\n\n  return {\n    json: {\n      success: true,\n      data: {\n        images: images,\n        prompt_original: webhookData.body.prompt,\n        prompt_revised: images[0]?.revised_prompt || null\n      },\n      meta: {\n        provider: 'openai',\n        model: model,\n        execution_mode: webhookData.body.execution_mode || 'online',\n        cost_estimate_usd: costEstimate\n      }\n    }\n  };\n});\n\nreturn results;"
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1140,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          60
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 600,
+          "height": 280,
+          "content": "## MCP - Image Generator (DALL-E)\n\n**Endpoint:** POST /webhook/image-generator\n\n**Parameters:**\n- `prompt` (required): Image generation prompt\n- `openai_api_key` (required): OpenAI API key\n- `options.model` (optional): dall-e-3 | dall-e-2 (default: dall-e-3)\n- `options.size` (optional): 1024x1024 | 1792x1024 | 1024x1792 (default: 1024x1024)\n- `options.quality` (optional): standard | hd (default: standard)\n- `options.style` (optional): vivid | natural (default: vivid)\n- `options.n` (optional): Number of images (default: 1)\n- `options.response_format` (optional): url | b64_json (default: url)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Generated image URL(s) or base64, revised prompt, cost estimate\n\n**Pricing (DALL-E 3):** Standard $0.04-0.08, HD $0.08-0.12 per image"
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "DALL-E Generate Image",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: No Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "DALL-E Generate Image": {
+        "main": [
+          [
+            {
+              "node": "Format Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

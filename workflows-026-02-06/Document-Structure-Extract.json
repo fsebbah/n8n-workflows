@@ -1,0 +1,570 @@
+{
+  "name": "Document Structure Extract",
+  "active": true,
+  "nodes": [
+    {
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 650,
+        "height": 380,
+        "content": "## Document Structure Extract\n\n**Endpoint:** POST /webhook/document-structure-extract\n\n**Purpose:** Generic LLM-powered document extraction with flexible schema.\n\n**Request:**\n```json\n{\n  \"text\": \"# POULET AU CURRY\\n\\n1. Laver les blancs...\",\n  \"schema\": {\n    \"type\": \"recipe\",\n    \"fields\": {\n      \"title\": \"string\",\n      \"servings\": \"integer\",\n      \"ingredients\": [{\"name\": \"string\", \"quantity\": \"number\", \"unit\": \"string\"}]\n    }\n  },\n  \"context\": { \"type\": \"recipe\", \"language\": \"fr\" },\n  \"plugin_context\": { \"api_keys\": { \"anthropic\": \"sk-ant-...\" } }\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"extracted\": { ... },\n  \"confidence\": 0.92,\n  \"missing_fields\": [\"description\"]\n}\n```\n\n**RFC:** RFC-018 (Recipe Enrichment)"
+      }
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "document-structure-extract",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "document-structure-extract",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\n// Validate required fields\nconst text = body.text;\nconst schema = body.schema;\nconst context = body.context || {};\nconst pluginContext = body.plugin_context || {};\nconst apiKey = pluginContext.api_keys?.anthropic;\n\nconst errors = [];\nif (!text || text.trim() === '') errors.push('text is required');\nif (!schema) errors.push('schema is required');\nif (!schema?.fields) errors.push('schema.fields is required');\nif (!apiKey) errors.push('plugin_context.api_keys.anthropic is required');\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// Extract config with defaults\nconst llmModel = pluginContext.llm_model || 'claude-3-haiku-20240307';\nconst language = context.language || 'fr';\nconst documentType = schema.type || context.type || 'document';\n\nreturn {\n  json: {\n    valid: true,\n    text: text.trim(),\n    schema: schema,\n    context: {\n      type: documentType,\n      language: language\n    },\n    plugin_context: pluginContext,\n    llm_model: llmModel,\n    api_key: apiKey\n  }\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        550
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error || { code: 400, message: 'Validation error', status: 'BAD_REQUEST' } }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "build-prompt",
+      "name": "Build LLM Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst schema = input.schema;\nconst text = input.text;\nconst language = input.context.language;\nconst documentType = input.context.type;\n\n// Build schema description for the prompt\nconst schemaDescription = JSON.stringify(schema.fields, null, 2);\n\n// Build the prompt\nconst systemPrompt = `Tu es un assistant expert en extraction de données structurées. Tu extrais les informations d'un document de type \"${documentType}\" selon le schéma fourni.\n\nRègles:\n1. Réponds UNIQUEMENT en JSON valide, sans texte avant ou après\n2. Respecte strictement le schéma fourni\n3. Si une information n'est pas trouvée, utilise null\n4. Pour les nombres, convertis les fractions et textes (\"une\" → 1, \"1/2\" → 0.5)\n5. Pour les unités, normalise (\"cuillère à soupe\" → \"c.s.\", \"grammes\" → \"g\")\n6. Langue du document: ${language}`;\n\nconst userPrompt = `Extrait les données structurées du document suivant selon ce schéma:\n\n**Schéma attendu:**\n\\`\\`\\`json\n${schemaDescription}\n\\`\\`\\`\n\n**Document à analyser:**\n${text}\n\n**Réponds avec un JSON contenant:**\n1. \"extracted\": l'objet extrait selon le schéma\n2. \"missing_fields\": liste des champs non trouvés ou null\n3. \"notes\": remarques éventuelles sur l'extraction`;\n\nreturn {\n  json: {\n    ...input,\n    system_prompt: systemPrompt,\n    user_prompt: userPrompt\n  }\n};"
+      }
+    },
+    {
+      "id": "claude-api",
+      "name": "Claude API Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: $json.llm_model,\n  max_tokens: 2000,\n  temperature: 0.1,\n  system: $json.system_prompt,\n  messages: [{\n    role: 'user',\n    content: $json.user_prompt\n  }]\n}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-response",
+      "name": "Parse LLM Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Build LLM Prompt').first().json;\nconst statusCode = input.statusCode || 200;\n\n// Handle LLM API error\nif (statusCode >= 400) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: input.body?.error?.message || 'LLM API error',\n        status: 'LLM_ERROR'\n      }\n    }\n  };\n}\n\n// Extract LLM response content\nconst content = input.body?.content?.[0]?.text || '';\n\n// Parse JSON from LLM response\nlet parsed;\ntry {\n  // Try to extract JSON from the response\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to parse LLM response: ' + e.message,\n        status: 'PARSE_ERROR',\n        raw_response: content.substring(0, 500)\n      }\n    }\n  };\n}\n\n// Calculate confidence based on missing fields\nconst extracted = parsed.extracted || parsed;\nconst missingFields = parsed.missing_fields || [];\nconst schemaFields = Object.keys(prevData.schema.fields || {});\nconst totalFields = schemaFields.length;\nconst foundFields = totalFields - missingFields.length;\nconst confidence = totalFields > 0 ? Math.round((foundFields / totalFields) * 100) / 100 : 1;\n\nreturn {\n  json: {\n    success: true,\n    extracted: extracted,\n    confidence: confidence,\n    missing_fields: missingFields,\n    notes: parsed.notes || null,\n    meta: {\n      provider: 'anthropic',\n      model: prevData.llm_model,\n      document_type: prevData.context.type,\n      language: prevData.context.language,\n      input_length: prevData.text.length\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1680,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Build LLM Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM Prompt": {
+      "main": [
+        [
+          {
+            "node": "Claude API Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude API Extract": {
+      "main": [
+        [
+          {
+            "node": "Parse LLM Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse LLM Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "232311d4-0ada-4df5-8c98-233c44a0ed8c",
+    "workflowId": "KMNE2BVahFJcDycQ",
+    "nodes": [
+      {
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          60
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 650,
+          "height": 380,
+          "content": "## Document Structure Extract\n\n**Endpoint:** POST /webhook/document-structure-extract\n\n**Purpose:** Generic LLM-powered document extraction with flexible schema.\n\n**Request:**\n```json\n{\n  \"text\": \"# POULET AU CURRY\\n\\n1. Laver les blancs...\",\n  \"schema\": {\n    \"type\": \"recipe\",\n    \"fields\": {\n      \"title\": \"string\",\n      \"servings\": \"integer\",\n      \"ingredients\": [{\"name\": \"string\", \"quantity\": \"number\", \"unit\": \"string\"}]\n    }\n  },\n  \"context\": { \"type\": \"recipe\", \"language\": \"fr\" },\n  \"plugin_context\": { \"api_keys\": { \"anthropic\": \"sk-ant-...\" } }\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"extracted\": { ... },\n  \"confidence\": 0.92,\n  \"missing_fields\": [\"description\"]\n}\n```\n\n**RFC:** RFC-018 (Recipe Enrichment)"
+        }
+      },
+      {
+        "id": "webhook-trigger",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          400
+        ],
+        "webhookId": "document-structure-extract",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "document-structure-extract",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          480,
+          400
+        ],
+        "parameters": {
+          "jsCode": "const body = $input.first().json.body || {};\n\n// Validate required fields\nconst text = body.text;\nconst schema = body.schema;\nconst context = body.context || {};\nconst pluginContext = body.plugin_context || {};\nconst apiKey = pluginContext.api_keys?.anthropic;\n\nconst errors = [];\nif (!text || text.trim() === '') errors.push('text is required');\nif (!schema) errors.push('schema is required');\nif (!schema?.fields) errors.push('schema.fields is required');\nif (!apiKey) errors.push('plugin_context.api_keys.anthropic is required');\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// Extract config with defaults\nconst llmModel = pluginContext.llm_model || 'claude-3-haiku-20240307';\nconst language = context.language || 'fr';\nconst documentType = schema.type || context.type || 'document';\n\nreturn {\n  json: {\n    valid: true,\n    text: text.trim(),\n    schema: schema,\n    context: {\n      type: documentType,\n      language: language\n    },\n    plugin_context: pluginContext,\n    llm_model: llmModel,\n    api_key: apiKey\n  }\n};"
+        }
+      },
+      {
+        "id": "if-valid",
+        "name": "Input Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          720,
+          400
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "respond-validation-error",
+        "name": "Respond Validation Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          960,
+          550
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: $json.error || { code: 400, message: 'Validation error', status: 'BAD_REQUEST' } }) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": "build-prompt",
+        "name": "Build LLM Prompt",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          960,
+          400
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst schema = input.schema;\nconst text = input.text;\nconst language = input.context.language;\nconst documentType = input.context.type;\n\n// Build schema description for the prompt\nconst schemaDescription = JSON.stringify(schema.fields, null, 2);\n\n// Build the prompt\nconst systemPrompt = `Tu es un assistant expert en extraction de données structurées. Tu extrais les informations d'un document de type \"${documentType}\" selon le schéma fourni.\n\nRègles:\n1. Réponds UNIQUEMENT en JSON valide, sans texte avant ou après\n2. Respecte strictement le schéma fourni\n3. Si une information n'est pas trouvée, utilise null\n4. Pour les nombres, convertis les fractions et textes (\"une\" → 1, \"1/2\" → 0.5)\n5. Pour les unités, normalise (\"cuillère à soupe\" → \"c.s.\", \"grammes\" → \"g\")\n6. Langue du document: ${language}`;\n\nconst userPrompt = `Extrait les données structurées du document suivant selon ce schéma:\n\n**Schéma attendu:**\n\\`\\`\\`json\n${schemaDescription}\n\\`\\`\\`\n\n**Document à analyser:**\n${text}\n\n**Réponds avec un JSON contenant:**\n1. \"extracted\": l'objet extrait selon le schéma\n2. \"missing_fields\": liste des champs non trouvés ou null\n3. \"notes\": remarques éventuelles sur l'extraction`;\n\nreturn {\n  json: {\n    ...input,\n    system_prompt: systemPrompt,\n    user_prompt: userPrompt\n  }\n};"
+        }
+      },
+      {
+        "id": "claude-api",
+        "name": "Claude API Extract",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1200,
+          400
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $json.api_key }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  model: $json.llm_model,\n  max_tokens: 2000,\n  temperature: 0.1,\n  system: $json.system_prompt,\n  messages: [{\n    role: 'user',\n    content: $json.user_prompt\n  }]\n}) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 60000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "parse-response",
+        "name": "Parse LLM Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1440,
+          400
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst prevData = $('Build LLM Prompt').first().json;\nconst statusCode = input.statusCode || 200;\n\n// Handle LLM API error\nif (statusCode >= 400) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: input.body?.error?.message || 'LLM API error',\n        status: 'LLM_ERROR'\n      }\n    }\n  };\n}\n\n// Extract LLM response content\nconst content = input.body?.content?.[0]?.text || '';\n\n// Parse JSON from LLM response\nlet parsed;\ntry {\n  // Try to extract JSON from the response\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to parse LLM response: ' + e.message,\n        status: 'PARSE_ERROR',\n        raw_response: content.substring(0, 500)\n      }\n    }\n  };\n}\n\n// Calculate confidence based on missing fields\nconst extracted = parsed.extracted || parsed;\nconst missingFields = parsed.missing_fields || [];\nconst schemaFields = Object.keys(prevData.schema.fields || {});\nconst totalFields = schemaFields.length;\nconst foundFields = totalFields - missingFields.length;\nconst confidence = totalFields > 0 ? Math.round((foundFields / totalFields) * 100) / 100 : 1;\n\nreturn {\n  json: {\n    success: true,\n    extracted: extracted,\n    confidence: confidence,\n    missing_fields: missingFields,\n    notes: parsed.notes || null,\n    meta: {\n      provider: 'anthropic',\n      model: prevData.llm_model,\n      document_type: prevData.context.type,\n      language: prevData.context.language,\n      input_length: prevData.text.length\n    }\n  }\n};"
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1680,
+          400
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Input Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Input Valid?": {
+        "main": [
+          [
+            {
+              "node": "Build LLM Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build LLM Prompt": {
+        "main": [
+          [
+            {
+              "node": "Claude API Extract",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude API Extract": {
+        "main": [
+          [
+            {
+              "node": "Parse LLM Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse LLM Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

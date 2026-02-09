@@ -1,0 +1,871 @@
+{
+  "name": "MCP - qdrant - Similar",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "qdrant-similar",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ],
+      "webhookId": "recipes-similar-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const input = $input.first().json;\n  const body = input.body || input;\n\n  const errors = [];\n\n  if (!body.entity_id && !body.entity) {\n    errors.push('Missing required parameter: entity_id or entity object');\n  }\n  if (!body.entity_type) {\n    errors.push('Missing required parameter: entity_type');\n  }\n  if (!body.qdrant_host) {\n    errors.push('Missing required parameter: qdrant_host');\n  }\n  if (!body.qdrant_port) {\n    errors.push('Missing required parameter: qdrant_port');\n  }\n  if (!body.qdrant_collection) {\n    errors.push('Missing required parameter: qdrant_collection');\n  }\n  if (!body.openai_api_key) {\n    errors.push('Missing required parameter: openai_api_key');\n  }\n\n  if (errors.length > 0) {\n    return [{\n      json: {\n        valid: false,\n        error: {\n          code: 400,\n          message: errors.join(', '),\n          status: 'BAD_REQUEST'\n        }\n      }\n    }];\n  }\n\n  // Build search text from entity\n  let searchText = '';\n  if (body.entity) {\n    const e = body.entity;\n    searchText = [\n      e.title || '',\n      e.description || '',\n      (e.tags || []).join(' '),\n      (e.ingredients || []).map(i => typeof i === 'string' ? i : i.name).join(' '),\n      e.content || ''\n    ].join(' ').trim();\n  }\n\n  const qdrantUrl = `http://${body.qdrant_host}:${body.qdrant_port}`;\n\n  return [{\n    json: {\n      valid: true,\n      entity_id: body.entity_id,\n      entity: body.entity,\n      entity_type: body.entity_type,\n      search_text: searchText,\n      limit: body.limit || 5,\n      exclude_self: body.exclude_self !== false,\n      user_id: body.user_id,\n      qdrant_url: qdrantUrl,\n      qdrant_collection: body.qdrant_collection,\n      openai_api_key: body.openai_api_key\n    }\n  }];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        688,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'qdrant' } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        912,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.recipe }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-has-recipe",
+      "name": "Has Recipe Object?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        912,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "  const input = $input.first().json;\n  const prevData = $('Validate Input').first().json;\n\n  if (input.result?.vector) {\n    return [{\n      json: {\n        ...prevData,\n        embedding: input.result.vector,\n        source_entity: input.result.payload\n      }\n    }];\n  }\n\n  // Fallback: create embedding from payload\n  const payload = input.result?.payload || {};\n  const searchText = [\n    payload.title || '',\n    payload.description || '',\n    (payload.tags || []).join(' '),\n    payload.content || ''\n  ].join(' ').trim();\n\n  return [{\n    json: {\n      ...prevData,\n      search_text: searchText,\n      source_entity: payload,\n      need_embedding: true\n    }\n  }];"
+      },
+      "id": "prepare-search-from-id",
+      "name": "Prepare Search from ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": \"{{ $json.search_text }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "generate-embedding",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "options": {}
+      },
+      "id": "merge-paths",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1632,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.qdrant_url }}/collections/{{ $json.qdrant_collection }}/points/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $json.qdrant_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.embedding) }},\n  \"limit\": {{ $json.limit + 1 }},\n  \"with_payload\": true,\n  \"score_threshold\": 0.6\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "search-similar",
+      "name": "Search Similar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1872,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const input = $input.first().json;\n  const prevData = $('Merge').first().json;\n\n  try {\n    let results = (input.result || []).map(item => ({\n      id: item.id,\n      score: item.score,\n      entity: item.payload || {}\n    }));\n\n    // Exclude self if requested\n    if (prevData.exclude_self && prevData.entity_id) {\n      results = results.filter(r => r.id !== prevData.entity_id);\n    }\n\n    // Limit results\n    results = results.slice(0, prevData.limit);\n\n    return [{\n      json: {\n        success: true,\n        data: {\n          source_entity: prevData.source_entity,\n          similar_entities: results,\n          total: results.length,\n          entity_type: prevData.entity_type\n        },\n        meta: {\n          provider: 'qdrant',\n          collection: prevData.qdrant_collection\n        }\n      }\n    }];\n  } catch (e) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to process similar entities: ' + e.message,\n          status: 'PROCESS_ERROR'\n        },\n        meta: { provider: 'qdrant' }\n      }\n    }];\n  }"
+      },
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2352,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Recipes - Similar\n\n**Endpoint:** POST /webhook/recipes-similar\n\n**Parameters:**\n- `recipe_id` (required*): ID of recipe in Qdrant\n- `recipe` (required*): Full recipe object (alternative)\n- `limit` (optional): Max results (default: 5)\n- `exclude_self` (optional): Exclude source recipe (default: true)\n\n**Returns:** Similar recipes based on embedding similarity",
+        "height": 180,
+        "width": 500,
+        "color": 4
+      },
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.qdrant_url }}/collections/{{ $json.qdrant_collection }}/points/{{ $json.recipe_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $json.qdrant_api_key }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "fetch-recipe-by-id",
+      "name": "Fetch entity by ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        304
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "  const input = $input.first().json;\n  const prevData = $('Validate Input').first().json;\n\n  return [{\n    json: {\n      ...prevData,\n      embedding: input.data[0].embedding,\n      source_entity: prevData.entity\n    }\n  }];"
+      },
+      "id": "prepare-search-from-recipe",
+      "name": "Prepare Search from Entity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        112
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Has Recipe Object?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Recipe Object?": {
+      "main": [
+        [
+          {
+            "node": "Generate Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch entity by ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embedding": {
+      "main": [
+        [
+          {
+            "node": "Prepare Search from Entity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Search from ID": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Search Similar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Similar": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch entity by ID": {
+      "main": [
+        [
+          {
+            "node": "Prepare Search from ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Search from Entity": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "8f64ebfc-dac3-4a08-8b59-98cb3139d05f",
+    "workflowId": "y2WP91jjAvV3zIus",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "qdrant-similar",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          304
+        ],
+        "webhookId": "recipes-similar-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "  const input = $input.first().json;\n  const body = input.body || input;\n\n  const errors = [];\n\n  if (!body.entity_id && !body.entity) {\n    errors.push('Missing required parameter: entity_id or entity object');\n  }\n  if (!body.entity_type) {\n    errors.push('Missing required parameter: entity_type');\n  }\n  if (!body.qdrant_host) {\n    errors.push('Missing required parameter: qdrant_host');\n  }\n  if (!body.qdrant_port) {\n    errors.push('Missing required parameter: qdrant_port');\n  }\n  if (!body.qdrant_collection) {\n    errors.push('Missing required parameter: qdrant_collection');\n  }\n  if (!body.openai_api_key) {\n    errors.push('Missing required parameter: openai_api_key');\n  }\n\n  if (errors.length > 0) {\n    return [{\n      json: {\n        valid: false,\n        error: {\n          code: 400,\n          message: errors.join(', '),\n          status: 'BAD_REQUEST'\n        }\n      }\n    }];\n  }\n\n  // Build search text from entity\n  let searchText = '';\n  if (body.entity) {\n    const e = body.entity;\n    searchText = [\n      e.title || '',\n      e.description || '',\n      (e.tags || []).join(' '),\n      (e.ingredients || []).map(i => typeof i === 'string' ? i : i.name).join(' '),\n      e.content || ''\n    ].join(' ').trim();\n  }\n\n  const qdrantUrl = `http://${body.qdrant_host}:${body.qdrant_port}`;\n\n  return [{\n    json: {\n      valid: true,\n      entity_id: body.entity_id,\n      entity: body.entity,\n      entity_type: body.entity_type,\n      search_text: searchText,\n      limit: body.limit || 5,\n      exclude_self: body.exclude_self !== false,\n      user_id: body.user_id,\n      qdrant_url: qdrantUrl,\n      qdrant_collection: body.qdrant_collection,\n      openai_api_key: body.openai_api_key\n    }\n  }];"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          464,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          688,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'qdrant' } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        },
+        "id": "error-validation",
+        "name": "Error: Validation",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          912,
+          464
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.recipe }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "object",
+                  "operation": "exists"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-has-recipe",
+        "name": "Has Recipe Object?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          912,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "  const input = $input.first().json;\n  const prevData = $('Validate Input').first().json;\n\n  if (input.result?.vector) {\n    return [{\n      json: {\n        ...prevData,\n        embedding: input.result.vector,\n        source_entity: input.result.payload\n      }\n    }];\n  }\n\n  // Fallback: create embedding from payload\n  const payload = input.result?.payload || {};\n  const searchText = [\n    payload.title || '',\n    payload.description || '',\n    (payload.tags || []).join(' '),\n    payload.content || ''\n  ].join(' ').trim();\n\n  return [{\n    json: {\n      ...prevData,\n      search_text: searchText,\n      source_entity: payload,\n      need_embedding: true\n    }\n  }];"
+        },
+        "id": "prepare-search-from-id",
+        "name": "Prepare Search from ID",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1392,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/embeddings",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.openai_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": \"{{ $json.search_text }}\"\n}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "generate-embedding",
+        "name": "Generate Embedding",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1152,
+          112
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "mode": "combine",
+          "options": {}
+        },
+        "id": "merge-paths",
+        "name": "Merge",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3,
+        "position": [
+          1632,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.qdrant_url }}/collections/{{ $json.qdrant_collection }}/points/search",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "api-key",
+                "value": "={{ $json.qdrant_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.embedding) }},\n  \"limit\": {{ $json.limit + 1 }},\n  \"with_payload\": true,\n  \"score_threshold\": 0.6\n}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "search-similar",
+        "name": "Search Similar",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1872,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "  const input = $input.first().json;\n  const prevData = $('Merge').first().json;\n\n  try {\n    let results = (input.result || []).map(item => ({\n      id: item.id,\n      score: item.score,\n      entity: item.payload || {}\n    }));\n\n    // Exclude self if requested\n    if (prevData.exclude_self && prevData.entity_id) {\n      results = results.filter(r => r.id !== prevData.entity_id);\n    }\n\n    // Limit results\n    results = results.slice(0, prevData.limit);\n\n    return [{\n      json: {\n        success: true,\n        data: {\n          source_entity: prevData.source_entity,\n          similar_entities: results,\n          total: results.length,\n          entity_type: prevData.entity_type\n        },\n        meta: {\n          provider: 'qdrant',\n          collection: prevData.qdrant_collection\n        }\n      }\n    }];\n  } catch (e) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to process similar entities: ' + e.message,\n          status: 'PROCESS_ERROR'\n        },\n        meta: { provider: 'qdrant' }\n      }\n    }];\n  }"
+        },
+        "id": "format-output",
+        "name": "Format Output",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2112,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        },
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2352,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## Recipes - Similar\n\n**Endpoint:** POST /webhook/recipes-similar\n\n**Parameters:**\n- `recipe_id` (required*): ID of recipe in Qdrant\n- `recipe` (required*): Full recipe object (alternative)\n- `limit` (optional): Max results (default: 5)\n- `exclude_self` (optional): Exclude source recipe (default: true)\n\n**Returns:** Similar recipes based on embedding similarity",
+          "height": 180,
+          "width": 500,
+          "color": 4
+        },
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ $json.qdrant_url }}/collections/{{ $json.qdrant_collection }}/points/{{ $json.recipe_id }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "api-key",
+                "value": "={{ $json.qdrant_api_key }}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "fetch-recipe-by-id",
+        "name": "Fetch entity by ID",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1152,
+          304
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "  const input = $input.first().json;\n  const prevData = $('Validate Input').first().json;\n\n  return [{\n    json: {\n      ...prevData,\n      embedding: input.data[0].embedding,\n      source_entity: prevData.entity\n    }\n  }];"
+        },
+        "id": "prepare-search-from-recipe",
+        "name": "Prepare Search from Entity",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1392,
+          112
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Has Recipe Object?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: Validation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Recipe Object?": {
+        "main": [
+          [
+            {
+              "node": "Generate Embedding",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Fetch entity by ID",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Generate Embedding": {
+        "main": [
+          [
+            {
+              "node": "Prepare Search from Entity",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Search from ID": {
+        "main": [
+          [
+            {
+              "node": "Merge",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Merge": {
+        "main": [
+          [
+            {
+              "node": "Search Similar",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Search Similar": {
+        "main": [
+          [
+            {
+              "node": "Format Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch entity by ID": {
+        "main": [
+          [
+            {
+              "node": "Prepare Search from ID",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Search from Entity": {
+        "main": [
+          [
+            {
+              "node": "Merge",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

@@ -1,0 +1,801 @@
+{
+  "name": "MCP - Analyze Message",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "analyze-message",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "analyze-message-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-text",
+              "leftValue": "={{ $json.body.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Missing required field: text' } }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "error-invalid-input",
+      "name": "Error Invalid Input",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        680,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for parallel processing\nconst body = $input.first().json.body;\nconst text = body.text;\nconst options = body.options || {\n  sentiment: true,\n  intent: true,\n  entities: true,\n  priority: true,\n  language: true\n};\n\n// API Keys passed from MCP Server\nconst googleApiKey = body.google_api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\n\nreturn {\n  json: {\n    text: text,\n    options: options,\n    googleApiKey: googleApiKey,\n    openaiApiKey: openaiApiKey,\n    startTime: Date.now()\n  }\n};"
+      },
+      "id": "prepare-data",
+      "name": "Prepare Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://language.googleapis.com/v1/documents:analyzeSentiment?key={{ $json.googleApiKey }}",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"document\": {\n    \"type\": \"PLAIN_TEXT\",\n    \"content\": \"{{ $json.text }}\"\n  },\n  \"encodingType\": \"UTF8\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "google-sentiment",
+      "name": "Google Sentiment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://language.googleapis.com/v1/documents:analyzeEntities?key={{ $json.googleApiKey }}",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"document\": {\n    \"type\": \"PLAIN_TEXT\",\n    \"content\": \"{{ $json.text }}\"\n  },\n  \"encodingType\": \"UTF8\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "google-entities",
+      "name": "Google Entities",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openaiApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Tu es un analyseur d'intentions pour un assistant IA. Analyse le message utilisateur.\\n\\n## Format de réponse OBLIGATOIRE\\n\\nRetourne EXACTEMENT ce JSON (respecte les clés):\\n\\n{\\n  \\\"intents\\\": [\\n    {\\n      \\\"type\\\": \\\"action_request|information_request|analysis_request|clarification|greeting|other\\\",\\n      \\\"action\\\": \\\"nom_action_snake_case\\\",\\n      \\\"target\\\": \\\"cible ou null\\\",\\n      \\\"confidence\\\": 0.0-1.0,\\n      \\\"reasoning\\\": \\\"explication courte\\\"\\n    }\\n  ],\\n  \\\"priority\\\": {\\n    \\\"level\\\": \\\"critical|high|medium|low\\\",\\n    \\\"score\\\": 0.0-1.0,\\n    \\\"indicators\\\": [],\\n    \\\"requires_confirmation\\\": false\\n  },\\n  \\\"language\\\": {\\n    \\\"code\\\": \\\"fr\\\",\\n    \\\"confidence\\\": 0.0-1.0\\n  }\\n}\\n\\n## Règles de confidence\\n\\n- 0.95+ : Intent explicite (\\\"Traduis ce texte en anglais\\\")\\n- 0.80-0.94 : Intent clair, détails manquants (\\\"Traduis ce document\\\")\\n- 0.60-0.79 : Intent ambigu (\\\"Aide-moi avec ce fichier\\\")\\n- 0.40-0.59 : Plusieurs intents possibles\\n- 0.20-0.39 : Intent très flou\\n- <0.20 : Impossible à déterminer\\n\\n## Exemple\\n\\nMessage: \\\"Traduis ce texte en anglais\\\"\\nRéponse:\\n{\\n  \\\"intents\\\": [{\\\"type\\\": \\\"action_request\\\", \\\"action\\\": \\\"translate_text\\\", \\\"target\\\": \\\"anglais\\\", \\\"confidence\\\": 0.95, \\\"reasoning\\\": \\\"Intent explicite avec langue cible\\\"}],\\n  \\\"priority\\\": {\\\"level\\\": \\\"medium\\\", \\\"score\\\": 0.5, \\\"indicators\\\": [], \\\"requires_confirmation\\\": false},\\n  \\\"language\\\": {\\\"code\\\": \\\"fr\\\", \\\"confidence\\\": 0.98}\\n}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.text }}\"\n    }\n  ],\n  \"temperature\": 0.1,\n  \"max_tokens\": 1000\n}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "openai-intent-priority",
+      "name": "OpenAI Intent+Priority",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        500
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag sentiment result\nconst result = $input.first().json;\nreturn {\n  json: {\n    source: 'sentiment',\n    data: result\n  }\n};"
+      },
+      "id": "tag-sentiment",
+      "name": "Tag Sentiment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag entities result\nconst result = $input.first().json;\nreturn {\n  json: {\n    source: 'entities',\n    data: result\n  }\n};"
+      },
+      "id": "tag-entities",
+      "name": "Tag Entities",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag OpenAI result\nconst result = $input.first().json;\nreturn {\n  json: {\n    source: 'openai',\n    data: result\n  }\n};"
+      },
+      "id": "tag-openai",
+      "name": "Tag OpenAI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 3
+      },
+      "id": "merge-all",
+      "name": "Merge All",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge all tagged results\nconst items = $input.all();\nconst prepareData = $('Prepare Data').first().json;\nconst text = prepareData.text;\nconst options = prepareData.options;\nconst startTime = prepareData.startTime;\n\n// Default values\nconst DEFAULT_PRIORITY = { level: 'medium', score: 0.5, indicators: [], requires_confirmation: false };\nconst DEFAULT_LANGUAGE = { code: 'unknown', confidence: 0 };\n\n// Find results by source tag\nlet sentimentData = null;\nlet entitiesData = null;\nlet openaiData = null;\n\nfor (const item of items) {\n  const source = item.json.source;\n  const data = item.json.data;\n  \n  if (source === 'sentiment') {\n    sentimentData = data;\n  } else if (source === 'entities') {\n    entitiesData = data;\n  } else if (source === 'openai') {\n    openaiData = data;\n  }\n}\n\n// Process sentiment\nlet sentimentResult = null;\ntry {\n  if (sentimentData && sentimentData.documentSentiment) {\n    const ds = sentimentData.documentSentiment;\n    sentimentResult = {\n      label: ds.score > 0.2 ? 'positive' : ds.score < -0.2 ? 'negative' : 'neutral',\n      score: ds.score,\n      magnitude: ds.magnitude,\n      confidence: Math.min(1, Math.abs(ds.score) + ds.magnitude / 2)\n    };\n  } else if (sentimentData && sentimentData.error) {\n    sentimentResult = { label: 'neutral', score: 0, magnitude: 0, confidence: 0, error: sentimentData.error.message || 'Google API error' };\n  } else {\n    sentimentResult = { label: 'neutral', score: 0, magnitude: 0, confidence: 0, error: 'No sentiment data' };\n  }\n} catch (e) {\n  sentimentResult = { label: 'neutral', score: 0, magnitude: 0, confidence: 0, error: 'Sentiment processing failed: ' + e.message };\n}\n\n// Process entities\nlet entitiesResult = [];\ntry {\n  if (entitiesData && entitiesData.entities) {\n    entitiesResult = entitiesData.entities.map(e => ({\n      type: e.type,\n      value: e.name,\n      salience: e.salience,\n      metadata: e.metadata || {}\n    }));\n  } else if (entitiesData && entitiesData.error) {\n    entitiesResult = [];\n  }\n} catch (e) {\n  entitiesResult = [];\n}\n\n// Process OpenAI (intents, priority, language)\nlet intentsResult = [];\nlet priorityResult = { ...DEFAULT_PRIORITY };\nlet languageResult = { ...DEFAULT_LANGUAGE };\n\ntry {\n  if (openaiData && openaiData.choices && openaiData.choices[0]) {\n    const content = openaiData.choices[0].message.content;\n    const parsed = JSON.parse(content);\n    \n    // Handle intents array - ensure it's always an array\n    if (Array.isArray(parsed.intents) && parsed.intents.length > 0) {\n      intentsResult = parsed.intents;\n    } else if (parsed.intent) {\n      // Handle single intent format\n      intentsResult = [parsed.intent];\n    } else {\n      intentsResult = [{ type: 'unknown', action: 'unknown', target: null, confidence: 0.1, reasoning: 'No intent detected' }];\n    }\n    \n    // Handle priority - always provide defaults\n    if (parsed.priority && typeof parsed.priority === 'object') {\n      priorityResult = {\n        level: parsed.priority.level || 'medium',\n        score: typeof parsed.priority.score === 'number' ? parsed.priority.score : 0.5,\n        indicators: Array.isArray(parsed.priority.indicators) ? parsed.priority.indicators : [],\n        requires_confirmation: parsed.priority.requires_confirmation === true\n      };\n    }\n    \n    // Handle language - always provide defaults\n    if (parsed.language && typeof parsed.language === 'object') {\n      languageResult = {\n        code: parsed.language.code || 'unknown',\n        confidence: typeof parsed.language.confidence === 'number' ? parsed.language.confidence : 0\n      };\n    }\n  } else if (openaiData && openaiData.error) {\n    intentsResult = [{ type: 'error', action: 'unknown', target: null, confidence: 0, reasoning: 'OpenAI API error: ' + (openaiData.error.message || 'Unknown') }];\n  } else {\n    intentsResult = [{ type: 'error', action: 'unknown', target: null, confidence: 0, reasoning: 'No OpenAI response received' }];\n  }\n} catch (e) {\n  intentsResult = [{ type: 'error', action: 'unknown', target: null, confidence: 0, reasoning: 'OpenAI parsing failed: ' + e.message }];\n}\n\n// Build final response - always include all fields\nconst response = {\n  success: true,\n  text: text,\n  analysis: {\n    sentiment: sentimentResult,\n    intents: intentsResult,\n    entities: entitiesResult,\n    priority: priorityResult,\n    language: languageResult\n  }\n};\n\nresponse.meta = {\n  providers: {\n    sentiment: 'google-cloud-nlp',\n    entities: 'google-cloud-nlp',\n    intents: 'openai-gpt4o-mini',\n    priority: 'openai-gpt4o-mini',\n    language: 'openai-gpt4o-mini'\n  },\n  processing_time_ms: Date.now() - startTime\n};\n\nreturn { json: response };"
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1820,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Prepare Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Invalid Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Data": {
+      "main": [
+        [
+          {
+            "node": "Google Sentiment",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Entities",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "OpenAI Intent+Priority",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Tag Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Entities": {
+      "main": [
+        [
+          {
+            "node": "Tag Entities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Intent+Priority": {
+      "main": [
+        [
+          {
+            "node": "Tag OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Entities": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Tag OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge All": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "1e966e48-36ea-4124-a014-1472726ccb32",
+    "workflowId": "aZ3DBPdr9qCCMYL2",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "analyze-message",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "analyze-message-webhook"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "condition-text",
+                "leftValue": "={{ $json.body.text }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Missing required field: text' } }) }}",
+          "options": {
+            "responseCode": 400
+          }
+        },
+        "id": "error-invalid-input",
+        "name": "Error Invalid Input",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          680,
+          480
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Prepare data for parallel processing\nconst body = $input.first().json.body;\nconst text = body.text;\nconst options = body.options || {\n  sentiment: true,\n  intent: true,\n  entities: true,\n  priority: true,\n  language: true\n};\n\n// API Keys passed from MCP Server\nconst googleApiKey = body.google_api_key || '';\nconst openaiApiKey = body.openai_api_key || '';\n\nreturn {\n  json: {\n    text: text,\n    options: options,\n    googleApiKey: googleApiKey,\n    openaiApiKey: openaiApiKey,\n    startTime: Date.now()\n  }\n};"
+        },
+        "id": "prepare-data",
+        "name": "Prepare Data",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          680,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://language.googleapis.com/v1/documents:analyzeSentiment?key={{ $json.googleApiKey }}",
+          "authentication": "none",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"document\": {\n    \"type\": \"PLAIN_TEXT\",\n    \"content\": \"{{ $json.text }}\"\n  },\n  \"encodingType\": \"UTF8\"\n}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "google-sentiment",
+        "name": "Google Sentiment",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          940,
+          100
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://language.googleapis.com/v1/documents:analyzeEntities?key={{ $json.googleApiKey }}",
+          "authentication": "none",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"document\": {\n    \"type\": \"PLAIN_TEXT\",\n    \"content\": \"{{ $json.text }}\"\n  },\n  \"encodingType\": \"UTF8\"\n}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "google-entities",
+        "name": "Google Entities",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          940,
+          300
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/chat/completions",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.openaiApiKey }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Tu es un analyseur d'intentions pour un assistant IA. Analyse le message utilisateur.\\n\\n## Format de réponse OBLIGATOIRE\\n\\nRetourne EXACTEMENT ce JSON (respecte les clés):\\n\\n{\\n  \\\"intents\\\": [\\n    {\\n      \\\"type\\\": \\\"action_request|information_request|analysis_request|clarification|greeting|other\\\",\\n      \\\"action\\\": \\\"nom_action_snake_case\\\",\\n      \\\"target\\\": \\\"cible ou null\\\",\\n      \\\"confidence\\\": 0.0-1.0,\\n      \\\"reasoning\\\": \\\"explication courte\\\"\\n    }\\n  ],\\n  \\\"priority\\\": {\\n    \\\"level\\\": \\\"critical|high|medium|low\\\",\\n    \\\"score\\\": 0.0-1.0,\\n    \\\"indicators\\\": [],\\n    \\\"requires_confirmation\\\": false\\n  },\\n  \\\"language\\\": {\\n    \\\"code\\\": \\\"fr\\\",\\n    \\\"confidence\\\": 0.0-1.0\\n  }\\n}\\n\\n## Règles de confidence\\n\\n- 0.95+ : Intent explicite (\\\"Traduis ce texte en anglais\\\")\\n- 0.80-0.94 : Intent clair, détails manquants (\\\"Traduis ce document\\\")\\n- 0.60-0.79 : Intent ambigu (\\\"Aide-moi avec ce fichier\\\")\\n- 0.40-0.59 : Plusieurs intents possibles\\n- 0.20-0.39 : Intent très flou\\n- <0.20 : Impossible à déterminer\\n\\n## Exemple\\n\\nMessage: \\\"Traduis ce texte en anglais\\\"\\nRéponse:\\n{\\n  \\\"intents\\\": [{\\\"type\\\": \\\"action_request\\\", \\\"action\\\": \\\"translate_text\\\", \\\"target\\\": \\\"anglais\\\", \\\"confidence\\\": 0.95, \\\"reasoning\\\": \\\"Intent explicite avec langue cible\\\"}],\\n  \\\"priority\\\": {\\\"level\\\": \\\"medium\\\", \\\"score\\\": 0.5, \\\"indicators\\\": [], \\\"requires_confirmation\\\": false},\\n  \\\"language\\\": {\\\"code\\\": \\\"fr\\\", \\\"confidence\\\": 0.98}\\n}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.text }}\"\n    }\n  ],\n  \"temperature\": 0.1,\n  \"max_tokens\": 1000\n}",
+          "options": {
+            "timeout": 15000
+          }
+        },
+        "id": "openai-intent-priority",
+        "name": "OpenAI Intent+Priority",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          940,
+          500
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Tag sentiment result\nconst result = $input.first().json;\nreturn {\n  json: {\n    source: 'sentiment',\n    data: result\n  }\n};"
+        },
+        "id": "tag-sentiment",
+        "name": "Tag Sentiment",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1160,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Tag entities result\nconst result = $input.first().json;\nreturn {\n  json: {\n    source: 'entities',\n    data: result\n  }\n};"
+        },
+        "id": "tag-entities",
+        "name": "Tag Entities",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1160,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Tag OpenAI result\nconst result = $input.first().json;\nreturn {\n  json: {\n    source: 'openai',\n    data: result\n  }\n};"
+        },
+        "id": "tag-openai",
+        "name": "Tag OpenAI",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1160,
+          500
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "append",
+          "numberInputs": 3
+        },
+        "id": "merge-all",
+        "name": "Merge All",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3,
+        "position": [
+          1380,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Merge all tagged results\nconst items = $input.all();\nconst prepareData = $('Prepare Data').first().json;\nconst text = prepareData.text;\nconst options = prepareData.options;\nconst startTime = prepareData.startTime;\n\n// Default values\nconst DEFAULT_PRIORITY = { level: 'medium', score: 0.5, indicators: [], requires_confirmation: false };\nconst DEFAULT_LANGUAGE = { code: 'unknown', confidence: 0 };\n\n// Find results by source tag\nlet sentimentData = null;\nlet entitiesData = null;\nlet openaiData = null;\n\nfor (const item of items) {\n  const source = item.json.source;\n  const data = item.json.data;\n  \n  if (source === 'sentiment') {\n    sentimentData = data;\n  } else if (source === 'entities') {\n    entitiesData = data;\n  } else if (source === 'openai') {\n    openaiData = data;\n  }\n}\n\n// Process sentiment\nlet sentimentResult = null;\ntry {\n  if (sentimentData && sentimentData.documentSentiment) {\n    const ds = sentimentData.documentSentiment;\n    sentimentResult = {\n      label: ds.score > 0.2 ? 'positive' : ds.score < -0.2 ? 'negative' : 'neutral',\n      score: ds.score,\n      magnitude: ds.magnitude,\n      confidence: Math.min(1, Math.abs(ds.score) + ds.magnitude / 2)\n    };\n  } else if (sentimentData && sentimentData.error) {\n    sentimentResult = { label: 'neutral', score: 0, magnitude: 0, confidence: 0, error: sentimentData.error.message || 'Google API error' };\n  } else {\n    sentimentResult = { label: 'neutral', score: 0, magnitude: 0, confidence: 0, error: 'No sentiment data' };\n  }\n} catch (e) {\n  sentimentResult = { label: 'neutral', score: 0, magnitude: 0, confidence: 0, error: 'Sentiment processing failed: ' + e.message };\n}\n\n// Process entities\nlet entitiesResult = [];\ntry {\n  if (entitiesData && entitiesData.entities) {\n    entitiesResult = entitiesData.entities.map(e => ({\n      type: e.type,\n      value: e.name,\n      salience: e.salience,\n      metadata: e.metadata || {}\n    }));\n  } else if (entitiesData && entitiesData.error) {\n    entitiesResult = [];\n  }\n} catch (e) {\n  entitiesResult = [];\n}\n\n// Process OpenAI (intents, priority, language)\nlet intentsResult = [];\nlet priorityResult = { ...DEFAULT_PRIORITY };\nlet languageResult = { ...DEFAULT_LANGUAGE };\n\ntry {\n  if (openaiData && openaiData.choices && openaiData.choices[0]) {\n    const content = openaiData.choices[0].message.content;\n    const parsed = JSON.parse(content);\n    \n    // Handle intents array - ensure it's always an array\n    if (Array.isArray(parsed.intents) && parsed.intents.length > 0) {\n      intentsResult = parsed.intents;\n    } else if (parsed.intent) {\n      // Handle single intent format\n      intentsResult = [parsed.intent];\n    } else {\n      intentsResult = [{ type: 'unknown', action: 'unknown', target: null, confidence: 0.1, reasoning: 'No intent detected' }];\n    }\n    \n    // Handle priority - always provide defaults\n    if (parsed.priority && typeof parsed.priority === 'object') {\n      priorityResult = {\n        level: parsed.priority.level || 'medium',\n        score: typeof parsed.priority.score === 'number' ? parsed.priority.score : 0.5,\n        indicators: Array.isArray(parsed.priority.indicators) ? parsed.priority.indicators : [],\n        requires_confirmation: parsed.priority.requires_confirmation === true\n      };\n    }\n    \n    // Handle language - always provide defaults\n    if (parsed.language && typeof parsed.language === 'object') {\n      languageResult = {\n        code: parsed.language.code || 'unknown',\n        confidence: typeof parsed.language.confidence === 'number' ? parsed.language.confidence : 0\n      };\n    }\n  } else if (openaiData && openaiData.error) {\n    intentsResult = [{ type: 'error', action: 'unknown', target: null, confidence: 0, reasoning: 'OpenAI API error: ' + (openaiData.error.message || 'Unknown') }];\n  } else {\n    intentsResult = [{ type: 'error', action: 'unknown', target: null, confidence: 0, reasoning: 'No OpenAI response received' }];\n  }\n} catch (e) {\n  intentsResult = [{ type: 'error', action: 'unknown', target: null, confidence: 0, reasoning: 'OpenAI parsing failed: ' + e.message }];\n}\n\n// Build final response - always include all fields\nconst response = {\n  success: true,\n  text: text,\n  analysis: {\n    sentiment: sentimentResult,\n    intents: intentsResult,\n    entities: entitiesResult,\n    priority: priorityResult,\n    language: languageResult\n  }\n};\n\nresponse.meta = {\n  providers: {\n    sentiment: 'google-cloud-nlp',\n    entities: 'google-cloud-nlp',\n    intents: 'openai-gpt4o-mini',\n    priority: 'openai-gpt4o-mini',\n    language: 'openai-gpt4o-mini'\n  },\n  processing_time_ms: Date.now() - startTime\n};\n\nreturn { json: response };"
+        },
+        "id": "merge-results",
+        "name": "Merge Results",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1600,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 200,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1820,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Prepare Data",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error Invalid Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Data": {
+        "main": [
+          [
+            {
+              "node": "Google Sentiment",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Google Entities",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "OpenAI Intent+Priority",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Google Sentiment": {
+        "main": [
+          [
+            {
+              "node": "Tag Sentiment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Google Entities": {
+        "main": [
+          [
+            {
+              "node": "Tag Entities",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Intent+Priority": {
+        "main": [
+          [
+            {
+              "node": "Tag OpenAI",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tag Sentiment": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tag Entities": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Tag OpenAI": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 2
+            }
+          ]
+        ]
+      },
+      "Merge All": {
+        "main": [
+          [
+            {
+              "node": "Merge Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge Results": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

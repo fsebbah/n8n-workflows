@@ -1,0 +1,453 @@
+{
+  "name": "MCP - Academic Searcher",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook-academic",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "academic-searcher-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "academic-searcher",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.query }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-query",
+      "name": "Error: No Query",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: query\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"semantic-scholar\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "semantic-scholar",
+      "name": "Semantic Scholar Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.semanticscholar.org/graph/v1/paper/search",
+        "authentication": "none",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.body.query }}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $json.body.options?.max_results || 10 }}"
+            },
+            {
+              "name": "offset",
+              "value": "={{ $json.body.options?.offset || 0 }}"
+            },
+            {
+              "name": "fields",
+              "value": "paperId,title,abstract,year,citationCount,authors,url,venue,publicationDate,openAccessPdf"
+            },
+            {
+              "name": "year",
+              "value": "={{ $json.body.options?.year_range || '' }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.body.semantic_scholar_api_key || '' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst startTime = Date.now();\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error || item.json.message) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: item.json.error || item.json.message || 'Semantic Scholar API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'semantic-scholar',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n\n  const papers = (item.json.data || []).map(paper => ({\n    id: paper.paperId,\n    title: paper.title,\n    abstract: paper.abstract || null,\n    authors: (paper.authors || []).map(a => a.name),\n    year: paper.year,\n    citation_count: paper.citationCount || 0,\n    venue: paper.venue || null,\n    publication_date: paper.publicationDate || null,\n    url: paper.url || `https://www.semanticscholar.org/paper/${paper.paperId}`,\n    pdf_url: paper.openAccessPdf?.url || null,\n    source: 'semantic-scholar'\n  }));\n\n  return {\n    json: {\n      success: true,\n      data: {\n        papers: papers,\n        meta: {\n          query: webhookData.body.query,\n          total_results: item.json.total || papers.length,\n          offset: item.json.offset || 0,\n          limit: webhookData.body.options?.max_results || 10\n        }\n      },\n      meta: {\n        provider: 'semantic-scholar',\n        execution_mode: webhookData.body.execution_mode || 'online',\n        processing_time_ms: Date.now() - startTime\n      }\n    }\n  };\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 600,
+        "height": 300,
+        "content": "## MCP - Academic Searcher (Semantic Scholar)\n\n**Endpoint:** POST /webhook/academic-searcher\n\n**Parameters:**\n- `query` (required): Search query\n- `semantic_scholar_api_key` (optional): API key for higher rate limits\n- `options.max_results` (optional): 1-100 (default: 10)\n- `options.offset` (optional): Pagination offset (default: 0)\n- `options.year_range` (optional): e.g. \"2020-2024\" or \"2023-\"\n- `options.fields_of_study` (optional): Computer Science, Medicine, etc.\n- `execution_mode` (optional): online | offline\n\n**Returns:** Academic papers with title, abstract, authors, citations, PDF links\n\n**Note:** Semantic Scholar API is free with rate limits (100 req/5min without key)"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Semantic Scholar Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Semantic Scholar Search": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "3c3fb412-9e17-471d-a11d-c499d9c4ad27",
+    "workflowId": "dwclCArbcxpUNOL4",
+    "nodes": [
+      {
+        "id": "webhook-academic",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "academic-searcher-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "academic-searcher",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.body.query }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-no-query",
+        "name": "Error: No Query",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          700,
+          500
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: query\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"semantic-scholar\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "semantic-scholar",
+        "name": "Semantic Scholar Search",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          700,
+          200
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.semanticscholar.org/graph/v1/paper/search",
+          "authentication": "none",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "query",
+                "value": "={{ $json.body.query }}"
+              },
+              {
+                "name": "limit",
+                "value": "={{ $json.body.options?.max_results || 10 }}"
+              },
+              {
+                "name": "offset",
+                "value": "={{ $json.body.options?.offset || 0 }}"
+              },
+              {
+                "name": "fields",
+                "value": "paperId,title,abstract,year,citationCount,authors,url,venue,publicationDate,openAccessPdf"
+              },
+              {
+                "name": "year",
+                "value": "={{ $json.body.options?.year_range || '' }}"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $json.body.semantic_scholar_api_key || '' }}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "format-output",
+        "name": "Format Output",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          920,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst startTime = Date.now();\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error || item.json.message) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: item.json.error || item.json.message || 'Semantic Scholar API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'semantic-scholar',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n\n  const papers = (item.json.data || []).map(paper => ({\n    id: paper.paperId,\n    title: paper.title,\n    abstract: paper.abstract || null,\n    authors: (paper.authors || []).map(a => a.name),\n    year: paper.year,\n    citation_count: paper.citationCount || 0,\n    venue: paper.venue || null,\n    publication_date: paper.publicationDate || null,\n    url: paper.url || `https://www.semanticscholar.org/paper/${paper.paperId}`,\n    pdf_url: paper.openAccessPdf?.url || null,\n    source: 'semantic-scholar'\n  }));\n\n  return {\n    json: {\n      success: true,\n      data: {\n        papers: papers,\n        meta: {\n          query: webhookData.body.query,\n          total_results: item.json.total || papers.length,\n          offset: item.json.offset || 0,\n          limit: webhookData.body.options?.max_results || 10\n        }\n      },\n      meta: {\n        provider: 'semantic-scholar',\n        execution_mode: webhookData.body.execution_mode || 'online',\n        processing_time_ms: Date.now() - startTime\n      }\n    }\n  };\n});\n\nreturn results;"
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1140,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          60
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 600,
+          "height": 300,
+          "content": "## MCP - Academic Searcher (Semantic Scholar)\n\n**Endpoint:** POST /webhook/academic-searcher\n\n**Parameters:**\n- `query` (required): Search query\n- `semantic_scholar_api_key` (optional): API key for higher rate limits\n- `options.max_results` (optional): 1-100 (default: 10)\n- `options.offset` (optional): Pagination offset (default: 0)\n- `options.year_range` (optional): e.g. \"2020-2024\" or \"2023-\"\n- `options.fields_of_study` (optional): Computer Science, Medicine, etc.\n- `execution_mode` (optional): online | offline\n\n**Returns:** Academic papers with title, abstract, authors, citations, PDF links\n\n**Note:** Semantic Scholar API is free with rate limits (100 req/5min without key)"
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Semantic Scholar Search",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: No Query",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Semantic Scholar Search": {
+        "main": [
+          [
+            {
+              "node": "Format Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

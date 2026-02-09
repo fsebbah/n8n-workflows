@@ -1,0 +1,1059 @@
+{
+  "name": "MCP - PDF Layout Translator",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - PDF Layout Translator\n\n**Endpoint:** POST /webhook/pdf-layout-translator\n\n**Pattern:** Async avec job_id\n\n**Input:**\n- `file_url` OU `file_base64`: PDF à traiter\n- `mistral_api_key`: Pour OCR Pixtral\n- `api_key`: Anthropic API key (traduction)\n- `openai_api_key`: Pour vérification GPT\n- `target_language` (optionnel): Default 'fr'\n- `source_language` (optionnel): Default 'auto'\n\n**Response immédiate:**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_xxx\",\n  \"status\": \"started\"\n}\n```\n\n**Statut:** GET /webhook/torah-job-status?job_id=xxx",
+        "height": 380,
+        "width": 320,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pdf-layout-translator",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        400,
+        304
+      ],
+      "webhookId": "pdf-layout-translator"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\n// Validation\nconst hasFile = !!(body.file_url || body.file_base64);\nconst hasMistralKey = !!body.mistral_api_key;\nconst hasAnthropicKey = !!body.api_key || !!body.anthropic_api_key;\nconst hasOpenAIKey = !!body.openai_api_key;\n\nconst errors = [];\nif (!hasFile) errors.push('file_url ou file_base64 requis');\nif (!hasMistralKey) errors.push('mistral_api_key requis');\nif (!hasAnthropicKey) errors.push('api_key (Anthropic) requis');\nif (!hasOpenAIKey) errors.push('openai_api_key requis');\n\n// Fonction pour détecter le MIME type depuis les magic bytes base64\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  if (prefix.startsWith('Qk')) return 'image/bmp';\n  if (prefix.startsWith('JVBER') || prefix.startsWith('JVBERi')) return 'application/pdf';\n  return null;\n}\n\n// Fonction pour obtenir le MIME type depuis l'extension\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp',\n    'tiff': 'image/tiff', 'tif': 'image/tiff',\n    'pdf': 'application/pdf'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// Préparer l'URL du fichier avec détection MIME intelligente\nlet fileUrl = '';\nlet detectedMime = 'application/pdf';\n\nif (body.file_url) {\n  fileUrl = body.file_url;\n} else if (body.file_base64) {\n  // 1. Essayer depuis file_type param\n  if (body.file_type) {\n    detectedMime = getMimeFromExtension(body.file_type) || 'application/pdf';\n  }\n  // 2. Fallback: détecter depuis magic bytes\n  if (detectedMime === 'application/pdf') {\n    const detected = detectMimeFromBase64(body.file_base64);\n    if (detected) detectedMime = detected;\n  }\n  fileUrl = 'data:' + detectedMime + ';base64,' + body.file_base64;\n}\n\n// Job ID\nconst jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    jobId: jobId,\n    fileUrl: fileUrl,\n    detectedMime: detectedMime,\n    sourceLanguage: body.source_language || 'auto',\n    targetLanguage: body.target_language || 'fr',\n    mistralApiKey: body.mistral_api_key,\n    anthropicApiKey: body.api_key || body.anthropic_api_key,\n    openaiApiKey: body.openai_api_key,\n    callbackUrl: body.callback_url || null\n  }\n}];"
+      },
+      "id": "validation",
+      "name": "Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/v2/jobs",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=  Body JSON - Remplacer par :\n  {\n    \"project_id\": \"mcp-documents\",\n    \"job_type\": \"pdf_translation\",\n    \"status\": \"pending\",\n    \"priority\": 1,\n    \"context\": {\n      \"guild_id\": {{ $json.context?.guild_id || null }},\n      \"user_id\": {{ $json.context?.user_id || null }},\n      \"channel_id\": {{ $json.context?.channel_id || null }}\n    },\n    \"input\": {\n      \"file_url\": {{ $json.fileUrl }},\n      \"file_type\": {{ $json.detectedMime }},\n      \"source_language\": {{ $json.sourceLanguage }},\n      \"target_language\": {{ $json.targetLanguage }}\n    }\n  }",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "create-job",
+      "name": "Create Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1072,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validation').first().json;\n\nconst data = input.body || input;\nconst apiJobId = data.job_id || prevData.jobId;\n\nreturn [{\n  json: {\n    ...prevData,\n    jobId: apiJobId\n  }\n}];"
+      },
+      "id": "extract-job-id",
+      "name": "Extract Job ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'started', message: 'PDF processing started' }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-started",
+      "name": "Respond Started",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1504,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.mistralApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'pixtral-12b-2409', messages: [{ role: 'user', content: [{ type: 'text', text: 'Extract all text content from this PDF page. Preserve the structure including:\\n- Headers and titles\\n- Paragraphs\\n- Lists (bulleted and numbered)\\n- Tables (in markdown format)\\n- Math formulas (in LaTeX format)\\n\\nReturn the content in clean Markdown format. Preserve the original language.' }, { type: 'image_url', image_url: { url: $json.fileUrl } }] }], max_tokens: 8192 }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "mistral-ocr",
+      "name": "Mistral Pixtral OCR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1728,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Extract Job ID').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier erreur OCR\nif (statusCode >= 400) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: data.message || data.error?.message || 'Mistral API error: ' + statusCode\n    }\n  }];\n}\n\nconst ocrText = data.choices?.[0]?.message?.content || '';\n\nif (!ocrText) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: 'OCR returned empty content'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    ocrText: ocrText,\n    ocrSuccess: true,\n    workerPayload: {\n      job_id: prevData.jobId,\n      text: ocrText,\n      source_language: prevData.sourceLanguage === 'auto' ? 'he' : prevData.sourceLanguage,\n      target_language: prevData.targetLanguage,\n      api_key: prevData.anthropicApiKey,\n      openai_api_key: prevData.openaiApiKey,\n      job_type: 'pdf_translation',\n      metadata: {\n        source: 'pdf_layout_translator',\n        ocr_model: 'pixtral-12b-2409'\n      }\n    }\n  }\n}];"
+      },
+      "id": "extract-ocr",
+      "name": "Extract OCR + Prepare Worker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-ocr",
+              "leftValue": "={{ $json.ocrSuccess }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-ocr-success",
+      "name": "OCR Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2160,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-translate-worker",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.workerPayload) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "call-worker",
+      "name": "Call Torah-Translate-Worker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2384,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le worker gère la traduction et met à jour le job\nconst prevData = $('Extract OCR + Prepare Worker').first().json;\n\nconsole.log('PDF Translation job dispatched:', prevData.jobId);\n\nreturn [{\n  json: {\n    jobId: prevData.jobId,\n    status: 'processing',\n    ocrCompleted: true,\n    translationStarted: true\n  }\n}];"
+      },
+      "id": "log-completion",
+      "name": "Log Completion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2720,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=  {\n    \"status\": \"failed\",\n    \"error\": {\n      \"code\": \"OCR_FAILED\",\n      \"message\": {{ $json.ocrError }}\n    }\n  }",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "update-job-error",
+      "name": "Update Job Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2384,
+        304
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+      },
+      "id": "build-error",
+      "name": "Build Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        432
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "done",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2832,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n    \"status\": \"processing\",\n    \"output\": {\n      \"ocr_completed\": true,\n      \"ocr_text_length\": {{ $json.ocrText.length }},\n      \"translation_started\": true\n    }\n  }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2560,
+        32
+      ],
+      "id": "9f95aff7-2661-4468-b068-0ef1223be48a",
+      "name": "Update Job Success"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Create Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Job": {
+      "main": [
+        [
+          {
+            "node": "Extract Job ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Job ID": {
+      "main": [
+        [
+          {
+            "node": "Respond Started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Started": {
+      "main": [
+        [
+          {
+            "node": "Mistral Pixtral OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Pixtral OCR": {
+      "main": [
+        [
+          {
+            "node": "Extract OCR + Prepare Worker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract OCR + Prepare Worker": {
+      "main": [
+        [
+          {
+            "node": "OCR Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OCR Success?": {
+      "main": [
+        [
+          {
+            "node": "Call Torah-Translate-Worker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Job Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Torah-Translate-Worker": {
+      "main": [
+        [
+          {
+            "node": "Update Job Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Completion": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Job Error": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Job Success": {
+      "main": [
+        [
+          {
+            "node": "Log Completion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "1cc29442-6691-4541-bc79-982722ba2f6b",
+    "workflowId": "P4K8eUBaspgYvpmp",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## MCP - PDF Layout Translator\n\n**Endpoint:** POST /webhook/pdf-layout-translator\n\n**Pattern:** Async avec job_id\n\n**Input:**\n- `file_url` OU `file_base64`: PDF à traiter\n- `mistral_api_key`: Pour OCR Pixtral\n- `api_key`: Anthropic API key (traduction)\n- `openai_api_key`: Pour vérification GPT\n- `target_language` (optionnel): Default 'fr'\n- `source_language` (optionnel): Default 'auto'\n\n**Response immédiate:**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_xxx\",\n  \"status\": \"started\"\n}\n```\n\n**Statut:** GET /webhook/torah-job-status?job_id=xxx",
+          "height": 380,
+          "width": 320,
+          "color": 6
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          64,
+          64
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "pdf-layout-translator",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          400,
+          304
+        ],
+        "webhookId": "pdf-layout-translator"
+      },
+      {
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\n// Validation\nconst hasFile = !!(body.file_url || body.file_base64);\nconst hasMistralKey = !!body.mistral_api_key;\nconst hasAnthropicKey = !!body.api_key || !!body.anthropic_api_key;\nconst hasOpenAIKey = !!body.openai_api_key;\n\nconst errors = [];\nif (!hasFile) errors.push('file_url ou file_base64 requis');\nif (!hasMistralKey) errors.push('mistral_api_key requis');\nif (!hasAnthropicKey) errors.push('api_key (Anthropic) requis');\nif (!hasOpenAIKey) errors.push('openai_api_key requis');\n\n// Fonction pour détecter le MIME type depuis les magic bytes base64\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  if (prefix.startsWith('Qk')) return 'image/bmp';\n  if (prefix.startsWith('JVBER') || prefix.startsWith('JVBERi')) return 'application/pdf';\n  return null;\n}\n\n// Fonction pour obtenir le MIME type depuis l'extension\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp',\n    'tiff': 'image/tiff', 'tif': 'image/tiff',\n    'pdf': 'application/pdf'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// Préparer l'URL du fichier avec détection MIME intelligente\nlet fileUrl = '';\nlet detectedMime = 'application/pdf';\n\nif (body.file_url) {\n  fileUrl = body.file_url;\n} else if (body.file_base64) {\n  // 1. Essayer depuis file_type param\n  if (body.file_type) {\n    detectedMime = getMimeFromExtension(body.file_type) || 'application/pdf';\n  }\n  // 2. Fallback: détecter depuis magic bytes\n  if (detectedMime === 'application/pdf') {\n    const detected = detectMimeFromBase64(body.file_base64);\n    if (detected) detectedMime = detected;\n  }\n  fileUrl = 'data:' + detectedMime + ';base64,' + body.file_base64;\n}\n\n// Job ID\nconst jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    jobId: jobId,\n    fileUrl: fileUrl,\n    detectedMime: detectedMime,\n    sourceLanguage: body.source_language || 'auto',\n    targetLanguage: body.target_language || 'fr',\n    mistralApiKey: body.mistral_api_key,\n    anthropicApiKey: body.api_key || body.anthropic_api_key,\n    openaiApiKey: body.openai_api_key,\n    callbackUrl: body.callback_url || null\n  }\n}];"
+        },
+        "id": "validation",
+        "name": "Validation",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          624,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-valid",
+        "name": "Input Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          848,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/v2/jobs",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "=  Body JSON - Remplacer par :\n  {\n    \"project_id\": \"mcp-documents\",\n    \"job_type\": \"pdf_translation\",\n    \"status\": \"pending\",\n    \"priority\": 1,\n    \"context\": {\n      \"guild_id\": {{ $json.context?.guild_id || null }},\n      \"user_id\": {{ $json.context?.user_id || null }},\n      \"channel_id\": {{ $json.context?.channel_id || null }}\n    },\n    \"input\": {\n      \"file_url\": {{ $json.fileUrl }},\n      \"file_type\": {{ $json.detectedMime }},\n      \"source_language\": {{ $json.sourceLanguage }},\n      \"target_language\": {{ $json.targetLanguage }}\n    }\n  }",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 10000
+          }
+        },
+        "id": "create-job",
+        "name": "Create Job",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1072,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst prevData = $('Validation').first().json;\n\nconst data = input.body || input;\nconst apiJobId = data.job_id || prevData.jobId;\n\nreturn [{\n  json: {\n    ...prevData,\n    jobId: apiJobId\n  }\n}];"
+        },
+        "id": "extract-job-id",
+        "name": "Extract Job ID",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1280,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'started', message: 'PDF processing started' }) }}",
+          "options": {
+            "responseCode": 200,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-started",
+        "name": "Respond Started",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1504,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.mistral.ai/v1/chat/completions",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.mistralApiKey }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: 'pixtral-12b-2409', messages: [{ role: 'user', content: [{ type: 'text', text: 'Extract all text content from this PDF page. Preserve the structure including:\\n- Headers and titles\\n- Paragraphs\\n- Lists (bulleted and numbered)\\n- Tables (in markdown format)\\n- Math formulas (in LaTeX format)\\n\\nReturn the content in clean Markdown format. Preserve the original language.' }, { type: 'image_url', image_url: { url: $json.fileUrl } }] }], max_tokens: 8192 }) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 120000
+          }
+        },
+        "id": "mistral-ocr",
+        "name": "Mistral Pixtral OCR",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1728,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst prevData = $('Extract Job ID').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier erreur OCR\nif (statusCode >= 400) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: data.message || data.error?.message || 'Mistral API error: ' + statusCode\n    }\n  }];\n}\n\nconst ocrText = data.choices?.[0]?.message?.content || '';\n\nif (!ocrText) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: 'OCR returned empty content'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    ocrText: ocrText,\n    ocrSuccess: true,\n    workerPayload: {\n      job_id: prevData.jobId,\n      text: ocrText,\n      source_language: prevData.sourceLanguage === 'auto' ? 'he' : prevData.sourceLanguage,\n      target_language: prevData.targetLanguage,\n      api_key: prevData.anthropicApiKey,\n      openai_api_key: prevData.openaiApiKey,\n      job_type: 'pdf_translation',\n      metadata: {\n        source: 'pdf_layout_translator',\n        ocr_model: 'pixtral-12b-2409'\n      }\n    }\n  }\n}];"
+        },
+        "id": "extract-ocr",
+        "name": "Extract OCR + Prepare Worker",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1952,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-ocr",
+                "leftValue": "={{ $json.ocrSuccess }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-ocr-success",
+        "name": "OCR Success?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2160,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-translate-worker",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.workerPayload) }}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "call-worker",
+        "name": "Call Torah-Translate-Worker",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2384,
+          112
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Le worker gère la traduction et met à jour le job\nconst prevData = $('Extract OCR + Prepare Worker').first().json;\n\nconsole.log('PDF Translation job dispatched:', prevData.jobId);\n\nreturn [{\n  json: {\n    jobId: prevData.jobId,\n    status: 'processing',\n    ocrCompleted: true,\n    translationStarted: true\n  }\n}];"
+        },
+        "id": "log-completion",
+        "name": "Log Completion",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2720,
+          32
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "=  {\n    \"status\": \"failed\",\n    \"error\": {\n      \"code\": \"OCR_FAILED\",\n      \"message\": {{ $json.ocrError }}\n    }\n  }",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "update-job-error",
+        "name": "Update Job Error",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2384,
+          304
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+        },
+        "id": "build-error",
+        "name": "Build Error Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1072,
+          432
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1280,
+          432
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "done",
+        "name": "Done",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          2832,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n    \"status\": \"processing\",\n    \"output\": {\n      \"ocr_completed\": true,\n      \"ocr_text_length\": {{ $json.ocrText.length }},\n      \"translation_started\": true\n    }\n  }",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          2560,
+          32
+        ],
+        "id": "9f95aff7-2661-4468-b068-0ef1223be48a",
+        "name": "Update Job Success"
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validation": {
+        "main": [
+          [
+            {
+              "node": "Input Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Input Valid?": {
+        "main": [
+          [
+            {
+              "node": "Create Job",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Error Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Job": {
+        "main": [
+          [
+            {
+              "node": "Extract Job ID",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Job ID": {
+        "main": [
+          [
+            {
+              "node": "Respond Started",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Respond Started": {
+        "main": [
+          [
+            {
+              "node": "Mistral Pixtral OCR",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mistral Pixtral OCR": {
+        "main": [
+          [
+            {
+              "node": "Extract OCR + Prepare Worker",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract OCR + Prepare Worker": {
+        "main": [
+          [
+            {
+              "node": "OCR Success?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OCR Success?": {
+        "main": [
+          [
+            {
+              "node": "Call Torah-Translate-Worker",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Update Job Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Torah-Translate-Worker": {
+        "main": [
+          [
+            {
+              "node": "Update Job Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Log Completion": {
+        "main": [
+          [
+            {
+              "node": "Done",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Job Error": {
+        "main": [
+          [
+            {
+              "node": "Done",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Error Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Job Success": {
+        "main": [
+          [
+            {
+              "node": "Log Completion",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

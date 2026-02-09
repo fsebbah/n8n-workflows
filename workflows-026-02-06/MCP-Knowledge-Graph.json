@@ -1,0 +1,719 @@
+{
+  "name": "MCP - Knowledge Graph",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "knowledge-graph",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ],
+      "webhookId": "knowledge-graph-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-path",
+              "leftValue": "={{ $json.body.documentPath }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-document-path",
+      "name": "Has documentPath?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-url",
+              "leftValue": "={{ $json.body.documentUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-document-url",
+      "name": "Has documentUrl?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        688,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-base64",
+              "leftValue": "={{ $json.body.document?.data }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-document-base64",
+      "name": "Has document.data?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        912,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "filePath": "={{ $json.body.documentPath }}"
+      },
+      "id": "read-local-file",
+      "name": "Read Local File",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        688,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.body.documentUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-from-url",
+      "name": "Download from URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        912,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "={{ \"No document provided. Please send documentPath, documentUrl, or document.data (base64)\" }}"
+      },
+      "id": "error-no-document",
+      "name": "Error: No Document",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for Knowledge Graph node\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\n// Get config from request\nconst configMode = body.configMode || 'preset';\nconst preset = body.preset || 'business';\nconst configJson = body.configJson ? JSON.stringify(body.configJson) : '{}';\n\n// Pass through binary data and add config\nconst items = $input.all();\n\nreturn items.map(item => ({\n  json: {\n    configMode,\n    preset,\n    configJson,\n    originalRequest: body\n  },\n  binary: item.binary\n}));"
+      },
+      "id": "prepare-config",
+      "name": "Prepare Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "inputType": "document",
+        "configMode": "={{ $json.configMode }}",
+        "preset": "={{ $json.preset }}",
+        "configJson": "={{ $json.configJson }}",
+        "options": {
+          "model": "gemini-2.5-flash",
+          "maxOutputTokens": 32768
+        }
+      },
+      "id": "knowledge-graph",
+      "name": "Knowledge Graph",
+      "type": "n8n-nodes-knowledge-graph.knowledgeGraph",
+      "typeVersion": 1,
+      "position": [
+        1792,
+        304
+      ],
+      "credentials": {
+        "googleVertexAiApi": {
+          "id": "Yis7YQJ8FMrvHGzl",
+          "name": "Google Vertex AI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convert base64 to binary\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\nconst base64Data = body.document?.data;\nconst mimeType = body.document?.mimeType || 'application/pdf';\n\nif (!base64Data) {\n  throw new Error('No base64 data found in document.data');\n}\n\n// Create binary data from base64\nconst binaryData = Buffer.from(base64Data, 'base64');\n\nreturn [{\n  json: body,\n  binary: {\n    data: {\n      data: base64Data,\n      mimeType: mimeType,\n      fileName: 'document.pdf'\n    }\n  }\n}];"
+      },
+      "id": "base64-to-binary",
+      "name": "Base64 to Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        544
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Has documentPath?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has documentPath?": {
+      "main": [
+        [
+          {
+            "node": "Read Local File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has documentUrl?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has documentUrl?": {
+      "main": [
+        [
+          {
+            "node": "Download from URL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has document.data?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has document.data?": {
+      "main": [
+        [
+          {
+            "node": "Base64 to Binary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Local File": {
+      "main": [
+        [
+          {
+            "node": "Prepare Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download from URL": {
+      "main": [
+        [
+          {
+            "node": "Prepare Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Base64 to Binary": {
+      "main": [
+        [
+          {
+            "node": "Prepare Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Config": {
+      "main": [
+        [
+          {
+            "node": "Knowledge Graph",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Graph": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "b0fc32e4-ca41-4060-8a98-7bfd8c339a89",
+    "workflowId": "e7YS4pgDKrxmvurW",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "knowledge-graph",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          304
+        ],
+        "webhookId": "knowledge-graph-webhook"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "condition-path",
+                "leftValue": "={{ $json.body.documentPath }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-document-path",
+        "name": "Has documentPath?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          464,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "condition-url",
+                "leftValue": "={{ $json.body.documentUrl }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-document-url",
+        "name": "Has documentUrl?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          688,
+          432
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "condition-base64",
+                "leftValue": "={{ $json.body.document?.data }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-document-base64",
+        "name": "Has document.data?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          912,
+          544
+        ]
+      },
+      {
+        "parameters": {
+          "filePath": "={{ $json.body.documentPath }}"
+        },
+        "id": "read-local-file",
+        "name": "Read Local File",
+        "type": "n8n-nodes-base.readBinaryFile",
+        "typeVersion": 1,
+        "position": [
+          688,
+          192
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ $json.body.documentUrl }}",
+          "options": {
+            "response": {
+              "response": {
+                "responseFormat": "file"
+              }
+            }
+          }
+        },
+        "id": "download-from-url",
+        "name": "Download from URL",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          912,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "errorMessage": "={{ \"No document provided. Please send documentPath, documentUrl, or document.data (base64)\" }}"
+        },
+        "id": "error-no-document",
+        "name": "Error: No Document",
+        "type": "n8n-nodes-base.stopAndError",
+        "typeVersion": 1,
+        "position": [
+          1120,
+          672
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Prepare data for Knowledge Graph node\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\n// Get config from request\nconst configMode = body.configMode || 'preset';\nconst preset = body.preset || 'business';\nconst configJson = body.configJson ? JSON.stringify(body.configJson) : '{}';\n\n// Pass through binary data and add config\nconst items = $input.all();\n\nreturn items.map(item => ({\n  json: {\n    configMode,\n    preset,\n    configJson,\n    originalRequest: body\n  },\n  binary: item.binary\n}));"
+        },
+        "id": "prepare-config",
+        "name": "Prepare Config",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1568,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "inputType": "document",
+          "configMode": "={{ $json.configMode }}",
+          "preset": "={{ $json.preset }}",
+          "configJson": "={{ $json.configJson }}",
+          "options": {
+            "model": "gemini-2.5-flash",
+            "maxOutputTokens": 32768
+          }
+        },
+        "id": "knowledge-graph",
+        "name": "Knowledge Graph",
+        "type": "n8n-nodes-knowledge-graph.knowledgeGraph",
+        "typeVersion": 1,
+        "position": [
+          1792,
+          304
+        ],
+        "credentials": {
+          "googleVertexAiApi": {
+            "id": "Yis7YQJ8FMrvHGzl",
+            "name": "Google Vertex AI account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        },
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2000,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Convert base64 to binary\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\nconst base64Data = body.document?.data;\nconst mimeType = body.document?.mimeType || 'application/pdf';\n\nif (!base64Data) {\n  throw new Error('No base64 data found in document.data');\n}\n\n// Create binary data from base64\nconst binaryData = Buffer.from(base64Data, 'base64');\n\nreturn [{\n  json: body,\n  binary: {\n    data: {\n      data: base64Data,\n      mimeType: mimeType,\n      fileName: 'document.pdf'\n    }\n  }\n}];"
+        },
+        "id": "base64-to-binary",
+        "name": "Base64 to Binary",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1328,
+          544
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Has documentPath?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has documentPath?": {
+        "main": [
+          [
+            {
+              "node": "Read Local File",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Has documentUrl?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has documentUrl?": {
+        "main": [
+          [
+            {
+              "node": "Download from URL",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Has document.data?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has document.data?": {
+        "main": [
+          [
+            {
+              "node": "Base64 to Binary",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: No Document",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read Local File": {
+        "main": [
+          [
+            {
+              "node": "Prepare Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Download from URL": {
+        "main": [
+          [
+            {
+              "node": "Prepare Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Base64 to Binary": {
+        "main": [
+          [
+            {
+              "node": "Prepare Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Config": {
+        "main": [
+          [
+            {
+              "node": "Knowledge Graph",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Knowledge Graph": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

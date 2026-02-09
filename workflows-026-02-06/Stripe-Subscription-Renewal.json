@@ -1,0 +1,835 @@
+{
+  "name": "Stripe - Subscription Renewal",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Subscription Renewal Callback\n\n**Endpoint:** POST /webhook/torah-sub-renewal\n\n**Triggered by:** Stripe webhook handler on `invoice.payment_succeeded`\n\n**Actions:**\n1. Add monthly credits based on plan\n2. Update current_period_end in database\n3. Log payment in payment_history\n4. Send renewal confirmation DM\n\n**Input:**\n```json\n{\n  \"event_type\": \"invoice.payment_succeeded\",\n  \"data\": {\n    \"customer_id\": \"cus_xxx\",\n    \"subscription_id\": \"sub_xxx\",\n    \"amount_paid\": 999,\n    \"period_start\": 1234567890,\n    \"period_end\": 1237246290\n  }\n}\n```",
+        "height": 400,
+        "width": 380,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        48,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stripe-subscription-renewal",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        480,
+        304
+      ],
+      "webhookId": "torah-sub-renewal"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract renewal data\nconst input = $input.first().json;\nconst body = input.body || {};\nconst data = body.data || {};\n\nif (!data.subscription_id) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Missing subscription_id',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Convert Unix timestamps to ISO\nconst periodEnd = data.period_end \n  ? new Date(data.period_end * 1000).toISOString()\n  : null;\n\nreturn [{\n  json: {\n    valid: true,\n    stripe_subscription_id: data.subscription_id,\n    stripe_customer_id: data.customer_id,\n    invoice_id: data.invoice_id,\n    amount_paid: data.amount_paid || 0,\n    currency: data.currency || 'eur',\n    period_end: periodEnd,\n    period_start: data.period_start,\n    billing_reason: data.billing_reason || 'subscription_cycle',\n    event_id: body.event_id\n  }\n}];"
+      },
+      "id": "extract-data",
+      "name": "Extract Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Data Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        928,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine credits to add based on plan\nconst subscriber = $input.first().json;\nconst prevData = $('Extract Data').first().json;\n\nif (!subscriber || !subscriber.id) {\n  return [{\n    json: {\n      found: false,\n      error: 'Subscriber not found for subscription: ' + prevData.stripe_subscription_id\n    }\n  }];\n}\n\nconst plan = subscriber.subscription_plan || 'basic';\nconst creditsMap = {\n  'basic': 1000,\n  'premium': 5000,\n  'unlimited': 999999\n};\nconst creditsToAdd = creditsMap[plan] || 1000;\n\nreturn [{\n  json: {\n    found: true,\n    user_id: subscriber.id,\n    discord_user_id: subscriber.discord_user_id,\n    plan: plan,\n    current_credits: subscriber.credits,\n    credits_to_add: creditsToAdd,\n    stripe_subscription_id: prevData.stripe_subscription_id,\n    stripe_customer_id: prevData.stripe_customer_id,\n    invoice_id: prevData.invoice_id,\n    amount_paid: prevData.amount_paid,\n    currency: prevData.currency,\n    period_end: prevData.period_end,\n    event_id: prevData.event_id\n  }\n}];"
+      },
+      "id": "calc-credits",
+      "name": "Calculate Credits",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-found",
+      "name": "Subscriber Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1584,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare success response\nconst calcData = $('Calculate Credits').first().json;\nconst newCredits = $('Add Credits').first().json?.credits || (calcData.current_credits + calcData.credits_to_add);\n\nreturn [{\n  json: {\n    success: true,\n    processed: true,\n    discord_user_id: calcData.discord_user_id,\n    plan: calcData.plan,\n    credits_added: calcData.credits_to_add,\n    new_credits: newCredits\n  }\n}];"
+      },
+      "id": "prepare-response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2736,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2720,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1152,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, subscription_id: $('Extract Data').first().json.stripe_subscription_id } }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-not-found",
+      "name": "Respond Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1808,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "{{ $env.API_URL }}/api/subscribers/by-subscription/{stripe_subscription_id}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1136,
+        208
+      ],
+      "id": "73142cda-cd9c-4ef4-99c3-4d2c0c869a28",
+      "name": "Get Subscriber"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.API_URL }}/api/subscribers/{id}/credits",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{ credits_to_add, period_end }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1792,
+        112
+      ],
+      "id": "ae85a671-abb8-4ff4-8e0d-316633cb80f9",
+      "name": "Add Credits"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/payments/log",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{ credits_to_add, period_end }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2000,
+        112
+      ],
+      "id": "35d85079-7965-427b-9438-a674e3eb8e0a",
+      "name": "Log Payment"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/subscribers/by-subscription/{stripe_subscription_id}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2208,
+        112
+      ],
+      "id": "496e66fe-dd26-486b-a719-2353a549e6e1",
+      "name": "Get subscriber par subscription"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/subscribers/{id}/credits",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{ credits_to_add, period_end }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2560,
+        256
+      ],
+      "id": "4c19bbb0-3fb2-4b82-a525-d04684a62c90",
+      "name": "Add crédits"
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Data": {
+      "main": [
+        [
+          {
+            "node": "Data Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Subscriber",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Credits": {
+      "main": [
+        [
+          {
+            "node": "Subscriber Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscriber Found?": {
+      "main": [
+        [
+          {
+            "node": "Add Credits",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Subscriber": {
+      "main": [
+        [
+          {
+            "node": "Calculate Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Credits": {
+      "main": [
+        [
+          {
+            "node": "Log Payment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Payment": {
+      "main": [
+        [
+          {
+            "node": "Get subscriber par subscription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get subscriber par subscription": {
+      "main": [
+        [
+          {
+            "node": "Add crédits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add crédits": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "03ff6afe-27cd-404c-b15b-c08591aa64d6",
+    "workflowId": "dGqqwaoSshiFNUiN",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Torah Subscription Renewal Callback\n\n**Endpoint:** POST /webhook/torah-sub-renewal\n\n**Triggered by:** Stripe webhook handler on `invoice.payment_succeeded`\n\n**Actions:**\n1. Add monthly credits based on plan\n2. Update current_period_end in database\n3. Log payment in payment_history\n4. Send renewal confirmation DM\n\n**Input:**\n```json\n{\n  \"event_type\": \"invoice.payment_succeeded\",\n  \"data\": {\n    \"customer_id\": \"cus_xxx\",\n    \"subscription_id\": \"sub_xxx\",\n    \"amount_paid\": 999,\n    \"period_start\": 1234567890,\n    \"period_end\": 1237246290\n  }\n}\n```",
+          "height": 400,
+          "width": 380,
+          "color": 5
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          48,
+          48
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "stripe-subscription-renewal",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          480,
+          304
+        ],
+        "webhookId": "torah-sub-renewal"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Extract renewal data\nconst input = $input.first().json;\nconst body = input.body || {};\nconst data = body.data || {};\n\nif (!data.subscription_id) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Missing subscription_id',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Convert Unix timestamps to ISO\nconst periodEnd = data.period_end \n  ? new Date(data.period_end * 1000).toISOString()\n  : null;\n\nreturn [{\n  json: {\n    valid: true,\n    stripe_subscription_id: data.subscription_id,\n    stripe_customer_id: data.customer_id,\n    invoice_id: data.invoice_id,\n    amount_paid: data.amount_paid || 0,\n    currency: data.currency || 'eur',\n    period_end: periodEnd,\n    period_start: data.period_start,\n    billing_reason: data.billing_reason || 'subscription_cycle',\n    event_id: body.event_id\n  }\n}];"
+        },
+        "id": "extract-data",
+        "name": "Extract Data",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          704,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-valid",
+        "name": "Data Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          928,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Determine credits to add based on plan\nconst subscriber = $input.first().json;\nconst prevData = $('Extract Data').first().json;\n\nif (!subscriber || !subscriber.id) {\n  return [{\n    json: {\n      found: false,\n      error: 'Subscriber not found for subscription: ' + prevData.stripe_subscription_id\n    }\n  }];\n}\n\nconst plan = subscriber.subscription_plan || 'basic';\nconst creditsMap = {\n  'basic': 1000,\n  'premium': 5000,\n  'unlimited': 999999\n};\nconst creditsToAdd = creditsMap[plan] || 1000;\n\nreturn [{\n  json: {\n    found: true,\n    user_id: subscriber.id,\n    discord_user_id: subscriber.discord_user_id,\n    plan: plan,\n    current_credits: subscriber.credits,\n    credits_to_add: creditsToAdd,\n    stripe_subscription_id: prevData.stripe_subscription_id,\n    stripe_customer_id: prevData.stripe_customer_id,\n    invoice_id: prevData.invoice_id,\n    amount_paid: prevData.amount_paid,\n    currency: prevData.currency,\n    period_end: prevData.period_end,\n    event_id: prevData.event_id\n  }\n}];"
+        },
+        "id": "calc-credits",
+        "name": "Calculate Credits",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1360,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-found",
+                "leftValue": "={{ $json.found }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-found",
+        "name": "Subscriber Found?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1584,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Prepare success response\nconst calcData = $('Calculate Credits').first().json;\nconst newCredits = $('Add Credits').first().json?.credits || (calcData.current_credits + calcData.credits_to_add);\n\nreturn [{\n  json: {\n    success: true,\n    processed: true,\n    discord_user_id: calcData.discord_user_id,\n    plan: calcData.plan,\n    credits_added: calcData.credits_to_add,\n    new_credits: newCredits\n  }\n}];"
+        },
+        "id": "prepare-response",
+        "name": "Prepare Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2736,
+          272
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2720,
+          544
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: $json.error } }}",
+          "options": {
+            "responseCode": 400
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1152,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: $json.error, subscription_id: $('Extract Data').first().json.stripe_subscription_id } }}",
+          "options": {
+            "responseCode": 404
+          }
+        },
+        "id": "respond-not-found",
+        "name": "Respond Not Found",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1808,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "url": "{{ $env.API_URL }}/api/subscribers/by-subscription/{stripe_subscription_id}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          1136,
+          208
+        ],
+        "id": "73142cda-cd9c-4ef4-99c3-4d2c0c869a28",
+        "name": "Get Subscriber"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "{{ $env.API_URL }}/api/subscribers/{id}/credits",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{ credits_to_add, period_end }",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          1792,
+          112
+        ],
+        "id": "ae85a671-abb8-4ff4-8e0d-316633cb80f9",
+        "name": "Add Credits"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/payments/log",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{ credits_to_add, period_end }",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          2000,
+          112
+        ],
+        "id": "35d85079-7965-427b-9438-a674e3eb8e0a",
+        "name": "Log Payment"
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/subscribers/by-subscription/{stripe_subscription_id}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          2208,
+          112
+        ],
+        "id": "496e66fe-dd26-486b-a719-2353a549e6e1",
+        "name": "Get subscriber par subscription"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/subscribers/{id}/credits",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{ credits_to_add, period_end }",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          2560,
+          256
+        ],
+        "id": "4c19bbb0-3fb2-4b82-a525-d04684a62c90",
+        "name": "Add crédits"
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Extract Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Data": {
+        "main": [
+          [
+            {
+              "node": "Data Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Data Valid?": {
+        "main": [
+          [
+            {
+              "node": "Get Subscriber",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Calculate Credits": {
+        "main": [
+          [
+            {
+              "node": "Subscriber Found?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Subscriber Found?": {
+        "main": [
+          [
+            {
+              "node": "Add Credits",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Not Found",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Subscriber": {
+        "main": [
+          [
+            {
+              "node": "Calculate Credits",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Add Credits": {
+        "main": [
+          [
+            {
+              "node": "Log Payment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Log Payment": {
+        "main": [
+          [
+            {
+              "node": "Get subscriber par subscription",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get subscriber par subscription": {
+        "main": [
+          [
+            {
+              "node": "Add crédits",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Add crédits": {
+        "main": [
+          [
+            {
+              "node": "Prepare Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}
