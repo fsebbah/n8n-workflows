@@ -3,8 +3,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## CRON - Intent Stats Daily\n\n**Issue:** #287\n**RFC:** RFC-031 (Section 6.3, 13.4)\n\n**Description:**\nCalcule les métriques quotidiennes du système d'intent classification et les stocke dans PostgreSQL.\n\n**Fréquence:** Daily à 04:00 AM\n\n**Métriques calculées:**\n- clarification_rate: % demandes nécessitant clarification\n- accuracy: % predictions validées\n- latency_p50, latency_p95, latency_p99\n- total_requests, unique_users\n\n**Output:** PostgreSQL `intent_metrics`",
-        "height": 380,
+        "content": "## CRON - Intent Stats Daily\n\n**Issue:** #287\n**RFC:** RFC-031 (Section 6.3, 13.4)\n\n**Description:**\nCalcule les métriques quotidiennes via API.\n\n**Fréquence:** Daily à 04:00 AM\n\n**Métriques calculées:**\n- clarification_rate, accuracy\n- latency_p50, latency_p95, latency_p99\n- total_requests, unique_users\n\n**Output:** API /api/intent/metrics",
+        "height": 340,
         "width": 360,
         "color": 5
       },
@@ -33,21 +33,20 @@
     },
     {
       "parameters": {
-        "operation": "aggregate",
-        "collection": "intent_history",
-        "query": "=[\n  {\n    \"$match\": {\n      \"created_at\": {\n        \"$gte\": { \"$date\": \"{{ $now.minus({days: 1}).startOf('day').toISO() }}\" },\n        \"$lt\": { \"$date\": \"{{ $now.startOf('day').toISO() }}\" }\n      }\n    }\n  },\n  {\n    \"$facet\": {\n      \"totals\": [\n        {\n          \"$group\": {\n            \"_id\": null,\n            \"total_requests\": { \"$sum\": 1 },\n            \"validated_count\": {\n              \"$sum\": { \"$cond\": [\"$was_validated\", 1, 0] }\n            },\n            \"clarification_count\": {\n              \"$sum\": {\n                \"$cond\": [\n                  { \"$eq\": [\"$validation_type\", \"clarification\"] },\n                  1,\n                  0\n                ]\n              }\n            },\n            \"unique_users\": { \"$addToSet\": \"$user_id\" },\n            \"unique_guilds\": { \"$addToSet\": \"$guild_id\" }\n          }\n        },\n        {\n          \"$project\": {\n            \"_id\": 0,\n            \"total_requests\": 1,\n            \"validated_count\": 1,\n            \"clarification_count\": 1,\n            \"unique_users\": { \"$size\": \"$unique_users\" },\n            \"unique_guilds\": { \"$size\": \"$unique_guilds\" }\n          }\n        }\n      ],\n      \"by_domain\": [\n        {\n          \"$group\": {\n            \"_id\": \"$domain\",\n            \"count\": { \"$sum\": 1 },\n            \"validated\": {\n              \"$sum\": { \"$cond\": [\"$was_validated\", 1, 0] }\n            }\n          }\n        }\n      ],\n      \"latencies\": [\n        { \"$match\": { \"latency_ms\": { \"$exists\": true } } },\n        { \"$sort\": { \"latency_ms\": 1 } },\n        {\n          \"$group\": {\n            \"_id\": null,\n            \"latencies\": { \"$push\": \"$latency_ms\" },\n            \"count\": { \"$sum\": 1 }\n          }\n        }\n      ]\n    }\n  }\n]"
-      },
-      "id": "mongodb-aggregate",
-      "name": "MongoDB Aggregate Stats",
-      "type": "n8n-nodes-base.mongoDb",
-      "typeVersion": 1,
-      "position": [280, 300],
-      "credentials": {
-        "mongoDb": {
-          "id": "mongodb-intent",
-          "name": "MongoDB Intent"
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/intent/stats/aggregate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"date\": \"{{ $now.minus({days: 1}).toFormat('yyyy-MM-dd') }}\"\n}",
+        "options": {
+          "timeout": 60000
         }
-      }
+      },
+      "id": "http-api-aggregate",
+      "name": "API Aggregate Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [280, 300]
     },
     {
       "parameters": {
@@ -60,7 +59,7 @@
           "conditions": [
             {
               "id": "check-has-data",
-              "leftValue": "={{ $json.totals?.[0]?.total_requests }}",
+              "leftValue": "={{ $json.data?.total_requests }}",
               "rightValue": 0,
               "operator": {
                 "type": "number",
@@ -80,7 +79,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// CALCULATE METRICS\n// ============================================\n// Process MongoDB aggregation and compute final metrics\n\nconst data = $input.first().json;\nconst totals = data.totals?.[0] || {};\nconst latencies = data.latencies?.[0] || {};\nconst byDomain = data.by_domain || [];\n\n// Calculate rates\nconst totalRequests = totals.total_requests || 0;\nconst clarificationRate = totalRequests > 0 \n  ? (totals.clarification_count / totalRequests) * 100 \n  : 0;\nconst accuracy = totalRequests > 0 \n  ? (totals.validated_count / totalRequests) * 100 \n  : 0;\n\n// Calculate latency percentiles\nfunction percentile(arr, p) {\n  if (!arr || arr.length === 0) return 0;\n  const idx = Math.ceil(arr.length * p / 100) - 1;\n  return arr[Math.max(0, idx)];\n}\n\nconst latencyArray = latencies.latencies || [];\nconst p50 = percentile(latencyArray, 50);\nconst p95 = percentile(latencyArray, 95);\nconst p99 = percentile(latencyArray, 99);\n\n// Build domain breakdown\nconst domainBreakdown = {};\nfor (const d of byDomain) {\n  domainBreakdown[d._id] = {\n    count: d.count,\n    validated: d.validated,\n    accuracy: d.count > 0 ? (d.validated / d.count) * 100 : 0\n  };\n}\n\n// Calculate date for the stats (yesterday)\nconst statsDate = $now.minus({days: 1}).toFormat('yyyy-MM-dd');\n\nreturn [{\n  json: {\n    stats_date: statsDate,\n    total_requests: totalRequests,\n    unique_users: totals.unique_users || 0,\n    unique_guilds: totals.unique_guilds || 0,\n    clarification_rate: Math.round(clarificationRate * 100) / 100,\n    accuracy: Math.round(accuracy * 100) / 100,\n    latency_p50: p50,\n    latency_p95: p95,\n    latency_p99: p99,\n    domain_breakdown: JSON.stringify(domainBreakdown),\n    created_at: new Date().toISOString()\n  }\n}];"
+        "jsCode": "// ============================================\n// CALCULATE METRICS\n// ============================================\n\nconst data = $input.first().json.data || {};\n\nconst totalRequests = data.total_requests || 0;\nconst clarificationRate = totalRequests > 0 \n  ? (data.clarification_count / totalRequests) * 100 \n  : 0;\nconst accuracy = totalRequests > 0 \n  ? (data.validated_count / totalRequests) * 100 \n  : 0;\n\n// Latency percentiles from API\nconst p50 = data.latency_p50 || 0;\nconst p95 = data.latency_p95 || 0;\nconst p99 = data.latency_p99 || 0;\n\nconst statsDate = $now.minus({days: 1}).toFormat('yyyy-MM-dd');\n\nreturn [{\n  json: {\n    stats_date: statsDate,\n    total_requests: totalRequests,\n    unique_users: data.unique_users || 0,\n    unique_guilds: data.unique_guilds || 0,\n    clarification_rate: Math.round(clarificationRate * 100) / 100,\n    accuracy: Math.round(accuracy * 100) / 100,\n    latency_p50: p50,\n    latency_p95: p95,\n    latency_p99: p99,\n    domain_breakdown: data.domain_breakdown || {}\n  }\n}];"
       },
       "id": "code-calc-metrics",
       "name": "Calculate Metrics",
@@ -90,25 +89,24 @@
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO intent_metrics (\n  stats_date,\n  total_requests,\n  unique_users,\n  unique_guilds,\n  clarification_rate,\n  accuracy,\n  latency_p50,\n  latency_p95,\n  latency_p99,\n  domain_breakdown,\n  created_at\n) VALUES (\n  '{{ $json.stats_date }}',\n  {{ $json.total_requests }},\n  {{ $json.unique_users }},\n  {{ $json.unique_guilds }},\n  {{ $json.clarification_rate }},\n  {{ $json.accuracy }},\n  {{ $json.latency_p50 }},\n  {{ $json.latency_p95 }},\n  {{ $json.latency_p99 }},\n  '{{ $json.domain_breakdown }}',\n  '{{ $json.created_at }}'\n)\nON CONFLICT (stats_date) DO UPDATE SET\n  total_requests = EXCLUDED.total_requests,\n  unique_users = EXCLUDED.unique_users,\n  unique_guilds = EXCLUDED.unique_guilds,\n  clarification_rate = EXCLUDED.clarification_rate,\n  accuracy = EXCLUDED.accuracy,\n  latency_p50 = EXCLUDED.latency_p50,\n  latency_p95 = EXCLUDED.latency_p95,\n  latency_p99 = EXCLUDED.latency_p99,\n  domain_breakdown = EXCLUDED.domain_breakdown,\n  created_at = EXCLUDED.created_at",
-        "options": {}
-      },
-      "id": "postgres-insert",
-      "name": "PostgreSQL Insert",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [940, 200],
-      "credentials": {
-        "postgres": {
-          "id": "postgres-metrics",
-          "name": "PostgreSQL Metrics"
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/intent/metrics",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
         }
-      }
+      },
+      "id": "http-api-metrics",
+      "name": "API Save Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 200]
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// LOG SUMMARY\n// ============================================\n\nconst input = $('Calculate Metrics').first().json;\n\nreturn [{\n  json: {\n    status: 'completed',\n    stats_date: input.stats_date,\n    metrics: {\n      total_requests: input.total_requests,\n      unique_users: input.unique_users,\n      clarification_rate: input.clarification_rate + '%',\n      accuracy: input.accuracy + '%',\n      latency_p50: input.latency_p50 + 'ms',\n      latency_p95: input.latency_p95 + 'ms',\n      latency_p99: input.latency_p99 + 'ms'\n    },\n    stored_in: 'PostgreSQL intent_metrics',\n    processed_at: new Date().toISOString()\n  }\n}];"
+        "jsCode": "// ============================================\n// LOG SUMMARY\n// ============================================\n\nconst input = $('Calculate Metrics').first().json;\n\nreturn [{\n  json: {\n    status: 'completed',\n    stats_date: input.stats_date,\n    metrics: {\n      total_requests: input.total_requests,\n      unique_users: input.unique_users,\n      clarification_rate: input.clarification_rate + '%',\n      accuracy: input.accuracy + '%',\n      latency_p50: input.latency_p50 + 'ms',\n      latency_p95: input.latency_p95 + 'ms',\n      latency_p99: input.latency_p99 + 'ms'\n    },\n    processed_at: new Date().toISOString()\n  }\n}];"
       },
       "id": "code-summary",
       "name": "Summary",
@@ -118,7 +116,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// No data for yesterday - log and exit\nreturn [{\n  json: {\n    status: 'no_data',\n    stats_date: $now.minus({days: 1}).toFormat('yyyy-MM-dd'),\n    message: 'No intent history data found for yesterday',\n    processed_at: new Date().toISOString()\n  }\n}];"
+        "jsCode": "// No data for yesterday\nreturn [{\n  json: {\n    status: 'no_data',\n    stats_date: $now.minus({days: 1}).toFormat('yyyy-MM-dd'),\n    message: 'No intent history data found for yesterday',\n    processed_at: new Date().toISOString()\n  }\n}];"
       },
       "id": "code-no-data",
       "name": "No Data Log",
@@ -132,14 +130,14 @@
       "main": [
         [
           {
-            "node": "MongoDB Aggregate Stats",
+            "node": "API Aggregate Stats",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "MongoDB Aggregate Stats": {
+    "API Aggregate Stats": {
       "main": [
         [
           {
@@ -172,14 +170,14 @@
       "main": [
         [
           {
-            "node": "PostgreSQL Insert",
+            "node": "API Save Metrics",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "PostgreSQL Insert": {
+    "API Save Metrics": {
       "main": [
         [
           {
