@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Intent Events Consumer\n\n**Issue:** #285\n**RFC:** RFC-031 (Section 17.4)\n\n**Description:**\nConsomme le Redis Stream `intent:events` et insère via API.\n\n**Architecture:** Option C (Hybride)\n- chatbot-core écrit dans Qdrant (sync) + Redis Stream (async)\n- n8n consomme le stream et appelle l'API\n\n**Flux:**\n1. XREAD intent:events (polling)\n2. Transform JSON\n3. POST API /api/intent/history\n4. Check Success\n5. SUCCESS → XACK | FAIL → DLQ",
+        "content": "## Intent Events Consumer\n\n**Issue:** #285\n**RFC:** RFC-031 (Section 17.4)\n\n**Description:**\nConsomme le Redis Stream `intent:events` et insère via API batch.\n\n**Architecture:** Option C (Hybride)\n- chatbot-core écrit dans Qdrant (sync) + Redis Stream (async)\n- n8n consomme le stream et appelle l'API batch\n\n**Flux:**\n1. XREAD intent:events (polling, max 50)\n2. Transform to batch\n3. POST /api/intent/events/batch\n4. SUCCESS → XACK all | FAIL → DLQ",
         "height": 360,
         "width": 360,
         "color": 5
@@ -83,10 +83,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// TRANSFORM INTENT EVENTS\n// ============================================\n// Parse Redis Stream data for API insert\n\nconst items = $input.all();\nconst transformed = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Redis Stream returns array of [id, fields]\n  // Or object with id and data\n  const streamId = data.id || data[0];\n  const fields = data.data || data.fields || data[1] || data;\n  \n  if (!fields || !fields.message) {\n    continue;\n  }\n  \n  // Parse tokens from JSON string\n  let tokens = [];\n  try {\n    tokens = JSON.parse(fields.tokens || '[]');\n  } catch (e) {\n    tokens = [];\n  }\n  \n  // Transform for API\n  transformed.push({\n    json: {\n      stream_id: streamId,\n      message: fields.message,\n      tokens: tokens,\n      domain: fields.domain,\n      was_validated: fields.was_validated === 'true' || fields.was_validated === true,\n      validation_type: fields.validation_type || 'implicit',\n      confidence_at_prediction: parseFloat(fields.confidence_at_prediction) || 0,\n      user_id: fields.user_id || '',\n      guild_id: fields.guild_id || '',\n      tool_used: fields.tool_used || '',\n      original_timestamp: fields.timestamp\n    }\n  });\n}\n\nreturn transformed;"
+        "jsCode": "// ============================================\n// TRANSFORM TO BATCH\n// ============================================\n// Collect all events for batch insert\n\nconst items = $input.all();\nconst events = [];\nconst streamIds = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  const streamId = data.id || data[0];\n  const fields = data.data || data.fields || data[1] || data;\n  \n  if (!fields || !fields.message) {\n    continue;\n  }\n  \n  let tokens = [];\n  try {\n    tokens = JSON.parse(fields.tokens || '[]');\n  } catch (e) {\n    tokens = [];\n  }\n  \n  streamIds.push(streamId);\n  events.push({\n    stream_id: streamId,\n    message: fields.message,\n    tokens: tokens,\n    domain: fields.domain,\n    was_validated: fields.was_validated === 'true' || fields.was_validated === true,\n    validation_type: fields.validation_type || 'implicit',\n    confidence_at_prediction: parseFloat(fields.confidence_at_prediction) || 0,\n    user_id: fields.user_id || '',\n    guild_id: fields.guild_id || '',\n    tool_used: fields.tool_used || '',\n    original_timestamp: fields.timestamp\n  });\n}\n\nreturn [{\n  json: {\n    events: events,\n    stream_ids: streamIds,\n    count: events.length\n  }\n}];"
       },
       "id": "code-transform",
-      "name": "Transform Events",
+      "name": "Transform to Batch",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [720, 200]
@@ -94,16 +94,16 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.API_URL }}/api/intent/history",
+        "url": "={{ $env.API_URL }}/api/intent/events/batch",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json) }}",
+        "jsonBody": "={{ JSON.stringify({ events: $json.events }) }}",
         "options": {
-          "timeout": 10000
+          "timeout": 30000
         }
       },
-      "id": "http-api-insert",
-      "name": "API Insert History",
+      "id": "http-api-batch",
+      "name": "API Batch Insert",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [940, 200],
@@ -120,10 +120,10 @@
           "conditions": [
             {
               "id": "check-success",
-              "leftValue": "={{ $json.error }}",
-              "rightValue": "",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
+                "type": "boolean",
                 "operation": "equals"
               }
             }
@@ -132,24 +132,34 @@
         },
         "options": {}
       },
-      "id": "if-insert-success",
-      "name": "Insert Success?",
+      "id": "if-batch-success",
+      "name": "Batch Success?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [1160, 200]
     },
     {
       "parameters": {
+        "jsCode": "// ============================================\n// XACK ALL STREAM IDS\n// ============================================\n\nconst batchData = $('Transform to Batch').first().json;\nconst streamIds = batchData.stream_ids || [];\n\n// Return each stream_id for XACK\nreturn streamIds.map(id => ({ json: { stream_id: id } }));"
+      },
+      "id": "code-prepare-ack",
+      "name": "Prepare XACK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1380, 100]
+    },
+    {
+      "parameters": {
         "operation": "xAck",
         "key": "intent:events",
         "group": "n8n-intent-consumer",
-        "messageId": "={{ $('Transform Events').item.json.stream_id }}"
+        "messageId": "={{ $json.stream_id }}"
       },
       "id": "redis-xack",
       "name": "Redis XACK",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
-      "position": [1380, 100],
+      "position": [1600, 100],
       "credentials": {
         "redis": {
           "id": "redis-intent",
@@ -159,7 +169,7 @@
     },
     {
       "parameters": {
-        "content": "## Error Handling\n\nAPI Insert avec `onError: continueRegularOutput`\n→ Si erreur, le flux continue avec $json.error\n→ IF check success/fail\n→ FAIL: XADD vers `intent:dlq`\n\nLe workflow ALERT-DLQ-Monitor surveille cette queue.",
+        "content": "## Error Handling\n\nSi le batch échoue:\n→ Tous les events vont dans la DLQ\n→ ALERT-DLQ-Monitor surveille cette queue\n\nNote: En cas de succès partiel (duplicates),\nle batch retourne quand même success=true.",
         "height": 180,
         "width": 300,
         "color": 3
@@ -168,7 +178,17 @@
       "name": "Error Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [1380, 220]
+      "position": [1380, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE DLQ ENTRIES\n// ============================================\n\nconst batchData = $('Transform to Batch').first().json;\nconst apiResponse = $('API Batch Insert').first().json;\nconst events = batchData.events || [];\n\n// Send all events to DLQ on batch failure\nreturn events.map(evt => ({\n  json: {\n    stream_id: evt.stream_id,\n    message: evt.message,\n    error: apiResponse.error || 'Batch insert failed'\n  }\n}));"
+      },
+      "id": "code-prepare-dlq",
+      "name": "Prepare DLQ",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1380, 480]
     },
     {
       "parameters": {
@@ -178,15 +198,15 @@
           "fieldValue": [
             {
               "field": "original_stream_id",
-              "value": "={{ $('Transform Events').item.json.stream_id }}"
+              "value": "={{ $json.stream_id }}"
             },
             {
               "field": "message",
-              "value": "={{ $('Transform Events').item.json.message }}"
+              "value": "={{ $json.message }}"
             },
             {
               "field": "error",
-              "value": "={{ $json.error || 'API insert failed' }}"
+              "value": "={{ $json.error }}"
             },
             {
               "field": "retry_count",
@@ -203,7 +223,7 @@
       "name": "Redis DLQ",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
-      "position": [1380, 400],
+      "position": [1600, 480],
       "credentials": {
         "redis": {
           "id": "redis-intent",
@@ -247,7 +267,7 @@
       "main": [
         [
           {
-            "node": "Transform Events",
+            "node": "Transform to Batch",
             "type": "main",
             "index": 0
           }
@@ -261,29 +281,47 @@
         ]
       ]
     },
-    "Transform Events": {
+    "Transform to Batch": {
       "main": [
         [
           {
-            "node": "API Insert History",
+            "node": "API Batch Insert",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "API Insert History": {
+    "API Batch Insert": {
       "main": [
         [
           {
-            "node": "Insert Success?",
+            "node": "Batch Success?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Insert Success?": {
+    "Batch Success?": {
+      "main": [
+        [
+          {
+            "node": "Prepare XACK",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare XACK": {
       "main": [
         [
           {
@@ -291,7 +329,11 @@
             "type": "main",
             "index": 0
           }
-        ],
+        ]
+      ]
+    },
+    "Prepare DLQ": {
+      "main": [
         [
           {
             "node": "Redis DLQ",
