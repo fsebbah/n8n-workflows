@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Intent Events Consumer\n\n**Issue:** #285\n**RFC:** RFC-031 (Section 17.4)\n\n**Description:**\nConsomme le Redis Stream `intent:events` et insère dans MongoDB `intent_history` pour les agrégations batch.\n\n**Architecture:** Option C (Hybride)\n- chatbot-core écrit dans Qdrant (sync) + Redis Stream (async)\n- n8n consomme le stream et écrit dans MongoDB\n\n**Flux:**\n1. XREAD intent:events (polling)\n2. Transform JSON\n3. INSERT MongoDB (continueOnFail)\n4. Check Insert Success\n5. SUCCESS → XACK | FAIL → DLQ",
+        "content": "## Intent Events Consumer\n\n**Issue:** #285\n**RFC:** RFC-031 (Section 17.4)\n\n**Description:**\nConsomme le Redis Stream `intent:events` et insère via API.\n\n**Architecture:** Option C (Hybride)\n- chatbot-core écrit dans Qdrant (sync) + Redis Stream (async)\n- n8n consomme le stream et appelle l'API\n\n**Flux:**\n1. XREAD intent:events (polling)\n2. Transform JSON\n3. POST API /api/intent/history\n4. Check Success\n5. SUCCESS → XACK | FAIL → DLQ",
         "height": 360,
         "width": 360,
         "color": 5
@@ -83,7 +83,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// TRANSFORM INTENT EVENTS\n// ============================================\n// Parse Redis Stream data for MongoDB insert\n\nconst items = $input.all();\nconst transformed = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Redis Stream returns array of [id, fields]\n  // Or object with id and data\n  const streamId = data.id || data[0];\n  const fields = data.data || data.fields || data[1] || data;\n  \n  if (!fields || !fields.message) {\n    continue;\n  }\n  \n  // Parse tokens from JSON string\n  let tokens = [];\n  try {\n    tokens = JSON.parse(fields.tokens || '[]');\n  } catch (e) {\n    tokens = [];\n  }\n  \n  // Transform for MongoDB\n  transformed.push({\n    json: {\n      stream_id: streamId,\n      message: fields.message,\n      tokens: tokens,\n      domain: fields.domain,\n      was_validated: fields.was_validated === 'true' || fields.was_validated === true,\n      validation_type: fields.validation_type || 'implicit',\n      confidence_at_prediction: parseFloat(fields.confidence_at_prediction) || 0,\n      user_id: fields.user_id || '',\n      guild_id: fields.guild_id || '',\n      tool_used: fields.tool_used || '',\n      original_timestamp: fields.timestamp,\n      created_at: new Date()\n    }\n  });\n}\n\nreturn transformed;"
+        "jsCode": "// ============================================\n// TRANSFORM INTENT EVENTS\n// ============================================\n// Parse Redis Stream data for API insert\n\nconst items = $input.all();\nconst transformed = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Redis Stream returns array of [id, fields]\n  // Or object with id and data\n  const streamId = data.id || data[0];\n  const fields = data.data || data.fields || data[1] || data;\n  \n  if (!fields || !fields.message) {\n    continue;\n  }\n  \n  // Parse tokens from JSON string\n  let tokens = [];\n  try {\n    tokens = JSON.parse(fields.tokens || '[]');\n  } catch (e) {\n    tokens = [];\n  }\n  \n  // Transform for API\n  transformed.push({\n    json: {\n      stream_id: streamId,\n      message: fields.message,\n      tokens: tokens,\n      domain: fields.domain,\n      was_validated: fields.was_validated === 'true' || fields.was_validated === true,\n      validation_type: fields.validation_type || 'implicit',\n      confidence_at_prediction: parseFloat(fields.confidence_at_prediction) || 0,\n      user_id: fields.user_id || '',\n      guild_id: fields.guild_id || '',\n      tool_used: fields.tool_used || '',\n      original_timestamp: fields.timestamp\n    }\n  });\n}\n\nreturn transformed;"
       },
       "id": "code-transform",
       "name": "Transform Events",
@@ -93,21 +93,20 @@
     },
     {
       "parameters": {
-        "operation": "insert",
-        "collection": "intent_history",
-        "fields": "stream_id,message,tokens,domain,was_validated,validation_type,confidence_at_prediction,user_id,guild_id,tool_used,original_timestamp,created_at"
-      },
-      "id": "mongodb-insert",
-      "name": "MongoDB Insert",
-      "type": "n8n-nodes-base.mongoDb",
-      "typeVersion": 1,
-      "position": [940, 200],
-      "credentials": {
-        "mongoDb": {
-          "id": "mongodb-intent",
-          "name": "MongoDB Intent"
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/intent/history",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
         }
       },
+      "id": "http-api-insert",
+      "name": "API Insert History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 200],
       "onError": "continueRegularOutput"
     },
     {
@@ -120,7 +119,7 @@
           },
           "conditions": [
             {
-              "id": "check-no-error",
+              "id": "check-success",
               "leftValue": "={{ $json.error }}",
               "rightValue": "",
               "operator": {
@@ -160,7 +159,7 @@
     },
     {
       "parameters": {
-        "content": "## Error Handling\n\nMongoDB Insert avec `onError: continueRegularOutput`\n→ Si erreur, le flux continue avec $json.error\n→ IF check success/fail\n→ FAIL: XADD vers `intent:dlq`\n\nLe workflow ALERT-DLQ-Monitor surveille cette queue.",
+        "content": "## Error Handling\n\nAPI Insert avec `onError: continueRegularOutput`\n→ Si erreur, le flux continue avec $json.error\n→ IF check success/fail\n→ FAIL: XADD vers `intent:dlq`\n\nLe workflow ALERT-DLQ-Monitor surveille cette queue.",
         "height": 180,
         "width": 300,
         "color": 3
@@ -187,7 +186,7 @@
             },
             {
               "field": "error",
-              "value": "={{ $json.error || 'MongoDB insert failed' }}"
+              "value": "={{ $json.error || 'API insert failed' }}"
             },
             {
               "field": "retry_count",
@@ -266,14 +265,14 @@
       "main": [
         [
           {
-            "node": "MongoDB Insert",
+            "node": "API Insert History",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "MongoDB Insert": {
+    "API Insert History": {
       "main": [
         [
           {

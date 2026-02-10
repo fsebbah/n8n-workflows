@@ -3,8 +3,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## CRON - Intent Keywords Sync\n\n**Issue:** #286\n**RFC:** RFC-031 (Section 6.3, 13.4)\n\n**Description:**\nAgrège les tokens validés depuis MongoDB et met à jour les poids des keywords dans Redis ZSET.\n\n**Fréquence:** Daily à 03:00 AM\n\n**Flux:**\n1. Aggregate MongoDB (dernières 24h)\n2. Calcul des poids\n3. ZADD Redis keywords:{domain}:triggers\n4. Bump version\n5. Prune si > 500 keywords/domaine",
-        "height": 320,
+        "content": "## CRON - Intent Keywords Sync\n\n**Issue:** #286\n**RFC:** RFC-031 (Section 6.2, 13.4)\n\n**Description:**\nAgrège les tokens validés et met à jour les poids des keywords via API.\n\n**Fréquence:** Daily à 03:00 AM\n\n**Calcul du poids:**\n`weight = min(10, count * avg_confidence)`\n\n**Output:** API sync keywords",
+        "height": 280,
         "width": 360,
         "color": 5
       },
@@ -33,21 +33,20 @@
     },
     {
       "parameters": {
-        "operation": "aggregate",
-        "collection": "intent_history",
-        "query": "=[\n  {\n    \"$match\": {\n      \"was_validated\": true,\n      \"created_at\": { \"$gte\": { \"$date\": \"{{ $now.minus({days: 1}).toISO() }}\" } }\n    }\n  },\n  { \"$unwind\": \"$tokens\" },\n  {\n    \"$group\": {\n      \"_id\": { \"domain\": \"$domain\", \"token\": \"$tokens\" },\n      \"count\": { \"$sum\": 1 },\n      \"avg_confidence\": { \"$avg\": \"$confidence_at_prediction\" }\n    }\n  },\n  { \"$match\": { \"count\": { \"$gte\": 3 } } },\n  { \"$sort\": { \"count\": -1 } }\n]"
-      },
-      "id": "mongodb-aggregate",
-      "name": "MongoDB Aggregate",
-      "type": "n8n-nodes-base.mongoDb",
-      "typeVersion": 1,
-      "position": [280, 300],
-      "credentials": {
-        "mongoDb": {
-          "id": "mongodb-intent",
-          "name": "MongoDB Intent"
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/intent/keywords/aggregate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"period\": \"24h\",\n  \"min_count\": 3\n}",
+        "options": {
+          "timeout": 30000
         }
-      }
+      },
+      "id": "http-api-aggregate",
+      "name": "API Aggregate Keywords",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [280, 300]
     },
     {
       "parameters": {
@@ -59,8 +58,8 @@
           },
           "conditions": [
             {
-              "id": "check-has-data",
-              "leftValue": "={{ $json.length }}",
+              "id": "check-has-results",
+              "leftValue": "={{ $json.data?.length }}",
               "rightValue": 0,
               "operator": {
                 "type": "number",
@@ -80,7 +79,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// CALCULATE KEYWORD WEIGHTS\n// ============================================\n// Transform MongoDB aggregation results into Redis ZADD commands\n\nconst items = $input.all();\nconst domainWeights = {};\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Extract domain and token from _id\n  const domain = data._id?.domain;\n  const token = data._id?.token;\n  \n  if (!domain || !token) continue;\n  \n  // Calculate weight: min(10, count * avg_confidence)\n  // This caps weights at 10 to prevent runaway values\n  const weight = Math.min(10, data.count * (data.avg_confidence || 0.5));\n  \n  // Group by domain\n  if (!domainWeights[domain]) {\n    domainWeights[domain] = [];\n  }\n  \n  domainWeights[domain].push({\n    token: token,\n    weight: Math.round(weight * 100) / 100,  // Round to 2 decimals\n    count: data.count,\n    avg_confidence: data.avg_confidence\n  });\n}\n\n// Convert to array for output\nconst results = [];\nfor (const [domain, keywords] of Object.entries(domainWeights)) {\n  results.push({\n    json: {\n      domain: domain,\n      keywords: keywords,\n      total_keywords: keywords.length\n    }\n  });\n}\n\nreturn results.length > 0 ? results : [{ json: { domain: 'none', keywords: [], total_keywords: 0 } }];"
+        "jsCode": "// ============================================\n// CALCULATE KEYWORD WEIGHTS\n// ============================================\n\nconst data = $input.first().json.data || [];\nconst keywordsByDomain = {};\n\nfor (const item of data) {\n  const domain = item._id?.domain || item.domain || 'general';\n  const token = item._id?.token || item.token;\n  const count = item.count || 0;\n  const avgConfidence = item.avg_confidence || 0.5;\n  \n  // Calculate weight: min(10, count * avg_confidence)\n  const weight = Math.min(10, count * avgConfidence);\n  \n  if (!keywordsByDomain[domain]) {\n    keywordsByDomain[domain] = [];\n  }\n  \n  keywordsByDomain[domain].push({\n    token: token,\n    weight: Math.round(weight * 100) / 100\n  });\n}\n\nreturn [{\n  json: {\n    keywords_by_domain: keywordsByDomain,\n    total_domains: Object.keys(keywordsByDomain).length,\n    total_keywords: data.length\n  }\n}];"
       },
       "id": "code-calc-weights",
       "name": "Calculate Weights",
@@ -90,67 +89,39 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// UPDATE REDIS ZSET FOR EACH DOMAIN\n// ============================================\n\nconst domain = $json.domain;\nconst keywords = $json.keywords || [];\n\nif (domain === 'none' || keywords.length === 0) {\n  return [{ json: { status: 'skipped', domain: domain, reason: 'no keywords' } }];\n}\n\n// Build ZADD arguments: [score1, member1, score2, member2, ...]\nconst zaddArgs = [];\nfor (const kw of keywords) {\n  zaddArgs.push(kw.weight);\n  zaddArgs.push(kw.token);\n}\n\nreturn [{\n  json: {\n    domain: domain,\n    redis_key: `keywords:${domain}:triggers`,\n    zadd_args: zaddArgs,\n    total_keywords: keywords.length\n  }\n}];"
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/intent/keywords/sync",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
       },
-      "id": "code-prepare-redis",
-      "name": "Prepare Redis ZADD",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "http-api-sync",
+      "name": "API Sync Keywords",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [940, 200]
     },
     {
       "parameters": {
-        "operation": "zAdd",
-        "key": "={{ $json.redis_key }}",
-        "value": "={{ $json.zadd_args }}"
-      },
-      "id": "redis-zadd",
-      "name": "Redis ZADD",
-      "type": "n8n-nodes-base.redis",
-      "typeVersion": 1,
-      "position": [1160, 200],
-      "credentials": {
-        "redis": {
-          "id": "redis-intent",
-          "name": "Redis Intent"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "set",
-        "key": "keywords:version",
-        "value": "={{ $now.toISO() }}",
-        "expire": false
-      },
-      "id": "redis-version",
-      "name": "Bump Version",
-      "type": "n8n-nodes-base.redis",
-      "typeVersion": 1,
-      "position": [1380, 200],
-      "credentials": {
-        "redis": {
-          "id": "redis-intent",
-          "name": "Redis Intent"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// SUMMARY LOG\n// ============================================\n\nconst items = $input.all();\nlet totalDomains = 0;\nlet totalKeywords = 0;\n\nfor (const item of items) {\n  if (item.json.total_keywords) {\n    totalDomains++;\n    totalKeywords += item.json.total_keywords;\n  }\n}\n\nreturn [{\n  json: {\n    status: 'completed',\n    timestamp: new Date().toISOString(),\n    domains_updated: totalDomains,\n    total_keywords_synced: totalKeywords\n  }\n}];"
+        "jsCode": "// ============================================\n// LOG SUMMARY\n// ============================================\n\nconst input = $('Calculate Weights').first().json;\nconst apiResponse = $input.first().json;\n\nreturn [{\n  json: {\n    status: 'completed',\n    domains_updated: input.total_domains,\n    keywords_synced: input.total_keywords,\n    api_response: apiResponse,\n    processed_at: new Date().toISOString()\n  }\n}];"
       },
       "id": "code-summary",
       "name": "Summary",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1600, 200]
+      "position": [1160, 200]
     },
     {
-      "parameters": {},
-      "id": "noop-end",
-      "name": "No Data",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
+      "parameters": {
+        "jsCode": "// No validated keywords found\nreturn [{\n  json: {\n    status: 'no_data',\n    message: 'No validated keywords found for sync',\n    processed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "code-no-data",
+      "name": "No Data Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [720, 400]
     }
   ],
@@ -159,14 +130,14 @@
       "main": [
         [
           {
-            "node": "MongoDB Aggregate",
+            "node": "API Aggregate Keywords",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "MongoDB Aggregate": {
+    "API Aggregate Keywords": {
       "main": [
         [
           {
@@ -188,7 +159,7 @@
         ],
         [
           {
-            "node": "No Data",
+            "node": "No Data Log",
             "type": "main",
             "index": 0
           }
@@ -199,36 +170,14 @@
       "main": [
         [
           {
-            "node": "Prepare Redis ZADD",
+            "node": "API Sync Keywords",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Prepare Redis ZADD": {
-      "main": [
-        [
-          {
-            "node": "Redis ZADD",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Redis ZADD": {
-      "main": [
-        [
-          {
-            "node": "Bump Version",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Bump Version": {
+    "API Sync Keywords": {
       "main": [
         [
           {
