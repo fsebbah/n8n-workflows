@@ -167,7 +167,8 @@ def import_workflow(json_file):
     properties_to_remove = [
         'id', 'active', 'versionId', 'createdAt', 'updatedAt',
         'meta', 'tags', 'triggerCount', 'staticData', 'isArchived',
-        'activeVersionId', 'versionCounter', 'description', 'pinData'
+        'activeVersionId', 'versionCounter', 'description', 'pinData',
+        'activeVersion'
     ]
     for prop in properties_to_remove:
         workflow_data.pop(prop, None)
