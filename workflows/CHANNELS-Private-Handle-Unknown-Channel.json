@@ -4,8 +4,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## CHANNELS - Private Handle Unknown Channel\n\n**RFC:** RFC-004\n\n**Description:** Gère le cas où un channel privé n'existe plus sur Discord. Supprime l'ancien enregistrement et recrée un nouveau channel.\n\n**Endpoint:** POST /webhook/private-channel-unknown\n\n**InputSchema:**\n```json\n{\"type\":\"object\",\"required\":[\"discord_user_id\",\"guild_id\",\"old_channel_id\"],\"properties\":{\"discord_user_id\":{\"type\":\"string\",\"description\":\"ID Discord de l'utilisateur\"},\"guild_id\":{\"type\":\"string\",\"description\":\"ID du serveur Discord\"},\"old_channel_id\":{\"type\":\"string\",\"description\":\"ID du channel supprimé\"},\"channel_type\":{\"type\":\"string\",\"default\":\"support\"},\"metadata\":{\"type\":\"object\"}}}\n```\n\n**Flow:**\n1. DELETE api-backend (old channel)\n2. POST chatbot-core (create Discord)\n3. POST api-backend (register new)\n4. Return channel info",
-        "height": 420,
+        "content": "## CHANNELS - Private Handle Unknown Channel\n\n**RFC:** RFC-004\n\n**Description:** Gère le cas où un channel privé n'existe plus sur Discord. Supprime l'ancien enregistrement et recrée un nouveau channel.\n\n**Endpoint:** POST /webhook/private-channel-unknown\n\n**InputSchema:**\n```json\n{\"type\":\"object\",\"required\":[\"discord_user_id\",\"guild_id\",\"old_channel_id\",\"bot_token\"],\"properties\":{\"discord_user_id\":{\"type\":\"string\",\"description\":\"ID Discord de l'utilisateur\"},\"guild_id\":{\"type\":\"string\",\"description\":\"ID du serveur Discord\"},\"old_channel_id\":{\"type\":\"string\",\"description\":\"ID du channel supprimé\"},\"bot_token\":{\"type\":\"string\",\"description\":\"Token du bot Discord (passé par le plugin)\"},\"channel_type\":{\"type\":\"string\",\"default\":\"support\"},\"category_id\":{\"type\":\"string\"},\"metadata\":{\"type\":\"object\"}}}\n```\n\n**Flow:**\n1. DELETE api-backend (old channel)\n2. POST Discord API (create channel)\n3. POST api-backend (register new)\n4. Return channel info",
+        "height": 480,
         "width": 360,
         "color": 6
       },
@@ -31,7 +31,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT (RFC-004)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extract Tenant ID ---\nconst tenantId = headers['x-tenant-id'] \n  || headers['X-Tenant-ID'] \n  || headers['X-Tenant-Id']\n  || $env.DEFAULT_TENANT_ID\n  || 'default';\n\n// --- Validation required fields ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis',\n    http_status: 400\n  };\n}\n\nif (!body.guild_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_GUILD_ID',\n    message: 'Le champ \"guild_id\" est requis',\n    http_status: 400\n  };\n}\n\nif (!body.old_channel_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_OLD_CHANNEL_ID',\n    message: 'Le champ \"old_channel_id\" est requis',\n    http_status: 400\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: body.discord_user_id,\n    guild_id: body.guild_id,\n    old_channel_id: body.old_channel_id,\n    channel_type: body.channel_type || 'support',\n    tenant_id: tenantId,\n    metadata: {\n      ...body.metadata,\n      recreated_from: body.old_channel_id,\n      reason: 'unknown_channel_error'\n    }\n  }\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT (RFC-004)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extract Tenant ID ---\nconst tenantId = headers['x-tenant-id'] \n  || headers['X-Tenant-ID'] \n  || headers['X-Tenant-Id']\n  || $env.DEFAULT_TENANT_ID\n  || 'default';\n\n// --- Validation required fields ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis',\n    http_status: 400\n  };\n}\n\nif (!body.guild_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_GUILD_ID',\n    message: 'Le champ \"guild_id\" est requis',\n    http_status: 400\n  };\n}\n\nif (!body.old_channel_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_OLD_CHANNEL_ID',\n    message: 'Le champ \"old_channel_id\" est requis',\n    http_status: 400\n  };\n}\n\nif (!body.bot_token) {\n  return {\n    error: true,\n    error_code: 'MISSING_BOT_TOKEN',\n    message: 'Le champ \"bot_token\" est requis',\n    http_status: 400\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: body.discord_user_id,\n    guild_id: body.guild_id,\n    old_channel_id: body.old_channel_id,\n    bot_token: body.bot_token,\n    channel_type: body.channel_type || 'support',\n    category_id: body.category_id || null,\n    tenant_id: tenantId,\n    metadata: {\n      ...body.metadata,\n      recreated_from: body.old_channel_id,\n      reason: 'unknown_channel_error'\n    }\n  }\n};"
       },
       "id": "channel-unknown-0002",
       "name": "Validate Input",
@@ -108,13 +108,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.CHATBOT_CORE_URL }}/api/discord/channels/create",
+        "url": "=https://discord.com/api/v10/guilds/{{ $('Validate Input').first().json.data.guild_id }}/channels",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "X-API-Key",
-              "value": "={{ $env.CHATBOT_CORE_API_KEY }}"
+              "name": "Authorization",
+              "value": "=Bot {{ $('Validate Input').first().json.data.bot_token }}"
             },
             {
               "name": "Content-Type",
@@ -124,9 +124,9 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ guild_id: $('Validate Input').first().json.data.guild_id, discord_user_id: $('Validate Input').first().json.data.discord_user_id, channel_type: $('Validate Input').first().json.data.channel_type }) }}",
+        "jsonBody": "={{ JSON.stringify({ name: $('Validate Input').first().json.data.channel_type + '-' + $('Validate Input').first().json.data.discord_user_id.slice(-4), type: 0, parent_id: $('Validate Input').first().json.data.category_id || undefined, permission_overwrites: [ { id: $('Validate Input').first().json.data.guild_id, type: 0, deny: '1024' }, { id: $('Validate Input').first().json.data.discord_user_id, type: 1, allow: '1024' } ] }) }}",
         "options": {
-          "timeout": 30000
+          "timeout": 15000
         }
       },
       "id": "channel-unknown-0005",
@@ -147,11 +147,11 @@
           "conditions": [
             {
               "id": "check-discord-success",
-              "leftValue": "={{ $json.success }}",
-              "rightValue": true,
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
               "operator": {
-                "type": "boolean",
-                "operation": "equals"
+                "type": "string",
+                "operation": "isNotEmpty"
               }
             }
           ],
@@ -193,7 +193,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ discord_user_id: $('Validate Input').first().json.data.discord_user_id, channel_id: $json.channel_id, channel_type: $('Validate Input').first().json.data.channel_type, channel_name: $json.channel_name, metadata: $('Validate Input').first().json.data.metadata }) }}",
+        "jsonBody": "={{ JSON.stringify({ discord_user_id: $('Validate Input').first().json.data.discord_user_id, channel_id: $('Create Discord Channel').first().json.id, channel_type: $('Validate Input').first().json.data.channel_type, channel_name: $('Create Discord Channel').first().json.name, metadata: $('Validate Input').first().json.data.metadata }) }}",
         "options": {
           "timeout": 10000
         }
@@ -227,7 +227,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT CHATBOT-CORE ERROR\n// ============================================\n\nconst input = $input.first().json;\n\n// Map chatbot-core errors\nconst errorCode = input.error?.code || input.code || 'DISCORD_ERROR';\nlet httpStatus = 500;\nlet message = input.error?.message || input.message || 'Erreur lors de la recréation du channel Discord';\n\nswitch(errorCode) {\n  case 'MISSING_FIELD':\n  case 'INVALID_CHANNEL_TYPE':\n    httpStatus = 400;\n    break;\n  case 'UNAUTHORIZED':\n    httpStatus = 401;\n    message = 'Authentification chatbot-core invalide';\n    break;\n  case 'GUILD_NOT_FOUND':\n    httpStatus = 404;\n    message = 'Serveur Discord non trouvé ou bot non présent';\n    break;\n  case 'MEMBER_NOT_FOUND':\n    httpStatus = 404;\n    message = 'Utilisateur non trouvé sur le serveur Discord';\n    break;\n  case 'PERMISSION_DENIED':\n    httpStatus = 403;\n    message = 'Le bot n\\'a pas les permissions pour créer le channel';\n    break;\n}\n\nreturn {\n  success: false,\n  error: {\n    code: errorCode,\n    message: message\n  },\n  http_status: httpStatus\n};"
+        "jsCode": "// ============================================\n// FORMAT DISCORD API ERROR\n// ============================================\n\nconst input = $input.first().json;\n\n// Discord API error codes\nconst discordCode = input.code;\nlet httpStatus = 500;\nlet errorCode = 'DISCORD_ERROR';\nlet message = input.message || 'Erreur Discord API';\n\nswitch(discordCode) {\n  case 50001: // Missing Access\n    httpStatus = 403;\n    errorCode = 'MISSING_ACCESS';\n    message = 'Le bot n\\'a pas accès à ce serveur';\n    break;\n  case 50013: // Missing Permissions\n    httpStatus = 403;\n    errorCode = 'MISSING_PERMISSIONS';\n    message = 'Le bot n\\'a pas les permissions pour créer un channel';\n    break;\n  case 10004: // Unknown Guild\n    httpStatus = 404;\n    errorCode = 'GUILD_NOT_FOUND';\n    message = 'Serveur Discord non trouvé';\n    break;\n  case 10013: // Unknown User\n    httpStatus = 404;\n    errorCode = 'USER_NOT_FOUND';\n    message = 'Utilisateur Discord non trouvé';\n    break;\n  case 30013: // Maximum channels reached\n    httpStatus = 400;\n    errorCode = 'MAX_CHANNELS';\n    message = 'Nombre maximum de channels atteint sur ce serveur';\n    break;\n  default:\n    if (input.error) {\n      message = input.error;\n    }\n}\n\nreturn {\n  success: false,\n  error: {\n    code: errorCode,\n    message: message,\n    discord_code: discordCode\n  },\n  http_status: httpStatus\n};"
       },
       "id": "channel-unknown-0010",
       "name": "Format Discord Error",
