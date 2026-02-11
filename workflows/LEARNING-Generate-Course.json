@@ -22,10 +22,23 @@
     {
       "id": "validate-input",
       "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Handle both direct body and nested body.body (plugin compatibility)\nconst rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nconst required = ['prompt', 'topic', 'guild_id', 'instructor_id'];\nconst missing = required.filter(field => !body[field]);\n\nif (missing.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required parameters: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST',\n        received_fields: Object.keys(body)\n      }\n    }\n  };\n}\n\n// Pass normalized body for downstream nodes\nreturn {\n  json: {\n    valid: true,\n    body: body\n  }\n};"
+      }
+    },
+    {
+      "id": "check-validation",
+      "name": "Validation OK?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        460,
+        680,
         300
       ],
       "parameters": {
@@ -37,35 +50,11 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ $json.body.prompt }}",
-              "rightValue": "",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "isNotEmpty"
-              }
-            },
-            {
-              "leftValue": "={{ $json.body.topic }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "isNotEmpty"
-              }
-            },
-            {
-              "leftValue": "={{ $json.body.guild_id }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "isNotEmpty"
-              }
-            },
-            {
-              "leftValue": "={{ $json.body.instructor_id }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "isNotEmpty"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],
@@ -85,7 +74,7 @@
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameters: prompt, topic, guild_id, instructor_id\", \"status\": \"BAD_REQUEST\" } } }}",
+        "responseBody": "={{ { \"success\": false, \"error\": $('Validate Input').first().json.error } }}",
         "options": {
           "responseCode": 400
         }
@@ -123,7 +112,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"{{ $json.body.model || 'claude-3-haiku-20240307' }}\",\n  \"max_tokens\": {{ $json.body.max_tokens || 4096 }},\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.body.prompt }}\"\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"{{ $('Validate Input').first().json.body.model || 'claude-3-haiku-20240307' }}\",\n  \"max_tokens\": {{ $('Validate Input').first().json.body.max_tokens || 4096 }},\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $('Validate Input').first().json.body.prompt }}\"\n    }\n  ]\n}",
         "options": {
           "timeout": 120000
         }
@@ -140,7 +129,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "const webhookData = $('Webhook').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  // Extract content from Claude response\n  const content = llmResponse.content?.[0]?.text || '';\n  \n  // Find JSON in the response (might be wrapped in markdown code blocks)\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const courseData = JSON.parse(jsonStr);\n  \n  // Add metadata from webhook\n  const enrichedCourse = {\n    ...courseData,\n    instructor_id: webhookData.body.instructor_id,\n    price_credits: webhookData.body.price_credits || 0,\n    is_free: webhookData.body.is_free !== false,\n    language: webhookData.body.language || 'fr',\n    thumbnail_url: webhookData.body.thumbnail_url || null\n  };\n  \n  return {\n    json: {\n      success: true,\n      course: enrichedCourse,\n      guild_id: webhookData.body.guild_id\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to parse course structure: ' + e.message,\n        raw_response: llmResponse.content?.[0]?.text?.substring(0, 500)\n      }\n    }\n  };\n}"
+        "jsCode": "const body = $('Validate Input').first().json.body;\nconst llmResponse = $input.first().json;\n\ntry {\n  // Extract content from Claude response\n  const content = llmResponse.content?.[0]?.text || '';\n  \n  // Find JSON in the response (might be wrapped in markdown code blocks)\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const courseData = JSON.parse(jsonStr);\n  \n  // Add metadata from validated body\n  const enrichedCourse = {\n    ...courseData,\n    instructor_id: body.instructor_id,\n    price_credits: body.price_credits || 0,\n    is_free: body.is_free !== false,\n    language: body.language || 'fr',\n    thumbnail_url: body.thumbnail_url || null\n  };\n  \n  return {\n    json: {\n      success: true,\n      course: enrichedCourse,\n      guild_id: body.guild_id\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to parse course structure: ' + e.message,\n        raw_response: llmResponse.content?.[0]?.text?.substring(0, 500)\n      }\n    }\n  };\n}"
       }
     },
     {
@@ -228,7 +217,7 @@
         100
       ],
       "parameters": {
-        "jsCode": "const apiResponse = $input.first().json;\nconst parseData = $('Parse LLM Response').first().json;\nconst webhookData = $('Webhook').first().json;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      course_id: apiResponse.id,\n      title: apiResponse.title,\n      status: apiResponse.status,\n      modules_count: apiResponse.modules_count || parseData.course.modules?.length || 0,\n      total_duration_minutes: apiResponse.total_duration_minutes\n    },\n    meta: {\n      workflow: 'learning-generate-course',\n      provider: 'anthropic',\n      model: webhookData.body.model || 'claude-3-haiku-20240307',\n      timestamp: new Date().toISOString()\n    }\n  }\n};"
+        "jsCode": "const apiResponse = $input.first().json;\nconst parseData = $('Parse LLM Response').first().json;\nconst body = $('Validate Input').first().json.body;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      course_id: apiResponse.id,\n      title: apiResponse.title,\n      status: apiResponse.status,\n      modules_count: apiResponse.modules_count || parseData.course.modules?.length || 0,\n      total_duration_minutes: apiResponse.total_duration_minutes\n    },\n    meta: {\n      workflow: 'learning-generate-course',\n      provider: 'anthropic',\n      model: body.model || 'claude-3-haiku-20240307',\n      timestamp: new Date().toISOString()\n    }\n  }\n};"
       }
     },
     {
@@ -293,6 +282,17 @@
       ]
     },
     "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Validation OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation OK?": {
       "main": [
         [
           {
