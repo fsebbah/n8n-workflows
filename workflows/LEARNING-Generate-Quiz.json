@@ -37,6 +37,14 @@
           },
           "conditions": [
             {
+              "leftValue": "={{ $json.body.prompt }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
               "leftValue": "={{ $json.body.lesson_id }}",
               "rightValue": "",
               "operator": {
@@ -77,7 +85,7 @@
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameters: lesson_id, guild_id, and topic or content\", \"status\": \"BAD_REQUEST\" } } }}",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameters: prompt, lesson_id, guild_id, and topic or content\", \"status\": \"BAD_REQUEST\" } } }}",
         "options": {
           "responseCode": 400
         }
@@ -115,7 +123,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-3-haiku-20240307\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Tu es un expert en création de quiz culinaires. Génère un quiz pédagogique.\\n\\n**Sujet/Contenu:** {{ $json.body.topic || $json.body.content }}\\n**Nombre de questions:** {{ $json.body.num_questions || 10 }}\\n**Types de questions:** {{ JSON.stringify($json.body.question_types || ['mcq', 'true_false']) }}\\n**Difficulté:** {{ $json.body.difficulty || 'medium' }}\\n**Langue:** {{ $json.body.language || 'fr' }}\\n\\n**Instructions:**\\n1. Questions claires et non ambiguës\\n2. Options de réponse plausibles\\n3. Explications pédagogiques pour chaque réponse\\n4. Distribution de difficulté variée\\n5. Points adaptés à la difficulté (easy=10, medium=15, hard=20)\\n\\n**IMPORTANT:** Réponds UNIQUEMENT en JSON valide:\\n{\\n  \\\"title\\\": \\\"Quiz: [sujet]\\\",\\n  \\\"description\\\": \\\"string\\\",\\n  \\\"instructions\\\": \\\"string\\\",\\n  \\\"questions\\\": [\\n    {\\n      \\\"text\\\": \\\"string\\\",\\n      \\\"type\\\": \\\"mcq|true_false|open\\\",\\n      \\\"options\\\": [\\\"A\\\", \\\"B\\\", \\\"C\\\", \\\"D\\\"] (pour mcq),\\n      \\\"correct_answer\\\": \\\"string\\\",\\n      \\\"explanation\\\": \\\"string\\\",\\n      \\\"difficulty\\\": 1-3,\\n      \\\"order_index\\\": number,\\n      \\\"points\\\": number\\n    }\\n  ]\\n}\"\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"{{ $json.body.model || 'claude-3-haiku-20240307' }}\",\n  \"max_tokens\": {{ $json.body.max_tokens || 4096 }},\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.body.prompt }}\"\n    }\n  ]\n}",
         "options": {
           "timeout": 120000
         }
@@ -211,7 +219,7 @@
         100
       ],
       "parameters": {
-        "jsCode": "const apiResponse = $input.first().json;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      quiz_id: apiResponse.id,\n      title: apiResponse.title,\n      questions_count: apiResponse.questions?.length || 0,\n      total_points: apiResponse.total_points,\n      passing_score: apiResponse.passing_score\n    },\n    meta: {\n      workflow: 'learning-generate-quiz',\n      provider: 'anthropic',\n      model: 'claude-3-haiku-20240307',\n      timestamp: new Date().toISOString()\n    }\n  }\n};"
+        "jsCode": "const apiResponse = $input.first().json;\nconst webhookData = $('Webhook').first().json;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      quiz_id: apiResponse.id,\n      title: apiResponse.title,\n      questions_count: apiResponse.questions?.length || 0,\n      total_points: apiResponse.total_points,\n      passing_score: apiResponse.passing_score\n    },\n    meta: {\n      workflow: 'learning-generate-quiz',\n      provider: 'anthropic',\n      model: webhookData.body.model || 'claude-3-haiku-20240307',\n      timestamp: new Date().toISOString()\n    }\n  }\n};"
       }
     },
     {
@@ -259,7 +267,7 @@
         "color": 6,
         "width": 650,
         "height": 240,
-        "content": "## LEARNING - Generate Quiz (RFC-022)\n\n**Endpoint:** POST /webhook/learning-generate-quiz\n\n**Parameters:**\n- `lesson_id` (required): UUID of the lesson\n- `guild_id` (required): Discord guild ID\n- `topic` or `content` (required): Quiz topic or lesson content\n- `num_questions` (optional): Number of questions (default: 10)\n- `question_types` (optional): [mcq, true_false, open] (default: [mcq, true_false])\n- `difficulty` (optional): easy | medium | hard (default: medium)\n- `language` (optional): fr | en (default: fr)\n- `time_limit_seconds` (optional): Quiz time limit (default: 600)\n- `passing_score` (optional): Minimum score to pass (default: 70)\n- `adaptive` (optional): Enable adaptive mode (default: false)\n\n**Returns:** Quiz with generated questions saved to API"
+        "content": "## LEARNING - Generate Quiz (RFC-022)\n\n**Endpoint:** POST /webhook/learning-generate-quiz\n\n**Parameters:**\n- `prompt` (required): LLM prompt for quiz generation\n- `lesson_id` (required): UUID of the lesson\n- `guild_id` (required): Discord guild ID\n- `topic` or `content` (required): Quiz topic or lesson content\n- `model` (optional): LLM model (default: claude-3-haiku-20240307)\n- `max_tokens` (optional): Max tokens (default: 4096)\n- `time_limit_seconds` (optional): Quiz time limit (default: 600)\n- `passing_score` (optional): Minimum score to pass (default: 70)\n- `adaptive` (optional): Enable adaptive mode (default: false)\n\n**Returns:** Quiz with generated questions saved to API"
       }
     }
   ],
@@ -360,370 +368,5 @@
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
-  },
-  "tags": [],
-  "activeVersion": {
-    "updatedAt": "2026-02-03T22:35:23.260Z",
-    "createdAt": "2026-02-03T22:35:23.260Z",
-    "versionId": "c849915e-c39e-4bef-b4ff-9593caeba0ec",
-    "workflowId": "etJfQIaXBz9tj1b6",
-    "nodes": [
-      {
-        "id": "webhook-generate-quiz",
-        "name": "Webhook",
-        "type": "n8n-nodes-base.webhook",
-        "typeVersion": 2,
-        "position": [
-          240,
-          300
-        ],
-        "webhookId": "learning-generate-quiz",
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "learning-generate-quiz",
-          "responseMode": "responseNode",
-          "options": {}
-        }
-      },
-      {
-        "id": "validate-input",
-        "name": "Validate Input",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          460,
-          300
-        ],
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "leftValue": "={{ $json.body.lesson_id }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "isNotEmpty"
-                }
-              },
-              {
-                "leftValue": "={{ $json.body.guild_id }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "isNotEmpty"
-                }
-              },
-              {
-                "leftValue": "={{ $json.body.topic || $json.body.content }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "isNotEmpty"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        }
-      },
-      {
-        "id": "error-missing-params",
-        "name": "Error: Missing Params",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          700,
-          500
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameters: lesson_id, guild_id, and topic or content\", \"status\": \"BAD_REQUEST\" } } }}",
-          "options": {
-            "responseCode": 400
-          }
-        }
-      },
-      {
-        "id": "generate-quiz-llm",
-        "name": "Generate Quiz Questions",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          700,
-          200
-        ],
-        "parameters": {
-          "method": "POST",
-          "url": "https://api.anthropic.com/v1/messages",
-          "authentication": "none",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "x-api-key",
-                "value": "={{ $env.ANTHROPIC_API_KEY }}"
-              },
-              {
-                "name": "anthropic-version",
-                "value": "2023-06-01"
-              },
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={\n  \"model\": \"claude-3-haiku-20240307\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Tu es un expert en création de quiz culinaires. Génère un quiz pédagogique.\\n\\n**Sujet/Contenu:** {{ $json.body.topic || $json.body.content }}\\n**Nombre de questions:** {{ $json.body.num_questions || 10 }}\\n**Types de questions:** {{ JSON.stringify($json.body.question_types || ['mcq', 'true_false']) }}\\n**Difficulté:** {{ $json.body.difficulty || 'medium' }}\\n**Langue:** {{ $json.body.language || 'fr' }}\\n\\n**Instructions:**\\n1. Questions claires et non ambiguës\\n2. Options de réponse plausibles\\n3. Explications pédagogiques pour chaque réponse\\n4. Distribution de difficulté variée\\n5. Points adaptés à la difficulté (easy=10, medium=15, hard=20)\\n\\n**IMPORTANT:** Réponds UNIQUEMENT en JSON valide:\\n{\\n  \\\"title\\\": \\\"Quiz: [sujet]\\\",\\n  \\\"description\\\": \\\"string\\\",\\n  \\\"instructions\\\": \\\"string\\\",\\n  \\\"questions\\\": [\\n    {\\n      \\\"text\\\": \\\"string\\\",\\n      \\\"type\\\": \\\"mcq|true_false|open\\\",\\n      \\\"options\\\": [\\\"A\\\", \\\"B\\\", \\\"C\\\", \\\"D\\\"] (pour mcq),\\n      \\\"correct_answer\\\": \\\"string\\\",\\n      \\\"explanation\\\": \\\"string\\\",\\n      \\\"difficulty\\\": 1-3,\\n      \\\"order_index\\\": number,\\n      \\\"points\\\": number\\n    }\\n  ]\\n}\"\n    }\n  ]\n}",
-          "options": {
-            "timeout": 120000
-          }
-        },
-        "onError": "continueRegularOutput"
-      },
-      {
-        "id": "parse-llm-response",
-        "name": "Parse LLM Response",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          920,
-          200
-        ],
-        "parameters": {
-          "jsCode": "const webhookData = $('Webhook').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  const content = llmResponse.content?.[0]?.text || '';\n  \n  // Find JSON in the response\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const quizData = JSON.parse(jsonStr);\n  \n  // Build quiz object for API\n  const quiz = {\n    lesson_id: webhookData.body.lesson_id,\n    guild_id: webhookData.body.guild_id,\n    title: quizData.title,\n    description: quizData.description,\n    instructions: quizData.instructions,\n    type: webhookData.body.adaptive ? 'adaptive' : 'standard',\n    time_limit_seconds: webhookData.body.time_limit_seconds || 600,\n    passing_score: webhookData.body.passing_score || 70,\n    questions: quizData.questions.map((q, i) => ({\n      text: q.text,\n      type: q.type,\n      options: q.options,\n      correct_answer: q.correct_answer,\n      explanation: q.explanation,\n      difficulty: q.difficulty || 2,\n      order_index: q.order_index || i,\n      points: q.points || (q.difficulty === 1 ? 10 : q.difficulty === 3 ? 20 : 15)\n    }))\n  };\n  \n  return {\n    json: {\n      success: true,\n      quiz: quiz,\n      guild_id: webhookData.body.guild_id\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to parse quiz: ' + e.message,\n        raw_response: llmResponse.content?.[0]?.text?.substring(0, 500)\n      }\n    }\n  };\n}"
-        }
-      },
-      {
-        "id": "check-parse-success",
-        "name": "Parse Success?",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          1140,
-          200
-        ],
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "leftValue": "={{ $json.success }}",
-                "rightValue": true,
-                "operator": {
-                  "type": "boolean",
-                  "operation": "equals"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        }
-      },
-      {
-        "id": "save-quiz-api",
-        "name": "Save Quiz",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          1360,
-          100
-        ],
-        "parameters": {
-          "method": "POST",
-          "url": "={{ $env.API_URL }}/api/v1/quizzes",
-          "authentication": "none",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "X-API-Key",
-                "value": "={{ $env.API_KEY }}"
-              },
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify($json.quiz) }}",
-          "options": {
-            "timeout": 30000
-          }
-        },
-        "onError": "continueRegularOutput"
-      },
-      {
-        "id": "format-success-response",
-        "name": "Format Success Response",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          1580,
-          100
-        ],
-        "parameters": {
-          "jsCode": "const apiResponse = $input.first().json;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      quiz_id: apiResponse.id,\n      title: apiResponse.title,\n      questions_count: apiResponse.questions?.length || 0,\n      total_points: apiResponse.total_points,\n      passing_score: apiResponse.passing_score\n    },\n    meta: {\n      workflow: 'learning-generate-quiz',\n      provider: 'anthropic',\n      model: 'claude-3-haiku-20240307',\n      timestamp: new Date().toISOString()\n    }\n  }\n};"
-        }
-      },
-      {
-        "id": "respond-success",
-        "name": "Respond Success",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          1800,
-          100
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ $json }}",
-          "options": {}
-        }
-      },
-      {
-        "id": "respond-parse-error",
-        "name": "Respond Parse Error",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          1360,
-          300
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ { \"success\": false, \"error\": $json.error, \"meta\": { \"workflow\": \"learning-generate-quiz\", \"timestamp\": new Date().toISOString() } } }}",
-          "options": {
-            "responseCode": 500
-          }
-        }
-      },
-      {
-        "id": "sticky-note-doc",
-        "name": "API Documentation",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          240,
-          60
-        ],
-        "parameters": {
-          "color": 6,
-          "width": 650,
-          "height": 240,
-          "content": "## LEARNING - Generate Quiz (RFC-022)\n\n**Endpoint:** POST /webhook/learning-generate-quiz\n\n**Parameters:**\n- `lesson_id` (required): UUID of the lesson\n- `guild_id` (required): Discord guild ID\n- `topic` or `content` (required): Quiz topic or lesson content\n- `num_questions` (optional): Number of questions (default: 10)\n- `question_types` (optional): [mcq, true_false, open] (default: [mcq, true_false])\n- `difficulty` (optional): easy | medium | hard (default: medium)\n- `language` (optional): fr | en (default: fr)\n- `time_limit_seconds` (optional): Quiz time limit (default: 600)\n- `passing_score` (optional): Minimum score to pass (default: 70)\n- `adaptive` (optional): Enable adaptive mode (default: false)\n\n**Returns:** Quiz with generated questions saved to API"
-        }
-      }
-    ],
-    "connections": {
-      "Webhook": {
-        "main": [
-          [
-            {
-              "node": "Validate Input",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Validate Input": {
-        "main": [
-          [
-            {
-              "node": "Generate Quiz Questions",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Error: Missing Params",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Generate Quiz Questions": {
-        "main": [
-          [
-            {
-              "node": "Parse LLM Response",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Parse LLM Response": {
-        "main": [
-          [
-            {
-              "node": "Parse Success?",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Parse Success?": {
-        "main": [
-          [
-            {
-              "node": "Save Quiz",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Respond Parse Error",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Save Quiz": {
-        "main": [
-          [
-            {
-              "node": "Format Success Response",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Format Success Response": {
-        "main": [
-          [
-            {
-              "node": "Respond Success",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      }
-    },
-    "authors": "Sebbah fsebbah@azy.solutions",
-    "name": null,
-    "description": null
   }
 }
