@@ -43,7 +43,7 @@
     },
     {
       "parameters": {
-        "jsCode": "  // ============================================================================\n  // BUILD REGISTRY - Extract metadata from workflows\n  // ============================================================================\n\n  const workflows = $input.first().json.data || [];\n  const baseUrl = $env.WEBHOOK_URL || 'http://pi6.local:5678/';\n\n  // Filter: active + has webhook + not TORAH/Registry\n  const toolWorkflows = workflows.filter(w =>\n    w.active &&\n    !w.name.includes('Registry') &&\n    !w.name.includes('TORAH')\n  );\n\n  // Build tools object\n  const tools = {};\n\n  for (const workflow of toolWorkflows) {\n    const webhookNode = workflow.nodes?.find(n => n.type === 'n8n-nodes-base.webhook');\n\n    if (webhookNode) {\n      const webhookPath = webhookNode.parameters?.path || webhookNode.webhookId;\n\n      // Extract description from sticky note\n      const stickyNote = workflow.nodes?.find(n => n.type === 'n8n-nodes-base.stickyNote');\n      const stickyContent = stickyNote?.parameters?.content || '';\n\n      // Parse description from sticky (after \"Description:\")\n      const descMatch = stickyContent.match(/\\*\\*Description[:\\s]*\\*\\*\\s*\\n?([^\\n*]+)/i);\n      const description = descMatch ? descMatch[1].trim() : workflow.name;\n\n      // Extract scope from settings or default to \"user\"\n      const scope = workflow.settings?.scope || 'user';\n\n      // Extract tags from workflow tags or name\n      const tags = workflow.tags?.map(t => t.name) || [];\n\n      tools[webhookPath] = {\n        name: workflow.name,\n        description: description,\n        workflow_id: workflow.id,\n        endpoint: `/webhook/${webhookPath}`,\n        webhook_url: `${baseUrl}webhook/${webhookPath}`,\n        method: webhookNode.parameters?.httpMethod || \"POST\",\n        scope: scope,\n        tags: tags,\n        parameters: { required: {}, optional: {} }, // TODO: extract from workflow\n        active: workflow.active\n      };\n    }\n  }\n\n  return {\n    json: {\n      version: \"4.2\",\n      updated_at: new Date().toISOString(),\n      total_tools: Object.keys(tools).length,\n      tools: tools\n    }\n  };"
+        "jsCode": "  // ============================================================================\n  // BUILD REGISTRY - Extract metadata from workflows\n  // ============================================================================\n\n  const workflows = $input.first().json.data || [];\n  const baseUrl = $env.WEBHOOK_URL || 'http://pi6.local:5678/';\n\n  // Filter: active + has webhook + not TORAH/Registry\n  const toolWorkflows = workflows.filter(w =>\n    w.active &&\n    !w.name.includes('Registry') &&\n    !w.name.includes('TORAH')\n  );\n\n  // Build tools object\n  const tools = {};\n\n  for (const workflow of toolWorkflows) {\n    const webhookNode = workflow.nodes?.find(n => n.type === 'n8n-nodes-base.webhook');\n\n    if (webhookNode) {\n      const webhookPath = webhookNode.parameters?.path || webhookNode.webhookId;\n\n      // Extract description from sticky note\n      const stickyNote = workflow.nodes?.find(n => n.type === 'n8n-nodes-base.stickyNote');\n      const stickyContent = stickyNote?.parameters?.content || '';\n\n      // Parse description from sticky (after \"Description:\")\n      const descMatch = stickyContent.match(/\\*\\*Description[:\\s]*\\*\\*\\s*\\n?([^\\n*]+)/i);\n      const description = descMatch ? descMatch[1].trim() : workflow.name;\n\n      // Extract InputSchema from sticky note (JSON block after **InputSchema:**)\n      let inputSchema = null;\n      const schemaMatch = stickyContent.match(/\\*\\*InputSchema:\\*\\*\\s*```json\\s*([\\s\\S]*?)```/i);\n      if (schemaMatch) {\n        try {\n          inputSchema = JSON.parse(schemaMatch[1].trim());\n        } catch (e) {\n          // Invalid JSON, skip\n        }\n      }\n\n      // Build parameters from inputSchema\n      const parameters = { required: {}, optional: {} };\n      if (inputSchema?.properties) {\n        const requiredFields = inputSchema.required || [];\n        for (const [key, prop] of Object.entries(inputSchema.properties)) {\n          const paramDef = {\n            type: prop.type || 'string',\n            description: prop.description || key\n          };\n          if (prop.default !== undefined) paramDef.default = prop.default;\n          if (prop.enum) paramDef.enum = prop.enum;\n\n          if (requiredFields.includes(key)) {\n            parameters.required[key] = paramDef;\n          } else {\n            parameters.optional[key] = paramDef;\n          }\n        }\n      }\n\n      // Extract scope from settings or default to \"user\"\n      const scope = workflow.settings?.scope || 'user';\n\n      // Extract tags from workflow tags or name\n      const tags = workflow.tags?.map(t => t.name) || [];\n\n      tools[webhookPath] = {\n        name: workflow.name,\n        description: description,\n        workflow_id: workflow.id,\n        endpoint: `/webhook/${webhookPath}`,\n        webhook_url: `${baseUrl}webhook/${webhookPath}`,\n        method: webhookNode.parameters?.httpMethod || \"POST\",\n        scope: scope,\n        tags: tags,\n        parameters: parameters,\n        inputSchema: inputSchema,\n        active: workflow.active\n      };\n    }\n  }\n\n  return {\n    json: {\n      version: \"4.3\",\n      updated_at: new Date().toISOString(),\n      total_tools: Object.keys(tools).length,\n      tools: tools\n    }\n  };"
       },
       "id": "code-registry",
       "name": "Build Registry",
@@ -119,129 +119,5 @@
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
-  },
-  "tags": [],
-  "activeVersion": {
-    "updatedAt": "2026-02-06T16:22:04.990Z",
-    "createdAt": "2026-02-06T16:22:04.990Z",
-    "versionId": "ef8e90bb-cb64-4d0f-abe9-452045f8f83f",
-    "workflowId": "dz4sQltaKjQPv0wv",
-    "nodes": [
-      {
-        "parameters": {
-          "path": "mcp/tools/registry",
-          "responseMode": "responseNode",
-          "options": {}
-        },
-        "id": "webhook-registry",
-        "name": "Webhook Registry",
-        "type": "n8n-nodes-base.webhook",
-        "position": [
-          304,
-          304
-        ],
-        "webhookId": "mcp-registry",
-        "typeVersion": 1
-      },
-      {
-        "parameters": {
-          "url": "={{$env.N8N_API_URL}}/workflows?active=true&limit=250",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "X-N8N-API-KEY",
-                "value": "={{ $('Webhook Registry').first().json.headers['x-n8n-api-key'] }}"
-              }
-            ]
-          },
-          "options": {}
-        },
-        "id": "http-get-workflows",
-        "name": "Get Active Workflows",
-        "type": "n8n-nodes-base.httpRequest",
-        "position": [
-          512,
-          304
-        ],
-        "typeVersion": 4.2
-      },
-      {
-        "parameters": {
-          "jsCode": "  // ============================================================================\n  // BUILD REGISTRY - Extract metadata from workflows\n  // ============================================================================\n\n  const workflows = $input.first().json.data || [];\n  const baseUrl = $env.WEBHOOK_URL || 'http://pi6.local:5678/';\n\n  // Filter: active + has webhook + not TORAH/Registry\n  const toolWorkflows = workflows.filter(w =>\n    w.active &&\n    !w.name.includes('Registry') &&\n    !w.name.includes('TORAH')\n  );\n\n  // Build tools object\n  const tools = {};\n\n  for (const workflow of toolWorkflows) {\n    const webhookNode = workflow.nodes?.find(n => n.type === 'n8n-nodes-base.webhook');\n\n    if (webhookNode) {\n      const webhookPath = webhookNode.parameters?.path || webhookNode.webhookId;\n\n      // Extract description from sticky note\n      const stickyNote = workflow.nodes?.find(n => n.type === 'n8n-nodes-base.stickyNote');\n      const stickyContent = stickyNote?.parameters?.content || '';\n\n      // Parse description from sticky (after \"Description:\")\n      const descMatch = stickyContent.match(/\\*\\*Description[:\\s]*\\*\\*\\s*\\n?([^\\n*]+)/i);\n      const description = descMatch ? descMatch[1].trim() : workflow.name;\n\n      // Extract scope from settings or default to \"user\"\n      const scope = workflow.settings?.scope || 'user';\n\n      // Extract tags from workflow tags or name\n      const tags = workflow.tags?.map(t => t.name) || [];\n\n      tools[webhookPath] = {\n        name: workflow.name,\n        description: description,\n        workflow_id: workflow.id,\n        endpoint: `/webhook/${webhookPath}`,\n        webhook_url: `${baseUrl}webhook/${webhookPath}`,\n        method: webhookNode.parameters?.httpMethod || \"POST\",\n        scope: scope,\n        tags: tags,\n        parameters: { required: {}, optional: {} }, // TODO: extract from workflow\n        active: workflow.active\n      };\n    }\n  }\n\n  return {\n    json: {\n      version: \"4.2\",\n      updated_at: new Date().toISOString(),\n      total_tools: Object.keys(tools).length,\n      tools: tools\n    }\n  };"
-        },
-        "id": "code-registry",
-        "name": "Build Registry",
-        "type": "n8n-nodes-base.code",
-        "position": [
-          1056,
-          304
-        ],
-        "typeVersion": 2
-      },
-      {
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ JSON.stringify($json) }}",
-          "options": {
-            "responseCode": 200,
-            "responseHeaders": {
-              "entries": [
-                {
-                  "name": "Content-Type",
-                  "value": "application/json"
-                }
-              ]
-            }
-          }
-        },
-        "id": "respond-registry",
-        "name": "Respond Registry",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "position": [
-          1216,
-          304
-        ],
-        "typeVersion": 1.1
-      }
-    ],
-    "connections": {
-      "Webhook Registry": {
-        "main": [
-          [
-            {
-              "node": "Get Active Workflows",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Get Active Workflows": {
-        "main": [
-          [
-            {
-              "node": "Build Registry",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Build Registry": {
-        "main": [
-          [
-            {
-              "node": "Respond Registry",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      }
-    },
-    "authors": "Sebbah fsebbah@azy.solutions",
-    "name": null,
-    "description": null
   }
 }
