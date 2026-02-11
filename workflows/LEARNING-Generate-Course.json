@@ -37,6 +37,14 @@
           },
           "conditions": [
             {
+              "leftValue": "={{ $json.body.prompt }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
               "leftValue": "={{ $json.body.topic }}",
               "rightValue": "",
               "operator": {
@@ -77,7 +85,7 @@
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameters: topic, guild_id, instructor_id\", \"status\": \"BAD_REQUEST\" } } }}",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameters: prompt, topic, guild_id, instructor_id\", \"status\": \"BAD_REQUEST\" } } }}",
         "options": {
           "responseCode": 400
         }
@@ -115,7 +123,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-3-haiku-20240307\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Tu es un expert en pédagogie culinaire. Génère la structure complète d'un cours de cuisine.\\n\\n**Sujet:** {{ $json.body.topic }}\\n**Niveau:** {{ $json.body.level || 'débutant' }}\\n**Durée souhaitée:** {{ $json.body.duration_hours || 4 }} heures\\n**Langue:** {{ $json.body.language || 'fr' }}\\n\\n**Instructions:**\\n1. Crée 3-5 modules progressifs\\n2. Chaque module contient 2-4 leçons\\n3. Chaque leçon a un type: video, text, exercise, live\\n4. Inclus des objectifs pédagogiques clairs\\n5. Estime la durée de chaque élément\\n\\n**IMPORTANT:** Réponds UNIQUEMENT en JSON valide selon ce schéma:\\n{\\n  \\\"title\\\": \\\"string\\\",\\n  \\\"description\\\": \\\"string (2-3 phrases)\\\",\\n  \\\"tags\\\": [\\\"tag1\\\", \\\"tag2\\\"],\\n  \\\"modules\\\": [\\n    {\\n      \\\"title\\\": \\\"string\\\",\\n      \\\"description\\\": \\\"string\\\",\\n      \\\"order_index\\\": number,\\n      \\\"duration_minutes\\\": number,\\n      \\\"objectives\\\": [\\\"string\\\"],\\n      \\\"lessons\\\": [\\n        {\\n          \\\"title\\\": \\\"string\\\",\\n          \\\"type\\\": \\\"video|text|exercise|live\\\",\\n          \\\"content\\\": \\\"string (description détaillée)\\\",\\n          \\\"duration_minutes\\\": number,\\n          \\\"order_index\\\": number\\n        }\\n      ]\\n    }\\n  ]\\n}\"\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"{{ $json.body.model || 'claude-3-haiku-20240307' }}\",\n  \"max_tokens\": {{ $json.body.max_tokens || 4096 }},\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.body.prompt }}\"\n    }\n  ]\n}",
         "options": {
           "timeout": 120000
         }
@@ -220,7 +228,7 @@
         100
       ],
       "parameters": {
-        "jsCode": "const apiResponse = $input.first().json;\nconst parseData = $('Parse LLM Response').first().json;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      course_id: apiResponse.id,\n      title: apiResponse.title,\n      status: apiResponse.status,\n      modules_count: apiResponse.modules_count || parseData.course.modules?.length || 0,\n      total_duration_minutes: apiResponse.total_duration_minutes\n    },\n    meta: {\n      workflow: 'learning-generate-course',\n      provider: 'anthropic',\n      model: 'claude-3-haiku-20240307',\n      timestamp: new Date().toISOString()\n    }\n  }\n};"
+        "jsCode": "const apiResponse = $input.first().json;\nconst parseData = $('Parse LLM Response').first().json;\nconst webhookData = $('Webhook').first().json;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      course_id: apiResponse.id,\n      title: apiResponse.title,\n      status: apiResponse.status,\n      modules_count: apiResponse.modules_count || parseData.course.modules?.length || 0,\n      total_duration_minutes: apiResponse.total_duration_minutes\n    },\n    meta: {\n      workflow: 'learning-generate-course',\n      provider: 'anthropic',\n      model: webhookData.body.model || 'claude-3-haiku-20240307',\n      timestamp: new Date().toISOString()\n    }\n  }\n};"
       }
     },
     {
@@ -268,7 +276,7 @@
         "color": 6,
         "width": 650,
         "height": 220,
-        "content": "## LEARNING - Generate Course (RFC-022)\n\n**Endpoint:** POST /webhook/learning-generate-course\n\n**Parameters:**\n- `topic` (required): Course topic/subject\n- `guild_id` (required): Discord guild ID\n- `instructor_id` (required): Instructor Discord ID\n- `level` (optional): débutant | intermédiaire | avancé (default: débutant)\n- `duration_hours` (optional): Target duration in hours (default: 4)\n- `language` (optional): fr | en (default: fr)\n- `price_credits` (optional): Price in credits (default: 0)\n- `is_free` (optional): boolean (default: true)\n\n**Returns:** Course draft with generated structure (modules, lessons)"
+        "content": "## LEARNING - Generate Course (RFC-022)\n\n**Endpoint:** POST /webhook/learning-generate-course\n\n**Parameters:**\n- `prompt` (required): LLM prompt for course generation\n- `topic` (required): Course topic/subject\n- `guild_id` (required): Discord guild ID\n- `instructor_id` (required): Instructor Discord ID\n- `model` (optional): LLM model (default: claude-3-haiku-20240307)\n- `max_tokens` (optional): Max tokens (default: 4096)\n- `level` (optional): débutant | intermédiaire | avancé\n- `language` (optional): fr | en (default: fr)\n\n**Returns:** Course draft with generated structure"
       }
     }
   ],
@@ -369,379 +377,5 @@
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
-  },
-  "tags": [],
-  "activeVersion": {
-    "updatedAt": "2026-02-03T22:35:07.429Z",
-    "createdAt": "2026-02-03T22:35:07.429Z",
-    "versionId": "7b52eccd-88df-4444-a911-6345afe60138",
-    "workflowId": "WgARrPX68duELRcM",
-    "nodes": [
-      {
-        "id": "webhook-generate-course",
-        "name": "Webhook",
-        "type": "n8n-nodes-base.webhook",
-        "typeVersion": 2,
-        "position": [
-          240,
-          300
-        ],
-        "webhookId": "learning-generate-course",
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "learning-generate-course",
-          "responseMode": "responseNode",
-          "options": {}
-        }
-      },
-      {
-        "id": "validate-input",
-        "name": "Validate Input",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          460,
-          300
-        ],
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "leftValue": "={{ $json.body.topic }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "isNotEmpty"
-                }
-              },
-              {
-                "leftValue": "={{ $json.body.guild_id }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "isNotEmpty"
-                }
-              },
-              {
-                "leftValue": "={{ $json.body.instructor_id }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "isNotEmpty"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        }
-      },
-      {
-        "id": "error-missing-params",
-        "name": "Error: Missing Params",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          700,
-          500
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameters: topic, guild_id, instructor_id\", \"status\": \"BAD_REQUEST\" } } }}",
-          "options": {
-            "responseCode": 400
-          }
-        }
-      },
-      {
-        "id": "generate-course-llm",
-        "name": "Generate Course Structure",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          700,
-          200
-        ],
-        "parameters": {
-          "method": "POST",
-          "url": "https://api.anthropic.com/v1/messages",
-          "authentication": "none",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "x-api-key",
-                "value": "={{ $env.ANTHROPIC_API_KEY }}"
-              },
-              {
-                "name": "anthropic-version",
-                "value": "2023-06-01"
-              },
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={\n  \"model\": \"claude-3-haiku-20240307\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Tu es un expert en pédagogie culinaire. Génère la structure complète d'un cours de cuisine.\\n\\n**Sujet:** {{ $json.body.topic }}\\n**Niveau:** {{ $json.body.level || 'débutant' }}\\n**Durée souhaitée:** {{ $json.body.duration_hours || 4 }} heures\\n**Langue:** {{ $json.body.language || 'fr' }}\\n\\n**Instructions:**\\n1. Crée 3-5 modules progressifs\\n2. Chaque module contient 2-4 leçons\\n3. Chaque leçon a un type: video, text, exercise, live\\n4. Inclus des objectifs pédagogiques clairs\\n5. Estime la durée de chaque élément\\n\\n**IMPORTANT:** Réponds UNIQUEMENT en JSON valide selon ce schéma:\\n{\\n  \\\"title\\\": \\\"string\\\",\\n  \\\"description\\\": \\\"string (2-3 phrases)\\\",\\n  \\\"tags\\\": [\\\"tag1\\\", \\\"tag2\\\"],\\n  \\\"modules\\\": [\\n    {\\n      \\\"title\\\": \\\"string\\\",\\n      \\\"description\\\": \\\"string\\\",\\n      \\\"order_index\\\": number,\\n      \\\"duration_minutes\\\": number,\\n      \\\"objectives\\\": [\\\"string\\\"],\\n      \\\"lessons\\\": [\\n        {\\n          \\\"title\\\": \\\"string\\\",\\n          \\\"type\\\": \\\"video|text|exercise|live\\\",\\n          \\\"content\\\": \\\"string (description détaillée)\\\",\\n          \\\"duration_minutes\\\": number,\\n          \\\"order_index\\\": number\\n        }\\n      ]\\n    }\\n  ]\\n}\"\n    }\n  ]\n}",
-          "options": {
-            "timeout": 120000
-          }
-        },
-        "onError": "continueRegularOutput"
-      },
-      {
-        "id": "parse-llm-response",
-        "name": "Parse LLM Response",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          920,
-          200
-        ],
-        "parameters": {
-          "jsCode": "const webhookData = $('Webhook').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  // Extract content from Claude response\n  const content = llmResponse.content?.[0]?.text || '';\n  \n  // Find JSON in the response (might be wrapped in markdown code blocks)\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const courseData = JSON.parse(jsonStr);\n  \n  // Add metadata from webhook\n  const enrichedCourse = {\n    ...courseData,\n    instructor_id: webhookData.body.instructor_id,\n    price_credits: webhookData.body.price_credits || 0,\n    is_free: webhookData.body.is_free !== false,\n    language: webhookData.body.language || 'fr',\n    thumbnail_url: webhookData.body.thumbnail_url || null\n  };\n  \n  return {\n    json: {\n      success: true,\n      course: enrichedCourse,\n      guild_id: webhookData.body.guild_id\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to parse course structure: ' + e.message,\n        raw_response: llmResponse.content?.[0]?.text?.substring(0, 500)\n      }\n    }\n  };\n}"
-        }
-      },
-      {
-        "id": "check-parse-success",
-        "name": "Parse Success?",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          1140,
-          200
-        ],
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "leftValue": "={{ $json.success }}",
-                "rightValue": true,
-                "operator": {
-                  "type": "boolean",
-                  "operation": "equals"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        }
-      },
-      {
-        "id": "save-course-api",
-        "name": "Save Course Draft",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          1360,
-          100
-        ],
-        "parameters": {
-          "method": "POST",
-          "url": "={{ $env.API_URL }}/api/v1/courses/draft",
-          "authentication": "none",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "X-API-Key",
-                "value": "={{ $env.API_KEY }}"
-              },
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          },
-          "sendQuery": true,
-          "queryParameters": {
-            "parameters": [
-              {
-                "name": "guild_id",
-                "value": "={{ $json.guild_id }}"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify($json.course) }}",
-          "options": {
-            "timeout": 30000
-          }
-        },
-        "onError": "continueRegularOutput"
-      },
-      {
-        "id": "format-success-response",
-        "name": "Format Success Response",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          1580,
-          100
-        ],
-        "parameters": {
-          "jsCode": "const apiResponse = $input.first().json;\nconst parseData = $('Parse LLM Response').first().json;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      course_id: apiResponse.id,\n      title: apiResponse.title,\n      status: apiResponse.status,\n      modules_count: apiResponse.modules_count || parseData.course.modules?.length || 0,\n      total_duration_minutes: apiResponse.total_duration_minutes\n    },\n    meta: {\n      workflow: 'learning-generate-course',\n      provider: 'anthropic',\n      model: 'claude-3-haiku-20240307',\n      timestamp: new Date().toISOString()\n    }\n  }\n};"
-        }
-      },
-      {
-        "id": "respond-success",
-        "name": "Respond Success",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          1800,
-          100
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ $json }}",
-          "options": {}
-        }
-      },
-      {
-        "id": "respond-parse-error",
-        "name": "Respond Parse Error",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          1360,
-          300
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ { \"success\": false, \"error\": $json.error, \"meta\": { \"workflow\": \"learning-generate-course\", \"timestamp\": new Date().toISOString() } } }}",
-          "options": {
-            "responseCode": 500
-          }
-        }
-      },
-      {
-        "id": "sticky-note-doc",
-        "name": "API Documentation",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          240,
-          60
-        ],
-        "parameters": {
-          "color": 6,
-          "width": 650,
-          "height": 220,
-          "content": "## LEARNING - Generate Course (RFC-022)\n\n**Endpoint:** POST /webhook/learning-generate-course\n\n**Parameters:**\n- `topic` (required): Course topic/subject\n- `guild_id` (required): Discord guild ID\n- `instructor_id` (required): Instructor Discord ID\n- `level` (optional): débutant | intermédiaire | avancé (default: débutant)\n- `duration_hours` (optional): Target duration in hours (default: 4)\n- `language` (optional): fr | en (default: fr)\n- `price_credits` (optional): Price in credits (default: 0)\n- `is_free` (optional): boolean (default: true)\n\n**Returns:** Course draft with generated structure (modules, lessons)"
-        }
-      }
-    ],
-    "connections": {
-      "Webhook": {
-        "main": [
-          [
-            {
-              "node": "Validate Input",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Validate Input": {
-        "main": [
-          [
-            {
-              "node": "Generate Course Structure",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Error: Missing Params",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Generate Course Structure": {
-        "main": [
-          [
-            {
-              "node": "Parse LLM Response",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Parse LLM Response": {
-        "main": [
-          [
-            {
-              "node": "Parse Success?",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Parse Success?": {
-        "main": [
-          [
-            {
-              "node": "Save Course Draft",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Respond Parse Error",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Save Course Draft": {
-        "main": [
-          [
-            {
-              "node": "Format Success Response",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Format Success Response": {
-        "main": [
-          [
-            {
-              "node": "Respond Success",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      }
-    },
-    "authors": "Sebbah fsebbah@azy.solutions",
-    "name": null,
-    "description": null
   }
 }
