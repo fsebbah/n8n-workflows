@@ -1,9 +1,10 @@
 # RFC-033 : Génération LLM en mode Batch
 
 **Date:** 2026-02-12
-**Statut:** Draft
+**Statut:** Approuvé (en attente implémentation)
 **Auteur:** Équipe n8n
 **Équipes concernées:** n8n, api-backend, plugin-recipes, chatbot-core
+**Dernière mise à jour:** 2026-02-12
 
 ---
 
@@ -62,7 +63,7 @@ Implémenter un système de **traitement batch asynchrone** :
 │  1. Met à jour Redis: status = "generating"                         │
 │  2. Appelle Claude API (timeout 10min)                              │
 │  3. Parse le résultat JSON                                          │
-│  4. POST /api/courses → Sauvegarde en DB                            │
+│  4. POST /api/training/formations → Sauvegarde en DB                │
 │  5. Met à jour Redis: status = "completed", result_url = "..."      │
 │  6. Notifie l'utilisateur (Discord ou callback_url)                 │
 └─────────────────────────────────────────────────────────────────────┘
@@ -200,11 +201,20 @@ Implémenter un système de **traitement batch asynchrone** :
 
 **Responsabilités:**
 - Confirmer les endpoints existants pour save course/quiz
-- (Optionnel) Endpoint `GET /api/jobs/{job_id}` si besoin de persistance DB
+- ~~(Optionnel) Endpoint `GET /api/jobs/{job_id}` si besoin de persistance DB~~
 
 **Questions:**
 1. L'endpoint `POST /api/courses` accepte-t-il le format JSON généré ?
-2. Faut-il un endpoint dédié pour les jobs ou Redis suffit ?
+2. ~~Faut-il un endpoint dédié pour les jobs ou Redis suffit ?~~
+
+**Réponses api-backend (2026-02-12):**
+1. **`POST /api/courses` n'existe pas** dans le backend actuel. Les cours sont gérés
+   côté training domain (`/api/training/formations`). Le Worker n8n devra soit
+   utiliser l'endpoint existant `POST /api/training/formations` (adapter le payload),
+   soit sauvegarder directement en DB via SQL dans le workflow n8n.
+2. **Redis suffit.** C'est du one-shot : pas besoin de persistance DB ni d'endpoint
+   `GET /api/jobs/{job_id}`. Le TTL Redis de 1h est largement suffisant pour le
+   polling et la notification. Pas d'historique nécessaire.
 
 ### 4.3 Équipe plugin-recipes
 
@@ -232,6 +242,51 @@ while True:
     await asyncio.sleep(5)
 ```
 
+**Réponses plugin-recipes (2026-02-12):**
+
+**Option retenue : Discord direct** (recommandé par chatbot-core)
+
+Justification :
+- Le plugin injecte déjà `bot_token` dans les webhooks learning (implémenté)
+- Pas besoin d'infrastructure callback HTTP côté plugin
+- L'utilisateur reçoit la notification directement sur Discord
+- Simplicité d'implémentation : le plugin affiche juste "génération en cours"
+
+**Implémentation prévue dans `executor.py`:**
+
+```python
+async def _execute_learning(self, tool, params, context):
+    # ... construction du payload existant ...
+
+    # Ajouter les infos pour notification Discord direct
+    payload["bot_token"] = self.bot.http.token  # Déjà implémenté
+    payload["discord_channel_id"] = context.get("channel_id", "")
+    payload["user_id"] = context.get("user_id", "")
+
+    # Appel webhook
+    response = await self._call_webhook(tool, payload)
+
+    # Nouvelle logique async
+    if response.get("job_id"):
+        # Job créé, n8n notifiera via Discord
+        return {
+            "success": True,
+            "message": f"Génération en cours... (job: {response['job_id']})",
+            "async": True
+        }
+    else:
+        # Réponse synchrone (fallback ou ancien workflow)
+        return response
+```
+
+**Message utilisateur immédiat** (étape 4 de l'Annexe A) :
+Le plugin affiche un embed avec :
+- Titre : "Génération en cours..."
+- Description : "Votre cours sur **{topic}** est en cours de création."
+- Footer : "Vous serez notifié quand ce sera terminé (2-3 min)"
+
+**Pas de polling** : n8n envoie directement sur Discord via l'API avec le `bot_token`.
+
 ### 4.4 Équipe chatbot-core
 
 **Responsabilités:**
@@ -241,6 +296,35 @@ while True:
 **Questions:**
 1. Quel channel Discord pour les notifications ?
 2. Format du message embed souhaité ?
+
+**Réponses chatbot-core (2026-02-12):**
+
+**Aucun développement requis côté chatbot-core.**
+
+Rappel architectural : chatbot-core est une **bibliothèque Python**, pas un service.
+Elle ne peut pas "recevoir" de notifications.
+
+**Recommandation pour les notifications :**
+
+| Option | Implémentation | Équipe responsable |
+|--------|----------------|-------------------|
+| **callback_url** (recommandé) | Le plugin fournit une URL, n8n POST le résultat | plugin-recipes |
+| **Discord direct** | n8n envoie via Discord API avec `bot_token` | n8n |
+| **Polling** | Le plugin poll `/job-status/{job_id}` | plugin-recipes |
+
+Pour l'option Discord direct, le plugin doit fournir dans la requête initiale :
+```json
+{
+  "bot_token": "...",
+  "discord_channel_id": "123456789",
+  "user_id": "987654321"
+}
+```
+
+Le Worker n8n peut alors envoyer directement via `POST https://discord.com/api/v10/channels/{channel_id}/messages`.
+
+**Message "génération en cours" :** C'est le plugin qui l'affiche (étape 4 de l'Annexe A),
+pas chatbot-core. Le plugin reçoit le `job_id` et affiche immédiatement un message à l'utilisateur.
 
 ---
 
@@ -259,8 +343,8 @@ while True:
 
 | Tâche | Équipe | Priorité |
 |-------|--------|----------|
-| Adapter plugin-recipes | plugin-recipes | P0 |
-| Configurer notification Discord | chatbot-core | P1 |
+| Adapter plugin-recipes (async + channel_id) | plugin-recipes | P0 |
+| Implémenter notification Discord direct | n8n | P0 |
 | Tests E2E | all | P0 |
 
 ### Phase 3: Migration (Semaine 3)
@@ -295,14 +379,43 @@ while True:
 
 ## 8. Questions ouvertes
 
-1. **Callback vs Discord vs Polling** - Quelle méthode de notification privilégier ?
-2. **Retry policy** - Combien de retries avant de marquer "failed" ?
-3. **Historique** - Garder les jobs en Redis (TTL 1h) ou persister en DB ?
-4. **Rate limiting** - Limiter le nombre de jobs par guild/user ?
+1. ~~**Callback vs Discord vs Polling** - Quelle méthode de notification privilégier ?~~
+   **Résolu:** Discord direct retenu (plugin-recipes fournit `bot_token`, n8n notifie)
+2. ~~**Retry policy** - Combien de retries avant de marquer "failed" ?~~
+   **Proposition n8n:** 3 retries avec backoff exponentiel (30s, 60s, 120s)
+3. ~~**Historique** - Garder les jobs en Redis (TTL 1h) ou persister en DB ?~~
+   **Résolu:** Redis suffit, TTL 1h (api-backend)
+4. ~~**Rate limiting** - Limiter le nombre de jobs par guild/user ?~~
+   **Proposition n8n:** 5 jobs/heure/user max (évite abus, vérifié via Redis INCR avec TTL)
 
 ---
 
-## Annexe A: Exemple de flux complet
+## 9. Résumé des décisions
+
+| Question | Décision | Source |
+|----------|----------|--------|
+| Notification | Discord direct via `bot_token` | plugin-recipes + chatbot-core |
+| Endpoint cours | `POST /api/training/formations` | api-backend |
+| Stockage jobs | Redis TTL 1h | api-backend |
+| Retry policy | 3 retries, backoff exponentiel | n8n (proposition) |
+| Rate limiting | 5 jobs/h/user | n8n (proposition) |
+
+---
+
+## 10. Statut final
+
+**RFC-033 : APPROUVÉ** (en attente validation retry/rate limit)
+
+| Équipe | Statut | Actions |
+|--------|--------|---------|
+| api-backend | ✅ Validé | Aucune action requise |
+| plugin-recipes | ✅ Validé | Ajouter `discord_channel_id`, `user_id` au payload |
+| chatbot-core | ✅ Validé | Aucune action requise |
+| n8n | 🔧 En cours | Créer Dispatcher, Worker, Status workflows |
+
+---
+
+## Annexe A: Exemple de flux complet (Discord direct)
 
 ```
 1. User: "Génère un cours sur la cuisine écossaise"
@@ -312,7 +425,10 @@ while True:
      "prompt": "...",
      "topic": "cuisine écossaise",
      "guild_id": "123",
-     "callback_url": "https://plugin.example.com/callback"
+     "instructor_id": "456",
+     "bot_token": "Bot xxx...",
+     "discord_channel_id": "789",
+     "user_id": "456"
    }
 
 3. Dispatcher → Respond (< 1 sec)
@@ -321,21 +437,28 @@ while True:
      "status": "processing"
    }
 
-4. Plugin → User: "🔄 Génération en cours... (2-3 min)"
+4. Plugin → User (embed Discord):
+   "🔄 Génération en cours...
+    Votre cours sur **cuisine écossaise** est en cours de création.
+    Vous serez notifié quand ce sera terminé (2-3 min)"
 
 5. Worker → Claude API (2 min)
 
-6. Worker → POST /api/courses (save)
+6. Worker → POST /api/training/formations (save)
 
 7. Worker → Redis SET job:learning:course_xxx {status: completed}
 
-8. Worker → POST callback_url OR Discord notification
-   {
-     "job_id": "course_xxx",
-     "status": "completed",
-     "course_id": "uuid-yyy",
-     "title": "Maîtriser la cuisine écossaise"
+8. Worker → POST https://discord.com/api/v10/channels/{channel_id}/messages
+   Headers: Authorization: Bot {bot_token}
+   Body: {
+     "content": "<@456>",
+     "embeds": [{
+       "title": "✅ Cours généré !",
+       "description": "**Maîtriser la cuisine écossaise**",
+       "url": "https://app.example.com/courses/uuid-yyy",
+       "color": 5763719
+     }]
    }
 
-9. Plugin → User: "✅ Cours généré! [Voir le cours](link)"
+9. User voit la notification Discord avec le lien vers le cours
 ```
