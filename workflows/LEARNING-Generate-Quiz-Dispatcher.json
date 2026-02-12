@@ -1,0 +1,185 @@
+{
+  "name": "LEARNING - Generate Quiz Dispatcher",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "learning-generate-quiz",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "learning-generate-quiz",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "// Handle both direct body and nested body.body (plugin compatibility)\nconst rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nconst required = ['prompt', 'lesson_id', 'guild_id', 'anthropic_api_key'];\nconst missing = required.filter(field => !body[field]);\n\n// Also need topic OR content\nif (!body.topic && !body.content) {\n  missing.push('topic or content');\n}\n\nif (missing.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required parameters: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// Generate unique job_id\nconst job_id = `quiz_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n\nreturn {\n  json: {\n    valid: true,\n    job_id: job_id,\n    body: body\n  }\n};"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "store-job-redis",
+      "name": "Store Job in Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [900, 200],
+      "parameters": {
+        "operation": "set",
+        "key": "=job:learning:{{ $json.job_id }}",
+        "value": "={{ JSON.stringify({ job_id: $json.job_id, type: 'quiz_generation', status: 'pending', created_at: new Date().toISOString(), input: { topic: $json.body.topic, lesson_id: $json.body.lesson_id, guild_id: $json.body.guild_id }, discord_channel_id: $json.body.discord_channel_id || null, user_id: $json.body.user_id || null }) }}",
+        "expire": true,
+        "ttl": 3600
+      },
+      "credentials": {
+        "redis": {
+          "id": "redis-credentials",
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "trigger-worker",
+      "name": "Trigger Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [1120, 200],
+      "parameters": {
+        "source": "parameter",
+        "workflowId": "={{ $env.LEARNING_QUIZ_WORKER_ID }}",
+        "mode": "queue",
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, job_id: $('Validate Input').first().json.job_id, status: 'processing', message: 'Génération du quiz en cours...', eta_seconds: 120 } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 400],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $('Validate Input').first().json.error } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Store Job in Redis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Job in Redis": {
+      "main": [
+        [
+          {
+            "node": "Trigger Worker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Worker": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}
