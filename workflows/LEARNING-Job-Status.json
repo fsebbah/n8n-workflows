@@ -1,0 +1,158 @@
+{
+  "name": "LEARNING - Job Status",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "learning-job-status",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "job-status/:job_id",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "get-job-redis",
+      "name": "Get Job from Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "parameters": {
+        "operation": "get",
+        "key": "=job:learning:{{ $json.params.job_id }}"
+      },
+      "credentials": {
+        "redis": {
+          "id": "redis-account",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "id": "check-exists",
+      "name": "Job Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "parse-job",
+      "name": "Parse Job Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 200],
+      "parameters": {
+        "jsCode": "const jobStr = $input.first().json;\ntry {\n  const job = typeof jobStr === 'string' ? JSON.parse(jobStr) : jobStr;\n  return { json: job };\n} catch (e) {\n  return { json: { error: 'Invalid job data' } };\n}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Job Status",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-not-found",
+      "name": "Respond Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 400],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: 'Job not found', job_id: $('Webhook').first().json.params.job_id } }}",
+        "options": {
+          "responseCode": 404
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get Job from Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Job from Redis": {
+      "main": [
+        [
+          {
+            "node": "Job Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Exists?": {
+      "main": [
+        [
+          {
+            "node": "Parse Job Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Job Data": {
+      "main": [
+        [
+          {
+            "node": "Respond Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}

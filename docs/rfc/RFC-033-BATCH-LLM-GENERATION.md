@@ -37,46 +37,57 @@ Implémenter un système de **traitement batch asynchrone** :
 
 ## 2. Architecture
 
-### 2.1 Vue d'ensemble
+### 2.1 Vue d'ensemble (Architecture Queue simplifiée)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     Plugin / Chatbot-core                            │
-│  POST /learning-generate-course {prompt, topic, ...}                │
+│  POST /learning-generate {prompt, topic, type: "course|quiz", ...}  │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│              WORKFLOW: LEARNING-Generate-Course-Dispatcher           │
+│              WORKFLOW: LEARNING-Generate-Dispatcher (unifié)         │
 │                                                                      │
-│  1. Valide les paramètres                                           │
-│  2. Génère job_id unique                                            │
+│  1. Valide les paramètres (type auto-détecté si non fourni)         │
+│  2. Génère job_id unique avec préfixe (course_xxx ou quiz_xxx)      │
 │  3. Stocke job dans Redis (status: pending, TTL: 1h)                │
-│  4. Retourne {job_id, status: "processing", eta: "2-3 min"}        │
-│  5. Trigger async → Worker workflow                                  │
+│  4. RPUSH job_id dans queue:learning                                │
+│  5. Retourne {job_id, status: "pending"} immédiatement              │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
-                                    ▼ (Execute Workflow - async)
+                                    │ (pas de trigger direct)
+                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│              WORKFLOW: LEARNING-Generate-Course-Worker               │
+│              WORKFLOW: LEARNING-Generate-Worker (cron 30s)           │
 │                                                                      │
-│  1. Met à jour Redis: status = "generating"                         │
-│  2. Appelle Claude API (timeout 10min)                              │
-│  3. Parse le résultat JSON                                          │
-│  4. POST /api/training/formations → Sauvegarde en DB                │
-│  5. Met à jour Redis: status = "completed", result_url = "..."      │
-│  6. Notifie l'utilisateur (Discord ou callback_url)                 │
+│  1. LPOP queue:learning → récupère job_id                           │
+│  2. Si queue vide → arrêt                                           │
+│  3. GET job:learning:{job_id} → récupère données complètes          │
+│  4. Met à jour Redis: status = "generating"                         │
+│  5. Switch sur type (course/quiz)                                   │
+│  6. Appelle Claude API (timeout 5-10min)                            │
+│  7. Parse le résultat JSON                                          │
+│  8. POST vers API (formations ou quizzes)                           │
+│  9. Met à jour Redis: status = "done"                               │
+│  10. Notifie Discord                                                 │
+│  11. Met à jour Redis: status = "terminate" (TTL 5min)              │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     Notification utilisateur                         │
 │                                                                      │
-│  Option A: Discord embed avec lien vers le cours                    │
-│  Option B: POST callback_url fournie dans la requête initiale       │
-│  Option C: Polling GET /job/{job_id}/status (fallback)              │
+│  Discord direct via bot_token fourni par le plugin                  │
+│  Polling GET /job-status/{job_id} (fallback)                        │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+**Avantages de l'architecture Queue:**
+- **Pas de Worker IDs** : Plus besoin de configurer des variables d'environnement
+- **Résilience** : Si le Worker échoue, le job reste dans la queue
+- **Scalabilité** : Plusieurs Workers peuvent consommer la même queue
+- **Simplicité** : Un seul Dispatcher et un seul Worker pour tous les types
 
 ### 2.2 Stockage Redis
 
@@ -111,58 +122,63 @@ Implémenter un système de **traitement batch asynchrone** :
 
 | Status | Description | Transition |
 |--------|-------------|------------|
-| `pending` | Job créé, en attente de traitement | → generating |
-| `generating` | LLM en cours de génération | → completed / failed |
-| `completed` | Cours généré et sauvegardé | Terminal |
+| `pending` | Job créé, en attente dans la queue | → generating |
+| `generating` | LLM en cours de génération | → done / failed |
+| `done` | Cours/Quiz généré, sauvegardé, notifié | → terminate |
+| `terminate` | Job terminé (TTL 5min puis suppression) | Terminal |
 | `failed` | Erreur (après retries) | Terminal |
 
 ---
 
 ## 3. Workflows n8n
 
-### 3.1 Dispatcher (nouveau)
+### 3.1 Dispatcher (unifié)
 
-**Nom:** `LEARNING-Generate-Course-Dispatcher`
-**Webhook:** `POST /learning-generate-course`
+**Nom:** `LEARNING-Generate-Dispatcher`
+**Webhook:** `POST /learning-generate`
 **Réponse:** Immédiate (< 1 sec)
 
 **Nodes:**
 1. Webhook (POST, responseMode: lastNode)
-2. Validate Input (Code)
-3. Generate Job ID (Code)
-4. Store Job in Redis (Redis SET avec TTL)
-5. Trigger Worker (Execute Workflow - async)
-6. Respond with Job ID (Respond to Webhook)
+2. Validate Input (Code) - détecte automatiquement le type (course/quiz)
+3. Store Job in Redis (SET avec TTL 1h)
+4. Push to Queue (RPUSH queue:learning)
+5. Respond with Job ID
 
 **Payload de réponse:**
 ```json
 {
   "success": true,
   "job_id": "course_1707735600123",
-  "status": "processing",
-  "message": "Génération du cours en cours...",
-  "eta_seconds": 180,
-  "check_status_url": "/webhook/job-status/course_1707735600123"
+  "type": "course",
+  "status": "pending",
+  "message": "Génération du cours en cours..."
 }
 ```
 
-### 3.2 Worker (nouveau)
+### 3.2 Worker (cron)
 
-**Nom:** `LEARNING-Generate-Course-Worker`
-**Trigger:** Execute Workflow (appelé par Dispatcher)
-**Réponse:** Aucune (fire-and-forget)
+**Nom:** `LEARNING-Generate-Worker`
+**Trigger:** Schedule (every 30 seconds)
+**Réponse:** Aucune
 
 **Nodes:**
-1. Receive Job Data
-2. Update Redis Status → "generating"
-3. Call Claude API (timeout 600000ms)
-4. Parse LLM Response
-5. IF Success → Save Course to API
-6. Update Redis → "completed" + result
-7. Send Notification (Discord ou callback)
-8. IF Error → Update Redis → "failed" + error
+1. Cron Trigger (30s)
+2. Pop Job from Queue (LPOP queue:learning)
+3. IF queue vide → arrêt
+4. Get Job Data (GET job:learning:{job_id})
+5. Parse Job Data
+6. Update Status → "generating"
+7. Switch (quiz/course)
+8. Call Claude API (timeout 5-10min selon type)
+9. Parse Response
+10. Save to API (formations ou quizzes)
+11. Update Status → "done"
+12. Notify Discord
+13. Update Status → "terminate" (TTL 5min)
+14. IF Error → Update Status → "failed" + Notify Discord error
 
-### 3.3 Status Endpoint (nouveau)
+### 3.3 Status Endpoint
 
 **Nom:** `LEARNING-Job-Status`
 **Webhook:** `GET /job-status/:job_id`
@@ -171,9 +187,10 @@ Implémenter un système de **traitement batch asynchrone** :
 ```json
 {
   "job_id": "course_1707735600123",
-  "status": "completed",
+  "type": "course",
+  "status": "done",
   "result": {
-    "course_id": "uuid-xxx",
+    "id": "uuid-xxx",
     "title": "Maîtriser la cuisine écossaise"
   }
 }
@@ -186,16 +203,16 @@ Implémenter un système de **traitement batch asynchrone** :
 ### 4.1 Équipe n8n (owner)
 
 **Responsabilités:**
-- Créer les 3 nouveaux workflows (Dispatcher, Worker, Status)
-- Adapter les workflows existants Course/Quiz
+- Créer les workflows unifiés (Dispatcher, Worker, Status)
+- Supprimer les anciens workflows synchrones
 - Tests d'intégration
 
 **Livrables:**
-- [ ] `LEARNING-Generate-Course-Dispatcher.json`
-- [ ] `LEARNING-Generate-Course-Worker.json`
-- [ ] `LEARNING-Generate-Quiz-Dispatcher.json`
-- [ ] `LEARNING-Generate-Quiz-Worker.json`
-- [ ] `LEARNING-Job-Status.json`
+- [x] `LEARNING-Generate-Dispatcher.json` (unifié course/quiz)
+- [x] `LEARNING-Generate-Worker.json` (cron-based, unifié)
+- [x] `LEARNING-Job-Status.json`
+- [x] Suppression de `LEARNING-Generate-Course.json` (ancien)
+- [x] Suppression de `LEARNING-Generate-Quiz.json` (ancien)
 
 ### 4.2 Équipe api-backend
 
@@ -404,14 +421,25 @@ pas chatbot-core. Le plugin reçoit le `job_id` et affiche immédiatement un mes
 
 ## 10. Statut final
 
-**RFC-033 : APPROUVÉ** (en attente validation retry/rate limit)
+**RFC-033 : IMPLÉMENTÉ** (architecture queue simplifiée)
 
 | Équipe | Statut | Actions |
 |--------|--------|---------|
 | api-backend | ✅ Validé | Aucune action requise |
 | plugin-recipes | ✅ Validé | Ajouter `discord_channel_id`, `user_id` au payload |
 | chatbot-core | ✅ Validé | Aucune action requise |
-| n8n | 🔧 En cours | Créer Dispatcher, Worker, Status workflows |
+| n8n | ✅ Implémenté | 3 workflows créés (PR #304) |
+
+### Changement d'architecture (2026-02-12)
+
+L'architecture initiale (4 workflows avec Worker IDs) a été simplifiée :
+- **Avant** : Dispatcher trigger Worker via Execute Workflow (nécessite Worker ID)
+- **Après** : Dispatcher push dans queue Redis, Worker poll avec cron
+
+**Avantages:**
+- Pas de variables d'environnement Worker ID à configurer
+- Plus résilient (job reste dans queue si Worker échoue)
+- Un seul Dispatcher et Worker au lieu de 4 workflows
 
 ---
 
