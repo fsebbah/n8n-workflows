@@ -1,5 +1,5 @@
 {
-  "name": "LEARNING - Generate Course Dispatcher",
+  "name": "LEARNING - Generate Dispatcher",
   "nodes": [
     {
       "id": "webhook",
@@ -7,10 +7,10 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [240, 300],
-      "webhookId": "learning-generate-course",
+      "webhookId": "learning-generate",
       "parameters": {
         "httpMethod": "POST",
-        "path": "learning-generate-course",
+        "path": "learning-generate",
         "responseMode": "responseNode",
         "options": {}
       }
@@ -22,7 +22,7 @@
       "typeVersion": 2,
       "position": [460, 300],
       "parameters": {
-        "jsCode": "// Handle both direct body and nested body.body (plugin compatibility)\nconst rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nconst required = ['prompt', 'topic', 'guild_id', 'instructor_id', 'anthropic_api_key'];\nconst missing = required.filter(field => !body[field]);\n\nif (missing.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required parameters: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// Generate unique job_id\nconst job_id = `course_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n\nreturn {\n  json: {\n    valid: true,\n    job_id: job_id,\n    body: body\n  }\n};"
+        "jsCode": "// Handle both direct body and nested body.body (plugin compatibility)\nconst rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\n// Determine job type\nconst jobType = body.type || (body.lesson_id ? 'quiz' : 'course');\n\n// Validate based on type\nlet required = ['prompt', 'guild_id', 'anthropic_api_key'];\nif (jobType === 'quiz') {\n  required.push('lesson_id');\n  if (!body.topic && !body.content) {\n    return {\n      json: {\n        valid: false,\n        error: {\n          code: 400,\n          message: 'Missing required parameters: topic or content',\n          status: 'BAD_REQUEST'\n        }\n      }\n    };\n  }\n} else {\n  required.push('topic', 'instructor_id');\n}\n\nconst missing = required.filter(field => !body[field]);\n\nif (missing.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required parameters: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// Generate unique job_id with type prefix\nconst job_id = `${jobType}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n\nreturn {\n  json: {\n    valid: true,\n    job_id: job_id,\n    type: jobType,\n    body: body\n  }\n};"
       }
     },
     {
@@ -62,7 +62,7 @@
       "parameters": {
         "operation": "set",
         "key": "=job:learning:{{ $json.job_id }}",
-        "value": "={{ JSON.stringify({ job_id: $json.job_id, type: 'course_generation', status: 'pending', created_at: new Date().toISOString(), input: { topic: $json.body.topic, level: $json.body.level, guild_id: $json.body.guild_id, instructor_id: $json.body.instructor_id }, discord_channel_id: $json.body.discord_channel_id || null, user_id: $json.body.user_id || null }) }}",
+        "value": "={{ JSON.stringify({ job_id: $json.job_id, type: $json.type, status: 'pending', created_at: new Date().toISOString(), body: $json.body }) }}",
         "expire": true,
         "ttl": 3600
       },
@@ -74,16 +74,22 @@
       }
     },
     {
-      "id": "trigger-worker",
-      "name": "Trigger Worker",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.1,
+      "id": "push-to-queue",
+      "name": "Push to Queue",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
       "position": [1120, 200],
       "parameters": {
-        "source": "parameter",
-        "workflowId": "={{ $env.LEARNING_COURSE_WORKER_ID }}",
-        "mode": "queue",
-        "options": {}
+        "operation": "push",
+        "list": "queue:learning",
+        "messageData": "={{ $('Validate Input').first().json.job_id }}",
+        "tail": true
+      },
+      "credentials": {
+        "redis": {
+          "id": "redis-account",
+          "name": "Redis account"
+        }
       }
     },
     {
@@ -94,7 +100,7 @@
       "position": [1340, 200],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { success: true, job_id: $('Validate Input').first().json.job_id, status: 'processing', message: 'Génération du cours en cours...', eta_seconds: 180 } }}",
+        "responseBody": "={{ { success: true, job_id: $('Validate Input').first().json.job_id, type: $('Validate Input').first().json.type, status: 'pending', message: $('Validate Input').first().json.type === 'quiz' ? 'Génération du quiz en cours...' : 'Génération du cours en cours...' } }}",
         "options": {}
       }
     },
@@ -158,14 +164,14 @@
       "main": [
         [
           {
-            "node": "Trigger Worker",
+            "node": "Push to Queue",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Trigger Worker": {
+    "Push to Queue": {
       "main": [
         [
           {
