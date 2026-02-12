@@ -248,7 +248,7 @@
       "typeVersion": 2,
       "position": [2000, 100],
       "parameters": {
-        "jsCode": "const jobData = $('Parse Job Data').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  if (llmResponse.error) {\n    throw new Error(llmResponse.error.message || 'Claude API error');\n  }\n\n  const content = llmResponse.content?.[0]?.text || '';\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const quizData = JSON.parse(jsonStr);\n  \n  const quiz = {\n    lesson_id: jobData.body.lesson_id,\n    guild_id: jobData.body.guild_id,\n    title: quizData.title,\n    description: quizData.description,\n    instructions: quizData.instructions,\n    type: jobData.body.adaptive ? 'adaptive' : 'standard',\n    time_limit_seconds: jobData.body.time_limit_seconds || 600,\n    passing_score: jobData.body.passing_score || 70,\n    questions: quizData.questions.map((q, i) => ({\n      text: q.text,\n      type: q.type,\n      options: q.options,\n      correct_answer: q.correct_answer,\n      explanation: q.explanation,\n      difficulty: q.difficulty || 2,\n      order_index: q.order_index || i,\n      points: q.points || (q.difficulty === 1 ? 10 : q.difficulty === 3 ? 20 : 15)\n    }))\n  };\n  \n  return {\n    json: {\n      success: true,\n      type: 'quiz',\n      result: quiz,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      type: 'quiz',\n      error: e.message,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n}"
+        "jsCode": "const jobData = $('Parse Job Data').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  if (llmResponse.error) {\n    throw new Error(llmResponse.error.message || 'Claude API error');\n  }\n\n  const content = llmResponse.content?.[0]?.text || '';\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const quizData = JSON.parse(jsonStr);\n  \n  // Quiz for MongoDB storage (format API backend)\n  const quiz = {\n    title: quizData.title,\n    topic: jobData.body.topic || '',\n    level: quizData.level || jobData.body.level || 'debutant',\n    guild_id: jobData.body.guild_id,\n    instructor_id: jobData.body.instructor_id || jobData.body.user_id,\n    job_id: jobData.job_id,\n    questions: quizData.questions.map((q, i) => {\n      // Convert to API format: choices array + correct_index\n      const choices = q.options || [];\n      const correctIndex = choices.findIndex(c => c === q.correct_answer);\n      return {\n        question: q.text,\n        choices: choices,\n        correct_index: correctIndex >= 0 ? correctIndex : 0,\n        explanation: q.explanation || ''\n      };\n    })\n  };\n  \n  return {\n    json: {\n      success: true,\n      type: 'quiz',\n      result: quiz,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      type: 'quiz',\n      error: e.message,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n}"
       }
     },
     {
@@ -258,7 +258,7 @@
       "typeVersion": 2,
       "position": [2000, 300],
       "parameters": {
-        "jsCode": "const jobData = $('Parse Job Data').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  if (llmResponse.error) {\n    throw new Error(llmResponse.error.message || 'Claude API error');\n  }\n\n  const content = llmResponse.content?.[0]?.text || '';\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const courseData = JSON.parse(jsonStr);\n  \n  const course = {\n    name: courseData.title.substring(0, 100),\n    slug: courseData.title.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 100),\n    description: (courseData.description || '').substring(0, 2000),\n    emoji: '🎓',\n    guild_id: jobData.body.guild_id,\n    // Keep full data for reference\n    _full: courseData\n  };\n  \n  return {\n    json: {\n      success: true,\n      type: 'course',\n      result: course,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      type: 'course',\n      error: e.message,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n}"
+        "jsCode": "const jobData = $('Parse Job Data').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  if (llmResponse.error) {\n    throw new Error(llmResponse.error.message || 'Claude API error');\n  }\n\n  const content = llmResponse.content?.[0]?.text || '';\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const courseData = JSON.parse(jsonStr);\n  \n  // Full course for MongoDB storage\n  const course = {\n    title: courseData.title,\n    topic: jobData.body.topic,\n    level: courseData.level || jobData.body.level || 'debutant',\n    description: courseData.description || '',\n    guild_id: jobData.body.guild_id,\n    instructor_id: jobData.body.instructor_id || jobData.body.user_id,\n    job_id: jobData.job_id,\n    modules: courseData.modules || []\n  };\n  \n  return {\n    json: {\n      success: true,\n      type: 'course',\n      result: course,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      type: 'course',\n      error: e.message,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n}"
       }
     },
     {
@@ -308,10 +308,10 @@
       "position": [2660, 100],
       "parameters": {
         "method": "POST",
-        "url": "={{ $json.type === 'quiz' ? $env.API_URL + '/api/training/quizzes' : $env.API_URL + '/api/training/formations' }}",
+        "url": "={{ $json.type === 'quiz' ? $env.API_URL + '/api/training/learning/quizzes' : $env.API_URL + '/api/training/learning/courses' }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.type === 'quiz' ? $json.result : { name: $json.result.name, slug: $json.result.slug, description: $json.result.description, emoji: $json.result.emoji, guild_id: $json.result.guild_id }) }}",
+        "jsonBody": "={{ JSON.stringify($json.result) }}",
         "options": {
           "timeout": 30000
         }
@@ -327,7 +327,7 @@
       "parameters": {
         "operation": "set",
         "key": "=job:learning:{{ $('Merge Results').first().json.job_id }}",
-        "value": "={{ JSON.stringify({ job_id: $('Merge Results').first().json.job_id, type: $('Merge Results').first().json.type, status: 'done', updated_at: new Date().toISOString(), result: { id: $json.id || $json.uuid, title: $('Merge Results').first().json.result.title || $('Merge Results').first().json.result.name } }) }}",
+        "value": "={{ JSON.stringify({ job_id: $('Merge Results').first().json.job_id, type: $('Merge Results').first().json.type, status: 'done', updated_at: new Date().toISOString(), result: { mongo_id: $json._id, title: $('Merge Results').first().json.result.title } }) }}",
         "expire": true,
         "ttl": 3600
       },
@@ -377,7 +377,7 @@
       "parameters": {
         "operation": "set",
         "key": "=job:learning:{{ $('Merge Results').first().json.job_id }}",
-        "value": "={{ JSON.stringify({ job_id: $('Merge Results').first().json.job_id, type: $('Merge Results').first().json.type, status: 'terminate', updated_at: new Date().toISOString(), result: { id: $('Save to API').first().json.id || $('Save to API').first().json.uuid, title: $('Merge Results').first().json.result.title || $('Merge Results').first().json.result.name } }) }}",
+        "value": "={{ JSON.stringify({ job_id: $('Merge Results').first().json.job_id, type: $('Merge Results').first().json.type, status: 'terminate', updated_at: new Date().toISOString(), result: { mongo_id: $('Save to API').first().json._id, title: $('Merge Results').first().json.result.title } }) }}",
         "expire": true,
         "ttl": 300
       },
