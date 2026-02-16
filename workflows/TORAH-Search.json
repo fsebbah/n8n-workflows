@@ -1,0 +1,238 @@
+{
+  "name": "TORAH - Search",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "torah-search",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-search",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "const rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nif (!body.query || typeof body.query !== 'string' || body.query.trim().length === 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Missing or empty required parameter: query',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    query: body.query.trim(),\n    sources: body.sources || [],  // Optional filter by sources\n    limit: Math.min(body.limit || 5, 20),\n    language: body.language || 'fr',\n    include_hebrew: body.include_hebrew !== false\n  }\n};"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "search-api",
+      "name": "Search in Qdrant via API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TORAH_API_URL }}/api/torah/search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.query, sources: $json.sources, limit: $json.limit, language: $json.language }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "check-results",
+      "name": "Has Results?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1120, 200],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.results }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "format-results",
+      "name": "Format Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 100],
+      "parameters": {
+        "jsCode": "const validData = $('Validate Input').first().json;\nconst searchResults = $input.first().json;\n\nconst formattedResults = (searchResults.results || []).map(r => {\n  const result = {\n    source: r.source,\n    reference: r.structure === 'pages' \n      ? `${r.source} ${r.page}` \n      : `${r.source} chapitre ${r.chapter}`,\n    segment_index: r.segment_index,\n    score: Math.round(r.score * 100) / 100\n  };\n  \n  if (validData.include_hebrew) {\n    result.text_hebrew = r.text_hebrew || r.text;\n  }\n  result.translation = r.text_translated || r.translation || null;\n  \n  return result;\n});\n\nreturn {\n  json: {\n    success: true,\n    query: validData.query,\n    results: formattedResults,\n    count: formattedResults.length,\n    language: validData.language\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 100],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-no-results",
+      "name": "Respond No Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, query: $('Validate Input').first().json.query, results: [], count: 0, message: 'No matching segments found' } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 400],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $('Validate Input').first().json.error } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Search in Qdrant via API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search in Qdrant via API": {
+      "main": [
+        [
+          {
+            "node": "Has Results?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Results?": {
+      "main": [
+        [
+          {
+            "node": "Format Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Results": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}
