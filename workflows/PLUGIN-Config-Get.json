@@ -1,0 +1,229 @@
+{
+  "name": "PLUGIN - Config Get",
+  "nodes": [
+    {
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 100],
+      "parameters": {
+        "color": 6,
+        "width": 420,
+        "height": 300,
+        "content": "## PLUGIN - Config Get\n\n**Endpoint:** `POST /webhook/plugin-config-get`\n\n**Payload IN:**\n```json\n{\"guild_id\": \"1458159736775119115\"}\n```\n\n**API Backend:** `GET /api/guilds/{guild_id}/plugin-config`\n\n**Payload OUT:** Configuration complète du plugin pour le guild:\n- plugin, entity, redis, qdrant, n8n\n- search, features, rate_limit\n- branding, keywords, prompts, scope, settings\n\n**Usage:** Plugin Discord / chatbot-core initialise sa config"
+      }
+    },
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "plugin-config-get",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "plugin-config-get",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "const rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nif (!body.guild_id) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Missing required parameter: guild_id',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    guild_id: String(body.guild_id)\n  }\n};"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "get-config",
+      "name": "Get Plugin Config from API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/guilds/{{ $json.guild_id }}/plugin-config",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "check-success",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1120, 200],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 100],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-not-found",
+      "name": "Respond Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.error ? $json : { success: false, error: { code: 'PLUGIN_CONFIG_NOT_FOUND', message: 'Aucune configuration plugin pour ce guild' } } }}",
+        "options": {
+          "responseCode": 404
+        }
+      }
+    },
+    {
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 400],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $('Validate Input').first().json.error } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Plugin Config from API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Plugin Config from API": {
+      "main": [
+        [
+          {
+            "node": "Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}
