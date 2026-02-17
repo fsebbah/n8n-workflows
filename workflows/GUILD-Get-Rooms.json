@@ -1,5 +1,5 @@
 {
-  "name": "TORAH - Get Chapter",
+  "name": "GUILD - Get Rooms",
   "nodes": [
     {
       "id": "sticky-doc",
@@ -9,9 +9,9 @@
       "position": [40, 100],
       "parameters": {
         "color": 6,
-        "width": 350,
-        "height": 200,
-        "content": "## TORAH - Get Chapter\n\n**Endpoint:** `POST /webhook/torah-get-chapter`\n\n**Payload:**\n```json\n{\"source\": \"Sha'ar HaHakdamot\", \"chapter\": 3}\n```\n\n**API Backend:** `GET /api/torah/chapters/{source}/{chapter}`"
+        "width": 400,
+        "height": 220,
+        "content": "## GUILD - Get Rooms\n\n**Endpoint:** `POST /webhook/guild-get-rooms`\n\n**Payload:**\n```json\n{\"guild_id\": \"123456789\"}\n```\n\n**API Backend:** `GET /api/guilds/{guild_id}/rooms`\n\n**Scope:** `branding:read`\n\n**Response:** Liste des RoomModels (salles de cours)"
       }
     },
     {
@@ -20,10 +20,10 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [240, 300],
-      "webhookId": "torah-get-chapter",
+      "webhookId": "guild-get-rooms",
       "parameters": {
         "httpMethod": "POST",
-        "path": "torah-get-chapter",
+        "path": "guild-get-rooms",
         "responseMode": "responseNode",
         "options": {}
       }
@@ -35,7 +35,7 @@
       "typeVersion": 2,
       "position": [460, 300],
       "parameters": {
-        "jsCode": "const rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nconst required = ['source', 'chapter'];\nconst missing = required.filter(field => body[field] === undefined || body[field] === null);\n\nif (missing.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required parameters: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nif (typeof body.chapter !== 'number' || body.chapter < 1) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'chapter must be a positive integer',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    source: body.source,\n    chapter: body.chapter,\n    language: body.language || 'fr'\n  }\n};"
+        "jsCode": "const rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nif (!body.guild_id) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Missing required parameter: guild_id',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    guild_id: String(body.guild_id)\n  }\n};"
       }
     },
     {
@@ -67,14 +67,14 @@
       }
     },
     {
-      "id": "get-chapter",
-      "name": "Get Chapter from API",
+      "id": "get-rooms",
+      "name": "Get Rooms from API",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [900, 200],
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.API_URL }}/api/torah/chapters/{{ encodeURIComponent($json.source) }}/{{ $json.chapter }}",
+        "url": "={{ $env.API_URL }}/api/guilds/{{ $json.guild_id }}/rooms",
         "options": {
           "timeout": 30000
         }
@@ -110,21 +110,11 @@
       }
     },
     {
-      "id": "format-response",
-      "name": "Format Response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1340, 100],
-      "parameters": {
-        "jsCode": "const data = $input.first().json;\nconst validData = $('Validate Input').first().json;\n\nreturn {\n  json: {\n    success: true,\n    source: data.source || validData.source,\n    chapter: data.chapter || validData.chapter,\n    title: data.title || null,\n    segments: (data.segments || []).map(s => ({\n      index: s.index,\n      text: s.text_hebrew || s.text,\n      translation: s.text_translated || s.translation || null\n    })),\n    total_segments: data.total_segments || (data.segments || []).length\n  }\n};"
-      }
-    },
-    {
       "id": "respond-success",
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1560, 100],
+      "position": [1340, 100],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json }}",
@@ -139,7 +129,7 @@
       "position": [1340, 300],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { success: false, error: { code: 404, message: 'Chapter not found or API error', status: 'NOT_FOUND' } } }}",
+        "responseBody": "={{ { success: false, error: { code: 404, message: $json.error || 'Rooms not found or API error', status: 'NOT_FOUND' } } }}",
         "options": {
           "responseCode": 404
         }
@@ -187,7 +177,7 @@
       "main": [
         [
           {
-            "node": "Get Chapter from API",
+            "node": "Get Rooms from API",
             "type": "main",
             "index": 0
           }
@@ -201,7 +191,7 @@
         ]
       ]
     },
-    "Get Chapter from API": {
+    "Get Rooms from API": {
       "main": [
         [
           {
@@ -216,7 +206,7 @@
       "main": [
         [
           {
-            "node": "Format Response",
+            "node": "Respond Success",
             "type": "main",
             "index": 0
           }
@@ -224,17 +214,6 @@
         [
           {
             "node": "Respond API Error",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format Response": {
-      "main": [
-        [
-          {
-            "node": "Respond Success",
             "type": "main",
             "index": 0
           }
