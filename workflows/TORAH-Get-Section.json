@@ -1,0 +1,271 @@
+{
+  "name": "TORAH - Get Section",
+  "nodes": [
+    {
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 100],
+      "parameters": {
+        "color": 6,
+        "width": 400,
+        "height": 240,
+        "content": "## TORAH - Get Section\n\n**Endpoint:** `POST /webhook/torah-get-section`\n\n**Payload:**\n```json\n{\"source\": \"Sha'ar HaHakdamot\", \"section\": \"Introduction\", \"number\": 3}\n```\n\n**API Backend:** `GET /api/torah/sections/{source}/{section}?number={number}`\n\n**Usage:** Sources avec structure_type=\"complex\""
+      }
+    },
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "torah-get-section",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-get-section",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "const rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nconst errors = [];\n\nif (!body.source || typeof body.source !== 'string') {\n  errors.push('source is required and must be a string');\n}\n\nif (!body.section || typeof body.section !== 'string') {\n  errors.push('section is required and must be a string');\n}\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// number is optional - specific entry within section\nconst number = body.number !== undefined ? parseInt(body.number, 10) : null;\n\nreturn {\n  json: {\n    valid: true,\n    source: body.source.trim(),\n    section: body.section.trim(),\n    number: number,\n    language: body.language || 'fr'\n  }\n};"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "build-url",
+      "name": "Build API URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 200],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nlet url = `${$env.API_URL}/api/torah/sections/${encodeURIComponent(data.source)}/${encodeURIComponent(data.section)}`;\n\nif (data.number !== null && data.number !== undefined) {\n  url += `?number=${data.number}`;\n}\n\nreturn {\n  json: {\n    ...data,\n    api_url: url\n  }\n};"
+      }
+    },
+    {
+      "id": "get-section",
+      "name": "Get Section from API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 200],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.api_url }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "check-api-success",
+      "name": "API Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1340, 200],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 100],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst validData = $('Validate Input').first().json;\n\nreturn {\n  json: {\n    success: true,\n    source: data.source || validData.source,\n    section: data.section || validData.section,\n    structure_type: 'complex',\n    title: data.title || null,\n    segments: (data.segments || data.entries || []).map((s, idx) => ({\n      index: s.index !== undefined ? s.index : idx + 1,\n      text: s.text_hebrew || s.text,\n      translation: s.text_translated || s.translation || null\n    })),\n    total_segments: data.total_segments || data.count || (data.segments || data.entries || []).length\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1780, 100],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-api-error",
+      "name": "Respond API Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: { code: 404, message: $json.error?.message || 'Section not found or API error', status: 'NOT_FOUND' } } }}",
+        "options": {
+          "responseCode": 404
+        }
+      }
+    },
+    {
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 400],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $('Validate Input').first().json.error } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Build API URL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build API URL": {
+      "main": [
+        [
+          {
+            "node": "Get Section from API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Section from API": {
+      "main": [
+        [
+          {
+            "node": "API Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Success?": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond API Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}
