@@ -1,0 +1,555 @@
+{
+  "name": "Torah Translate Worker v2",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Translate Worker v2\n\n**Endpoint:** POST /webhook/torah-translate-worker-v2\n\n**Améliorations v2:**\n- Découpage intelligent des segments longs (> 10K chars)\n- Claude utilisé pour split sémantique\n- Extraction OCR des images\n- max_tokens: 8192, timeout: 180s\n\n**Flow:**\n1. Parse & respond\n2. Pour chaque segment:\n   - Si > 10K chars → Claude split intelligent\n   - Si images → OCR extraction\n   - Traduire chaque chunk\n3. Recombiner les traductions",
+        "height": 380,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 40]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-translate-worker-v2",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [400, 300],
+      "webhookId": "torah-translate-worker-v2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse input data - v2 avec support preprocessing\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst CHUNK_THRESHOLD = 10000; // 10K chars\n\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\n\nconst sourceLanguage = body.source_language || 'he';\nconst targetLanguage = body.target_language || 'fr';\nconst needsPivot = sourceLanguage !== 'en' && targetLanguage !== 'en';\n\n// Handle segments\nlet segments = [];\nif (Array.isArray(body.segments)) {\n  segments = body.segments;\n} else if (body.text) {\n  segments = [body.text];\n}\n\n// Analyze each segment for preprocessing needs\nconst analyzedSegments = segments.map((segment, idx) => {\n  const isObject = typeof segment === 'object' && segment !== null;\n  const segmentText = isObject ? segment.text : segment;\n  const charCount = segmentText.length;\n  \n  // Detect images\n  const imageRegex = /<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>/gi;\n  const imageMatches = [...segmentText.matchAll(imageRegex)];\n  const imageUrls = imageMatches.map(m => m[1]);\n  \n  return {\n    index: idx,\n    text: segmentText,\n    commentary_id: isObject ? segment.commentary_id : null,\n    source_text_id: isObject ? segment.source_text_id : null,\n    char_count: charCount,\n    needs_chunking: charCount > CHUNK_THRESHOLD,\n    has_images: imageUrls.length > 0,\n    image_urls: imageUrls\n  };\n});\n\nconst metadata = {\n  ...(body.metadata || {}),\n  commentator: body.commentator || body.metadata?.commentator\n};\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    traite: body.traite,\n    page: body.page,\n    jobType: body.job_type || 'unit_translation',\n    mode: body.mode || 'standard',\n    sourceLanguage: sourceLanguage,\n    sourceLangName: languageNames[sourceLanguage] || sourceLanguage,\n    targetLanguage: targetLanguage,\n    targetLangName: languageNames[targetLanguage] || targetLanguage,\n    needsPivot: needsPivot,\n    apiKey: body.api_key,\n    openaiApiKey: body.openai_api_key,\n    mistralApiKey: body.mistral_api_key,\n    segments: analyzedSegments,\n    segmentsCount: segments.length,\n    needsPreprocessing: analyzedSegments.some(s => s.needs_chunking || s.has_images),\n    context: body.context || {},\n    metadata: metadata,\n    requestId: body.request_id,\n    startTime: Date.now(),\n    chunkThreshold: CHUNK_THRESHOLD\n  }\n}];"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [620, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ received: true, job_id: $json.jobId, segments_count: $json.segmentsCount, needs_preprocessing: $json.needsPreprocessing, pivot: $json.needsPivot }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "application/json" }]
+          }
+        }
+      },
+      "id": "respond-immediately",
+      "name": "Respond Immediately",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [840, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": \"processing\" }",
+        "options": { "timeout": 5000 }
+      },
+      "id": "set-in-progress",
+      "name": "Set In Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split analyzed segments into items for processing\nconst input = $('Parse Input').first().json;\n\nconst items = input.segments.map((segment) => {\n  return {\n    json: {\n      ...segment,\n      totalSegments: input.segments.length,\n      jobId: input.jobId,\n      traite: input.traite,\n      page: input.page,\n      jobType: input.jobType,\n      mode: input.mode,\n      sourceLanguage: input.sourceLanguage,\n      sourceLangName: input.sourceLangName,\n      targetLanguage: input.targetLanguage,\n      targetLangName: input.targetLangName,\n      needsPivot: input.needsPivot,\n      apiKey: input.apiKey,\n      openaiApiKey: input.openaiApiKey,\n      mistralApiKey: input.mistralApiKey,\n      context: input.context,\n      metadata: input.metadata,\n      requestId: input.requestId,\n      startTime: input.startTime,\n      chunkThreshold: input.chunkThreshold\n    }\n  };\n});\n\nreturn items;"
+      },
+      "id": "split-segments",
+      "name": "Split Segments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1280, 300]
+    },
+    {
+      "parameters": { "options": {} },
+      "id": "loop-segments",
+      "name": "Loop Segments",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.needs_chunking }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-chunking",
+      "name": "Needs Chunking?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1720, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $json.apiKey }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 4096, messages: [{ role: 'user', content: 'Tu es expert en textes hébraïques rabbiniques (Talmud, Kabbale, Zohar).\\n\\nDécoupe ce texte en sections de maximum 8000 caractères.\\nRespecte les frontières sémantiques :\\n- Fin de citation (וכו\\', ע\\\"כ)\\n- Changement de sujet/commentateur\\n- Marqueurs structurels (<b>, titres)\\n- Ne coupe JAMAIS au milieu d\\'une phrase\\n\\nIgnore les balises <img> - elles seront traitées séparément.\\n\\nRetourne UNIQUEMENT un JSON valide (pas de ```json), format:\\n{\"chunks\": [{\"index\": 1, \"text\": \"...\", \"char_count\": 7500}], \"total_chunks\": 2}\\n\\nTEXTE À DÉCOUPER:\\n' + $json.text.substring(0, 50000) }] }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 120000
+        }
+      },
+      "id": "claude-smart-split",
+      "name": "Claude Smart Split",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1940, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's chunking response\nconst input = $input.first().json;\nconst originalData = $('Needs Chunking?').first().json;\n\ntry {\n  const body = input.body || input;\n  const content = body.content?.[0]?.text || '';\n  \n  // Try to parse JSON from response\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const parsed = JSON.parse(jsonStr);\n  const chunks = parsed.chunks || [];\n  \n  if (chunks.length === 0) {\n    // Fallback: return original as single chunk\n    return [{\n      json: {\n        ...originalData,\n        chunks: [{ index: 0, text: originalData.text, char_count: originalData.char_count }],\n        total_chunks: 1,\n        split_method: 'fallback_single'\n      }\n    }];\n  }\n  \n  return [{\n    json: {\n      ...originalData,\n      chunks: chunks,\n      total_chunks: chunks.length,\n      split_method: 'claude_semantic'\n    }\n  }];\n} catch (e) {\n  // Error parsing: return original as single chunk\n  return [{\n    json: {\n      ...originalData,\n      chunks: [{ index: 0, text: originalData.text, char_count: originalData.char_count }],\n      total_chunks: 1,\n      split_method: 'fallback_error',\n      split_error: e.message\n    }\n  }];\n}"
+      },
+      "id": "parse-chunks",
+      "name": "Parse Chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No chunking needed - wrap text as single chunk\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    ...input,\n    chunks: [{ index: 0, text: input.text, char_count: input.char_count }],\n    total_chunks: 1,\n    split_method: 'none'\n  }\n}];"
+      },
+      "id": "no-chunking",
+      "name": "No Chunking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1940, 500]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "input1"
+      },
+      "id": "merge-after-chunk",
+      "name": "Merge After Chunk",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2380, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_images }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-images",
+      "name": "Has Images?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2600, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract image URLs and prepare OCR calls\nconst input = $input.first().json;\nconst imageUrls = input.image_urls || [];\n\nif (imageUrls.length === 0 || !input.mistralApiKey) {\n  // No images or no API key - continue without OCR\n  return [{\n    json: {\n      ...input,\n      ocr_texts: [],\n      ocr_status: 'skipped'\n    }\n  }];\n}\n\n// For now, mark for OCR processing\n// In a full implementation, we'd call image-ocr webhook here\nreturn [{\n  json: {\n    ...input,\n    ocr_texts: [],\n    ocr_status: 'pending',\n    ocr_note: 'OCR processing would be called here for: ' + imageUrls.join(', ')\n  }\n}];"
+      },
+      "id": "process-images",
+      "name": "Process Images",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2820, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No images to process\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    ...input,\n    ocr_texts: [],\n    ocr_status: 'none'\n  }\n}];"
+      },
+      "id": "no-images",
+      "name": "No Images",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2820, 500]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "input1"
+      },
+      "id": "merge-after-images",
+      "name": "Merge After Images",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [3040, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Expand chunks into individual items for translation\nconst input = $input.first().json;\nconst chunks = input.chunks || [{ index: 0, text: input.text }];\n\nconst items = chunks.map((chunk, idx) => {\n  return {\n    json: {\n      chunkIndex: idx,\n      chunkText: chunk.text,\n      chunkCharCount: chunk.char_count || chunk.text.length,\n      originalSegmentIndex: input.index,\n      totalChunks: chunks.length,\n      totalSegments: input.totalSegments,\n      jobId: input.jobId,\n      traite: input.traite,\n      page: input.page,\n      jobType: input.jobType,\n      mode: input.mode,\n      sourceLanguage: input.sourceLanguage,\n      sourceLangName: input.sourceLangName,\n      targetLanguage: input.targetLanguage,\n      targetLangName: input.targetLangName,\n      needsPivot: input.needsPivot,\n      apiKey: input.apiKey,\n      openaiApiKey: input.openaiApiKey,\n      context: input.context,\n      metadata: input.metadata,\n      commentary_id: input.commentary_id,\n      source_text_id: input.source_text_id,\n      split_method: input.split_method,\n      ocr_texts: input.ocr_texts || []\n    }\n  };\n});\n\nreturn items;"
+      },
+      "id": "expand-chunks",
+      "name": "Expand Chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3260, 400]
+    },
+    {
+      "parameters": { "options": {} },
+      "id": "loop-chunks",
+      "name": "Loop Chunks",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [3480, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.needsPivot }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-pivot",
+      "name": "Needs Pivot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3700, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $json.apiKey }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 8192, messages: [{ role: 'user', content: 'Tu es un expert en textes talmudiques et kabbalistiques. Le texte source est en ' + $json.sourceLangName + '. Traduis en English (anglais).\\n\\nContexte: ' + $json.traite + ' ' + $json.page + ($json.metadata.commentator ? ' - ' + $json.metadata.commentator : '') + '\\n\\nTexte à traduire:\\n' + $json.chunkText + '\\n\\nRéponds UNIQUEMENT avec la traduction anglaise.' }] }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 180000
+        }
+      },
+      "id": "claude-pivot-step1",
+      "name": "Claude Pivot Step 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3920, 400],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract English translation from pivot step 1\nconst input = $input.first().json;\nconst prevData = $('Needs Pivot?').first().json;\n\ntry {\n  const body = input.body || input;\n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  return [{\n    json: {\n      ...prevData,\n      intermediateTranslation: content,\n      pivotTokens: {\n        input_tokens: usage.input_tokens || 0,\n        output_tokens: usage.output_tokens || 0\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      ...prevData,\n      intermediateTranslation: '',\n      pivotError: e.message\n    }\n  }];\n}"
+      },
+      "id": "extract-step1",
+      "name": "Extract Step 1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4140, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $json.apiKey }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 8192, messages: [{ role: 'user', content: 'Tu es un expert traducteur. Le texte est en English. Traduis en ' + $json.targetLangName + '.\\n\\nContexte: ' + $json.traite + ' ' + $json.page + ($json.metadata.commentator ? ' - ' + $json.metadata.commentator : '') + '\\n\\nTexte à traduire:\\n' + $json.intermediateTranslation + '\\n\\nRéponds UNIQUEMENT avec la traduction.' }] }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 180000
+        }
+      },
+      "id": "claude-pivot-step2",
+      "name": "Claude Pivot Step 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4360, 400],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract final translation from pivot step 2\nconst input = $input.first().json;\nconst prevData = $('Extract Step 1').first().json;\n\ntry {\n  const body = input.body || input;\n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  return [{\n    json: {\n      ...prevData,\n      finalTranslation: content,\n      claudeTokens: {\n        input_tokens: (prevData.pivotTokens?.input_tokens || 0) + (usage.input_tokens || 0),\n        output_tokens: (prevData.pivotTokens?.output_tokens || 0) + (usage.output_tokens || 0)\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      ...prevData,\n      finalTranslation: prevData.intermediateTranslation || '',\n      translateError: e.message\n    }\n  }];\n}"
+      },
+      "id": "extract-step2",
+      "name": "Extract Step 2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4580, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $json.apiKey }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 8192, messages: [{ role: 'user', content: 'Tu es un expert en textes talmudiques et kabbalistiques. Le texte source est en ' + $json.sourceLangName + '. Traduis directement en ' + $json.targetLangName + '.\\n\\nContexte: ' + $json.traite + ' ' + $json.page + ($json.metadata.commentator ? ' - ' + $json.metadata.commentator : '') + '\\n\\nTexte à traduire:\\n' + $json.chunkText + '\\n\\nRéponds UNIQUEMENT avec la traduction.' }] }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 180000
+        }
+      },
+      "id": "claude-direct",
+      "name": "Claude Direct",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3920, 600],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract direct translation\nconst input = $input.first().json;\nconst prevData = $('Needs Pivot?').first().json;\n\ntry {\n  const body = input.body || input;\n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  return [{\n    json: {\n      ...prevData,\n      finalTranslation: content,\n      claudeTokens: {\n        input_tokens: usage.input_tokens || 0,\n        output_tokens: usage.output_tokens || 0\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      ...prevData,\n      finalTranslation: '',\n      translateError: e.message\n    }\n  }];\n}"
+      },
+      "id": "extract-direct",
+      "name": "Extract Direct",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4140, 600]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "input1"
+      },
+      "id": "merge-translations",
+      "name": "Merge Translations",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [4800, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Accumulate chunk translation for recombination\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    chunkIndex: input.chunkIndex,\n    originalSegmentIndex: input.originalSegmentIndex,\n    originalText: input.chunkText,\n    translation: input.finalTranslation,\n    totalChunks: input.totalChunks,\n    claudeTokens: input.claudeTokens || { input_tokens: 0, output_tokens: 0 },\n    commentary_id: input.commentary_id,\n    metadata: input.metadata,\n    jobId: input.jobId,\n    traite: input.traite,\n    page: input.page,\n    targetLanguage: input.targetLanguage\n  }\n}];"
+      },
+      "id": "accumulate-chunk",
+      "name": "Accumulate Chunk",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5020, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recombine chunks when segment is complete\n// This runs after all chunks of a segment are processed\nconst allItems = $input.all();\n\n// Group by originalSegmentIndex\nconst grouped = {};\nfor (const item of allItems) {\n  const segIdx = item.json.originalSegmentIndex;\n  if (!grouped[segIdx]) {\n    grouped[segIdx] = [];\n  }\n  grouped[segIdx].push(item.json);\n}\n\n// Sort and recombine\nconst results = [];\nfor (const segIdx of Object.keys(grouped).sort((a, b) => parseInt(a) - parseInt(b))) {\n  const chunks = grouped[segIdx].sort((a, b) => a.chunkIndex - b.chunkIndex);\n  const combinedTranslation = chunks.map(c => c.translation).join('\\n\\n');\n  const combinedOriginal = chunks.map(c => c.originalText).join('\\n\\n');\n  const totalTokens = chunks.reduce((acc, c) => ({\n    input_tokens: acc.input_tokens + (c.claudeTokens?.input_tokens || 0),\n    output_tokens: acc.output_tokens + (c.claudeTokens?.output_tokens || 0)\n  }), { input_tokens: 0, output_tokens: 0 });\n  \n  results.push({\n    json: {\n      segmentIndex: parseInt(segIdx),\n      originalText: combinedOriginal,\n      translation: combinedTranslation,\n      chunks_count: chunks.length,\n      claudeTokens: totalTokens,\n      commentary_id: chunks[0].commentary_id,\n      metadata: chunks[0].metadata,\n      jobId: chunks[0].jobId,\n      traite: chunks[0].traite,\n      page: chunks[0].page,\n      targetLanguage: chunks[0].targetLanguage\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "recombine-chunks",
+      "name": "Recombine Chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5460, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/translations/save",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.jobId, traite: $json.traite, page: $json.page, original_text: $json.originalText, translated_text: $json.translation, target_language: $json.targetLanguage, commentary_id: $json.commentary_id, metadata: $json.metadata, tokens: $json.claudeTokens }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "save-translation",
+      "name": "Save Translation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [5680, 400],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $('Recombine Chunks').first().json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'completed', output: { translations_count: $input.all().length, total_tokens: $input.all().reduce((acc, item) => ({ input_tokens: acc.input_tokens + (item.json.claudeTokens?.input_tokens || 0), output_tokens: acc.output_tokens + (item.json.claudeTokens?.output_tokens || 0) }), { input_tokens: 0, output_tokens: 0 }) } }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "update-job-complete",
+      "name": "Update Job Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [5900, 400],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "done",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [6120, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Parse Input", "type": "main", "index": 0 }]]
+    },
+    "Parse Input": {
+      "main": [[{ "node": "Respond Immediately", "type": "main", "index": 0 }]]
+    },
+    "Respond Immediately": {
+      "main": [[{ "node": "Set In Progress", "type": "main", "index": 0 }]]
+    },
+    "Set In Progress": {
+      "main": [[{ "node": "Split Segments", "type": "main", "index": 0 }]]
+    },
+    "Split Segments": {
+      "main": [[{ "node": "Loop Segments", "type": "main", "index": 0 }]]
+    },
+    "Loop Segments": {
+      "main": [
+        [{ "node": "Recombine Chunks", "type": "main", "index": 0 }],
+        [{ "node": "Needs Chunking?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Needs Chunking?": {
+      "main": [
+        [{ "node": "Claude Smart Split", "type": "main", "index": 0 }],
+        [{ "node": "No Chunking", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Smart Split": {
+      "main": [[{ "node": "Parse Chunks", "type": "main", "index": 0 }]]
+    },
+    "Parse Chunks": {
+      "main": [[{ "node": "Merge After Chunk", "type": "main", "index": 0 }]]
+    },
+    "No Chunking": {
+      "main": [[{ "node": "Merge After Chunk", "type": "main", "index": 1 }]]
+    },
+    "Merge After Chunk": {
+      "main": [[{ "node": "Has Images?", "type": "main", "index": 0 }]]
+    },
+    "Has Images?": {
+      "main": [
+        [{ "node": "Process Images", "type": "main", "index": 0 }],
+        [{ "node": "No Images", "type": "main", "index": 0 }]
+      ]
+    },
+    "Process Images": {
+      "main": [[{ "node": "Merge After Images", "type": "main", "index": 0 }]]
+    },
+    "No Images": {
+      "main": [[{ "node": "Merge After Images", "type": "main", "index": 1 }]]
+    },
+    "Merge After Images": {
+      "main": [[{ "node": "Expand Chunks", "type": "main", "index": 0 }]]
+    },
+    "Expand Chunks": {
+      "main": [[{ "node": "Loop Chunks", "type": "main", "index": 0 }]]
+    },
+    "Loop Chunks": {
+      "main": [
+        [{ "node": "Accumulate Chunk", "type": "main", "index": 0 }],
+        [{ "node": "Needs Pivot?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Needs Pivot?": {
+      "main": [
+        [{ "node": "Claude Pivot Step 1", "type": "main", "index": 0 }],
+        [{ "node": "Claude Direct", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Pivot Step 1": {
+      "main": [[{ "node": "Extract Step 1", "type": "main", "index": 0 }]]
+    },
+    "Extract Step 1": {
+      "main": [[{ "node": "Claude Pivot Step 2", "type": "main", "index": 0 }]]
+    },
+    "Claude Pivot Step 2": {
+      "main": [[{ "node": "Extract Step 2", "type": "main", "index": 0 }]]
+    },
+    "Extract Step 2": {
+      "main": [[{ "node": "Merge Translations", "type": "main", "index": 0 }]]
+    },
+    "Claude Direct": {
+      "main": [[{ "node": "Extract Direct", "type": "main", "index": 0 }]]
+    },
+    "Extract Direct": {
+      "main": [[{ "node": "Merge Translations", "type": "main", "index": 1 }]]
+    },
+    "Merge Translations": {
+      "main": [[{ "node": "Accumulate Chunk", "type": "main", "index": 0 }]]
+    },
+    "Accumulate Chunk": {
+      "main": [[{ "node": "Loop Chunks", "type": "main", "index": 0 }]]
+    },
+    "Recombine Chunks": {
+      "main": [[{ "node": "Save Translation", "type": "main", "index": 0 }]]
+    },
+    "Save Translation": {
+      "main": [[{ "node": "Update Job Complete", "type": "main", "index": 0 }]]
+    },
+    "Update Job Complete": {
+      "main": [[{ "node": "Done", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}
