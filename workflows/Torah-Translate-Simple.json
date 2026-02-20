@@ -1,0 +1,248 @@
+{
+  "name": "Torah Translate Simple",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Translate Simple\n\n**Endpoint:** `POST /webhook/torah-translate`\n\n**Responsabilite:** Traduire UN segment (sans sauvegarder)\n\n**Input:**\n```json\n{\n  \"job_id\": \"uuid\",\n  \"text\": \"...\",\n  \"source_language\": \"he\",\n  \"target_language\": \"fr\",\n  \"api_key\": \"sk-ant-...\",\n  \"context\": { \"traite\": \"...\", \"page\": \"...\" }\n}\n```\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"translation\": \"...\",\n  \"tokens\": { \"input\": 100, \"output\": 150 }\n}\n```",
+        "height": 380,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 40]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-translate",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "webhookId": "torah-translate"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and validate input\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\n\nif (!body.text) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_TEXT', message: 'text is required' }\n    }\n  }];\n}\n\nif (!body.api_key) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_API_KEY', message: 'api_key is required' }\n    }\n  }];\n}\n\nconst sourceLanguage = body.source_language || 'he';\nconst targetLanguage = body.target_language || 'fr';\nconst needsPivot = sourceLanguage !== 'en' && targetLanguage !== 'en';\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    text: body.text,\n    sourceLanguage: sourceLanguage,\n    sourceLangName: languageNames[sourceLanguage] || sourceLanguage,\n    targetLanguage: targetLanguage,\n    targetLangName: languageNames[targetLanguage] || targetLanguage,\n    needsPivot: needsPivot,\n    apiKey: body.api_key,\n    model: body.model || 'claude-sonnet-4-20250514',\n    context: body.context || {},\n    metadata: body.metadata || {}\n  }\n}];"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.needsPivot }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-pivot",
+      "name": "Needs Pivot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $json.apiKey }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: 8192, messages: [{ role: 'user', content: 'Tu es un expert en textes talmudiques et kabbalistiques. Le texte source est en ' + $json.sourceLangName + '. Traduis en English (anglais).\\n\\nContexte: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\nTexte à traduire:\\n' + $json.text + '\\n\\nRéponds UNIQUEMENT avec la traduction anglaise.' }] }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 180000
+        }
+      },
+      "id": "claude-pivot-step1",
+      "name": "Claude Pivot Step 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract English translation from pivot step 1\nconst input = $input.first().json;\nconst prevData = $('Parse Input').first().json;\n\ntry {\n  const body = input.body || input;\n  \n  if (body.error) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'CLAUDE_ERROR', message: body.error.message || 'Claude API error' }\n      }\n    }];\n  }\n  \n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'EMPTY_RESPONSE', message: 'Claude returned empty response' }\n      }\n    }];\n  }\n  \n  return [{\n    json: {\n      ...prevData,\n      intermediateTranslation: content,\n      pivotTokens: {\n        input_tokens: usage.input_tokens || 0,\n        output_tokens: usage.output_tokens || 0\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'PARSE_ERROR', message: e.message }\n    }\n  }];\n}"
+      },
+      "id": "extract-step1",
+      "name": "Extract Step 1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.success }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "step1-failed",
+      "name": "Step 1 Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1540, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $json.apiKey }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: 8192, messages: [{ role: 'user', content: 'Tu es un expert traducteur. Le texte est en English. Traduis en ' + $json.targetLangName + '.\\n\\nContexte: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\nTexte à traduire:\\n' + $json.intermediateTranslation + '\\n\\nRéponds UNIQUEMENT avec la traduction.' }] }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 180000
+        }
+      },
+      "id": "claude-pivot-step2",
+      "name": "Claude Pivot Step 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract final translation from pivot step 2\nconst input = $input.first().json;\nconst prevData = $('Extract Step 1').first().json;\n\ntry {\n  const body = input.body || input;\n  \n  if (body.error) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'CLAUDE_ERROR', message: body.error.message || 'Claude API error in step 2' }\n      }\n    }];\n  }\n  \n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'EMPTY_RESPONSE', message: 'Claude returned empty response in step 2' }\n      }\n    }];\n  }\n  \n  return [{\n    json: {\n      success: true,\n      translation: content,\n      method: 'pivot',\n      tokens: {\n        input_tokens: (prevData.pivotTokens?.input_tokens || 0) + (usage.input_tokens || 0),\n        output_tokens: (prevData.pivotTokens?.output_tokens || 0) + (usage.output_tokens || 0)\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'PARSE_ERROR', message: e.message }\n    }\n  }];\n}"
+      },
+      "id": "extract-step2",
+      "name": "Extract Step 2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $json.apiKey }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: 8192, messages: [{ role: 'user', content: 'Tu es un expert en textes talmudiques et kabbalistiques. Le texte source est en ' + $json.sourceLangName + '. Traduis directement en ' + $json.targetLangName + '.\\n\\nContexte: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\nTexte à traduire:\\n' + $json.text + '\\n\\nRéponds UNIQUEMENT avec la traduction.' }] }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 180000
+        }
+      },
+      "id": "claude-direct",
+      "name": "Claude Direct",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 400],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract direct translation\nconst input = $input.first().json;\n\ntry {\n  const body = input.body || input;\n  \n  if (body.error) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'CLAUDE_ERROR', message: body.error.message || 'Claude API error' }\n      }\n    }];\n  }\n  \n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'EMPTY_RESPONSE', message: 'Claude returned empty response' }\n      }\n    }];\n  }\n  \n  return [{\n    json: {\n      success: true,\n      translation: content,\n      method: 'direct',\n      tokens: {\n        input_tokens: usage.input_tokens || 0,\n        output_tokens: usage.output_tokens || 0\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'PARSE_ERROR', message: e.message }\n    }\n  }];\n}"
+      },
+      "id": "extract-direct",
+      "name": "Extract Direct",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 400]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "id": "merge-result",
+      "name": "Merge Result",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2200, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Parse Input", "type": "main", "index": 0 }]]
+    },
+    "Parse Input": {
+      "main": [[{ "node": "Needs Pivot?", "type": "main", "index": 0 }]]
+    },
+    "Needs Pivot?": {
+      "main": [
+        [{ "node": "Claude Pivot Step 1", "type": "main", "index": 0 }],
+        [{ "node": "Claude Direct", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Pivot Step 1": {
+      "main": [[{ "node": "Extract Step 1", "type": "main", "index": 0 }]]
+    },
+    "Extract Step 1": {
+      "main": [[{ "node": "Step 1 Failed?", "type": "main", "index": 0 }]]
+    },
+    "Step 1 Failed?": {
+      "main": [
+        [{ "node": "Merge Result", "type": "main", "index": 0 }],
+        [{ "node": "Claude Pivot Step 2", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Pivot Step 2": {
+      "main": [[{ "node": "Extract Step 2", "type": "main", "index": 0 }]]
+    },
+    "Extract Step 2": {
+      "main": [[{ "node": "Merge Result", "type": "main", "index": 0 }]]
+    },
+    "Claude Direct": {
+      "main": [[{ "node": "Extract Direct", "type": "main", "index": 0 }]]
+    },
+    "Extract Direct": {
+      "main": [[{ "node": "Merge Result", "type": "main", "index": 1 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}

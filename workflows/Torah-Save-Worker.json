@@ -1,0 +1,84 @@
+{
+  "name": "Torah Save Worker",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Save Worker\n\n**Endpoint:** `POST /webhook/torah-save`\n\n**Responsabilite:** Sauvegarder UNE traduction en DB\n\n**Input:**\n```json\n{\n  \"job_id\": \"uuid\",\n  \"translation\": \"...\",\n  \"commentary_id\": \"uuid\",  // OU\n  \"source_text_id\": \"uuid\",\n  \"target_language\": \"fr\",\n  \"metadata\": {}\n}\n```\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"saved_id\": \"uuid\"\n}\n```",
+        "height": 320,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 40]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-save",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "webhookId": "torah-save"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and validate input\nconst input = $input.first().json;\nconst body = input.body || input;\n\nif (!body.translation) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_TRANSLATION', message: 'translation is required' }\n    }\n  }];\n}\n\nif (!body.commentary_id && !body.source_text_id) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_ID', message: 'Either commentary_id or source_text_id is required' }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    translation: body.translation,\n    commentaryId: body.commentary_id || null,\n    sourceTextId: body.source_text_id || null,\n    targetLanguage: body.target_language || 'fr',\n    provider: body.provider || 'anthropic',\n    model: body.model || 'claude-sonnet-4-20250514',\n    tokens: body.tokens || null,\n    metadata: body.metadata || {}\n  }\n}];"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/translations/save",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.jobId, source_text_id: $json.sourceTextId, commentary_id: $json.commentaryId, translated_text: $json.translation, target_language: $json.targetLanguage, provider: $json.provider, model: $json.model, tokens: $json.tokens, metadata: $json.metadata }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "save-to-api",
+      "name": "Save to API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format response\nconst input = $input.first().json;\n\nif (input.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 'SAVE_ERROR',\n        message: input.error.message || 'Failed to save translation'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: input.success !== false,\n    saved_id: input.translation_id || input.commentary_id || input.source_text_id,\n    message: input.message || 'Translation saved'\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Parse Input", "type": "main", "index": 0 }]]
+    },
+    "Parse Input": {
+      "main": [[{ "node": "Save to API", "type": "main", "index": 0 }]]
+    },
+    "Save to API": {
+      "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}
