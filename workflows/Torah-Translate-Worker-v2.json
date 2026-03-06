@@ -1,10 +1,10 @@
 {
   "name": "Torah Translate Worker v2",
-  "active": false,
+  "active": true,
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Translate Worker v2\n\n**Endpoint:** POST /webhook/torah-translate-worker-v2\n\n**Améliorations v2:**\n- Support `section` pour sources complexes (section || page)\n- Découpage intelligent des segments longs (> 10K chars)\n- Claude utilisé pour split sémantique\n- Extraction OCR des images\n- max_tokens: 8192, timeout: 180s\n\n**Payload:**\n```json\n{ \"traite\": \"Sha'ar HaHakdamot\", \"section\": \"Introductions\", ... }\n```",
+        "content": "## Torah Translate Worker v2\n\n**Endpoint:** POST /webhook/torah-translate-worker\n\n**Améliorations v2:**\n- Support `section` pour sources complexes (section || page)\n- Découpage intelligent des segments longs (> 10K chars)\n- Claude utilisé pour split sémantique\n- Extraction OCR des images\n- max_tokens: 8192, timeout: 180s\n\n**Payload:**\n```json\n{ \"traite\": \"Sha'ar HaHakdamot\", \"section\": \"Introductions\", ... }\n```",
         "height": 380,
         "width": 340,
         "color": 5
@@ -18,7 +18,7 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "torah-translate-worker-v2",
+        "path": "torah-translate-worker",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -27,11 +27,11 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [400, 300],
-      "webhookId": "torah-translate-worker-v2"
+      "webhookId": "torah-translate-worker"
     },
     {
       "parameters": {
-        "jsCode": "// Parse input data - v2 avec support preprocessing + section\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst CHUNK_THRESHOLD = 10000; // 10K chars\n\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\n\nconst sourceLanguage = body.source_language || 'he';\nconst targetLanguage = body.target_language || 'fr';\nconst needsPivot = sourceLanguage !== 'en' && targetLanguage !== 'en';\n\n// Support section || page for complex sources\nconst section = body.section || body.page || null;\nconst page = body.page || body.section || null;\n\n// Handle segments\nlet segments = [];\nif (Array.isArray(body.segments)) {\n  segments = body.segments;\n} else if (body.text) {\n  segments = [body.text];\n}\n\n// Analyze each segment for preprocessing needs\nconst analyzedSegments = segments.map((segment, idx) => {\n  const isObject = typeof segment === 'object' && segment !== null;\n  const segmentText = isObject ? segment.text : segment;\n  const charCount = segmentText.length;\n  \n  // Detect images\n  const imageRegex = /<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>/gi;\n  const imageMatches = [...segmentText.matchAll(imageRegex)];\n  const imageUrls = imageMatches.map(m => m[1]);\n  \n  return {\n    index: idx,\n    text: segmentText,\n    commentary_id: isObject ? segment.commentary_id : null,\n    source_text_id: isObject ? segment.source_text_id : null,\n    char_count: charCount,\n    needs_chunking: charCount > CHUNK_THRESHOLD,\n    has_images: imageUrls.length > 0,\n    image_urls: imageUrls\n  };\n});\n\nconst metadata = {\n  ...(body.metadata || {}),\n  commentator: body.commentator || body.metadata?.commentator\n};\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    traite: body.traite,\n    section: section,\n    page: page,\n    locationLabel: section || page || '',\n    jobType: body.job_type || 'unit_translation',\n    mode: body.mode || 'standard',\n    sourceLanguage: sourceLanguage,\n    sourceLangName: languageNames[sourceLanguage] || sourceLanguage,\n    targetLanguage: targetLanguage,\n    targetLangName: languageNames[targetLanguage] || targetLanguage,\n    needsPivot: needsPivot,\n    llmProvider: body.llm_provider || 'anthropic',\n    modelAnthropic: body.model_anthropic || 'claude-sonnet-4-20250514',\n    apiKey: body.api_key,\n    openaiApiKey: body.openai_api_key,\n    mistralApiKey: body.mistral_api_key,\n    segments: analyzedSegments,\n    segmentsCount: segments.length,\n    needsPreprocessing: analyzedSegments.some(s => s.needs_chunking || s.has_images),\n    context: body.context || {},\n    metadata: metadata,\n    requestId: body.request_id,\n    startTime: Date.now(),\n    chunkThreshold: CHUNK_THRESHOLD\n  }\n}];"
+        "jsCode": "// Parse input data - v2 avec support preprocessing + section + source_text_id\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst CHUNK_THRESHOLD = 10000; // 10K chars\n\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\n\nconst sourceLanguage = body.source_language || 'he';\nconst targetLanguage = body.target_language || 'fr';\nconst needsPivot = sourceLanguage !== 'en' && targetLanguage !== 'en';\n\n// Support section || page for complex sources\nconst section = body.section || body.page || null;\nconst page = body.page || body.section || null;\n\n// Handle segments\nlet segments = [];\nif (Array.isArray(body.segments)) {\n  segments = body.segments;\n} else if (body.text) {\n  segments = [body.text];\n}\n\n// Analyze each segment for preprocessing needs\n// Skip segments that are already translated (text_translated != null)\nlet skippedCount = 0;\nconst analyzedSegments = segments.map((segment, idx) => {\n  const isObject = typeof segment === 'object' && segment !== null;\n  const segmentText = isObject ? (segment.text || segment.text_hebrew) : segment;\n  const alreadyTranslated = isObject && segment.text_translated != null && segment.text_translated !== '';\n  const charCount = segmentText ? segmentText.length : 0;\n  \n  if (alreadyTranslated) {\n    skippedCount++;\n  }\n  \n  // Detect images\n  const imageRegex = /<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>/gi;\n  const imageMatches = segmentText ? [...segmentText.matchAll(imageRegex)] : [];\n  const imageUrls = imageMatches.map(m => m[1]);\n  \n  return {\n    index: idx,\n    text: segmentText,\n    commentary_id: isObject ? segment.commentary_id : null,\n    source_text_id: isObject ? segment.source_text_id : null,\n    already_translated: alreadyTranslated,\n    existing_translation: isObject ? segment.text_translated : null,\n    char_count: charCount,\n    needs_chunking: charCount > CHUNK_THRESHOLD,\n    has_images: imageUrls.length > 0,\n    image_urls: imageUrls\n  };\n}).filter(s => !s.already_translated); // Filter out already translated\n\nconst metadata = {\n  ...(body.metadata || {}),\n  commentator: body.commentator || body.metadata?.commentator\n};\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    traite: body.traite,\n    section: section,\n    page: page,\n    locationLabel: section || page || '',\n    jobType: body.job_type || 'unit_translation',\n    mode: body.mode || 'standard',\n    sourceLanguage: sourceLanguage,\n    sourceLangName: languageNames[sourceLanguage] || sourceLanguage,\n    targetLanguage: targetLanguage,\n    targetLangName: languageNames[targetLanguage] || targetLanguage,\n    needsPivot: needsPivot,\n    llmProvider: body.llm_provider || 'anthropic',\n    modelAnthropic: body.model_anthropic || 'claude-sonnet-4-20250514',\n    apiKey: body.api_key,\n    openaiApiKey: body.openai_api_key,\n    mistralApiKey: body.mistral_api_key,\n    segments: analyzedSegments,\n    segmentsCount: analyzedSegments.length,\n    skippedCount: skippedCount,\n    totalInputSegments: segments.length,\n    needsPreprocessing: analyzedSegments.some(s => s.needs_chunking || s.has_images),\n    context: body.context || {},\n    metadata: metadata,\n    requestId: body.request_id,\n    startTime: Date.now(),\n    chunkThreshold: CHUNK_THRESHOLD\n  }\n}];"
       },
       "id": "parse-input",
       "name": "Parse Input",
@@ -140,7 +140,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse Claude's chunking response\nconst input = $input.first().json;\nconst originalData = $('Needs Chunking?').first().json;\n\ntry {\n  const body = input.body || input;\n  const content = body.content?.[0]?.text || '';\n  \n  // Try to parse JSON from response\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const parsed = JSON.parse(jsonStr);\n  const chunks = parsed.chunks || [];\n  \n  if (chunks.length === 0) {\n    // Fallback: return original as single chunk\n    return [{\n      json: {\n        ...originalData,\n        chunks: [{ index: 0, text: originalData.text, char_count: originalData.char_count }],\n        total_chunks: 1,\n        split_method: 'fallback_single'\n      }\n    }];\n  }\n  \n  return [{\n    json: {\n      ...originalData,\n      chunks: chunks,\n      total_chunks: chunks.length,\n      split_method: 'claude_semantic'\n    }\n  }];\n} catch (e) {\n  // Error parsing: return original as single chunk\n  return [{\n    json: {\n      ...originalData,\n      chunks: [{ index: 0, text: originalData.text, char_count: originalData.char_count }],\n      total_chunks: 1,\n      split_method: 'fallback_error',\n      split_error: e.message\n    }\n  }];\n}"
+        "jsCode": "// Parse Claude's chunking response\nconst input = $input.first().json;\nconst originalData = $('Needs Chunking?').first().json;\n\ntry {\n  const body = input.body || input;\n  const content = body.content?.[0]?.text || '';\n  \n  // Check for API error\n  if (body.error || !content) {\n    return [{\n      json: {\n        ...originalData,\n        chunks: [],\n        total_chunks: 0,\n        split_method: 'error',\n        split_error: body.error?.message || 'Smart Split API returned empty response',\n        hasError: true\n      }\n    }];\n  }\n  \n  // Try to parse JSON from response\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const parsed = JSON.parse(jsonStr);\n  const chunks = parsed.chunks || [];\n  \n  if (chunks.length === 0) {\n    return [{\n      json: {\n        ...originalData,\n        chunks: [],\n        total_chunks: 0,\n        split_method: 'error',\n        split_error: 'Smart Split returned no chunks - text too long or complex (' + originalData.char_count + ' chars)',\n        hasError: true\n      }\n    }];\n  }\n  \n  return [{\n    json: {\n      ...originalData,\n      chunks: chunks,\n      total_chunks: chunks.length,\n      split_method: 'claude_semantic',\n      hasError: false\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      ...originalData,\n      chunks: [],\n      total_chunks: 0,\n      split_method: 'error',\n      split_error: 'Failed to parse Smart Split response: ' + e.message,\n      hasError: true\n    }\n  }];\n}"
       },
       "id": "parse-chunks",
       "name": "Parse Chunks",
@@ -160,14 +160,50 @@
     },
     {
       "parameters": {
-        "mode": "chooseBranch",
-        "output": "input1"
+        "mode": "chooseBranch"
       },
       "id": "merge-after-chunk",
       "name": "Merge After Chunk",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [2380, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasError }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-split-error",
+      "name": "Split Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2600, 400]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'failed', error: { code: 'SMART_SPLIT_FAILED', message: $json.split_error, segment_index: $json.index, char_count: $json.char_count } }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "update-job-split-error",
+      "name": "Update Job Split Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2820, 300],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -188,7 +224,7 @@
       "name": "Has Images?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2600, 400]
+      "position": [2820, 500]
     },
     {
       "parameters": {
@@ -198,7 +234,7 @@
       "name": "Process Images",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2820, 300]
+      "position": [3040, 400]
     },
     {
       "parameters": {
@@ -208,18 +244,17 @@
       "name": "No Images",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2820, 500]
+      "position": [3040, 600]
     },
     {
       "parameters": {
-        "mode": "chooseBranch",
-        "output": "input1"
+        "mode": "chooseBranch"
       },
       "id": "merge-after-images",
       "name": "Merge After Images",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [3040, 400]
+      "position": [3260, 500]
     },
     {
       "parameters": {
@@ -232,7 +267,7 @@
       "position": [3260, 400]
     },
     {
-      "parameters": { "options": {} },
+      "parameters": { "batchSize": 3, "options": {} },
       "id": "loop-chunks",
       "name": "Loop Chunks",
       "type": "n8n-nodes-base.splitInBatches",
@@ -373,8 +408,7 @@
     },
     {
       "parameters": {
-        "mode": "chooseBranch",
-        "output": "input1"
+        "mode": "chooseBranch"
       },
       "id": "merge-translations",
       "name": "Merge Translations",
@@ -384,7 +418,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Accumulate chunk translation for recombination\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    chunkIndex: input.chunkIndex,\n    originalSegmentIndex: input.originalSegmentIndex,\n    originalText: input.chunkText,\n    translation: input.finalTranslation,\n    totalChunks: input.totalChunks,\n    claudeTokens: input.claudeTokens || { input_tokens: 0, output_tokens: 0 },\n    commentary_id: input.commentary_id,\n    metadata: input.metadata,\n    jobId: input.jobId,\n    traite: input.traite,\n    section: input.section,\n    page: input.page,\n    targetLanguage: input.targetLanguage\n  }\n}];"
+        "jsCode": "// Accumulate chunk translation for recombination\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    chunkIndex: input.chunkIndex,\n    originalSegmentIndex: input.originalSegmentIndex,\n    originalText: input.chunkText,\n    translation: input.finalTranslation,\n    totalChunks: input.totalChunks,\n    totalSegments: input.totalSegments,\n    claudeTokens: input.claudeTokens || { input_tokens: 0, output_tokens: 0 },\n    source_text_id: input.source_text_id,\n    commentary_id: input.commentary_id,\n    modelAnthropic: input.modelAnthropic,\n    metadata: input.metadata,\n    jobId: input.jobId,\n    traite: input.traite,\n    section: input.section,\n    page: input.page,\n    targetLanguage: input.targetLanguage\n  }\n}];"
       },
       "id": "accumulate-chunk",
       "name": "Accumulate Chunk",
@@ -394,7 +428,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Recombine chunks when segment is complete\n// This runs after all chunks of a segment are processed\nconst allItems = $input.all();\n\n// Group by originalSegmentIndex\nconst grouped = {};\nfor (const item of allItems) {\n  const segIdx = item.json.originalSegmentIndex;\n  if (!grouped[segIdx]) {\n    grouped[segIdx] = [];\n  }\n  grouped[segIdx].push(item.json);\n}\n\n// Sort and recombine\nconst results = [];\nfor (const segIdx of Object.keys(grouped).sort((a, b) => parseInt(a) - parseInt(b))) {\n  const chunks = grouped[segIdx].sort((a, b) => a.chunkIndex - b.chunkIndex);\n  const combinedTranslation = chunks.map(c => c.translation).join('\\n\\n');\n  const combinedOriginal = chunks.map(c => c.originalText).join('\\n\\n');\n  const totalTokens = chunks.reduce((acc, c) => ({\n    input_tokens: acc.input_tokens + (c.claudeTokens?.input_tokens || 0),\n    output_tokens: acc.output_tokens + (c.claudeTokens?.output_tokens || 0)\n  }), { input_tokens: 0, output_tokens: 0 });\n  \n  results.push({\n    json: {\n      segmentIndex: parseInt(segIdx),\n      originalText: combinedOriginal,\n      translation: combinedTranslation,\n      chunks_count: chunks.length,\n      claudeTokens: totalTokens,\n      commentary_id: chunks[0].commentary_id,\n      metadata: chunks[0].metadata,\n      jobId: chunks[0].jobId,\n      traite: chunks[0].traite,\n      section: chunks[0].section,\n      page: chunks[0].page,\n      targetLanguage: chunks[0].targetLanguage\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "// Recombine chunks for the CURRENT segment only\n// Now runs after each segment's chunks are processed (not at the end of all segments)\nconst allItems = $input.all();\n\nif (allItems.length === 0) {\n  return [];\n}\n\n// All chunks should be from the same segment\nconst firstItem = allItems[0].json;\nconst originalSegmentIndex = firstItem.originalSegmentIndex;\nconst totalSegments = firstItem.totalSegments;\n\n// Sort chunks by index\nconst chunks = allItems.map(item => item.json).sort((a, b) => a.chunkIndex - b.chunkIndex);\n\nconst combinedTranslation = chunks.map(c => c.translation).filter(t => t).join('\\n\\n');\nconst combinedOriginal = chunks.map(c => c.originalText).filter(t => t).join('\\n\\n');\nconst totalTokens = chunks.reduce((acc, c) => ({\n  input_tokens: acc.input_tokens + (c.claudeTokens?.input_tokens || 0),\n  output_tokens: acc.output_tokens + (c.claudeTokens?.output_tokens || 0)\n}), { input_tokens: 0, output_tokens: 0 });\n\nreturn [{\n  json: {\n    segmentIndex: originalSegmentIndex,\n    currentSegment: originalSegmentIndex + 1,\n    totalSegments: totalSegments,\n    isLastSegment: (originalSegmentIndex + 1) >= totalSegments,\n    originalText: combinedOriginal,\n    translation: combinedTranslation,\n    chunks_count: chunks.length,\n    claudeTokens: totalTokens,\n    source_text_id: firstItem.source_text_id,\n    commentary_id: firstItem.commentary_id,\n    modelAnthropic: firstItem.modelAnthropic,\n    metadata: firstItem.metadata,\n    jobId: firstItem.jobId,\n    traite: firstItem.traite,\n    section: firstItem.section,\n    page: firstItem.page,\n    targetLanguage: firstItem.targetLanguage\n  }\n}];"
       },
       "id": "recombine-chunks",
       "name": "Recombine Chunks",
@@ -404,34 +438,92 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.translation }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-translation",
+      "name": "Check Translation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [5570, 400]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "={{ $env.API_URL }}/api/translations/save",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ job_id: $json.jobId, traite: $json.traite, section: $json.section, page: $json.page, original_text: $json.originalText, translated_text: $json.translation, target_language: $json.targetLanguage, commentary_id: $json.commentary_id, metadata: $json.metadata, tokens: $json.claudeTokens }) }}",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.jobId, source_text_id: $json.source_text_id, translated_text: $json.translation, target_language: $json.targetLanguage, provider: 'anthropic', model: $json.modelAnthropic || 'claude-sonnet-4-20250514', commentary_id: $json.commentary_id, metadata: $json.metadata, tokens: $json.claudeTokens }) }}",
         "options": { "timeout": 30000 }
       },
       "id": "save-translation",
       "name": "Save Translation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [5680, 400],
+      "position": [5780, 300],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "method": "PATCH",
-        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $('Recombine Chunks').first().json.jobId }}",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $('Check Translation').first().json.jobId }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ status: 'completed', output: { translations_count: $input.all().length, total_tokens: $input.all().reduce((acc, item) => ({ input_tokens: acc.input_tokens + (item.json.claudeTokens?.input_tokens || 0), output_tokens: acc.output_tokens + (item.json.claudeTokens?.output_tokens || 0) }), { input_tokens: 0, output_tokens: 0 }) } }) }}",
+        "jsonBody": "={{ JSON.stringify({ status: 'processing', progress: { current: $('Check Translation').first().json.currentSegment, total: $('Check Translation').first().json.totalSegments, percent: Math.round(($('Check Translation').first().json.currentSegment / $('Check Translation').first().json.totalSegments) * 100) } }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "id": "update-progress",
+      "name": "Update Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [5900, 400],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Check Translation').first().json.isLastSegment }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-last-segment",
+      "name": "Last Segment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [6120, 400]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $('Check Translation').first().json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'completed', progress: { current: $('Check Translation').first().json.totalSegments, total: $('Check Translation').first().json.totalSegments, percent: 100 }, output: { translations_count: $('Check Translation').first().json.totalSegments, final_segment: $('Check Translation').first().json.segmentIndex } }) }}",
         "options": { "timeout": 10000 }
       },
       "id": "update-job-complete",
       "name": "Update Job Complete",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [5900, 400],
+      "position": [6340, 300],
       "onError": "continueRegularOutput"
     },
     {
@@ -440,7 +532,7 @@
       "name": "Done",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [6120, 400]
+      "position": [6560, 400]
     }
   ],
   "connections": {
@@ -461,7 +553,7 @@
     },
     "Loop Segments": {
       "main": [
-        [{ "node": "Recombine Chunks", "type": "main", "index": 0 }],
+        [{ "node": "Done", "type": "main", "index": 0 }],
         [{ "node": "Needs Chunking?", "type": "main", "index": 0 }]
       ]
     },
@@ -475,13 +567,19 @@
       "main": [[{ "node": "Parse Chunks", "type": "main", "index": 0 }]]
     },
     "Parse Chunks": {
-      "main": [[{ "node": "Merge After Chunk", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Split Error?", "type": "main", "index": 0 }]]
     },
     "No Chunking": {
-      "main": [[{ "node": "Merge After Chunk", "type": "main", "index": 1 }]]
+      "main": [[{ "node": "Split Error?", "type": "main", "index": 0 }]]
     },
-    "Merge After Chunk": {
-      "main": [[{ "node": "Has Images?", "type": "main", "index": 0 }]]
+    "Split Error?": {
+      "main": [
+        [{ "node": "Update Job Split Error", "type": "main", "index": 0 }],
+        [{ "node": "Has Images?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Job Split Error": {
+      "main": [[{ "node": "Loop Segments", "type": "main", "index": 0 }]]
     },
     "Has Images?": {
       "main": [
@@ -490,12 +588,9 @@
       ]
     },
     "Process Images": {
-      "main": [[{ "node": "Merge After Images", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Expand Chunks", "type": "main", "index": 0 }]]
     },
     "No Images": {
-      "main": [[{ "node": "Merge After Images", "type": "main", "index": 1 }]]
-    },
-    "Merge After Images": {
       "main": [[{ "node": "Expand Chunks", "type": "main", "index": 0 }]]
     },
     "Expand Chunks": {
@@ -503,7 +598,7 @@
     },
     "Loop Chunks": {
       "main": [
-        [{ "node": "Accumulate Chunk", "type": "main", "index": 0 }],
+        [{ "node": "Recombine Chunks", "type": "main", "index": 0 }],
         [{ "node": "Needs Pivot?", "type": "main", "index": 0 }]
       ]
     },
@@ -523,25 +618,37 @@
       "main": [[{ "node": "Extract Step 2", "type": "main", "index": 0 }]]
     },
     "Extract Step 2": {
-      "main": [[{ "node": "Merge Translations", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Accumulate Chunk", "type": "main", "index": 0 }]]
     },
     "Claude Direct": {
       "main": [[{ "node": "Extract Direct", "type": "main", "index": 0 }]]
     },
     "Extract Direct": {
-      "main": [[{ "node": "Merge Translations", "type": "main", "index": 1 }]]
-    },
-    "Merge Translations": {
       "main": [[{ "node": "Accumulate Chunk", "type": "main", "index": 0 }]]
     },
     "Accumulate Chunk": {
       "main": [[{ "node": "Loop Chunks", "type": "main", "index": 0 }]]
     },
     "Recombine Chunks": {
-      "main": [[{ "node": "Save Translation", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Check Translation", "type": "main", "index": 0 }]]
+    },
+    "Check Translation": {
+      "main": [
+        [{ "node": "Save Translation", "type": "main", "index": 0 }],
+        [{ "node": "Update Progress", "type": "main", "index": 0 }]
+      ]
     },
     "Save Translation": {
-      "main": [[{ "node": "Update Job Complete", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Update Progress", "type": "main", "index": 0 }]]
+    },
+    "Update Progress": {
+      "main": [[{ "node": "Last Segment?", "type": "main", "index": 0 }]]
+    },
+    "Last Segment?": {
+      "main": [
+        [{ "node": "Update Job Complete", "type": "main", "index": 0 }],
+        [{ "node": "Loop Segments", "type": "main", "index": 0 }]
+      ]
     },
     "Update Job Complete": {
       "main": [[{ "node": "Done", "type": "main", "index": 0 }]]
