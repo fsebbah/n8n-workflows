@@ -209,8 +209,35 @@ When assisting with this repository:
 
 #
 
+# Environment Variables (.env.local)
+
+Key environment variables used by workflows:
+
+## n8n Configuration
+- `N8N_WEBHOOK_BASE_URL` - Base URL for webhooks (http://pi6.local:5678/webhook)
+- `N8N_API_URL` - n8n API endpoint (http://pi6.local:5678/api/v1)
+- `N8N_API_KEY` - API key for n8n API access
+- `N8N_REGISTRY` - MCP tools registry endpoint
+
+## LLM Configuration
+- `ANTHROPIC_API_KEY` - Anthropic API key
+- `OPENAI_API_KEY` - OpenAI API key
+- `MODEL_ANTHROPIC` - Default Anthropic model (claude-haiku-4-5-20251001)
+- `MODEL_OPENAI` - Default OpenAI model (gpt-5-mini)
+
+## Qdrant Configuration (Vector Database)
+- `QDRANT_SHARED_1_HOST` - Qdrant host (host3.local)
+- `QDRANT_SHARED_1_PORT` - Qdrant port (20001)
+- `QDRANT_SHARED_1_API_KEY` - Qdrant API key
+- `QDRANT_SHARED_1_BASE` - Base collection prefix (azychat_qdrant)
+
+## Database Configuration
+- `DB_POSTGRESDB_HOST` - PostgreSQL host (databases.local)
+- `REDIS_HOST` - Redis host (host3.local)
+
+#
+
 # Repository-Specific Information
-[Add any specific information about your workflows, naming conventions, or special considerations here]
 
 #
 

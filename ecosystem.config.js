@@ -1,3 +1,6 @@
+// Charger les variables d'environnement depuis .env.local
+require('dotenv').config({ path: __dirname + '/.env.local' });
+
 module.exports = {
   apps: [
     {
