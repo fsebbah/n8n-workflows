@@ -1,0 +1,396 @@
+{
+  "name": "MCP - Tools Enricher",
+  "nodes": [
+    {
+      "id": "webhook-enricher",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "webhookId": "tools-enricher",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tools-enricher",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 200]
+    },
+        {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// Get API keys from headers, body, or env\nconst anthropicKey = body.api_keys?.anthropic || $env.ANTHROPIC_API_KEY;\nconst openaiKey = body.api_keys?.openai || $env.OPENAI_API_KEY;\nconst n8nApiKey = headers['x-n8n-api-key'] || headers['X-N8N-API-KEY'] || body.n8n_api_key || $env.N8N_API_KEY;\n\n// Get models from env\nconst modelAnthropic = $env.MODEL_ANTHROPIC || 'claude-3-5-haiku-20241022';\nconst modelOpenai = $env.MODEL_OPENAI || 'gpt-4o-mini';\n\n// Qdrant config - use shared instance\nconst qdrantHost = body.qdrant_host || $env.QDRANT_SHARED_1_HOST || 'host3.local';\nconst qdrantPort = body.qdrant_port || $env.QDRANT_SHARED_1_PORT || '20001';\nconst qdrantApiKey = body.qdrant_api_key || $env.QDRANT_SHARED_1_API_KEY || '';\nconst qdrantCollection = body.qdrant_collection || 'tools_index';\n\n// Options\nconst mode = body.mode || 'full';\nconst workflowIds = body.workflow_ids || [];\nconst dryRun = body.dry_run === true;\nconst batchSize = body.batch_size || 10;\n\n// Generate job_id and log file path\nconst now = new Date();\nconst timestamp = now.toISOString().replace(/[-:]/g, '').replace('T', '_').substring(0, 15);\nconst jobId = `enrich_${timestamp}`;\n\nconst errors = [];\nif (!anthropicKey) errors.push('Missing ANTHROPIC_API_KEY');\nif (!openaiKey) errors.push('Missing OPENAI_API_KEY');\nif (!n8nApiKey) errors.push('Missing N8N_API_KEY');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  }];\n}\n\n// Initialize static data for results tracking\nconst staticData = $getWorkflowStaticData('global');\nstaticData.results = [];\nstaticData.jobId = jobId;\nstaticData.startedAt = now.toISOString();\n\nreturn [{\n  json: {\n    valid: true,\n    config: {\n      jobId,\n      anthropicKey,\n      openaiKey,\n      n8nApiKey,\n      modelAnthropic,\n      modelOpenai,\n      qdrantUrl: `http://${qdrantHost}:${qdrantPort}`,\n      qdrantApiKey,\n      qdrantCollection,\n      mode,\n      workflowIds,\n      dryRun,\n      batchSize\n    },\n    stats: {\n      startedAt: now.toISOString()\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [920, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error } }}",
+        "options": { "responseCode": 400 }
+      }
+    },
+    {
+      "id": "respond-accepted",
+      "name": "Respond Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, message: 'Enrichment started', mode: $json.config.mode, dry_run: $json.config.dryRun } }}",
+        "options": { "responseCode": 202 }
+      }
+    },
+    {
+      "id": "get-workflows",
+      "name": "Get Workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1380, 200],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.N8N_API_URL || 'http://pi6.local:5678/api/v1' }}/workflows?active=true&limit=250",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "X-N8N-API-KEY", "value": "={{ $('Validate Input').first().json.config.n8nApiKey }}" }]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "get-indexed",
+      "name": "Get Indexed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1620, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate Input').first().json.config.qdrantUrl }}/collections/{{ $('Validate Input').first().json.config.qdrantCollection }}/points/scroll",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "api-key", "value": "={{ $('Validate Input').first().json.config.qdrantApiKey }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"limit\": 500, \"with_payload\": {\"include\": [\"workflow_id\", \"source_updated_at\"]}, \"with_vector\": false}",
+        "options": { "timeout": 10000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "filter-workflows",
+      "name": "Filter Workflows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1860, 200],
+      "parameters": {
+        "jsCode": "const n8nData = $('Get Workflows').first().json;\nconst qdrantData = $input.first().json;\nconst config = $('Validate Input').first().json.config;\n\nif (n8nData.error) {\n  return [];\n}\n\n// Get already indexed workflow_ids with their updated_at\nconst indexedMap = new Map();\nif (qdrantData.result?.points) {\n  for (const p of qdrantData.result.points) {\n    indexedMap.set(p.payload.workflow_id, p.payload.source_updated_at);\n  }\n}\nconsole.log(`[Enricher] Found ${indexedMap.size} already indexed workflows`);\n\nconst allWorkflows = n8nData.data || [];\n\n// Filter: has webhook, not Registry/System workflows\nlet workflows = allWorkflows.filter(w => {\n  if (!w.active) return false;\n  if (w.name.includes('Registry')) return false;\n  if (w.name.includes('Enricher')) return false;\n  const hasWebhook = w.nodes?.some(n => n.type === 'n8n-nodes-base.webhook');\n  return hasWebhook;\n});\n\n// Mode: specific\nif (config.mode === 'specific' && config.workflowIds.length > 0) {\n  workflows = workflows.filter(w => config.workflowIds.includes(w.id));\n}\n\n// Mode: incremental - exclude already indexed (unless updated)\nif (config.mode === 'incremental') {\n  workflows = workflows.filter(w => {\n    const indexedAt = indexedMap.get(w.id);\n    if (!indexedAt) return true; // Not indexed yet\n    // Re-index if workflow was updated after last indexing\n    return new Date(w.updatedAt) > new Date(indexedAt);\n  });\n  console.log(`[Enricher] Incremental: ${workflows.length} new/updated workflows to process`);\n}\n\n// Return items for SplitInBatches\nreturn workflows.map(w => {\n  const webhookNode = w.nodes?.find(n => n.type === 'n8n-nodes-base.webhook');\n  const stickyNote = w.nodes?.find(n => n.type === 'n8n-nodes-base.stickyNote');\n  const codeNodes = w.nodes?.filter(n => n.type === 'n8n-nodes-base.code') || [];\n  const httpNodes = w.nodes?.filter(n => n.type === 'n8n-nodes-base.httpRequest') || [];\n  const nodeTypes = [...new Set(w.nodes?.map(n => n.type.replace('n8n-nodes-base.', '')) || [])];\n  const codeSnippets = codeNodes.slice(0, 3).map(n => (n.parameters?.jsCode || '').substring(0, 500));\n  const httpUrls = httpNodes.map(n => n.parameters?.url || '').filter(u => u);\n  \n  console.log(`[Enricher] Queued: ${w.name}`);\n  \n  return {\n    json: {\n      workflow_id: w.id,\n      name: w.name,\n      webhook_path: webhookNode?.parameters?.path || webhookNode?.webhookId || '',\n      webhook_method: webhookNode?.parameters?.httpMethod || 'POST',\n      sticky_content: stickyNote?.parameters?.content || '',\n      node_types: nodeTypes,\n      node_count: w.nodes?.length || 0,\n      code_snippets: codeSnippets,\n      http_urls: httpUrls,\n      updated_at: w.updatedAt,\n      config\n    }\n  };\n});"
+      }
+    },
+    {
+      "id": "split-batches",
+      "name": "Split Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2100, 200],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "process-workflow",
+      "name": "Process Workflow",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2340, 200],
+      "parameters": {
+        "jsCode": "const workflow = $input.first().json;\nconst config = workflow.config;\n\n// Sanitize text for JSON (remove problematic chars)\nfunction sanitize(text, maxLen = 500) {\n  if (!text) return '';\n  return String(text)\n    .substring(0, maxLen)\n    .replace(/[\\x00-\\x1F\\x7F]/g, ' ')\n    .replace(/\\\\/g, '\\\\\\\\')\n    .replace(/\"/g, '\\\\\"')\n    .trim();\n}\n\n// Build context\nconst context = {\n  name: workflow.name,\n  webhook_path: workflow.webhook_path,\n  webhook_method: workflow.webhook_method,\n  node_types: workflow.node_types.join(', '),\n  node_count: workflow.node_count,\n  existing_doc: sanitize(workflow.sticky_content, 400),\n  code_samples: sanitize(workflow.code_snippets.join(' --- '), 600),\n  http_endpoints: workflow.http_urls.join(', ')\n};\n\n// Build Claude request body\nconst claudeBody = {\n  model: config.modelAnthropic,\n  max_tokens: 2000,\n  tools: [{\n    name: 'enrich_tool_metadata',\n    description: 'Generate structured metadata for an n8n workflow tool',\n    input_schema: {\n      type: 'object',\n      required: ['description', 'category', 'keywords', 'use_cases', 'operations'],\n      properties: {\n        description: { type: 'string', description: 'Concise description (max 100 chars), verb infinitive' },\n        category: { type: 'string', enum: ['recherche', 'traduction', 'media', 'documents', 'email', 'calendar', 'database', 'ai', 'communication', 'finance', 'torah', 'autre'] },\n        keywords: { type: 'array', items: { type: 'string' }, description: '5-15 keywords FR and EN' },\n        use_cases: { type: 'array', items: { type: 'string' }, description: '2-5 concrete examples' },\n        operations: {\n          type: 'array',\n          items: {\n            type: 'object',\n            required: ['id', 'type', 'verbs_fr', 'verbs_en'],\n            properties: {\n              id: { type: 'string' },\n              type: { type: 'string', enum: ['READ', 'WRITE'] },\n              verbs_fr: { type: 'array', items: { type: 'string' } },\n              verbs_en: { type: 'array', items: { type: 'string' } }\n            }\n          },\n          description: 'Operations with READ/WRITE type and associated verbs'\n        }\n      }\n    }\n  }],\n  tool_choice: { type: 'tool', name: 'enrich_tool_metadata' },\n  messages: [{\n    role: 'user',\n    content: `Analyse ce workflow n8n et génère des métadonnées structurées.\n\nWORKFLOW:\n- Nom: ${context.name}\n- Webhook: ${context.webhook_method} /${context.webhook_path}\n- Nodes (${context.node_count}): ${context.node_types}\n- Documentation: ${context.existing_doc}\n- Code: ${context.code_samples}\n- HTTP endpoints: ${context.http_endpoints}\n\nRÈGLES:\n- description: max 100 chars, verbe infinitif\n- keywords: FR et EN, synonymes inclus\n- use_cases: commencer par un verbe\n- operations: identifier TOUTES les actions (READ=consulter/lire, WRITE=créer/envoyer/modifier)\n\nUtilise l'outil enrich_tool_metadata.`\n  }]\n};\n\nreturn [{\n  json: {\n    ...workflow,\n    context,\n    claudeBody\n  }\n}];"
+      }
+    },
+    {
+      "id": "call-claude",
+      "name": "Claude Generate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2340, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $json.config.anthropicKey }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.claudeBody) }}",
+        "options": { "timeout": 60000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-claude",
+      "name": "Parse Claude",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2580, 200],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Process Workflow').first().json;\n\nif (input.error) {\n  return [{\n    json: {\n      ...prevData,\n      claude_result: null,\n      claude_error: input.error.message || 'Claude API error',\n      status: 'claude_failed'\n    }\n  }];\n}\n\ntry {\n  // Extract tool use result\n  const toolUse = input.content?.find(c => c.type === 'tool_use');\n  if (!toolUse || !toolUse.input) {\n    return [{\n      json: {\n        ...prevData,\n        claude_result: null,\n        claude_error: 'No tool_use in response',\n        status: 'claude_failed'\n      }\n    }];\n  }\n  \n  return [{\n    json: {\n      ...prevData,\n      claude_result: toolUse.input,\n      claude_usage: input.usage || {},\n      status: 'claude_ok'\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      ...prevData,\n      claude_result: null,\n      claude_error: 'Parse error: ' + e.message,\n      status: 'claude_failed'\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "check-claude-ok",
+      "name": "Claude OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2820, 200],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "leftValue": "={{ $json.status }}", "rightValue": "claude_ok", "operator": { "type": "string", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "call-gpt-validate",
+      "name": "GPT Validate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3060, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $json.config.openaiKey }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.config.modelOpenai }}\",\n  \"temperature\": 0.3,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Tu es un validateur de métadonnées. Vérifie et corrige si nécessaire. Réponds en JSON avec: { \\\"valid\\\": true/false, \\\"score\\\": 0.0-1.0, \\\"corrections\\\": {...} ou null, \\\"issues\\\": [...] }\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Valide ces métadonnées pour le workflow '{{ $json.name }}':\\n\\n{{ JSON.stringify($json.claude_result) }}\\n\\nVérifie:\\n1. description < 100 chars et verbe infinitif\\n2. keywords contient FR et EN\\n3. operations a les bons types READ/WRITE\\n4. cohérence globale\"\n    }\n  ]\n}",
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-gpt",
+      "name": "Parse GPT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3300, 100],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Parse Claude').first().json;\n\nif (input.error) {\n  // GPT failed, use Claude result as-is\n  return [{\n    json: {\n      ...prevData,\n      gpt_validation: { valid: true, score: 0.7, note: 'GPT validation skipped' },\n      final_metadata: prevData.claude_result,\n      status: 'gpt_skipped'\n    }\n  }];\n}\n\ntry {\n  const content = input.choices?.[0]?.message?.content;\n  const validation = JSON.parse(content);\n  \n  // Apply corrections if any\n  let finalMetadata = prevData.claude_result;\n  if (validation.corrections) {\n    finalMetadata = { ...prevData.claude_result, ...validation.corrections };\n  }\n  \n  return [{\n    json: {\n      ...prevData,\n      gpt_validation: validation,\n      final_metadata: finalMetadata,\n      status: validation.valid ? 'validated' : 'corrected'\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      ...prevData,\n      gpt_validation: { valid: true, score: 0.7, note: 'Parse error, using Claude' },\n      final_metadata: prevData.claude_result,\n      status: 'gpt_parse_error'\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "generate-embedding",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3540, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $json.config.openaiKey }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": \"{{ $json.final_metadata.description }} | {{ $json.final_metadata.keywords.join(', ') }} | {{ $json.final_metadata.use_cases.join('. ') }} | {{ $json.final_metadata.operations.map(op => op.id + ': ' + op.verbs_fr.join(', ')).join('; ') }}\"\n}",
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "prepare-qdrant",
+      "name": "Prepare Qdrant",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3780, 100],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Parse GPT').first().json;\n\n// Use workflow_id directly as point_id (Qdrant accepts string IDs)\nfunction workflowToPointId(workflowId) {\n  // Convert workflow_id to a valid UUID using a simple deterministic method\n  // Pad the workflow_id and convert to hex-like format\n  const padded = (workflowId + '0000000000000000').substring(0, 16);\n  let hex = '';\n  for (let i = 0; i < padded.length; i++) {\n    hex += padded.charCodeAt(i).toString(16).padStart(2, '0');\n  }\n  // Format: 8-4-4-4-12 (total 32 hex chars)\n  return `${hex.substring(0,8)}-${hex.substring(8,12)}-4${hex.substring(12,15)}-a${hex.substring(15,18)}-${hex.substring(18,30)}`;\n}\n\nconst embedding = input.data?.[0]?.embedding;\n\nif (!embedding) {\n  return [{\n    json: {\n      ...prevData,\n      embedding: null,\n      embedding_error: 'No embedding generated',\n      status: 'embedding_failed'\n    }\n  }];\n}\n\n// Deterministic point_id based on workflow_id\nconst pointId = workflowToPointId(prevData.workflow_id);\n\n// Build Qdrant payload\nconst payload = {\n  workflow_id: prevData.workflow_id,\n  webhook_path: prevData.webhook_path,\n  webhook_url: `http://pi6.local:5678/webhook/${prevData.webhook_path}`,\n  webhook_method: prevData.webhook_method,\n  name: prevData.name,\n  description: prevData.final_metadata.description,\n  category: prevData.final_metadata.category,\n  keywords: prevData.final_metadata.keywords,\n  use_cases: prevData.final_metadata.use_cases,\n  operations: prevData.final_metadata.operations,\n  enrichment_score: prevData.gpt_validation?.score || 0.7,\n  enriched_at: new Date().toISOString(),\n  enricher_version: '1.0',\n  source_updated_at: prevData.updated_at,\n  active: true,\n  scope: 'user'\n};\n\nconsole.log(`[Enricher] Preparing: ${prevData.name} (${prevData.workflow_id})`);\n\nreturn [{\n  json: {\n    ...prevData,\n    embedding,\n    point_id: pointId,\n    qdrant_payload: payload,\n    status: 'ready_to_store'\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-dry-run",
+      "name": "Dry Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4020, 100],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "leftValue": "={{ $json.config.dryRun }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "store-qdrant",
+      "name": "Store in Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4260, 0],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.config.qdrantUrl }}/collections/{{ $json.config.qdrantCollection }}/points",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "api-key", "value": "={{ $json.config.qdrantApiKey }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [{\n    \"id\": \"{{ $json.point_id }}\",\n    \"vector\": {{ JSON.stringify($json.embedding) }},\n    \"payload\": {{ JSON.stringify($json.qdrant_payload) }}\n  }]\n}",
+        "options": { "timeout": 30000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "skip-store",
+      "name": "Skip Store (Dry Run)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [4260, 200]
+    },
+        {
+      "id": "track-result",
+      "name": "Track Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4740, 100],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Prepare Qdrant').first().json;\nconst config = $('Validate Input').first().json.config;\n\nlet status = 'enriched';\nif (config.dryRun) {\n  status = 'dry_run';\n} else if (input.error) {\n  status = 'qdrant_failed';\n}\n\nconst result = {\n  workflow_id: prevData.workflow_id,\n  name: prevData.name,\n  webhook_path: prevData.webhook_path,\n  status,\n  enrichment_score: prevData.gpt_validation?.score || 0.7,\n  point_id: prevData.point_id,\n  timestamp: new Date().toISOString(),\n  error: input.error?.message || null\n};\n\n// Log progress\nconst staticData = $getWorkflowStaticData('global');\nstaticData.results.push(result);\nconst count = staticData.results.length;\nconsole.log(`[Enricher] ${count}. ${status.toUpperCase()}: ${prevData.name}`);\n\nreturn [{ json: result }];"
+      }
+    },
+    {
+      "id": "mark-failed",
+      "name": "Mark Failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3060, 300],
+      "parameters": {
+        "jsCode": "const prevData = $input.first().json;\n\nconst result = {\n  workflow_id: prevData.workflow_id,\n  name: prevData.name,\n  webhook_path: prevData.webhook_path,\n  status: 'failed',\n  error: prevData.claude_error || 'Unknown error',\n  timestamp: new Date().toISOString()\n};\n\n// Log failure\nconst staticData = $getWorkflowStaticData('global');\nstaticData.results.push(result);\nconst count = staticData.results.length;\nconsole.log(`[Enricher] ${count}. FAILED: ${prevData.name} - ${result.error}`);\n\nreturn [{ json: result }];"
+      }
+    },
+        {
+      "id": "aggregate-stats",
+      "name": "Aggregate Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5460, 200],
+      "parameters": {
+        "jsCode": "const config = $('Validate Input').first().json.config;\nconst staticData = $getWorkflowStaticData('global');\nconst results = staticData.results || [];\nconst startedAt = staticData.startedAt;\n\n// Calculate stats\nconst enriched = results.filter(r => r.status === 'enriched').length;\nconst dryRunCount = results.filter(r => r.status === 'dry_run').length;\nconst failed = results.filter(r => r.status === 'failed' || r.status === 'qdrant_failed').length;\nconst errors = results.filter(r => r.status === 'failed' || r.status === 'qdrant_failed');\n\nconst stats = {\n  job_id: staticData.jobId,\n  mode: config.mode,\n  dry_run: config.dryRun,\n  total: results.length,\n  enriched,\n  dry_run_count: dryRunCount,\n  failed,\n  duration_ms: Date.now() - new Date(startedAt).getTime(),\n  collection: config.qdrantCollection\n};\n\nreturn [{\n  json: {\n    success: failed === 0,\n    message: failed === 0 \n      ? `Enrichment completed: ${enriched} tools indexed.` \n      : `Enrichment completed with ${failed} errors.`,\n    stats,\n    errors: errors.length > 0 ? errors : null,\n    results: results\n  }\n}];"
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 0],
+      "parameters": {
+        "color": 4,
+        "width": 600,
+        "height": 350,
+        "content": "## MCP - Tools Enricher (RFC-032)\n\n**Description:** Enrichir automatiquement les métadonnées des tools n8n et les indexer dans Qdrant\n**Category:** ai\n**Keywords:** tools, enrichment, metadata, qdrant, embeddings, indexation, semantic\n**Use cases:**\n- Indexer tous les workflows actifs dans Qdrant\n- Générer descriptions, keywords, operations READ/WRITE\n- Permettre le pré-filtrage sémantique des tools\n\n**Endpoint:** POST /webhook/tools-enricher\n\n**InputSchema:**\n```json\n{\n  \"mode\": \"full|incremental|specific\",\n  \"workflow_ids\": [\"id1\", \"id2\"],\n  \"dry_run\": false,\n  \"batch_size\": 10\n}\n```\n\n**Flow:** Get Workflows → Batch 10 → Claude Generate → GPT Validate → Embedding → Qdrant"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]] },
+    "Manual Trigger": { "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]] },
+    "Validate Input": { "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]] },
+    "Valid?": {
+      "main": [
+        [{ "node": "Respond Accepted", "type": "main", "index": 0 }],
+        [{ "node": "Error: Validation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Respond Accepted": { "main": [[{ "node": "Get Workflows", "type": "main", "index": 0 }]] },
+    "Get Workflows": { "main": [[{ "node": "Get Indexed", "type": "main", "index": 0 }]] },
+    "Get Indexed": { "main": [[{ "node": "Filter Workflows", "type": "main", "index": 0 }]] },
+    "Filter Workflows": { "main": [[{ "node": "Split Batches", "type": "main", "index": 0 }]] },
+    "Split Batches": {
+      "main": [
+        [{ "node": "Aggregate Stats", "type": "main", "index": 0 }],
+        [{ "node": "Process Workflow", "type": "main", "index": 0 }]
+      ]
+    },
+    "Process Workflow": { "main": [[{ "node": "Claude Generate", "type": "main", "index": 0 }]] },
+    "Claude Generate": { "main": [[{ "node": "Parse Claude", "type": "main", "index": 0 }]] },
+    "Parse Claude": { "main": [[{ "node": "Claude OK?", "type": "main", "index": 0 }]] },
+    "Claude OK?": {
+      "main": [
+        [{ "node": "GPT Validate", "type": "main", "index": 0 }],
+        [{ "node": "Mark Failed", "type": "main", "index": 0 }]
+      ]
+    },
+    "GPT Validate": { "main": [[{ "node": "Parse GPT", "type": "main", "index": 0 }]] },
+    "Parse GPT": { "main": [[{ "node": "Generate Embedding", "type": "main", "index": 0 }]] },
+    "Generate Embedding": { "main": [[{ "node": "Prepare Qdrant", "type": "main", "index": 0 }]] },
+    "Prepare Qdrant": { "main": [[{ "node": "Dry Run?", "type": "main", "index": 0 }]] },
+    "Dry Run?": {
+      "main": [
+        [{ "node": "Skip Store (Dry Run)", "type": "main", "index": 0 }],
+        [{ "node": "Store in Qdrant", "type": "main", "index": 0 }]
+      ]
+    },
+    "Store in Qdrant": { "main": [[{ "node": "Track Result", "type": "main", "index": 0 }]] },
+    "Skip Store (Dry Run)": { "main": [[{ "node": "Track Result", "type": "main", "index": 0 }]] },
+    "Track Result": { "main": [[{ "node": "Split Batches", "type": "main", "index": 0 }]] },
+    "Mark Failed": { "main": [[{ "node": "Split Batches", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
