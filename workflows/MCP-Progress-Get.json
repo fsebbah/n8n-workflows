@@ -1,0 +1,262 @@
+{
+  "name": "MCP - Progress Get",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "progress-get",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "progress-get-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\nconst tenant_id = body.tenant_id;\nconst user_id = body.user_id;\nconst domain = body.domain || null;  // chess, cooking, null = all\nconst include = body.include || ['stats', 'lessons', 'badges'];\n\n// Validation\nconst errors = [];\nif (!tenant_id) errors.push('tenant_id requis');\nif (!user_id) errors.push('user_id requis');\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    tenant_id,\n    user_id,\n    domain,\n    include,\n    include_lichess: include.includes('lichess_games') || include.includes('lichess_elo')\n  }\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 460]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_API_URL || 'https://api.azy.solutions' }}/api/n8n/progress",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-API-Key", "value": "={{ $env.N8N_API_KEY }}" },
+            { "name": "X-Tenant-ID", "value": "={{ $json.tenant_id }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ user_id: $json.user_id, domain: $json.domain }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 10000
+        }
+      },
+      "id": "get-progress",
+      "name": "Get Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Validate Input').first().json;\nconst response = $input.first().json;\n\n// Parse response\nconst statusCode = response.statusCode || 200;\nconst body = response.body || response;\n\nif (statusCode >= 400 || body.success === false) {\n  return {\n    json: {\n      success: false,\n      error: { code: statusCode, message: body.error?.message || 'Erreur API', details: body }\n    }\n  };\n}\n\nconst progress = body.data;\n\n// User not found\nif (progress === null) {\n  return {\n    json: {\n      success: true,\n      user_id: input.user_id,\n      exists: false,\n      message: 'Utilisateur non trouvé - nouveau profil'\n    }\n  };\n}\n\n// Check if we need Lichess data\nconst lichessUsername = progress.lichess_username;\nconst needsLichess = input.include_lichess && lichessUsername;\n\nreturn {\n  json: {\n    progress,\n    lichess_username: lichessUsername,\n    needs_lichess: needsLichess,\n    include: input.include\n  }\n};"
+      },
+      "id": "parse-progress",
+      "name": "Parse Progress Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "check-lichess",
+              "leftValue": "={{ $json.needs_lichess }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-lichess",
+      "name": "Needs Lichess?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://lichess.org/api/user/{{ $json.lichess_username }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" }
+          ]
+        },
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 10000
+        }
+      },
+      "id": "get-lichess-profile",
+      "name": "Get Lichess Profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 220],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://lichess.org/api/user/{{ $('Parse Progress Response').first().json.lichess_username }}/rating-history",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" }
+          ]
+        },
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 10000
+        }
+      },
+      "id": "get-lichess-elo",
+      "name": "Get Lichess Elo History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 380],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const progressData = $('Parse Progress Response').first().json;\nconst lichessProfile = $('Get Lichess Profile').first().json;\nconst lichessElo = $('Get Lichess Elo History').first().json;\n\n// Parse Lichess data\nconst profile = lichessProfile.body || {};\nconst eloHistory = lichessElo.body || [];\n\nconst progress = progressData.progress;\n\n// Build combined response\nconst result = {\n  success: true,\n  user_id: progress.user_id,\n  \n  // App data from MongoDB\n  stats: progress.stats || {},\n  lessons: progress.lessons || [],\n  badges: progress.badges || [],\n  preferences: progress.preferences || {},\n  cooking: progress.cooking || null,\n  \n  // Lichess data (live)\n  lichess: {\n    connected: true,\n    username: progressData.lichess_username,\n    profile: {\n      id: profile.id,\n      username: profile.username,\n      perfs: profile.perfs,\n      count: profile.count,\n      playTime: profile.playTime\n    },\n    elo_history: eloHistory.filter(cat => \n      ['bullet', 'blitz', 'rapid', 'classical', 'puzzle'].includes(cat.name)\n    ).map(cat => ({\n      category: cat.name,\n      points: cat.points.slice(-30)\n    }))\n  }\n};\n\nreturn { json: result };"
+      },
+      "id": "merge-lichess",
+      "name": "Merge Lichess Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const progressData = $('Parse Progress Response').first().json;\n\n// Check if user not found\nif (progressData.exists === false) {\n  return { json: progressData };\n}\n\nconst progress = progressData.progress;\n\n// Build response without Lichess\nconst result = {\n  success: true,\n  user_id: progress.user_id,\n  \n  // App data from MongoDB\n  stats: progress.stats || {},\n  lessons: progress.lessons || [],\n  badges: progress.badges || [],\n  preferences: progress.preferences || {},\n  cooking: progress.cooking || null,\n  \n  // Lichess not connected or not requested\n  lichess: progressData.lichess_username ? {\n    connected: true,\n    username: progressData.lichess_username,\n    profile: null,\n    elo_history: null\n  } : {\n    connected: false\n  }\n};\n\nreturn { json: result };"
+      },
+      "id": "build-response-no-lichess",
+      "name": "Build Response (No Lichess)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 460]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "content": "## MCP - Progress Get\n\n**Endpoint:** POST /webhook/progress-get\n\n### Input\n```json\n{\n  \"tenant_id\": \"chess_plugin\",\n  \"user_id\": \"discord_123456\",\n  \"domain\": \"chess\" | \"cooking\" | null,\n  \"include\": [\"stats\", \"lessons\", \"badges\", \"lichess_elo\"]\n}\n```\n\n### Output\n```json\n{\n  \"success\": true,\n  \"stats\": {...},\n  \"lessons\": [...],\n  \"badges\": [...],\n  \"lichess\": { \"connected\": true, \"profile\": {...} }\n}\n```\n\n### Sources\n- Backend API: `/api/n8n/progress`\n- Lichess API: profile, elo history (si connecté et demandé)\n\n### RFC-039 compliant",
+        "height": 380,
+        "width": 400,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 80]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+    },
+    "Valid?": {
+      "main": [
+        [{ "node": "Get Progress", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Progress": {
+      "main": [[{ "node": "Parse Progress Response", "type": "main", "index": 0 }]]
+    },
+    "Parse Progress Response": {
+      "main": [[{ "node": "Needs Lichess?", "type": "main", "index": 0 }]]
+    },
+    "Needs Lichess?": {
+      "main": [
+        [
+          { "node": "Get Lichess Profile", "type": "main", "index": 0 },
+          { "node": "Get Lichess Elo History", "type": "main", "index": 0 }
+        ],
+        [{ "node": "Build Response (No Lichess)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Lichess Profile": {
+      "main": [[{ "node": "Merge Lichess Data", "type": "main", "index": 0 }]]
+    },
+    "Get Lichess Elo History": {
+      "main": [[{ "node": "Merge Lichess Data", "type": "main", "index": 0 }]]
+    },
+    "Merge Lichess Data": {
+      "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]]
+    },
+    "Build Response (No Lichess)": {
+      "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
