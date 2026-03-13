@@ -1,0 +1,155 @@
+{
+  "name": "MCP - Lichess Auth Start",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lichess-auth-start",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "lichess-auth-start-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\nconst tenant_id = body.tenant_id;\nconst user_id = body.user_id;\nconst redirect_uri = body.redirect_uri || $env.LICHESS_REDIRECT_URI;\n\n// Validation\nconst errors = [];\nif (!tenant_id) errors.push('tenant_id requis');\nif (!user_id) errors.push('user_id requis');\nif (!redirect_uri) errors.push('redirect_uri requis (ou configurer LICHESS_REDIRECT_URI)');\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  };\n}\n\n// Generate state token (includes user_id + tenant_id for callback)\nconst state = Buffer.from(JSON.stringify({\n  tenant_id,\n  user_id,\n  ts: Date.now(),\n  nonce: Math.random().toString(36).substring(2, 15)\n})).toString('base64url');\n\n// PKCE: Generate code_verifier and code_challenge\nconst crypto = require('crypto');\nconst code_verifier = crypto.randomBytes(32).toString('base64url');\nconst code_challenge = crypto\n  .createHash('sha256')\n  .update(code_verifier)\n  .digest('base64url');\n\n// Lichess OAuth scopes\nconst scopes = [\n  'preference:read',\n  'challenge:read',\n  'challenge:write', \n  'puzzle:read',\n  'team:read',\n  'board:play'\n].join(' ');\n\nreturn {\n  json: {\n    valid: true,\n    tenant_id,\n    user_id,\n    redirect_uri,\n    state,\n    code_verifier,\n    code_challenge,\n    scopes\n  }\n};"
+      },
+      "id": "validate-and-prepare",
+      "name": "Validate & Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 460]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_API_URL || 'https://api.azy.solutions' }}/api/n8n/oauth/store",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-API-Key", "value": "={{ $env.N8N_API_KEY }}" },
+            { "name": "X-Tenant-ID", "value": "={{ $json.tenant_id }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ user_id: $json.user_id, provider: 'lichess', access_token: '__PENDING__', expires_at: new Date(Date.now() + 600000).toISOString(), scope: 'pending', provider_user_id: '__pending_' + $json.state.substring(0, 8) + '__' }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 10000
+        }
+      },
+      "id": "store-pending",
+      "name": "Store Pending Auth",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Validate & Prepare').first().json;\nconst storeResult = $input.first().json;\n\nif (storeResult.statusCode >= 400) {\n  return {\n    json: {\n      success: false,\n      error: { code: 500, message: 'Erreur stockage state', details: storeResult }\n    }\n  };\n}\n\n// Build Lichess authorization URL\nconst clientId = $env.LICHESS_CLIENT_ID;\nif (!clientId) {\n  return {\n    json: {\n      success: false,\n      error: { code: 500, message: 'LICHESS_CLIENT_ID non configuré' }\n    }\n  };\n}\n\nconst params = new URLSearchParams({\n  response_type: 'code',\n  client_id: clientId,\n  redirect_uri: input.redirect_uri,\n  scope: input.scopes,\n  state: input.state,\n  code_challenge: input.code_challenge,\n  code_challenge_method: 'S256'\n});\n\nconst authUrl = `https://lichess.org/oauth?${params.toString()}`;\n\n// Store code_verifier in memory for callback (via state mapping)\n// Note: In production, store code_verifier in Redis or similar\n// For now, we embed it in state (less secure but functional)\n\nreturn {\n  json: {\n    success: true,\n    auth_url: authUrl,\n    state: input.state,\n    code_verifier: input.code_verifier,\n    message: 'Redirigez l\\'utilisateur vers auth_url pour autorisation Lichess'\n  }\n};"
+      },
+      "id": "build-auth-url",
+      "name": "Build Auth URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : 500 }}",
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "content": "## MCP - Lichess Auth Start\n\n**Endpoint:** POST /webhook/lichess-auth-start\n\n### Input\n```json\n{\n  \"tenant_id\": \"chess_plugin\",\n  \"user_id\": \"discord_123456\",\n  \"redirect_uri\": \"https://app.local/callback\" \n}\n```\n\n### Output\n```json\n{\n  \"success\": true,\n  \"auth_url\": \"https://lichess.org/oauth?...\",\n  \"state\": \"base64...\",\n  \"code_verifier\": \"abc123...\",\n  \"message\": \"Redirigez l'utilisateur...\"\n}\n```\n\n### Flow\n1. Valide tenant_id + user_id\n2. Génère state (contient tenant_id + user_id) + PKCE\n3. Stocke placeholder en OAuth store\n4. Retourne URL d'autorisation Lichess\n\n### Note\nLe `code_verifier` est retourné au caller qui doit\nle passer au callback (ou le stocker côté client).\n\n### Variables d'environnement\n- `LICHESS_CLIENT_ID`\n- `LICHESS_REDIRECT_URI`\n- `BACKEND_API_URL`\n- `N8N_API_KEY`\n\n### RFC-039 compliant",
+        "height": 500,
+        "width": 400,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 40]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate & Prepare", "type": "main", "index": 0 }]]
+    },
+    "Validate & Prepare": {
+      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+    },
+    "Valid?": {
+      "main": [
+        [{ "node": "Store Pending Auth", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Store Pending Auth": {
+      "main": [[{ "node": "Build Auth URL", "type": "main", "index": 0 }]]
+    },
+    "Build Auth URL": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

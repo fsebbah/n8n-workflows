@@ -1,0 +1,155 @@
+{
+  "name": "MCP - Games Add",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "games-add",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "games-add-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\nconst tenant_id = body.tenant_id;\nconst user_id = body.user_id;\nconst game = body.game || {};\n\n// Validation\nconst errors = [];\nif (!tenant_id) errors.push('tenant_id requis');\nif (!user_id) errors.push('user_id requis');\n\n// Game validation\nif (!game.white) errors.push('game.white requis');\nif (!game.black) errors.push('game.black requis');\n\nconst validResults = ['win', 'loss', 'draw'];\nif (!game.result) {\n  errors.push('game.result requis');\n} else if (!validResults.includes(game.result)) {\n  errors.push(`game.result invalide: ${game.result}. Valeurs: ${validResults.join(', ')}`);\n}\n\nconst validSources = ['manual', 'lichess', 'pgn_import'];\nif (game.source && !validSources.includes(game.source)) {\n  errors.push(`game.source invalide: ${game.source}. Valeurs: ${validSources.join(', ')}`);\n}\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  };\n}\n\n// Set defaults\nif (!game.source) game.source = 'manual';\n\nreturn {\n  json: {\n    valid: true,\n    tenant_id,\n    user_id,\n    game\n  }\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 460]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_API_URL || 'https://api.azy.solutions' }}/api/n8n/games/add",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-API-Key", "value": "={{ $env.N8N_API_KEY }}" },
+            { "name": "X-Tenant-ID", "value": "={{ $json.tenant_id }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ user_id: $json.user_id, game: $json.game }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 15000
+        }
+      },
+      "id": "api-add-game",
+      "name": "API Add Game",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\nconst statusCode = response.statusCode || 200;\nconst body = response.body || response;\n\nif (statusCode >= 400 || body.success === false) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: body.error?.message || 'Erreur API',\n        details: body\n      }\n    }\n  };\n}\n\nconst data = body.data || body;\n\nreturn {\n  json: {\n    success: true,\n    game_id: data.game_id,\n    created: data.created !== false\n  }\n};"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : 500 }}",
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "content": "## MCP - Games Add\n\n**Endpoint:** POST /webhook/games-add\n\n### Input\n```json\n{\n  \"tenant_id\": \"chess_plugin\",\n  \"user_id\": \"discord_123456\",\n  \"game\": {\n    \"white\": \"user\",\n    \"black\": \"opponent_name\",\n    \"result\": \"win\",\n    \"pgn\": \"1. e4 e5 2. Nf3 ...\",\n    \"source\": \"manual\",\n    \"time_control\": \"10+0\",\n    \"opening\": \"Sicilian Defense\"\n  }\n}\n```\n\n### Output\n```json\n{\n  \"success\": true,\n  \"game_id\": \"665f1a2b3c4d5e6f7a8b9c0d\",\n  \"created\": true\n}\n```\n\n### Champs game\n- `white`: requis\n- `black`: requis\n- `result`: requis (win, loss, draw)\n- `source`: optionnel (manual, lichess, pgn_import)\n- `pgn`: optionnel\n- `time_control`: optionnel\n- `opening`: optionnel\n\n### RFC-039 compliant",
+        "height": 480,
+        "width": 400,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 40]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+    },
+    "Valid?": {
+      "main": [
+        [{ "node": "API Add Game", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "API Add Game": {
+      "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]]
+    },
+    "Format Response": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

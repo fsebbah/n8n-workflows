@@ -1,0 +1,155 @@
+{
+  "name": "MCP - OAuth Get",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "oauth-get",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "oauth-get-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\nconst tenant_id = body.tenant_id;\nconst user_id = body.user_id;\nconst provider = body.provider;\n\n// Validation\nconst errors = [];\nif (!tenant_id) errors.push('tenant_id requis');\nif (!user_id) errors.push('user_id requis');\nif (!provider) errors.push('provider requis');\n\nconst validProviders = ['lichess'];\nif (provider && !validProviders.includes(provider)) {\n  errors.push(`provider invalide: ${provider}. Valeurs: ${validProviders.join(', ')}`);\n}\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    tenant_id,\n    user_id,\n    provider\n  }\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 460]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_API_URL || 'https://api.azy.solutions' }}/api/n8n/oauth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-API-Key", "value": "={{ $env.N8N_API_KEY }}" },
+            { "name": "X-Tenant-ID", "value": "={{ $json.tenant_id }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ user_id: $json.user_id, provider: $json.provider }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 10000
+        }
+      },
+      "id": "api-oauth",
+      "name": "API Get OAuth",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Validate Input').first().json;\nconst response = $input.first().json;\n\nconst statusCode = response.statusCode || 200;\nconst body = response.body || response;\n\nif (statusCode >= 400 || body.success === false) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: body.error?.message || 'Erreur API',\n        details: body\n      }\n    }\n  };\n}\n\nconst data = body.data;\n\n// No token found\nif (data === null) {\n  return {\n    json: {\n      success: true,\n      has_token: false,\n      provider: input.provider,\n      message: 'Aucun token OAuth trouve pour ce provider'\n    }\n  };\n}\n\n// Token found\nreturn {\n  json: {\n    success: true,\n    has_token: true,\n    provider: input.provider,\n    access_token: data.access_token,\n    refresh_token: data.refresh_token || null,\n    expires_at: data.expires_at,\n    is_expired: data.is_expired || false,\n    scope: data.scope,\n    provider_user_id: data.provider_user_id\n  }\n};"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : 500 }}",
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "content": "## MCP - OAuth Get\n\n**Endpoint:** POST /webhook/oauth-get\n\n### Input\n```json\n{\n  \"tenant_id\": \"chess_plugin\",\n  \"user_id\": \"discord_123456\",\n  \"provider\": \"lichess\"\n}\n```\n\n### Output (token existe)\n```json\n{\n  \"success\": true,\n  \"has_token\": true,\n  \"provider\": \"lichess\",\n  \"access_token\": \"lip_xxxx\",\n  \"refresh_token\": \"lrt_xxxx\",\n  \"expires_at\": \"2026-04-12T14:00:00+00:00\",\n  \"is_expired\": false,\n  \"scope\": \"challenge:read challenge:write\",\n  \"provider_user_id\": \"DrNykterstein\"\n}\n```\n\n### Output (pas de token)\n```json\n{\n  \"success\": true,\n  \"has_token\": false,\n  \"provider\": \"lichess\",\n  \"message\": \"Aucun token OAuth...\"\n}\n```\n\n### Securite\nLes tokens sont dechiffres a la volee\n(AES-256-GCM cote backend).\n\n### RFC-039 compliant",
+        "height": 480,
+        "width": 400,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 40]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+    },
+    "Valid?": {
+      "main": [
+        [{ "node": "API Get OAuth", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "API Get OAuth": {
+      "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]]
+    },
+    "Format Response": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
