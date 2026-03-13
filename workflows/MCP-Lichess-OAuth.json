@@ -1,0 +1,345 @@
+{
+  "name": "MCP - Lichess OAuth",
+  "nodes": [
+    {
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [160, 0],
+      "parameters": {
+        "color": 4,
+        "width": 520,
+        "height": 320,
+        "content": "## MCP - Lichess OAuth\n\n**Description:** Workflow OAuth complet pour Lichess\n**Category:** oauth\n**Keywords:** lichess, oauth, token, discord, chess\n\n**Endpoint:** GET /webhook/lichess-oauth-callback\n\n**URL externe:** https://lichess.azy.solutions/webhook/lichess-oauth-callback\n\n**Flow:**\n1. Reçoit callback Lichess (?code&state)\n2. Récupère flow data depuis Redis (code_verifier, user_id)\n3. Échange code contre token via Lichess API\n4. Stocke token dans Redis\n5. Cleanup flow data\n6. Affiche page succès\n\n**Redis Keys:**\n- `oauth:flow:{state}` - Flow temporaire (10 min TTL)\n- `oauth:token:lichess:{user_id}` - Token stocké"
+      }
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "webhookId": "lichess-oauth-callback",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "lichess-oauth-callback",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-params",
+      "name": "Validate Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 400],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst query = input.query || {};\n\nconst code = query.code;\nconst state = query.state;\n\nif (!code || !state) {\n  return [{\n    json: {\n      valid: false,\n      error: 'params_missing'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    code,\n    state\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Params Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 400],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "redis-get-flow",
+      "name": "Redis GET Flow",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [960, 300],
+      "parameters": {
+        "operation": "get",
+        "key": "={{ 'oauth:flow:' + $json.state }}",
+        "propertyName": "flowData",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "id": "check-flow-exists",
+      "name": "Flow Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1200, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "leftValue": "={{ $json.flowData }}", "rightValue": "", "operator": { "type": "string", "operation": "notEquals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "parse-flow-data",
+      "name": "Parse Flow Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 200],
+      "parameters": {
+        "jsCode": "const flowDataStr = $input.first().json.flowData;\nconst code = $('Validate Params').first().json.code;\nconst state = $('Validate Params').first().json.state;\n\nlet flowData;\ntry {\n  flowData = JSON.parse(flowDataStr);\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: 'parse_error'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    code: code,\n    state: state,\n    user_id: flowData.user_id,\n    code_verifier: flowData.code_verifier,\n    redirect_uri: flowData.redirect_uri || 'https://lichess.azy.solutions/webhook/lichess-oauth-callback',\n    provider: flowData.provider || 'lichess'\n  }\n}];"
+      }
+    },
+    {
+      "id": "exchange-token",
+      "name": "Lichess Token Exchange",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://lichess.org/api/token",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/x-www-form-urlencoded" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "grant_type", "value": "authorization_code" },
+            { "name": "code", "value": "={{ $json.code }}" },
+            { "name": "code_verifier", "value": "={{ $json.code_verifier }}" },
+            { "name": "redirect_uri", "value": "={{ $json.redirect_uri }}" }
+          ]
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "check-token",
+      "name": "Token OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1920, 200],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "leftValue": "={{ $json.access_token }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare-token",
+      "name": "Prepare Token Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 100],
+      "parameters": {
+        "jsCode": "const tokenResponse = $input.first().json;\nconst flowData = $('Parse Flow Data').first().json;\n\n// Calculer expiration\nconst expiresIn = tokenResponse.expires_in || 5184000; // 60 jours par défaut\nconst expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();\n\n// TTL en secondes (expires_in - 1 heure de marge, minimum 1 jour)\nconst ttl = Math.max(expiresIn - 3600, 86400);\n\nreturn [{\n  json: {\n    user_id: flowData.user_id,\n    state: flowData.state,\n    token_data: JSON.stringify({\n      access_token: tokenResponse.access_token,\n      token_type: tokenResponse.token_type || 'Bearer',\n      expires_in: expiresIn,\n      expires_at: expiresAt,\n      provider: 'lichess',\n      created_at: new Date().toISOString()\n    }),\n    ttl: ttl\n  }\n}];"
+      }
+    },
+    {
+      "id": "redis-set-token",
+      "name": "Redis SET Token",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [2400, 100],
+      "parameters": {
+        "operation": "set",
+        "key": "={{ 'oauth:token:lichess:' + $json.user_id }}",
+        "value": "={{ $json.token_data }}",
+        "expire": true,
+        "ttl": "={{ $json.ttl }}",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "id": "redis-del-flow",
+      "name": "Redis DEL Flow",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [2640, 100],
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ 'oauth:flow:' + $('Parse Flow Data').first().json.state }}",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "id": "build-success-html",
+      "name": "Build Success HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 100],
+      "parameters": {
+        "jsCode": "const html = `<!DOCTYPE html>\n<html lang=\"fr\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Lichess - Connexion réussie</title>\n  <style>\n    * { margin: 0; padding: 0; box-sizing: border-box; }\n    body {\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;\n      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);\n      color: white;\n      min-height: 100vh;\n      display: flex;\n      align-items: center;\n      justify-content: center;\n    }\n    .container {\n      text-align: center;\n      padding: 40px;\n      background: rgba(255,255,255,0.1);\n      border-radius: 16px;\n      backdrop-filter: blur(10px);\n      max-width: 400px;\n    }\n    .icon { font-size: 64px; margin-bottom: 20px; }\n    h1 { font-size: 24px; margin-bottom: 16px; }\n    p { color: rgba(255,255,255,0.8); line-height: 1.6; margin-bottom: 12px; }\n    .discord-link {\n      display: inline-block;\n      margin-top: 24px;\n      padding: 12px 24px;\n      background: #5865F2;\n      color: white;\n      text-decoration: none;\n      border-radius: 8px;\n      font-weight: 600;\n    }\n    .discord-link:hover { background: #4752C4; }\n    .auto-close { font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 16px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"icon\">✅</div>\n    <h1>Connexion Lichess réussie !</h1>\n    <p>Ton compte Lichess est maintenant lié à Discord.</p>\n    <p>Tu peux utiliser <strong>/lichess profile</strong> pour voir ton profil.</p>\n    <a href=\"https://discord.com/channels/@me\" class=\"discord-link\">\n      Retourner sur Discord\n    </a>\n    <p class=\"auto-close\">Cette page se fermera automatiquement...</p>\n  </div>\n  <script>\n    setTimeout(() => {\n      try { window.close(); } catch(e) {}\n    }, 5000);\n  </script>\n</body>\n</html>`;\n\nreturn [{ json: { html } }];"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3120, 100],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "text/html; charset=utf-8" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "build-error-params",
+      "name": "Error: Params Invalid",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 520],
+      "parameters": {
+        "jsCode": "const html = `<!DOCTYPE html>\n<html lang=\"fr\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Erreur - Lichess</title>\n  <style>\n    body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #1a1a2e, #16213e); color: white; min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }\n    .container { text-align: center; padding: 40px; background: rgba(255,255,255,0.1); border-radius: 16px; max-width: 400px; }\n    .icon { font-size: 64px; margin-bottom: 20px; }\n    h1 { margin-bottom: 16px; }\n    p { color: rgba(255,255,255,0.8); }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"icon\">❌</div>\n    <h1>Erreur de connexion</h1>\n    <p>Paramètres invalides. Retourne sur Discord et réessaie /lichess connect</p>\n  </div>\n</body>\n</html>`;\n\nreturn [{ json: { html } }];"
+      }
+    },
+    {
+      "id": "respond-error-params",
+      "name": "Respond Error Params",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 520],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "text/html; charset=utf-8" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "build-error-expired",
+      "name": "Error: State Expired",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 420],
+      "parameters": {
+        "jsCode": "const html = `<!DOCTYPE html>\n<html lang=\"fr\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Erreur - Lichess</title>\n  <style>\n    body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #1a1a2e, #16213e); color: white; min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }\n    .container { text-align: center; padding: 40px; background: rgba(255,255,255,0.1); border-radius: 16px; max-width: 400px; }\n    .icon { font-size: 64px; margin-bottom: 20px; }\n    h1 { margin-bottom: 16px; }\n    p { color: rgba(255,255,255,0.8); line-height: 1.6; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"icon\">⏰</div>\n    <h1>Lien expiré</h1>\n    <p>Ce lien de connexion a expiré (10 minutes max).</p>\n    <p>Retourne sur Discord et utilise <strong>/lichess connect</strong> pour réessayer.</p>\n  </div>\n</body>\n</html>`;\n\nreturn [{ json: { html } }];"
+      }
+    },
+    {
+      "id": "respond-error-expired",
+      "name": "Respond Error Expired",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1680, 420],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "text/html; charset=utf-8" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "build-error-token",
+      "name": "Error: Token Failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 320],
+      "parameters": {
+        "jsCode": "const html = `<!DOCTYPE html>\n<html lang=\"fr\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Erreur - Lichess</title>\n  <style>\n    body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #1a1a2e, #16213e); color: white; min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }\n    .container { text-align: center; padding: 40px; background: rgba(255,255,255,0.1); border-radius: 16px; max-width: 400px; }\n    .icon { font-size: 64px; margin-bottom: 20px; }\n    h1 { margin-bottom: 16px; }\n    p { color: rgba(255,255,255,0.8); line-height: 1.6; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"icon\">❌</div>\n    <h1>Erreur Lichess</h1>\n    <p>Impossible de finaliser la connexion avec Lichess.</p>\n    <p>Réessaie avec <strong>/lichess connect</strong> sur Discord.</p>\n  </div>\n</body>\n</html>`;\n\nreturn [{ json: { html } }];"
+      }
+    },
+    {
+      "id": "respond-error-token",
+      "name": "Respond Error Token",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2400, 320],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 500,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "text/html; charset=utf-8" }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate Params", "type": "main", "index": 0 }]] },
+    "Validate Params": { "main": [[{ "node": "Params Valid?", "type": "main", "index": 0 }]] },
+    "Params Valid?": {
+      "main": [
+        [{ "node": "Redis GET Flow", "type": "main", "index": 0 }],
+        [{ "node": "Error: Params Invalid", "type": "main", "index": 0 }]
+      ]
+    },
+    "Redis GET Flow": { "main": [[{ "node": "Flow Exists?", "type": "main", "index": 0 }]] },
+    "Flow Exists?": {
+      "main": [
+        [{ "node": "Parse Flow Data", "type": "main", "index": 0 }],
+        [{ "node": "Error: State Expired", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Flow Data": { "main": [[{ "node": "Lichess Token Exchange", "type": "main", "index": 0 }]] },
+    "Lichess Token Exchange": { "main": [[{ "node": "Token OK?", "type": "main", "index": 0 }]] },
+    "Token OK?": {
+      "main": [
+        [{ "node": "Prepare Token Data", "type": "main", "index": 0 }],
+        [{ "node": "Error: Token Failed", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Token Data": { "main": [[{ "node": "Redis SET Token", "type": "main", "index": 0 }]] },
+    "Redis SET Token": { "main": [[{ "node": "Redis DEL Flow", "type": "main", "index": 0 }]] },
+    "Redis DEL Flow": { "main": [[{ "node": "Build Success HTML", "type": "main", "index": 0 }]] },
+    "Build Success HTML": { "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]] },
+    "Error: Params Invalid": { "main": [[{ "node": "Respond Error Params", "type": "main", "index": 0 }]] },
+    "Error: State Expired": { "main": [[{ "node": "Respond Error Expired", "type": "main", "index": 0 }]] },
+    "Error: Token Failed": { "main": [[{ "node": "Respond Error Token", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

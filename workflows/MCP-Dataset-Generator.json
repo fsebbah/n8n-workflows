@@ -1,0 +1,239 @@
+{
+  "name": "MCP - Dataset Generator",
+  "nodes": [
+    {
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "dataset-generate",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mcp/dataset/generate",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || {};\n\n// Required fields\nconst domain = body.domain;\nif (!domain) {\n  return [{\n    json: {\n      valid: false,\n      error: { code: 400, message: 'domain requis', status: 'BAD_REQUEST' }\n    }\n  }];\n}\n\n// Optional fields with defaults\nconst categories = body.categories || ['simple', 'ambigu', 'multi-étape', 'elliptique'];\nconst countPerCategory = body.count_per_category || 10;\nconst toolsFocus = body.tools_focus || [];\nconst language = body.language || 'fr';\n\n// API keys - from body or env\nconst generatorModel = body.generator?.model || $env.MODEL_ANTHROPIC || 'claude-haiku-4-5-20251001';\nconst generatorKey = body.generator?.api_key || $env.ANTHROPIC_API_KEY;\nconst reviewerModel = body.reviewer?.model || $env.MODEL_OPENAI || 'gpt-4o-mini';\nconst reviewerKey = body.reviewer?.api_key || $env.OPENAI_API_KEY;\n\n// Qdrant config\nconst qdrantHost = $env.QDRANT_SHARED_1_HOST || 'host3.local';\nconst qdrantPort = $env.QDRANT_SHARED_1_PORT || '20001';\nconst qdrantApiKey = $env.QDRANT_SHARED_1_API_KEY || '';\nconst qdrantCollection = 'tools_index';\n\nconst errors = [];\nif (!generatorKey) errors.push('Generator API key manquant');\nif (!reviewerKey) errors.push('Reviewer API key manquant');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  }];\n}\n\n// Generate job ID\nconst now = new Date();\nconst timestamp = now.toISOString().replace(/[-:]/g, '').replace('T', '_').substring(0, 15);\nconst jobId = `dataset_${domain.replace(/\\s+/g, '_')}_${timestamp}`;\n\nreturn [{\n  json: {\n    valid: true,\n    config: {\n      jobId,\n      domain,\n      categories,\n      countPerCategory,\n      toolsFocus,\n      language,\n      generatorModel,\n      generatorKey,\n      reviewerModel,\n      reviewerKey,\n      qdrantUrl: `http://${qdrantHost}:${qdrantPort}`,\n      qdrantApiKey,\n      qdrantCollection\n    },\n    stats: {\n      startedAt: now.toISOString()\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [700, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [920, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error } }}",
+        "options": { "responseCode": 400 }
+      }
+    },
+    {
+      "id": "get-tools-qdrant",
+      "name": "Get Tools from Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.config.qdrantUrl }}/collections/{{ $json.config.qdrantCollection }}/points/scroll",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "api-key", "value": "={{ $json.config.qdrantApiKey }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"limit\": 300, \"with_payload\": true, \"with_vector\": false}",
+        "options": { "timeout": 15000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "build-tools-reference",
+      "name": "Build Tools Reference",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 200],
+      "parameters": {
+        "jsCode": "const qdrantResponse = $input.first().json;\nconst config = $('Validate Input').first().json.config;\n\nif (qdrantResponse.error || !qdrantResponse.result?.points) {\n  return [{\n    json: {\n      error: true,\n      message: 'Erreur récupération Qdrant: ' + (qdrantResponse.error?.message || 'Unknown')\n    }\n  }];\n}\n\nconst points = qdrantResponse.result.points;\nconst toolsFocus = config.toolsFocus || [];\n\n// Build tools reference for LLM prompt\nlet toolsReference = '';\nconst toolsList = [];\n\nfor (const p of points) {\n  const pl = p.payload || {};\n  const name = pl.name || pl.webhook_path || 'unknown';\n  const webhookPath = pl.webhook_path || '';\n  const description = pl.description || '';\n  const keywords = (pl.keywords || []).slice(0, 8).join(', ');\n  const operations = (pl.operations || []).map(op => `${op.id}(${op.type})`).join(', ');\n  const useCases = (pl.use_cases || []).slice(0, 3).join('; ');\n  \n  toolsList.push(webhookPath || name);\n  \n  // Highlight focused tools\n  const isFocused = toolsFocus.some(t => name.toLowerCase().includes(t.toLowerCase()) || webhookPath.toLowerCase().includes(t.toLowerCase()));\n  const marker = isFocused ? ' [PRIORITAIRE]' : '';\n  \n  toolsReference += `\\n### ${name}${marker}\\n`;\n  toolsReference += `- **webhook**: ${webhookPath}\\n`;\n  toolsReference += `- **description**: ${description}\\n`;\n  toolsReference += `- **keywords**: ${keywords}\\n`;\n  toolsReference += `- **operations**: ${operations}\\n`;\n  toolsReference += `- **use_cases**: ${useCases}\\n`;\n}\n\nconsole.log(`[Dataset Generator] Loaded ${points.length} tools from Qdrant`);\n\n// Prepare category items for loop\nconst categoryItems = config.categories.map(cat => ({\n  json: {\n    category: cat,\n    config,\n    toolsReference,\n    toolsList\n  }\n}));\n\nreturn categoryItems;"
+      }
+    },
+    {
+      "id": "loop-categories",
+      "name": "Loop Categories",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1400, 200],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "generator-claude",
+      "name": "Generator (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1640, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $json.config.generatorKey }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.config.generatorModel }}\",\n  \"max_tokens\": 4000,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Tu es un générateur de dataset de test pour un système d'analyse d'intentions.\\n\\n## Ta mission\\n\\nGénérer {{ $json.config.countPerCategory }} cas de test pour la catégorie \\\"{{ $json.category }}\\\" dans le domaine \\\"{{ $json.config.domain }}\\\".\\n\\n## Catégories de test\\n\\n### simple\\nRequêtes avec une seule intention claire où toutes les informations sont fournies.\\n- next_action_attendu = \\\"search_tools\\\" (toujours)\\n\\n### ambigu\\nRequêtes où il manque des informations critiques ou références floues.\\n- MISSING_BLOCKING → next_action = \\\"ask_user\\\"\\n- LOOKUP_REQUIRED → next_action = \\\"resolve_entities\\\"\\n\\n### multi-étape\\nRequêtes impliquant plusieurs actions séquentielles (2-4 outils).\\n- Si step 1 exécutable → next_action = \\\"search_tools\\\"\\n- Si step 1 bloqué → next_action = \\\"ask_user\\\"\\n\\n### elliptique\\nRequêtes référençant le contexte. TOUJOURS inclure [context: ...].\\n\\n## Statuts des entités\\n\\n- RESOLVED: Valeur fournie explicitement\\n- LOOKUP_REQUIRED: Prénom seul à chercher, fichier à chercher\\n- AMBIGUOUS: Plusieurs résultats possibles\\n- USER_CONFIRMATION_REQUIRED: Inférence risquée\\n- MISSING_BLOCKING: Info indispensable absente\\n\\n## Outils disponibles\\n\\n{{ $json.toolsReference }}\\n\\n## Format de sortie\\n\\nRéponds UNIQUEMENT avec un tableau JSON:\\n\\n```json\\n[\\n  {\\n    \\\"id\\\": 1,\\n    \\\"categorie\\\": \\\"{{ $json.category }}\\\",\\n    \\\"demande_utilisateur\\\": \\\"La requête en français\\\",\\n    \\\"next_action_attendu\\\": \\\"ask_user|confirm_inference|disambiguate|resolve_entities|search_tools\\\",\\n    \\\"outils_obligatoires\\\": \\\"outil1,outil2\\\",\\n    \\\"entites_a_resoudre\\\": \\\"type:valeur→STATUT,type:valeur→STATUT\\\",\\n    \\\"missing_blocking\\\": \\\"champ1|champ2\\\",\\n    \\\"notes_testeur\\\": \\\"Explication du comportement attendu\\\"\\n  }\\n]\\n```\\n\\n## Contraintes\\n\\n1. Utilise UNIQUEMENT les outils de la liste\\n2. Demandes naturelles et variées\\n3. Cohérence next_action / statuts entités\\n4. Pour elliptique, TOUJOURS [context: ...]\\n5. Langue: {{ $json.config.language }}\"\n    }\n  ]\n}",
+        "options": { "timeout": 120000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-generator",
+      "name": "Parse Generator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1880, 100],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Loop Categories').first().json;\n\nif (input.error) {\n  return [{\n    json: {\n      ...prevData,\n      generatedCases: [],\n      generatorError: input.error.message || 'Generator error',\n      status: 'generator_failed'\n    }\n  }];\n}\n\ntry {\n  const content = input.content?.[0]?.text || '';\n  \n  // Extract JSON array from response\n  const jsonMatch = content.match(/\\[\\s*\\{[\\s\\S]*\\}\\s*\\]/m);\n  if (!jsonMatch) {\n    return [{\n      json: {\n        ...prevData,\n        generatedCases: [],\n        generatorError: 'No JSON array found in response',\n        status: 'generator_failed'\n      }\n    }];\n  }\n  \n  const cases = JSON.parse(jsonMatch[0]);\n  console.log(`[Dataset Generator] Generated ${cases.length} cases for category: ${prevData.category}`);\n  \n  return [{\n    json: {\n      ...prevData,\n      generatedCases: cases,\n      generatorUsage: input.usage || {},\n      status: 'generated'\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      ...prevData,\n      generatedCases: [],\n      generatorError: 'Parse error: ' + e.message,\n      status: 'generator_failed'\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "reviewer-gpt",
+      "name": "Reviewer (GPT)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2120, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $json.config.reviewerKey }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.config.reviewerModel }}\",\n  \"temperature\": 0.2,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Tu es un validateur de dataset de test. Vérifie et corrige les cas de test.\\n\\nOutils valides: {{ $json.toolsList.join(', ') }}\\n\\nRègles:\\n1. outils_obligatoires doit contenir UNIQUEMENT des outils de la liste\\n2. Si MISSING_BLOCKING dans entités → next_action DOIT être ask_user\\n3. Si LOOKUP_REQUIRED → next_action peut être resolve_entities ou search_tools\\n4. Si catégorie elliptique → demande DOIT contenir [context: ...]\\n5. Format entités: type:valeur→STATUT\\n\\nRéponds en JSON: { \\\"validated_cases\\\": [...], \\\"corrections\\\": [...], \\\"rejected\\\": [...] }\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Valide ces cas de test pour la catégorie '{{ $json.category }}':\\n\\n{{ JSON.stringify($json.generatedCases) }}\"\n    }\n  ]\n}",
+        "options": { "timeout": 60000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-reviewer",
+      "name": "Parse Reviewer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2360, 100],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Parse Generator').first().json;\n\nif (prevData.status === 'generator_failed') {\n  return [{\n    json: {\n      category: prevData.category,\n      cases: [],\n      stats: { generated: 0, validated: 0, corrected: 0, rejected: 0 },\n      error: prevData.generatorError\n    }\n  }];\n}\n\nif (input.error) {\n  // Reviewer failed, use generated cases as-is\n  console.log(`[Dataset Generator] Reviewer failed, using raw cases for ${prevData.category}`);\n  return [{\n    json: {\n      category: prevData.category,\n      cases: prevData.generatedCases,\n      stats: { generated: prevData.generatedCases.length, validated: prevData.generatedCases.length, corrected: 0, rejected: 0 },\n      reviewerSkipped: true\n    }\n  }];\n}\n\ntry {\n  const content = input.choices?.[0]?.message?.content;\n  const review = JSON.parse(content);\n  \n  const validatedCases = review.validated_cases || [];\n  const corrections = review.corrections || [];\n  const rejected = review.rejected || [];\n  \n  // Merge validated + corrected\n  const finalCases = [...validatedCases, ...corrections];\n  \n  console.log(`[Dataset Generator] Category ${prevData.category}: ${validatedCases.length} validated, ${corrections.length} corrected, ${rejected.length} rejected`);\n  \n  return [{\n    json: {\n      category: prevData.category,\n      cases: finalCases,\n      stats: {\n        generated: prevData.generatedCases.length,\n        validated: validatedCases.length,\n        corrected: corrections.length,\n        rejected: rejected.length\n      },\n      rejectedDetails: rejected.length > 0 ? rejected : null\n    }\n  }];\n} catch (e) {\n  // Parse error, use generated cases\n  console.log(`[Dataset Generator] Reviewer parse error for ${prevData.category}: ${e.message}`);\n  return [{\n    json: {\n      category: prevData.category,\n      cases: prevData.generatedCases,\n      stats: { generated: prevData.generatedCases.length, validated: prevData.generatedCases.length, corrected: 0, rejected: 0 },\n      reviewerParseError: e.message\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "collect-results",
+      "name": "Collect Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2600, 100],
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\n\n// Store in static data for aggregation\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.categoryResults) {\n  staticData.categoryResults = [];\n}\nstaticData.categoryResults.push(result);\n\nreturn [{ json: result }];"
+      }
+    },
+    {
+      "id": "aggregate-and-csv",
+      "name": "Aggregate & Generate CSV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2840, 200],
+      "parameters": {
+        "jsCode": "const config = $('Validate Input').first().json.config;\nconst staticData = $getWorkflowStaticData('global');\nconst categoryResults = staticData.categoryResults || [];\n\n// Aggregate all cases\nlet allCases = [];\nlet totalStats = { generated: 0, validated: 0, corrected: 0, rejected: 0 };\nconst byCategory = {};\nconst errors = [];\n\nlet globalId = 1;\nfor (const result of categoryResults) {\n  byCategory[result.category] = result.cases.length;\n  totalStats.generated += result.stats.generated;\n  totalStats.validated += result.stats.validated;\n  totalStats.corrected += result.stats.corrected;\n  totalStats.rejected += result.stats.rejected;\n  \n  if (result.error) {\n    errors.push({ category: result.category, error: result.error });\n  }\n  \n  for (const c of result.cases) {\n    allCases.push({\n      id: globalId++,\n      categorie: c.categorie || result.category,\n      demande_utilisateur: c.demande_utilisateur || '',\n      next_action_attendu: c.next_action_attendu || '',\n      outils_obligatoires: c.outils_obligatoires || '',\n      entites_a_resoudre: c.entites_a_resoudre || '',\n      missing_blocking: c.missing_blocking || '',\n      notes_testeur: c.notes_testeur || ''\n    });\n  }\n}\n\n// Generate CSV\nconst headers = 'id;categorie;demande_utilisateur;next_action_attendu;outils_obligatoires;entites_a_resoudre;missing_blocking;notes_testeur;result_next_action;result_tools;result_thinking_decision;result_status;langfuse_trace_url;execution_date';\n\nfunction escapeCsv(val) {\n  if (val === null || val === undefined) return '';\n  const str = String(val);\n  if (str.includes(';') || str.includes('\"') || str.includes('\\n')) {\n    return '\"' + str.replace(/\"/g, '\"\"') + '\"';\n  }\n  return str;\n}\n\nconst rows = allCases.map(c => [\n  c.id,\n  escapeCsv(c.categorie),\n  escapeCsv(c.demande_utilisateur),\n  escapeCsv(c.next_action_attendu),\n  escapeCsv(c.outils_obligatoires),\n  escapeCsv(c.entites_a_resoudre),\n  escapeCsv(c.missing_blocking),\n  escapeCsv(c.notes_testeur),\n  '', '', '', '', '', ''\n].join(';'));\n\nconst csvContent = headers + '\\n' + rows.join('\\n');\n\n// Generate filename\nconst timestamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').substring(0, 15);\nconst domainSlug = config.domain.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();\nconst filename = `rfc037_test_dataset_${domainSlug}_${timestamp}.csv`;\nconst filepath = `/tmp/datasets/${filename}`;\n\n// Clear static data\nstaticData.categoryResults = [];\n\nreturn [{\n  json: {\n    success: true,\n    dataset: {\n      filename,\n      filepath,\n      domain: config.domain,\n      total_cases: allCases.length,\n      by_category: byCategory,\n      validation: {\n        generated: totalStats.generated,\n        validated: totalStats.validated,\n        corrected: totalStats.corrected,\n        rejected: totalStats.rejected\n      },\n      errors: errors.length > 0 ? errors : null\n    },\n    csvContent,\n    config\n  }\n}];"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3080, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: $json.success, dataset: $json.dataset, csv_content: $json.csvContent } }}",
+        "options": { "responseCode": 200 }
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 0],
+      "parameters": {
+        "color": 4,
+        "width": 700,
+        "height": 280,
+        "content": "## MCP - Dataset Generator (RFC-037-B)\n\n**Description:** Générer automatiquement des datasets de test pour l'analyse d'intentions\n**Category:** ai\n**Keywords:** dataset, test, intentions, training, evaluation, LLM, génération\n**Use cases:**\n- Générer des cas de test par domaine (email, shopping, recherche)\n- Créer des datasets variés (simple, ambigu, multi-étape, elliptique)\n- Valider et corriger les cas via LLM reviewer\n\n**Endpoint:** POST /webhook/mcp/dataset/generate\n\n**InputSchema:**\n```json\n{\n  \"domain\": \"email et calendrier\",\n  \"categories\": [\"simple\", \"ambigu\"],\n  \"count_per_category\": 10,\n  \"tools_focus\": [\"mcp-gmail\"],\n  \"generator\": { \"model\": \"claude-...\", \"api_key\": \"...\" },\n  \"reviewer\": { \"model\": \"gpt-4o-mini\", \"api_key\": \"...\" }\n}\n```"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]] },
+    "Validate Input": { "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]] },
+    "Valid?": {
+      "main": [
+        [{ "node": "Get Tools from Qdrant", "type": "main", "index": 0 }],
+        [{ "node": "Error: Validation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Tools from Qdrant": { "main": [[{ "node": "Build Tools Reference", "type": "main", "index": 0 }]] },
+    "Build Tools Reference": { "main": [[{ "node": "Loop Categories", "type": "main", "index": 0 }]] },
+    "Loop Categories": {
+      "main": [
+        [{ "node": "Aggregate & Generate CSV", "type": "main", "index": 0 }],
+        [{ "node": "Generator (Claude)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generator (Claude)": { "main": [[{ "node": "Parse Generator", "type": "main", "index": 0 }]] },
+    "Parse Generator": { "main": [[{ "node": "Reviewer (GPT)", "type": "main", "index": 0 }]] },
+    "Reviewer (GPT)": { "main": [[{ "node": "Parse Reviewer", "type": "main", "index": 0 }]] },
+    "Parse Reviewer": { "main": [[{ "node": "Collect Results", "type": "main", "index": 0 }]] },
+    "Collect Results": { "main": [[{ "node": "Loop Categories", "type": "main", "index": 0 }]] },
+    "Aggregate & Generate CSV": { "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
