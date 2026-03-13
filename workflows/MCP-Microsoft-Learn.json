@@ -1,0 +1,286 @@
+{
+  "name": "MCP - Microsoft Learn",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "microsoft-learn",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "microsoft-learn-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\nconst operation = body.operation || 'search';\nconst query = body.query;\nconst url = body.url;\nconst product = body.product;\nconst language = body.language;\nconst max_results = body.max_results || 5;\n\n// Validation\nconst errors = [];\n\nconst validOps = ['search', 'fetch', 'code_samples'];\nif (!validOps.includes(operation)) {\n  errors.push(`operation invalide: ${operation}. Valeurs: ${validOps.join(', ')}`);\n}\n\nif (operation === 'search' && !query) {\n  errors.push('query requis pour operation search');\n}\nif (operation === 'fetch' && !url) {\n  errors.push('url requis pour operation fetch');\n}\nif (operation === 'code_samples' && !query) {\n  errors.push('query requis pour operation code_samples');\n}\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    operation,\n    query,\n    url,\n    product,\n    language,\n    max_results\n  }\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://learn.microsoft.com/api/mcp",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Accept", "value": "application/json, text/event-stream" },
+            { "name": "MCP-Protocol-Version", "value": "2025-03-26" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jsonrpc: '2.0', method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: { tools: {} }, clientInfo: { name: 'n8n-mcp-client', version: '1.0.0' } }, id: 1 }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true, "responseFormat": "text" } },
+          "timeout": 15000
+        }
+      },
+      "id": "init-session",
+      "name": "Initialize MCP Session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst input = $('Validate Input').first().json;\n\n// Extract session ID from headers\nconst headers = response.headers || {};\nconst sessionId = headers['mcp-session-id'] || headers['Mcp-Session-Id'];\n\n// Parse response body (may be SSE format)\nlet initResult;\nconst body = response.body;\n\ntry {\n  if (typeof body === 'string') {\n    // Handle SSE format: data: {...}\n    if (body.includes('data:')) {\n      const lines = body.split('\\n');\n      for (const line of lines) {\n        if (line.startsWith('data:')) {\n          const jsonStr = line.substring(5).trim();\n          if (jsonStr) {\n            initResult = JSON.parse(jsonStr);\n            break;\n          }\n        }\n      }\n    } else {\n      initResult = JSON.parse(body);\n    }\n  } else {\n    initResult = body;\n  }\n} catch (e) {\n  return {\n    json: {\n      error: true,\n      message: 'Failed to parse init response',\n      raw: body\n    }\n  };\n}\n\n// Check for initialization error\nif (initResult?.error) {\n  return {\n    json: {\n      error: true,\n      message: initResult.error.message || 'Init failed',\n      details: initResult.error\n    }\n  };\n}\n\nreturn {\n  json: {\n    error: false,\n    sessionId,\n    serverInfo: initResult?.result?.serverInfo,\n    capabilities: initResult?.result?.capabilities,\n    operation: input.operation,\n    query: input.query,\n    url: input.url,\n    product: input.product,\n    language: input.language,\n    max_results: input.max_results\n  }\n};"
+      },
+      "id": "parse-init",
+      "name": "Parse Init Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-init-ok",
+      "name": "Init OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 500, message: $json.message || 'MCP init failed', details: $json } }) }}",
+        "options": {
+          "responseCode": 500,
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-init-error",
+      "name": "Respond Init Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 460]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://learn.microsoft.com/api/mcp",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Accept", "value": "application/json, text/event-stream" },
+            { "name": "MCP-Protocol-Version", "value": "2025-03-26" },
+            { "name": "Mcp-Session-Id", "value": "={{ $json.sessionId || '' }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', id: 2 }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true } },
+          "timeout": 5000
+        }
+      },
+      "id": "send-initialized",
+      "name": "Send Initialized",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const initData = $('Parse Init Response').first().json;\nconst operation = initData.operation;\n\n// Build tool name and arguments\nlet toolName, toolArgs;\n\nswitch (operation) {\n  case 'search':\n    toolName = 'microsoft_docs_search';\n    toolArgs = { query: initData.query };\n    if (initData.product) toolArgs.product = initData.product;\n    if (initData.max_results) toolArgs.top = initData.max_results;\n    break;\n    \n  case 'fetch':\n    toolName = 'microsoft_docs_fetch';\n    toolArgs = { url: initData.url };\n    break;\n    \n  case 'code_samples':\n    toolName = 'microsoft_code_sample_search';\n    toolArgs = { query: initData.query };\n    if (initData.language) toolArgs.language = initData.language;\n    if (initData.max_results) toolArgs.top = initData.max_results;\n    break;\n}\n\nreturn {\n  json: {\n    sessionId: initData.sessionId,\n    operation,\n    toolName,\n    toolArgs\n  }\n};"
+      },
+      "id": "prepare-tool-call",
+      "name": "Prepare Tool Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://learn.microsoft.com/api/mcp",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Accept", "value": "application/json, text/event-stream" },
+            { "name": "MCP-Protocol-Version", "value": "2025-03-26" },
+            { "name": "Mcp-Session-Id", "value": "={{ $json.sessionId || '' }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: { name: $json.toolName, arguments: $json.toolArgs }, id: 3 }) }}",
+        "options": {
+          "response": { "response": { "fullResponse": true, "responseFormat": "text" } },
+          "timeout": 30000
+        }
+      },
+      "id": "call-tool",
+      "name": "Call MCP Tool",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepData = $('Prepare Tool Call').first().json;\nconst response = $input.first().json;\n\nconst statusCode = response.statusCode || 200;\nconst body = response.body;\n\n// Handle HTTP errors\nif (statusCode >= 400) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: `MCP Server error: ${statusCode}`,\n        details: body\n      }\n    }\n  };\n}\n\n// Parse response (may be SSE format)\nlet result;\ntry {\n  if (typeof body === 'string') {\n    // Handle SSE format\n    if (body.includes('data:')) {\n      const lines = body.split('\\n');\n      for (const line of lines) {\n        if (line.startsWith('data:')) {\n          const jsonStr = line.substring(5).trim();\n          if (jsonStr && jsonStr !== '[DONE]') {\n            try {\n              const parsed = JSON.parse(jsonStr);\n              // Look for the actual result (has 'result' field)\n              if (parsed.result) {\n                result = parsed;\n              }\n            } catch {}\n          }\n        }\n      }\n    } else {\n      result = JSON.parse(body);\n    }\n  } else {\n    result = body;\n  }\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to parse MCP response',\n        raw: body?.substring?.(0, 1000) || body\n      }\n    }\n  };\n}\n\n// Check for JSON-RPC error\nif (result?.error) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: result.error.code || 500,\n        message: result.error.message || 'MCP error',\n        details: result.error.data\n      }\n    }\n  };\n}\n\n// Extract tool result content\nconst toolResult = result?.result;\nlet content = null;\n\nif (toolResult?.content) {\n  // MCP tools return content as array of {type, text} objects\n  if (Array.isArray(toolResult.content)) {\n    content = toolResult.content.map(c => {\n      if (c.type === 'text') {\n        // Try to parse as JSON if it looks like JSON\n        try {\n          return JSON.parse(c.text);\n        } catch {\n          return c.text;\n        }\n      }\n      return c;\n    });\n    // If single item, unwrap\n    if (content.length === 1) content = content[0];\n  } else {\n    content = toolResult.content;\n  }\n}\n\n// Format based on operation\nconst operation = prepData.operation;\nlet formattedResult;\n\nswitch (operation) {\n  case 'search':\n    formattedResult = {\n      operation: 'search',\n      query: prepData.toolArgs.query,\n      results: content\n    };\n    break;\n    \n  case 'fetch':\n    formattedResult = {\n      operation: 'fetch',\n      url: prepData.toolArgs.url,\n      content: content\n    };\n    break;\n    \n  case 'code_samples':\n    formattedResult = {\n      operation: 'code_samples',\n      query: prepData.toolArgs.query,\n      samples: content\n    };\n    break;\n    \n  default:\n    formattedResult = { raw: content };\n}\n\nreturn {\n  json: {\n    success: true,\n    ...formattedResult\n  }\n};"
+      },
+      "id": "parse-response",
+      "name": "Parse Tool Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : 500 }}",
+          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "content": "## MCP - Microsoft Learn\n\n**Endpoint:** POST /webhook/microsoft-learn\n\n### Protocol\nUtilise MCP (Model Context Protocol) avec Streamable HTTP:\n1. Initialize session\n2. Send initialized notification\n3. Call tool\n4. Parse SSE response\n\n### Operations\n\n**1. search** - Recherche documentation\n```json\n{\n  \"operation\": \"search\",\n  \"query\": \"Azure Functions tutorial\",\n  \"product\": \"azure\",\n  \"max_results\": 5\n}\n```\n\n**2. fetch** - Récupère article complet\n```json\n{\n  \"operation\": \"fetch\",\n  \"url\": \"https://learn.microsoft.com/...\"\n}\n```\n\n**3. code_samples** - Exemples de code\n```json\n{\n  \"operation\": \"code_samples\",\n  \"query\": \"blob storage upload\",\n  \"language\": \"python\"\n}\n```\n\n### MCP Server\n- **URL:** https://learn.microsoft.com/api/mcp\n- **Protocol:** JSON-RPC 2.0 / Streamable HTTP\n- **Version:** 2025-03-26\n- **Auth:** Aucune\n\n### Tools disponibles\n- `microsoft_docs_search`\n- `microsoft_docs_fetch`\n- `microsoft_code_sample_search`",
+        "height": 620,
+        "width": 400,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 20]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+    },
+    "Validate Input": {
+      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+    },
+    "Valid?": {
+      "main": [
+        [{ "node": "Initialize MCP Session", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Initialize MCP Session": {
+      "main": [[{ "node": "Parse Init Response", "type": "main", "index": 0 }]]
+    },
+    "Parse Init Response": {
+      "main": [[{ "node": "Init OK?", "type": "main", "index": 0 }]]
+    },
+    "Init OK?": {
+      "main": [
+        [{ "node": "Send Initialized", "type": "main", "index": 0 }],
+        [{ "node": "Respond Init Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Initialized": {
+      "main": [[{ "node": "Prepare Tool Call", "type": "main", "index": 0 }]]
+    },
+    "Prepare Tool Call": {
+      "main": [[{ "node": "Call MCP Tool", "type": "main", "index": 0 }]]
+    },
+    "Call MCP Tool": {
+      "main": [[{ "node": "Parse Tool Response", "type": "main", "index": 0 }]]
+    },
+    "Parse Tool Response": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
