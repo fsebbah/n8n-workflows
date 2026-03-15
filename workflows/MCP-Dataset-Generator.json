@@ -97,11 +97,21 @@
       }
     },
     {
+      "id": "prepare-claude-body",
+      "name": "Prepare Claude Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1640, 100],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst config = data.config;\nconst category = data.category;\nconst toolsReference = data.toolsReference;\n\nconst prompt = `Tu es un générateur de dataset de test pour un système d'analyse d'intentions.\n\n## Ta mission\n\nGénérer ${config.countPerCategory} cas de test pour la catégorie \"${category}\" dans le domaine \"${config.domain}\".\n\n## Catégories de test\n\n### simple\nRequêtes avec une seule intention claire où toutes les informations sont fournies.\n- next_action_attendu = \"search_tools\" (toujours)\n\n### ambigu\nRequêtes où il manque des informations critiques ou références floues.\n- MISSING_BLOCKING → next_action = \"ask_user\"\n- LOOKUP_REQUIRED → next_action = \"resolve_entities\"\n\n### multi-étape\nRequêtes impliquant plusieurs actions séquentielles (2-4 outils).\n- Si step 1 exécutable → next_action = \"search_tools\"\n- Si step 1 bloqué → next_action = \"ask_user\"\n\n### elliptique\nRequêtes référençant le contexte. TOUJOURS inclure [context: ...].\n\n## Statuts des entités\n\n- RESOLVED: Valeur fournie explicitement\n- LOOKUP_REQUIRED: Prénom seul à chercher, fichier à chercher\n- AMBIGUOUS: Plusieurs résultats possibles\n- USER_CONFIRMATION_REQUIRED: Inférence risquée\n- MISSING_BLOCKING: Info indispensable absente\n\n## Outils disponibles\n\n${toolsReference}\n\n## Format de sortie\n\nRéponds UNIQUEMENT avec un tableau JSON:\n\n\\`\\`\\`json\n[\n  {\n    \"id\": 1,\n    \"categorie\": \"${category}\",\n    \"demande_utilisateur\": \"La requête en français\",\n    \"next_action_attendu\": \"ask_user|confirm_inference|disambiguate|resolve_entities|search_tools\",\n    \"outils_obligatoires\": \"outil1,outil2\",\n    \"entites_a_resoudre\": \"type:valeur→STATUT,type:valeur→STATUT\",\n    \"missing_blocking\": \"champ1|champ2\",\n    \"notes_testeur\": \"Explication du comportement attendu\"\n  }\n]\n\\`\\`\\`\n\n## Contraintes\n\n1. Utilise UNIQUEMENT les outils de la liste\n2. Demandes naturelles et variées\n3. Cohérence next_action / statuts entités\n4. Pour elliptique, TOUJOURS [context: ...]\n5. Langue: ${config.language}`;\n\nconst requestBody = {\n  model: config.generatorModel,\n  max_tokens: 4000,\n  messages: [\n    {\n      role: 'user',\n      content: prompt\n    }\n  ]\n};\n\nreturn [{\n  json: {\n    ...data,\n    claudeRequestBody: requestBody\n  }\n}];"
+      }
+    },
+    {
       "id": "generator-claude",
       "name": "Generator (Claude)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1640, 100],
+      "position": [1880, 100],
       "parameters": {
         "method": "POST",
         "url": "https://api.anthropic.com/v1/messages",
@@ -115,7 +125,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"{{ $json.config.generatorModel }}\",\n  \"max_tokens\": 4000,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Tu es un générateur de dataset de test pour un système d'analyse d'intentions.\\n\\n## Ta mission\\n\\nGénérer {{ $json.config.countPerCategory }} cas de test pour la catégorie \\\"{{ $json.category }}\\\" dans le domaine \\\"{{ $json.config.domain }}\\\".\\n\\n## Catégories de test\\n\\n### simple\\nRequêtes avec une seule intention claire où toutes les informations sont fournies.\\n- next_action_attendu = \\\"search_tools\\\" (toujours)\\n\\n### ambigu\\nRequêtes où il manque des informations critiques ou références floues.\\n- MISSING_BLOCKING → next_action = \\\"ask_user\\\"\\n- LOOKUP_REQUIRED → next_action = \\\"resolve_entities\\\"\\n\\n### multi-étape\\nRequêtes impliquant plusieurs actions séquentielles (2-4 outils).\\n- Si step 1 exécutable → next_action = \\\"search_tools\\\"\\n- Si step 1 bloqué → next_action = \\\"ask_user\\\"\\n\\n### elliptique\\nRequêtes référençant le contexte. TOUJOURS inclure [context: ...].\\n\\n## Statuts des entités\\n\\n- RESOLVED: Valeur fournie explicitement\\n- LOOKUP_REQUIRED: Prénom seul à chercher, fichier à chercher\\n- AMBIGUOUS: Plusieurs résultats possibles\\n- USER_CONFIRMATION_REQUIRED: Inférence risquée\\n- MISSING_BLOCKING: Info indispensable absente\\n\\n## Outils disponibles\\n\\n{{ $json.toolsReference }}\\n\\n## Format de sortie\\n\\nRéponds UNIQUEMENT avec un tableau JSON:\\n\\n```json\\n[\\n  {\\n    \\\"id\\\": 1,\\n    \\\"categorie\\\": \\\"{{ $json.category }}\\\",\\n    \\\"demande_utilisateur\\\": \\\"La requête en français\\\",\\n    \\\"next_action_attendu\\\": \\\"ask_user|confirm_inference|disambiguate|resolve_entities|search_tools\\\",\\n    \\\"outils_obligatoires\\\": \\\"outil1,outil2\\\",\\n    \\\"entites_a_resoudre\\\": \\\"type:valeur→STATUT,type:valeur→STATUT\\\",\\n    \\\"missing_blocking\\\": \\\"champ1|champ2\\\",\\n    \\\"notes_testeur\\\": \\\"Explication du comportement attendu\\\"\\n  }\\n]\\n```\\n\\n## Contraintes\\n\\n1. Utilise UNIQUEMENT les outils de la liste\\n2. Demandes naturelles et variées\\n3. Cohérence next_action / statuts entités\\n4. Pour elliptique, TOUJOURS [context: ...]\\n5. Langue: {{ $json.config.language }}\"\n    }\n  ]\n}",
+        "jsonBody": "={{ JSON.stringify($json.claudeRequestBody) }}",
         "options": { "timeout": 120000 }
       },
       "onError": "continueRegularOutput"
@@ -125,9 +135,9 @@
       "name": "Parse Generator",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1880, 100],
+      "position": [2120, 100],
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst prevData = $('Loop Categories').first().json;\n\nif (input.error) {\n  return [{\n    json: {\n      ...prevData,\n      generatedCases: [],\n      generatorError: input.error.message || 'Generator error',\n      status: 'generator_failed'\n    }\n  }];\n}\n\ntry {\n  const content = input.content?.[0]?.text || '';\n  \n  // Extract JSON array from response\n  const jsonMatch = content.match(/\\[\\s*\\{[\\s\\S]*\\}\\s*\\]/m);\n  if (!jsonMatch) {\n    return [{\n      json: {\n        ...prevData,\n        generatedCases: [],\n        generatorError: 'No JSON array found in response',\n        status: 'generator_failed'\n      }\n    }];\n  }\n  \n  const cases = JSON.parse(jsonMatch[0]);\n  console.log(`[Dataset Generator] Generated ${cases.length} cases for category: ${prevData.category}`);\n  \n  return [{\n    json: {\n      ...prevData,\n      generatedCases: cases,\n      generatorUsage: input.usage || {},\n      status: 'generated'\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      ...prevData,\n      generatedCases: [],\n      generatorError: 'Parse error: ' + e.message,\n      status: 'generator_failed'\n    }\n  }];\n}"
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Prepare Claude Body').first().json;\n\nif (input.error) {\n  return [{\n    json: {\n      ...prevData,\n      generatedCases: [],\n      generatorError: input.error.message || 'Generator error',\n      status: 'generator_failed'\n    }\n  }];\n}\n\ntry {\n  const content = input.content?.[0]?.text || '';\n  \n  // Extract JSON array from response\n  const jsonMatch = content.match(/\\[\\s*\\{[\\s\\S]*\\}\\s*\\]/m);\n  if (!jsonMatch) {\n    return [{\n      json: {\n        ...prevData,\n        generatedCases: [],\n        generatorError: 'No JSON array found in response',\n        status: 'generator_failed'\n      }\n    }];\n  }\n  \n  const cases = JSON.parse(jsonMatch[0]);\n  console.log(`[Dataset Generator] Generated ${cases.length} cases for category: ${prevData.category}`);\n  \n  return [{\n    json: {\n      ...prevData,\n      generatedCases: cases,\n      generatorUsage: input.usage || {},\n      status: 'generated'\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      ...prevData,\n      generatedCases: [],\n      generatorError: 'Parse error: ' + e.message,\n      status: 'generator_failed'\n    }\n  }];\n}"
       }
     },
     {
@@ -135,7 +145,7 @@
       "name": "Reviewer (GPT)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2120, 100],
+      "position": [2360, 100],
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/chat/completions",
@@ -158,7 +168,7 @@
       "name": "Parse Reviewer",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2360, 100],
+      "position": [2600, 100],
       "parameters": {
         "jsCode": "const input = $input.first().json;\nconst prevData = $('Parse Generator').first().json;\n\nif (prevData.status === 'generator_failed') {\n  return [{\n    json: {\n      category: prevData.category,\n      cases: [],\n      stats: { generated: 0, validated: 0, corrected: 0, rejected: 0 },\n      error: prevData.generatorError\n    }\n  }];\n}\n\nif (input.error) {\n  // Reviewer failed, use generated cases as-is\n  console.log(`[Dataset Generator] Reviewer failed, using raw cases for ${prevData.category}`);\n  return [{\n    json: {\n      category: prevData.category,\n      cases: prevData.generatedCases,\n      stats: { generated: prevData.generatedCases.length, validated: prevData.generatedCases.length, corrected: 0, rejected: 0 },\n      reviewerSkipped: true\n    }\n  }];\n}\n\ntry {\n  const content = input.choices?.[0]?.message?.content;\n  const review = JSON.parse(content);\n  \n  const validatedCases = review.validated_cases || [];\n  const corrections = review.corrections || [];\n  const rejected = review.rejected || [];\n  \n  // Merge validated + corrected\n  const finalCases = [...validatedCases, ...corrections];\n  \n  console.log(`[Dataset Generator] Category ${prevData.category}: ${validatedCases.length} validated, ${corrections.length} corrected, ${rejected.length} rejected`);\n  \n  return [{\n    json: {\n      category: prevData.category,\n      cases: finalCases,\n      stats: {\n        generated: prevData.generatedCases.length,\n        validated: validatedCases.length,\n        corrected: corrections.length,\n        rejected: rejected.length\n      },\n      rejectedDetails: rejected.length > 0 ? rejected : null\n    }\n  }];\n} catch (e) {\n  // Parse error, use generated cases\n  console.log(`[Dataset Generator] Reviewer parse error for ${prevData.category}: ${e.message}`);\n  return [{\n    json: {\n      category: prevData.category,\n      cases: prevData.generatedCases,\n      stats: { generated: prevData.generatedCases.length, validated: prevData.generatedCases.length, corrected: 0, rejected: 0 },\n      reviewerParseError: e.message\n    }\n  }];\n}"
       }
@@ -168,7 +178,7 @@
       "name": "Collect Results",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2600, 100],
+      "position": [2840, 100],
       "parameters": {
         "jsCode": "const result = $input.first().json;\n\n// Store in static data for aggregation\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.categoryResults) {\n  staticData.categoryResults = [];\n}\nstaticData.categoryResults.push(result);\n\nreturn [{ json: result }];"
       }
@@ -223,9 +233,10 @@
     "Loop Categories": {
       "main": [
         [{ "node": "Aggregate & Generate CSV", "type": "main", "index": 0 }],
-        [{ "node": "Generator (Claude)", "type": "main", "index": 0 }]
+        [{ "node": "Prepare Claude Body", "type": "main", "index": 0 }]
       ]
     },
+    "Prepare Claude Body": { "main": [[{ "node": "Generator (Claude)", "type": "main", "index": 0 }]] },
     "Generator (Claude)": { "main": [[{ "node": "Parse Generator", "type": "main", "index": 0 }]] },
     "Parse Generator": { "main": [[{ "node": "Reviewer (GPT)", "type": "main", "index": 0 }]] },
     "Reviewer (GPT)": { "main": [[{ "node": "Parse Reviewer", "type": "main", "index": 0 }]] },
