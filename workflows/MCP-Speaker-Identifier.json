@@ -65,7 +65,84 @@
       "typeVersion": 1.1,
       "position": [
         680,
-        480
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-callback",
+              "leftValue": "={{ $json.body.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-callback-url",
+      "name": "Has Callback URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store callback info for async mode\nconst input = $input.first().json;\nconst crypto = require('crypto');\n\n// Generate a unique job_id\nconst jobId = `job_${crypto.randomBytes(16).toString('hex')}`;\n\nreturn {\n  json: {\n    ...input,\n    callback_url: input.body.callback_url,\n    job_id: input.body.job_id || jobId,\n    async_mode: true\n  }\n};"
+      },
+      "id": "store-callback-info",
+      "name": "Store Callback Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-source-async",
+              "leftValue": "={{ $json.body.source }}",
+              "rightValue": "base64",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-base64-async",
+      "name": "Is Base64? (Async)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        200
       ]
     },
     {
@@ -96,9 +173,423 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        680,
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// For base64 input (async mode)\nconst input = $input.first().json;\nconst base64Data = input.body.data;\nconst options = input.body.options || {};\nconst apiKey = input.body.assemblyai_api_key;\n\n// Remove data URL prefix if present\nconst cleanBase64 = base64Data.replace(/^data:audio\\/[a-z]+;base64,/, '');\n\nreturn {\n  json: {\n    audioBase64: cleanBase64,\n    options: options,\n    needsUpload: true,\n    assemblyai_api_key: apiKey,\n    callback_url: input.callback_url,\n    job_id: input.job_id,\n    async_mode: true\n  }\n};"
+      },
+      "id": "prepare-base64-async",
+      "name": "Prepare Base64 (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare URL audio input (async mode)\nconst input = $input.first().json;\nconst audioUrl = input.body.data;\nconst options = input.body.options || {};\nconst apiKey = input.body.assemblyai_api_key;\n\nreturn {\n  json: {\n    audioUrl: audioUrl,\n    options: options,\n    needsUpload: false,\n    assemblyai_api_key: apiKey,\n    callback_url: input.callback_url,\n    job_id: input.job_id,\n    async_mode: true\n  }\n};"
+      },
+      "id": "prepare-url-async",
+      "name": "Prepare URL (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
         300
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.assemblyai.com/v2/upload",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.assemblyai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/octet-stream"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "body": "={{ Buffer.from($json.audioBase64, 'base64') }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "upload-to-assemblyai-async",
+      "name": "Upload to AssemblyAI (Async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge uploaded URL with options (async mode)\nconst uploadResponse = $input.first().json;\nconst previousData = $('Prepare Base64 (Async)').first().json;\n\nreturn {\n  json: {\n    audioUrl: uploadResponse.upload_url,\n    options: previousData.options,\n    assemblyai_api_key: previousData.assemblyai_api_key,\n    callback_url: previousData.callback_url,\n    job_id: previousData.job_id,\n    async_mode: true\n  }\n};"
+      },
+      "id": "merge-upload-result-async",
+      "name": "Merge Upload Result (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare AssemblyAI transcription request (async mode)\nconst input = $input.first().json;\nconst options = input.options || {};\n\nconst requestBody = {\n  audio_url: input.audioUrl,\n  speaker_labels: true\n};\n\n// Add optional parameters\nif (options.speakers_expected) {\n  requestBody.speakers_expected = options.speakers_expected;\n}\n\nif (options.language && options.language !== 'auto') {\n  requestBody.language_code = options.language;\n}\n\nif (options.language === 'auto') {\n  requestBody.language_detection = true;\n}\n\nreturn {\n  json: {\n    requestBody: requestBody,\n    options: options,\n    assemblyai_api_key: input.assemblyai_api_key,\n    callback_url: input.callback_url,\n    job_id: input.job_id,\n    async_mode: true\n  }\n};"
+      },
+      "id": "prepare-transcription-request-async",
+      "name": "Prepare Transcription Request (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.assemblyai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "start-transcription-async",
+      "name": "Start Transcription (Async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, job_id: $('Store Callback Info').first().json.job_id, status: 'processing', message: 'Transcription started' }) }}",
+        "options": {
+          "responseCode": 202,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-immediate",
+      "name": "Respond Immediate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2440,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store transcript ID and options for polling (async mode)\nconst response = $('Start Transcription (Async)').first().json;\nconst previousData = $('Prepare Transcription Request (Async)').first().json;\n\nreturn {\n  json: {\n    transcriptId: response.id,\n    status: response.status,\n    options: previousData.options,\n    pollCount: 0,\n    startTime: Date.now(),\n    assemblyai_api_key: previousData.assemblyai_api_key,\n    callback_url: previousData.callback_url,\n    job_id: previousData.job_id,\n    async_mode: true\n  }\n};"
+      },
+      "id": "store-transcript-id-async",
+      "name": "Store Transcript ID (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.assemblyai.com/v2/transcript/{{ $json.transcriptId }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.assemblyai_api_key }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "poll-status-async",
+      "name": "Poll Status (Async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2880,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-completed-async",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-completed-async",
+      "name": "Is Completed? (Async)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-error-async",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "error",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-error-async",
+      "name": "Is Error? (Async)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Increment poll count and prepare for next poll (async mode)\nconst response = $input.first().json;\nconst storedData = $('Store Transcript ID (Async)').first().json;\n\nconst pollCount = storedData.pollCount + 1;\nconst elapsedMs = Date.now() - storedData.startTime;\n\n// Timeout after 30 minutes\nif (elapsedMs > 30 * 60 * 1000) {\n  throw new Error('Transcription timeout after 30 minutes');\n}\n\nreturn {\n  json: {\n    transcriptId: storedData.transcriptId,\n    status: response.status,\n    options: storedData.options,\n    pollCount: pollCount,\n    startTime: storedData.startTime,\n    assemblyai_api_key: storedData.assemblyai_api_key,\n    callback_url: storedData.callback_url,\n    job_id: storedData.job_id,\n    async_mode: true\n  }\n};"
+      },
+      "id": "prepare-next-poll-async",
+      "name": "Prepare Next Poll (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "wait-before-poll-async",
+      "name": "Wait 5s (Async)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format the final response with speaker identification (async mode)\nconst transcript = $input.first().json;\nconst storedData = $('Store Transcript ID (Async)').first().json;\nconst options = storedData.options || {};\nconst startTime = storedData.startTime;\n\n// Group utterances by speaker\nconst speakerStats = {};\nconst utterances = transcript.utterances || [];\n\nutterances.forEach(u => {\n  if (!speakerStats[u.speaker]) {\n    speakerStats[u.speaker] = {\n      id: u.speaker,\n      label: `Speaker ${u.speaker.replace('speaker_', '').toUpperCase()}`,\n      total_speaking_time_ms: 0,\n      utterance_count: 0\n    };\n  }\n  speakerStats[u.speaker].total_speaking_time_ms += (u.end - u.start);\n  speakerStats[u.speaker].utterance_count++;\n});\n\n// Calculate percentages\nconst totalSpeakingTime = Object.values(speakerStats).reduce((sum, s) => sum + s.total_speaking_time_ms, 0);\nconst speakers = Object.values(speakerStats).map(s => ({\n  ...s,\n  percentage: totalSpeakingTime > 0 ? Math.round((s.total_speaking_time_ms / totalSpeakingTime) * 100) : 0\n}));\n\n// Format utterances\nconst formattedUtterances = utterances.map(u => ({\n  speaker: u.speaker,\n  text: u.text,\n  start_ms: u.start,\n  end_ms: u.end,\n  confidence: u.confidence\n}));\n\n// Build full transcript with speaker labels\nconst transcriptFull = utterances.map(u => {\n  const label = speakerStats[u.speaker]?.label || u.speaker;\n  return `${label}: ${u.text}`;\n}).join('\\n');\n\nconst response = {\n  success: true,\n  job_id: storedData.job_id,\n  data: {\n    speakers: speakers,\n    utterances: options.include_transcription !== false ? formattedUtterances : undefined,\n    transcript_full: options.include_transcription !== false ? transcriptFull : undefined,\n    audio_duration_ms: transcript.audio_duration * 1000,\n    num_speakers_detected: speakers.length,\n    language_detected: transcript.language_code\n  },\n  meta: {\n    provider: 'assemblyai',\n    execution_mode: 'async',\n    processing_time_ms: Date.now() - startTime,\n    transcript_id: transcript.id\n  }\n};\n\nreturn {\n  json: {\n    callback_url: storedData.callback_url,\n    job_id: storedData.job_id,\n    payload: response\n  }\n};"
+      },
+      "id": "format-response-async",
+      "name": "Format Response (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3320,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare callback payload with success response\nconst input = $input.first().json;\n\nreturn {\n  json: {\n    callback_url: input.callback_url,\n    job_id: input.job_id,\n    payload: input.payload,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "prepare-callback-payload",
+      "name": "Prepare Callback Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compute HMAC signature for callback (RFC-040 format)\nconst crypto = require('crypto');\nconst input = $input.first().json;\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(input.payload);\n\n// RFC-040: Sign body only, output hex without prefix\nconst signature = crypto\n  .createHmac('sha256', secret)\n  .update(payload)\n  .digest('hex');\n\nreturn {\n  json: {\n    callback_url: input.callback_url,\n    job_id: input.job_id,\n    payload: input.payload,\n    signature: signature\n  }\n};"
+      },
+      "id": "compute-hmac-signature",
+      "name": "Compute HMAC Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3760,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "callback-success",
+      "name": "Callback Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3980,
+        100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare error callback payload\nconst response = $input.first().json;\nconst storedData = $('Store Transcript ID (Async)').first().json;\n\nconst errorPayload = {\n  success: false,\n  job_id: storedData.job_id,\n  error: {\n    code: 'TRANSCRIPTION_ERROR',\n    message: response.error || 'Transcription failed'\n  },\n  meta: {\n    provider: 'assemblyai',\n    execution_mode: 'async',\n    processing_time_ms: Date.now() - storedData.startTime\n  }\n};\n\nreturn {\n  json: {\n    callback_url: storedData.callback_url,\n    job_id: storedData.job_id,\n    payload: errorPayload,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "prepare-error-callback",
+      "name": "Prepare Error Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compute HMAC signature for error callback (RFC-040 format)\nconst crypto = require('crypto');\nconst input = $input.first().json;\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(input.payload);\n\n// RFC-040: Sign body only, output hex without prefix\nconst signature = crypto\n  .createHmac('sha256', secret)\n  .update(payload)\n  .digest('hex');\n\nreturn {\n  json: {\n    callback_url: input.callback_url,\n    job_id: input.job_id,\n    payload: input.payload,\n    signature: signature\n  }\n};"
+      },
+      "id": "compute-hmac-error",
+      "name": "Compute HMAC Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3760,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "callback-error",
+      "name": "Callback Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3980,
+        400
+      ],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -109,8 +600,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        900,
-        200
+        1120,
+        300
       ]
     },
     {
@@ -143,8 +634,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1120,
-        200
+        1340,
+        400
       ],
       "onError": "continueRegularOutput"
     },
@@ -157,8 +648,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        900,
-        400
+        1120,
+        500
       ]
     },
     {
@@ -170,8 +661,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1340,
-        200
+        1560,
+        400
       ]
     },
     {
@@ -183,8 +674,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1560,
-        300
+        1780,
+        450
       ]
     },
     {
@@ -217,8 +708,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1780,
-        300
+        2000,
+        450
       ],
       "onError": "continueRegularOutput"
     },
@@ -231,8 +722,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2000,
-        300
+        2220,
+        450
       ]
     },
     {
@@ -258,8 +749,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2220,
-        300
+        2440,
+        450
       ],
       "onError": "continueRegularOutput"
     },
@@ -291,8 +782,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2440,
-        300
+        2660,
+        450
       ]
     },
     {
@@ -323,8 +814,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2660,
-        400
+        2880,
+        550
       ]
     },
     {
@@ -340,8 +831,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        2880,
-        500
+        3100,
+        650
       ]
     },
     {
@@ -353,8 +844,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2880,
-        300
+        3100,
+        450
       ]
     },
     {
@@ -367,21 +858,21 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        3100,
-        300
+        3320,
+        450
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Format the final response with speaker identification\nconst transcript = $input.first().json;\nconst storedData = $('Store Transcript ID').first().json;\nconst options = storedData.options || {};\nconst startTime = storedData.startTime;\n\n// Group utterances by speaker\nconst speakerStats = {};\nconst utterances = transcript.utterances || [];\n\nutterances.forEach(u => {\n  if (!speakerStats[u.speaker]) {\n    speakerStats[u.speaker] = {\n      id: u.speaker,\n      label: `Speaker ${u.speaker.replace('speaker_', '').toUpperCase()}`,\n      total_speaking_time_ms: 0,\n      utterance_count: 0\n    };\n  }\n  speakerStats[u.speaker].total_speaking_time_ms += (u.end - u.start);\n  speakerStats[u.speaker].utterance_count++;\n});\n\n// Calculate percentages\nconst totalSpeakingTime = Object.values(speakerStats).reduce((sum, s) => sum + s.total_speaking_time_ms, 0);\nconst speakers = Object.values(speakerStats).map(s => ({\n  ...s,\n  percentage: totalSpeakingTime > 0 ? Math.round((s.total_speaking_time_ms / totalSpeakingTime) * 100) : 0\n}));\n\n// Format utterances\nconst formattedUtterances = utterances.map(u => ({\n  speaker: u.speaker,\n  text: u.text,\n  start_ms: u.start,\n  end_ms: u.end,\n  confidence: u.confidence\n}));\n\n// Build full transcript with speaker labels\nconst transcriptFull = utterances.map(u => {\n  const label = speakerStats[u.speaker]?.label || u.speaker;\n  return `${label}: ${u.text}`;\n}).join('\\n');\n\nconst response = {\n  success: true,\n  data: {\n    speakers: speakers,\n    utterances: options.include_transcription !== false ? formattedUtterances : undefined,\n    transcript_full: options.include_transcription !== false ? transcriptFull : undefined,\n    audio_duration_ms: transcript.audio_duration * 1000,\n    num_speakers_detected: speakers.length,\n    language_detected: transcript.language_code\n  },\n  meta: {\n    provider: 'assemblyai',\n    execution_mode: 'online',\n    processing_time_ms: Date.now() - startTime,\n    transcript_id: transcript.id\n  }\n};\n\nreturn { json: response };"
+        "jsCode": "// Format the final response with speaker identification\nconst transcript = $input.first().json;\nconst storedData = $('Store Transcript ID').first().json;\nconst options = storedData.options || {};\nconst startTime = storedData.startTime;\n\n// Group utterances by speaker\nconst speakerStats = {};\nconst utterances = transcript.utterances || [];\n\nutterances.forEach(u => {\n  if (!speakerStats[u.speaker]) {\n    speakerStats[u.speaker] = {\n      id: u.speaker,\n      label: `Speaker ${u.speaker.replace('speaker_', '').toUpperCase()}`,\n      total_speaking_time_ms: 0,\n      utterance_count: 0\n    };\n  }\n  speakerStats[u.speaker].total_speaking_time_ms += (u.end - u.start);\n  speakerStats[u.speaker].utterance_count++;\n});\n\n// Calculate percentages\nconst totalSpeakingTime = Object.values(speakerStats).reduce((sum, s) => sum + s.total_speaking_time_ms, 0);\nconst speakers = Object.values(speakerStats).map(s => ({\n  ...s,\n  percentage: totalSpeakingTime > 0 ? Math.round((s.total_speaking_time_ms / totalSpeakingTime) * 100) : 0\n}));\n\n// Format utterances\nconst formattedUtterances = utterances.map(u => ({\n  speaker: u.speaker,\n  text: u.text,\n  start_ms: u.start,\n  end_ms: u.end,\n  confidence: u.confidence\n}));\n\n// Build full transcript with speaker labels\nconst transcriptFull = utterances.map(u => {\n  const label = speakerStats[u.speaker]?.label || u.speaker;\n  return `${label}: ${u.text}`;\n}).join('\\n');\n\nconst response = {\n  success: true,\n  data: {\n    speakers: speakers,\n    utterances: options.include_transcription !== false ? formattedUtterances : undefined,\n    transcript_full: options.include_transcription !== false ? transcriptFull : undefined,\n    audio_duration_ms: transcript.audio_duration * 1000,\n    num_speakers_detected: speakers.length,\n    language_detected: transcript.language_code\n  },\n  meta: {\n    provider: 'assemblyai',\n    execution_mode: 'sync',\n    processing_time_ms: Date.now() - startTime,\n    transcript_id: transcript.id\n  }\n};\n\nreturn { json: response };"
       },
       "id": "format-response",
       "name": "Format Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2660,
-        200
+        2880,
+        350
       ]
     },
     {
@@ -405,8 +896,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        2880,
-        200
+        3100,
+        350
       ]
     },
     {
@@ -416,13 +907,13 @@
       "typeVersion": 1,
       "position": [
         240,
-        80
+        40
       ],
       "parameters": {
         "color": 4,
-        "width": 550,
-        "height": 220,
-        "content": "## MCP - Speaker Identifier\n\n**Endpoint:** POST /webhook/speaker-identifier\n\n**Parameters:**\n- `data` (required): Audio URL or base64 encoded audio\n- `assemblyai_api_key` (required): AssemblyAI API key\n- `source` (optional): 'url' or 'base64' (default: url)\n- `options.speakers_expected` (optional): Number of expected speakers\n- `options.language` (optional): Language code or 'auto'\n- `options.include_transcription` (optional): Include full transcript (default: true)\n\n**Returns:** Speaker statistics, utterances with timestamps"
+        "width": 700,
+        "height": 340,
+        "content": "## MCP - Speaker Identifier\n\n**Endpoint:** POST /webhook/speaker-identifier\n\n**Parameters:**\n- `data` (required): Audio URL or base64 encoded audio\n- `assemblyai_api_key` (required): AssemblyAI API key\n- `source` (optional): 'url' or 'base64' (default: url)\n- `options.speakers_expected` (optional): Number of expected speakers\n- `options.language` (optional): Language code or 'auto'\n- `options.include_transcription` (optional): Include full transcript (default: true)\n\n**Async Mode (RFC-040):**\n- `callback_url` (optional): URL to POST results when processing completes\n- `job_id` (optional): Custom job ID (auto-generated if not provided)\n\n**Sync Response (200):** Speaker statistics, utterances with timestamps\n**Async Response (202):** `{ success: true, job_id: \"xxx\", status: \"processing\", message: \"Transcription started\" }`\n\n**Callback Headers:**\n- `X-N8N-Signature`: HMAC-SHA256 signature of payload using N8N_WEBHOOK_SECRET\n- `X-N8N-Job-ID`: The job ID for correlation\n- `X-N8N-Timestamp`: ISO timestamp of callback"
       }
     }
   ],
@@ -442,7 +933,7 @@
       "main": [
         [
           {
-            "node": "Is Base64?",
+            "node": "Has Callback URL?",
             "type": "main",
             "index": 0
           }
@@ -450,6 +941,265 @@
         [
           {
             "node": "Error Invalid Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Callback URL?": {
+      "main": [
+        [
+          {
+            "node": "Store Callback Info",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Base64?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Callback Info": {
+      "main": [
+        [
+          {
+            "node": "Is Base64? (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Base64? (Async)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Base64 (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare URL (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Base64 (Async)": {
+      "main": [
+        [
+          {
+            "node": "Upload to AssemblyAI (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to AssemblyAI (Async)": {
+      "main": [
+        [
+          {
+            "node": "Merge Upload Result (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Upload Result (Async)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Transcription Request (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare URL (Async)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Transcription Request (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Transcription Request (Async)": {
+      "main": [
+        [
+          {
+            "node": "Start Transcription (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Transcription (Async)": {
+      "main": [
+        [
+          {
+            "node": "Respond Immediate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Immediate": {
+      "main": [
+        [
+          {
+            "node": "Store Transcript ID (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Transcript ID (Async)": {
+      "main": [
+        [
+          {
+            "node": "Poll Status (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Status (Async)": {
+      "main": [
+        [
+          {
+            "node": "Is Completed? (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Completed? (Async)": {
+      "main": [
+        [
+          {
+            "node": "Format Response (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Error? (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Error? (Async)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Error Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Next Poll (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Next Poll (Async)": {
+      "main": [
+        [
+          {
+            "node": "Wait 5s (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 5s (Async)": {
+      "main": [
+        [
+          {
+            "node": "Poll Status (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response (Async)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback Payload": {
+      "main": [
+        [
+          {
+            "node": "Compute HMAC Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute HMAC Signature": {
+      "main": [
+        [
+          {
+            "node": "Callback Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Error Callback": {
+      "main": [
+        [
+          {
+            "node": "Compute HMAC Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute HMAC Error": {
+      "main": [
+        [
+          {
+            "node": "Callback Error",
             "type": "main",
             "index": 0
           }
@@ -637,645 +1387,5 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "tags": [],
-  "activeVersion": {
-    "updatedAt": "2026-02-02T17:55:15.060Z",
-    "createdAt": "2026-02-02T17:55:15.060Z",
-    "versionId": "7591f12b-7bf4-4503-9a5d-a02a0afe0621",
-    "workflowId": "zp2f63S20SLgs22o",
-    "nodes": [
-      {
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "speaker-identifier",
-          "responseMode": "responseNode",
-          "options": {}
-        },
-        "id": "webhook-trigger",
-        "name": "Webhook",
-        "type": "n8n-nodes-base.webhook",
-        "typeVersion": 2,
-        "position": [
-          240,
-          300
-        ],
-        "webhookId": "speaker-identifier-webhook"
-      },
-      {
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "id": "condition-data",
-                "leftValue": "={{ $json.body.data }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "exists"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        },
-        "id": "validate-input",
-        "name": "Validate Input",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2,
-        "position": [
-          460,
-          300
-        ]
-      },
-      {
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Missing required field: data (URL or base64 audio)' } }) }}",
-          "options": {
-            "responseCode": 400
-          }
-        },
-        "id": "error-invalid-input",
-        "name": "Error Invalid Input",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1.1,
-        "position": [
-          680,
-          480
-        ]
-      },
-      {
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "id": "condition-source",
-                "leftValue": "={{ $json.body.source }}",
-                "rightValue": "base64",
-                "operator": {
-                  "type": "string",
-                  "operation": "equals"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        },
-        "id": "check-source-type",
-        "name": "Is Base64?",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2,
-        "position": [
-          680,
-          300
-        ]
-      },
-      {
-        "parameters": {
-          "jsCode": "// For base64 input, we need to upload to a temporary storage\nconst base64Data = $input.first().json.body.data;\nconst options = $input.first().json.body.options || {};\nconst apiKey = $input.first().json.body.assemblyai_api_key;\n\n// Remove data URL prefix if present\nconst cleanBase64 = base64Data.replace(/^data:audio\\/[a-z]+;base64,/, '');\n\nreturn {\n  json: {\n    audioBase64: cleanBase64,\n    options: options,\n    needsUpload: true,\n    assemblyai_api_key: apiKey\n  }\n};"
-        },
-        "id": "prepare-base64",
-        "name": "Prepare Base64",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          900,
-          200
-        ]
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "https://api.assemblyai.com/v2/upload",
-          "authentication": "none",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "={{ $json.assemblyai_api_key }}"
-              },
-              {
-                "name": "Content-Type",
-                "value": "application/octet-stream"
-              }
-            ]
-          },
-          "sendBody": true,
-          "contentType": "raw",
-          "body": "={{ Buffer.from($json.audioBase64, 'base64') }}",
-          "options": {
-            "timeout": 120000
-          }
-        },
-        "id": "upload-to-assemblyai",
-        "name": "Upload to AssemblyAI",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          1120,
-          200
-        ],
-        "onError": "continueRegularOutput"
-      },
-      {
-        "parameters": {
-          "jsCode": "// Prepare URL audio input\nconst audioUrl = $input.first().json.body.data;\nconst options = $input.first().json.body.options || {};\nconst apiKey = $input.first().json.body.assemblyai_api_key;\n\nreturn {\n  json: {\n    audioUrl: audioUrl,\n    options: options,\n    needsUpload: false,\n    assemblyai_api_key: apiKey\n  }\n};"
-        },
-        "id": "prepare-url",
-        "name": "Prepare URL",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          900,
-          400
-        ]
-      },
-      {
-        "parameters": {
-          "jsCode": "// Merge uploaded URL with options\nconst uploadResponse = $input.first().json;\nconst previousData = $('Prepare Base64').first().json;\n\nreturn {\n  json: {\n    audioUrl: uploadResponse.upload_url,\n    options: previousData.options,\n    assemblyai_api_key: previousData.assemblyai_api_key\n  }\n};"
-        },
-        "id": "merge-upload-result",
-        "name": "Merge Upload Result",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          1340,
-          200
-        ]
-      },
-      {
-        "parameters": {
-          "jsCode": "// Prepare AssemblyAI transcription request\nconst input = $input.first().json;\nconst options = input.options || {};\n\nconst requestBody = {\n  audio_url: input.audioUrl,\n  speaker_labels: true\n};\n\n// Add optional parameters\nif (options.speakers_expected) {\n  requestBody.speakers_expected = options.speakers_expected;\n}\n\nif (options.language && options.language !== 'auto') {\n  requestBody.language_code = options.language;\n}\n\nif (options.language === 'auto') {\n  requestBody.language_detection = true;\n}\n\nreturn {\n  json: {\n    requestBody: requestBody,\n    options: options,\n    assemblyai_api_key: input.assemblyai_api_key\n  }\n};"
-        },
-        "id": "prepare-transcription-request",
-        "name": "Prepare Transcription Request",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          1560,
-          300
-        ]
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "https://api.assemblyai.com/v2/transcript",
-          "authentication": "none",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "={{ $json.assemblyai_api_key }}"
-              },
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
-          "options": {
-            "timeout": 30000
-          }
-        },
-        "id": "start-transcription",
-        "name": "Start Transcription",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          1780,
-          300
-        ],
-        "onError": "continueRegularOutput"
-      },
-      {
-        "parameters": {
-          "jsCode": "// Store transcript ID and options for polling\nconst response = $input.first().json;\nconst previousData = $('Prepare Transcription Request').first().json;\n\nreturn {\n  json: {\n    transcriptId: response.id,\n    status: response.status,\n    options: previousData.options,\n    pollCount: 0,\n    startTime: Date.now(),\n    assemblyai_api_key: previousData.assemblyai_api_key\n  }\n};"
-        },
-        "id": "store-transcript-id",
-        "name": "Store Transcript ID",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          2000,
-          300
-        ]
-      },
-      {
-        "parameters": {
-          "method": "GET",
-          "url": "=https://api.assemblyai.com/v2/transcript/{{ $json.transcriptId }}",
-          "authentication": "none",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "={{ $json.assemblyai_api_key }}"
-              }
-            ]
-          },
-          "options": {
-            "timeout": 30000
-          }
-        },
-        "id": "poll-status",
-        "name": "Poll Status",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          2220,
-          300
-        ],
-        "onError": "continueRegularOutput"
-      },
-      {
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "id": "condition-completed",
-                "leftValue": "={{ $json.status }}",
-                "rightValue": "completed",
-                "operator": {
-                  "type": "string",
-                  "operation": "equals"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        },
-        "id": "check-completed",
-        "name": "Is Completed?",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2,
-        "position": [
-          2440,
-          300
-        ]
-      },
-      {
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "id": "condition-error",
-                "leftValue": "={{ $json.status }}",
-                "rightValue": "error",
-                "operator": {
-                  "type": "string",
-                  "operation": "equals"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        },
-        "id": "check-error",
-        "name": "Is Error?",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2,
-        "position": [
-          2660,
-          400
-        ]
-      },
-      {
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'TRANSCRIPTION_ERROR', message: $json.error || 'Transcription failed' } }) }}",
-          "options": {
-            "responseCode": 500
-          }
-        },
-        "id": "error-transcription",
-        "name": "Error Transcription",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1.1,
-        "position": [
-          2880,
-          500
-        ]
-      },
-      {
-        "parameters": {
-          "jsCode": "// Increment poll count and prepare for next poll\nconst response = $input.first().json;\nconst storedData = $('Store Transcript ID').first().json;\n\nconst pollCount = storedData.pollCount + 1;\nconst elapsedMs = Date.now() - storedData.startTime;\n\n// Timeout after 30 minutes\nif (elapsedMs > 30 * 60 * 1000) {\n  throw new Error('Transcription timeout after 30 minutes');\n}\n\nreturn {\n  json: {\n    transcriptId: storedData.transcriptId,\n    status: response.status,\n    options: storedData.options,\n    pollCount: pollCount,\n    startTime: storedData.startTime,\n    assemblyai_api_key: storedData.assemblyai_api_key\n  }\n};"
-        },
-        "id": "prepare-next-poll",
-        "name": "Prepare Next Poll",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          2880,
-          300
-        ]
-      },
-      {
-        "parameters": {
-          "amount": 5,
-          "unit": "seconds"
-        },
-        "id": "wait-before-poll",
-        "name": "Wait 5s",
-        "type": "n8n-nodes-base.wait",
-        "typeVersion": 1.1,
-        "position": [
-          3100,
-          300
-        ]
-      },
-      {
-        "parameters": {
-          "jsCode": "// Format the final response with speaker identification\nconst transcript = $input.first().json;\nconst storedData = $('Store Transcript ID').first().json;\nconst options = storedData.options || {};\nconst startTime = storedData.startTime;\n\n// Group utterances by speaker\nconst speakerStats = {};\nconst utterances = transcript.utterances || [];\n\nutterances.forEach(u => {\n  if (!speakerStats[u.speaker]) {\n    speakerStats[u.speaker] = {\n      id: u.speaker,\n      label: `Speaker ${u.speaker.replace('speaker_', '').toUpperCase()}`,\n      total_speaking_time_ms: 0,\n      utterance_count: 0\n    };\n  }\n  speakerStats[u.speaker].total_speaking_time_ms += (u.end - u.start);\n  speakerStats[u.speaker].utterance_count++;\n});\n\n// Calculate percentages\nconst totalSpeakingTime = Object.values(speakerStats).reduce((sum, s) => sum + s.total_speaking_time_ms, 0);\nconst speakers = Object.values(speakerStats).map(s => ({\n  ...s,\n  percentage: totalSpeakingTime > 0 ? Math.round((s.total_speaking_time_ms / totalSpeakingTime) * 100) : 0\n}));\n\n// Format utterances\nconst formattedUtterances = utterances.map(u => ({\n  speaker: u.speaker,\n  text: u.text,\n  start_ms: u.start,\n  end_ms: u.end,\n  confidence: u.confidence\n}));\n\n// Build full transcript with speaker labels\nconst transcriptFull = utterances.map(u => {\n  const label = speakerStats[u.speaker]?.label || u.speaker;\n  return `${label}: ${u.text}`;\n}).join('\\n');\n\nconst response = {\n  success: true,\n  data: {\n    speakers: speakers,\n    utterances: options.include_transcription !== false ? formattedUtterances : undefined,\n    transcript_full: options.include_transcription !== false ? transcriptFull : undefined,\n    audio_duration_ms: transcript.audio_duration * 1000,\n    num_speakers_detected: speakers.length,\n    language_detected: transcript.language_code\n  },\n  meta: {\n    provider: 'assemblyai',\n    execution_mode: 'online',\n    processing_time_ms: Date.now() - startTime,\n    transcript_id: transcript.id\n  }\n};\n\nreturn { json: response };"
-        },
-        "id": "format-response",
-        "name": "Format Response",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          2660,
-          200
-        ]
-      },
-      {
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ JSON.stringify($json) }}",
-          "options": {
-            "responseCode": 200,
-            "responseHeaders": {
-              "entries": [
-                {
-                  "name": "Content-Type",
-                  "value": "application/json"
-                }
-              ]
-            }
-          }
-        },
-        "id": "respond-success",
-        "name": "Respond Success",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1.1,
-        "position": [
-          2880,
-          200
-        ]
-      },
-      {
-        "id": "sticky-note-doc",
-        "name": "API Documentation",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          240,
-          80
-        ],
-        "parameters": {
-          "color": 4,
-          "width": 550,
-          "height": 220,
-          "content": "## MCP - Speaker Identifier\n\n**Endpoint:** POST /webhook/speaker-identifier\n\n**Parameters:**\n- `data` (required): Audio URL or base64 encoded audio\n- `assemblyai_api_key` (required): AssemblyAI API key\n- `source` (optional): 'url' or 'base64' (default: url)\n- `options.speakers_expected` (optional): Number of expected speakers\n- `options.language` (optional): Language code or 'auto'\n- `options.include_transcription` (optional): Include full transcript (default: true)\n\n**Returns:** Speaker statistics, utterances with timestamps"
-        }
-      }
-    ],
-    "connections": {
-      "Webhook": {
-        "main": [
-          [
-            {
-              "node": "Validate Input",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Validate Input": {
-        "main": [
-          [
-            {
-              "node": "Is Base64?",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Error Invalid Input",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Is Base64?": {
-        "main": [
-          [
-            {
-              "node": "Prepare Base64",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Prepare URL",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Prepare Base64": {
-        "main": [
-          [
-            {
-              "node": "Upload to AssemblyAI",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Upload to AssemblyAI": {
-        "main": [
-          [
-            {
-              "node": "Merge Upload Result",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Merge Upload Result": {
-        "main": [
-          [
-            {
-              "node": "Prepare Transcription Request",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Prepare URL": {
-        "main": [
-          [
-            {
-              "node": "Prepare Transcription Request",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Prepare Transcription Request": {
-        "main": [
-          [
-            {
-              "node": "Start Transcription",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Start Transcription": {
-        "main": [
-          [
-            {
-              "node": "Store Transcript ID",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Store Transcript ID": {
-        "main": [
-          [
-            {
-              "node": "Poll Status",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Poll Status": {
-        "main": [
-          [
-            {
-              "node": "Is Completed?",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Is Completed?": {
-        "main": [
-          [
-            {
-              "node": "Format Response",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Is Error?",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Is Error?": {
-        "main": [
-          [
-            {
-              "node": "Error Transcription",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Prepare Next Poll",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Prepare Next Poll": {
-        "main": [
-          [
-            {
-              "node": "Wait 5s",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Wait 5s": {
-        "main": [
-          [
-            {
-              "node": "Poll Status",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Format Response": {
-        "main": [
-          [
-            {
-              "node": "Respond Success",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      }
-    },
-    "authors": "import",
-    "name": null,
-    "description": null
-  }
+  "tags": []
 }
