@@ -65,7 +65,7 @@
       "typeVersion": 1,
       "position": [
         700,
-        460
+        560
       ],
       "parameters": {
         "respondWith": "json",
@@ -76,12 +76,105 @@
       }
     },
     {
-      "id": "route-operation",
-      "name": "Route Operation",
+      "id": "check-callback-url",
+      "name": "Has Callback URL?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
         700,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "store-async-context",
+      "name": "Store Async Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        940,
+        200
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ { \"job_id\": $json.body.job_id || $now.toMillis().toString(36) + Math.random().toString(36).substring(2, 8), \"callback_url\": $json.body.callback_url, \"body\": $json.body } }}"
+      }
+    },
+    {
+      "id": "respond-202-accepted",
+      "name": "Respond 202 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1180,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"job_id\": $json.job_id, \"status\": \"processing\" } }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "route-operation-sync",
+      "name": "Route Operation (Sync)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        940,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.file_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "route-operation-async",
+      "name": "Route Operation (Async)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1420,
         200
       ],
       "parameters": {
@@ -107,13 +200,13 @@
       }
     },
     {
-      "id": "list-drive-files",
-      "name": "List Drive Files",
+      "id": "list-drive-files-sync",
+      "name": "List Drive Files (Sync)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        940,
-        100
+        1180,
+        500
       ],
       "parameters": {
         "method": "GET",
@@ -152,12 +245,57 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "download-file",
-      "name": "Download File",
+      "id": "list-drive-files-async",
+      "name": "List Drive Files (Async)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        940,
+        1660,
+        100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.googleapis.com/drive/v3/files",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Store Async Context').first().json.body.google_access_token }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "='\"{{ $('Store Async Context').first().json.body.folder_id }}\" in parents and (mimeType=\"image/png\" or mimeType=\"image/jpeg\" or mimeType=\"application/pdf\")'"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name,mimeType,size,createdTime)"
+            },
+            {
+              "name": "pageSize",
+              "value": "={{ $('Store Async Context').first().json.body.max_files || 100 }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "download-file-sync",
+      "name": "Download File (Sync)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1180,
         300
       ],
       "parameters": {
@@ -185,13 +323,46 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "get-file-metadata",
-      "name": "Get File Metadata",
+      "id": "download-file-async",
+      "name": "Download File (Async)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        940,
-        500
+        1660,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Store Async Context').first().json.body.file_id }}?alt=media",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Store Async Context').first().json.body.google_access_token }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "get-file-metadata-sync",
+      "name": "Get File Metadata (Sync)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1180,
+        700
       ],
       "parameters": {
         "method": "GET",
@@ -222,12 +393,49 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "mistral-ocr",
-      "name": "Mistral OCR API",
+      "id": "get-file-metadata-async",
+      "name": "Get File Metadata (Async)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1180,
+        1660,
+        500
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Store Async Context').first().json.body.file_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Store Async Context').first().json.body.google_access_token }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "id,name,mimeType,size"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "mistral-ocr-sync",
+      "name": "Mistral OCR API (Sync)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1420,
         300
       ],
       "parameters": {
@@ -249,7 +457,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { \"model\": \"mistral-ocr-latest\", \"document\": { \"type\": \"image_url\", \"image_url\": 'data:' + ($('Get File Metadata').first().json.mimeType || 'image/png') + ';base64,' + $binary.data.data }, \"include_image_base64\": $('Webhook').first().json.body.include_images || false } }}",
+        "jsonBody": "={{ { \"model\": \"mistral-ocr-latest\", \"document\": { \"type\": \"image_url\", \"image_url\": 'data:' + ($('Get File Metadata (Sync)').first().json.mimeType || 'image/png') + ';base64,' + $binary.data.data }, \"include_image_base64\": $('Webhook').first().json.body.include_images || false } }}",
         "options": {
           "timeout": 120000
         }
@@ -257,13 +465,48 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "format-list-output",
-      "name": "Format List Output",
+      "id": "mistral-ocr-async",
+      "name": "Mistral OCR API (Async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1900,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/ocr",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Store Async Context').first().json.body.mistral_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"model\": \"mistral-ocr-latest\", \"document\": { \"type\": \"image_url\", \"image_url\": 'data:' + ($('Get File Metadata (Async)').first().json.mimeType || 'image/png') + ';base64,' + $binary.data.data }, \"include_image_base64\": $('Store Async Context').first().json.body.include_images || false } }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-list-output-sync",
+      "name": "Format List Output (Sync)",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1180,
-        100
+        1420,
+        500
       ],
       "parameters": {
         "mode": "raw",
@@ -271,27 +514,55 @@
       }
     },
     {
-      "id": "format-ocr-output",
-      "name": "Format OCR Output",
+      "id": "format-list-output-async",
+      "name": "Format List Output (Async)",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1420,
+        1900,
+        100
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ { \"success\": true, \"job_id\": $('Store Async Context').first().json.job_id, \"operation\": \"list_files\", \"data\": { \"files\": $json.files || [], \"folder_id\": $('Store Async Context').first().json.body.folder_id }, \"meta\": { \"provider\": \"google_drive\", \"count\": ($json.files || []).length } } }}"
+      }
+    },
+    {
+      "id": "format-ocr-output-sync",
+      "name": "Format OCR Output (Sync)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1660,
         300
       ],
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"operation\": \"ocr\", \"data\": { \"text\": $json.pages?.map(p => p.markdown).join('\\n\\n') || '', \"pages\": $json.pages || [], \"file\": { \"id\": $('Webhook').first().json.body.file_id, \"name\": $('Get File Metadata').first().json.name, \"mimeType\": $('Get File Metadata').first().json.mimeType } }, \"meta\": { \"provider\": \"mistral\", \"model\": $json.model || 'mistral-ocr-latest', \"usage\": { \"pages_processed\": $json.usage_info?.pages_processed || 1, \"doc_size_bytes\": $json.usage_info?.doc_size_bytes || 0 } } } }}"
+        "jsonOutput": "={{ { \"success\": true, \"operation\": \"ocr\", \"data\": { \"text\": $json.pages?.map(p => p.markdown).join('\\n\\n') || '', \"pages\": $json.pages || [], \"file\": { \"id\": $('Webhook').first().json.body.file_id, \"name\": $('Get File Metadata (Sync)').first().json.name, \"mimeType\": $('Get File Metadata (Sync)').first().json.mimeType } }, \"meta\": { \"provider\": \"mistral\", \"model\": $json.model || 'mistral-ocr-latest', \"usage\": { \"pages_processed\": $json.usage_info?.pages_processed || 1, \"doc_size_bytes\": $json.usage_info?.doc_size_bytes || 0 } } } }}"
       }
     },
     {
-      "id": "respond-list",
-      "name": "Respond List",
+      "id": "format-ocr-output-async",
+      "name": "Format OCR Output (Async)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2140,
+        300
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ { \"success\": true, \"job_id\": $('Store Async Context').first().json.job_id, \"operation\": \"ocr\", \"data\": { \"text\": $json.pages?.map(p => p.markdown).join('\\n\\n') || '', \"pages\": $json.pages || [], \"file\": { \"id\": $('Store Async Context').first().json.body.file_id, \"name\": $('Get File Metadata (Async)').first().json.name, \"mimeType\": $('Get File Metadata (Async)').first().json.mimeType } }, \"meta\": { \"provider\": \"mistral\", \"model\": $json.model || 'mistral-ocr-latest', \"usage\": { \"pages_processed\": $json.usage_info?.pages_processed || 1, \"doc_size_bytes\": $json.usage_info?.doc_size_bytes || 0 } } } }}"
+      }
+    },
+    {
+      "id": "respond-list-sync",
+      "name": "Respond List (Sync)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        1420,
-        100
+        1660,
+        500
       ],
       "parameters": {
         "respondWith": "json",
@@ -300,17 +571,192 @@
       }
     },
     {
-      "id": "respond-ocr",
-      "name": "Respond OCR",
+      "id": "respond-ocr-sync",
+      "name": "Respond OCR (Sync)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        1660,
+        1900,
         300
       ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare-callback-list",
+      "name": "Prepare Callback (List)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2140,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst result = $input.first().json;\nconst asyncContext = $('Store Async Context').first().json;\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(result);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn {\n  json: {\n    callback_url: asyncContext.callback_url,\n    payload: result,\n    signature: signature\n  }\n};"
+      }
+    },
+    {
+      "id": "prepare-callback-ocr",
+      "name": "Prepare Callback (OCR)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2380,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst result = $input.first().json;\nconst asyncContext = $('Store Async Context').first().json;\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(result);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn {\n  json: {\n    callback_url: asyncContext.callback_url,\n    payload: result,\n    signature: signature\n  }\n};"
+      }
+    },
+    {
+      "id": "callback-list",
+      "name": "Callback (List)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "callback-ocr",
+      "name": "Callback (OCR)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2620,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "prepare-error-callback",
+      "name": "Prepare Error Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2140,
+        500
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst asyncContext = $('Store Async Context').first().json;\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\n\nconst errorResult = {\n  success: false,\n  job_id: asyncContext.job_id,\n  error: {\n    code: 500,\n    message: 'Processing failed. Please check the file format and try again.',\n    status: 'INTERNAL_ERROR'\n  }\n};\n\nconst payload = JSON.stringify(errorResult);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn {\n  json: {\n    callback_url: asyncContext.callback_url,\n    payload: errorResult,\n    signature: signature\n  }\n};"
+      }
+    },
+    {
+      "id": "callback-error",
+      "name": "Callback (Error)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        500
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "check-async-error",
+      "name": "Check Async Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1900,
+        500
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.error || $json.statusCode >= 400 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
         "options": {}
       }
     },
@@ -321,13 +767,29 @@
       "typeVersion": 1,
       "position": [
         240,
-        60
+        -40
       ],
       "parameters": {
         "color": 6,
-        "width": 600,
-        "height": 280,
-        "content": "## MCP - Google Drive OCR\n\n**Endpoint:** POST /webhook/google-drive-ocr\n\n**Parameters:**\n- `google_access_token` (required): Google OAuth2 access token\n- `mistral_api_key` (required for OCR): Mistral API key\n- `folder_id` (string): List files in folder\n- `file_id` (string): Process specific file with OCR\n- `max_files` (int): Max files to list (default: 100)\n- `include_images` (bool): Include base64 images in OCR response\n\n**Operations:**\n- List files: provide `folder_id`\n- OCR file: provide `file_id` + `mistral_api_key`\n\n**API:** Mistral OCR (mistral-ocr-latest) + Google Drive v3"
+        "width": 700,
+        "height": 380,
+        "content": "## MCP - Google Drive OCR (RFC-040 Async Support)\n\n**Endpoint:** POST /webhook/google-drive-ocr\n\n**Parameters:**\n- `google_access_token` (required): Google OAuth2 access token\n- `mistral_api_key` (required for OCR): Mistral API key\n- `folder_id` (string): List files in folder\n- `file_id` (string): Process specific file with OCR\n- `max_files` (int): Max files to list (default: 100)\n- `include_images` (bool): Include base64 images in OCR response\n- `callback_url` (string): URL for async callback (RFC-040)\n- `job_id` (string): Optional job ID for async tracking\n\n**Sync Mode:** Omit `callback_url` for synchronous response\n\n**Async Mode (RFC-040):**\n- Provide `callback_url` to receive 202 Accepted immediately\n- Result POSTed to callback_url with HMAC signature\n- Header: X-N8N-Signature (HMAC-SHA256 of payload)\n\n**API:** Mistral OCR (mistral-ocr-latest) + Google Drive v3"
+      }
+    },
+    {
+      "id": "sticky-note-async",
+      "name": "Async Flow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1420,
+        -40
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 400,
+        "height": 180,
+        "content": "## RFC-040 Async Callback Pattern\n\n1. Client sends request with `callback_url`\n2. Server responds immediately with 202 + job_id\n3. Processing continues in background\n4. Result POSTed to callback_url with:\n   - Content-Type: application/json\n   - X-N8N-Signature: HMAC-SHA256(payload)"
       }
     }
   ],
@@ -347,7 +809,7 @@
       "main": [
         [
           {
-            "node": "Route Operation",
+            "node": "Has Callback URL?",
             "type": "main",
             "index": 0
           }
@@ -361,78 +823,253 @@
         ]
       ]
     },
-    "Route Operation": {
+    "Has Callback URL?": {
       "main": [
         [
           {
-            "node": "Download File",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Get File Metadata",
+            "node": "Store Async Context",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "List Drive Files",
+            "node": "Route Operation (Sync)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "List Drive Files": {
+    "Store Async Context": {
       "main": [
         [
           {
-            "node": "Format List Output",
+            "node": "Respond 202 Accepted",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Download File": {
+    "Respond 202 Accepted": {
       "main": [
         [
           {
-            "node": "Mistral OCR API",
+            "node": "Route Operation (Async)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Mistral OCR API": {
+    "Route Operation (Sync)": {
       "main": [
         [
           {
-            "node": "Format OCR Output",
+            "node": "Download File (Sync)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get File Metadata (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "List Drive Files (Sync)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format List Output": {
+    "Route Operation (Async)": {
       "main": [
         [
           {
-            "node": "Respond List",
+            "node": "Download File (Async)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get File Metadata (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "List Drive Files (Async)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format OCR Output": {
+    "List Drive Files (Sync)": {
       "main": [
         [
           {
-            "node": "Respond OCR",
+            "node": "Format List Output (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Drive Files (Async)": {
+      "main": [
+        [
+          {
+            "node": "Format List Output (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Mistral OCR API (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File (Async)": {
+      "main": [
+        [
+          {
+            "node": "Mistral OCR API (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral OCR API (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Format OCR Output (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral OCR API (Async)": {
+      "main": [
+        [
+          {
+            "node": "Format OCR Output (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format List Output (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Respond List (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format List Output (Async)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback (List)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format OCR Output (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Respond OCR (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format OCR Output (Async)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback (OCR)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback (List)": {
+      "main": [
+        [
+          {
+            "node": "Callback (List)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback (OCR)": {
+      "main": [
+        [
+          {
+            "node": "Callback (OCR)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File Metadata (Async)": {
+      "main": [
+        [
+          {
+            "node": "Check Async Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Async Error": {
+      "main": [
+        [
+          {
+            "node": "Prepare Error Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+        ]
+      ]
+    },
+    "Prepare Error Callback": {
+      "main": [
+        [
+          {
+            "node": "Callback (Error)",
             "type": "main",
             "index": 0
           }
@@ -445,453 +1082,5 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "tags": [],
-  "activeVersion": {
-    "updatedAt": "2026-02-02T17:55:15.060Z",
-    "createdAt": "2026-02-02T17:55:15.060Z",
-    "versionId": "d10aa7c3-1d85-4127-888c-c05b3029ded8",
-    "workflowId": "syDUdlVjTrV9QqPI",
-    "nodes": [
-      {
-        "id": "webhook-drive-ocr",
-        "name": "Webhook",
-        "type": "n8n-nodes-base.webhook",
-        "typeVersion": 2,
-        "position": [
-          240,
-          300
-        ],
-        "webhookId": "google-drive-ocr-webhook",
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "google-drive-ocr",
-          "responseMode": "responseNode",
-          "options": {}
-        }
-      },
-      {
-        "id": "validate-input",
-        "name": "Validate Input",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          460,
-          300
-        ],
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "loose"
-            },
-            "conditions": [
-              {
-                "leftValue": "={{ $json.body.google_access_token }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "isNotEmpty"
-                }
-              },
-              {
-                "leftValue": "={{ $json.body.file_id || $json.body.folder_id }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "isNotEmpty"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        }
-      },
-      {
-        "id": "error-no-input",
-        "name": "Error: Missing Input",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          700,
-          460
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameters. Provide google_access_token and either file_id or folder_id.\", \"status\": \"BAD_REQUEST\" } } }}",
-          "options": {
-            "responseCode": 400
-          }
-        }
-      },
-      {
-        "id": "route-operation",
-        "name": "Route Operation",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          700,
-          200
-        ],
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "loose"
-            },
-            "conditions": [
-              {
-                "leftValue": "={{ $json.body.file_id }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "isNotEmpty"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        }
-      },
-      {
-        "id": "list-drive-files",
-        "name": "List Drive Files",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          940,
-          100
-        ],
-        "parameters": {
-          "method": "GET",
-          "url": "=https://www.googleapis.com/drive/v3/files",
-          "authentication": "none",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "=Bearer {{ $('Webhook').first().json.body.google_access_token }}"
-              }
-            ]
-          },
-          "sendQuery": true,
-          "queryParameters": {
-            "parameters": [
-              {
-                "name": "q",
-                "value": "='\"{{ $('Webhook').first().json.body.folder_id }}\" in parents and (mimeType=\"image/png\" or mimeType=\"image/jpeg\" or mimeType=\"application/pdf\")'"
-              },
-              {
-                "name": "fields",
-                "value": "files(id,name,mimeType,size,createdTime)"
-              },
-              {
-                "name": "pageSize",
-                "value": "={{ $('Webhook').first().json.body.max_files || 100 }}"
-              }
-            ]
-          },
-          "options": {
-            "timeout": 30000
-          }
-        },
-        "onError": "continueRegularOutput"
-      },
-      {
-        "id": "download-file",
-        "name": "Download File",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          940,
-          300
-        ],
-        "parameters": {
-          "method": "GET",
-          "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Webhook').first().json.body.file_id }}?alt=media",
-          "authentication": "none",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "=Bearer {{ $('Webhook').first().json.body.google_access_token }}"
-              }
-            ]
-          },
-          "options": {
-            "response": {
-              "response": {
-                "responseFormat": "file"
-              }
-            },
-            "timeout": 60000
-          }
-        },
-        "onError": "continueRegularOutput"
-      },
-      {
-        "id": "get-file-metadata",
-        "name": "Get File Metadata",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          940,
-          500
-        ],
-        "parameters": {
-          "method": "GET",
-          "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Webhook').first().json.body.file_id }}",
-          "authentication": "none",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "=Bearer {{ $('Webhook').first().json.body.google_access_token }}"
-              }
-            ]
-          },
-          "sendQuery": true,
-          "queryParameters": {
-            "parameters": [
-              {
-                "name": "fields",
-                "value": "id,name,mimeType,size"
-              }
-            ]
-          },
-          "options": {
-            "timeout": 15000
-          }
-        },
-        "onError": "continueRegularOutput"
-      },
-      {
-        "id": "mistral-ocr",
-        "name": "Mistral OCR API",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          1180,
-          300
-        ],
-        "parameters": {
-          "method": "POST",
-          "url": "https://api.mistral.ai/v1/ocr",
-          "authentication": "none",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "=Bearer {{ $('Webhook').first().json.body.mistral_api_key }}"
-              },
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{ { \"model\": \"mistral-ocr-latest\", \"document\": { \"type\": \"image_url\", \"image_url\": 'data:' + ($('Get File Metadata').first().json.mimeType || 'image/png') + ';base64,' + $binary.data.data }, \"include_image_base64\": $('Webhook').first().json.body.include_images || false } }}",
-          "options": {
-            "timeout": 120000
-          }
-        },
-        "onError": "continueRegularOutput"
-      },
-      {
-        "id": "format-list-output",
-        "name": "Format List Output",
-        "type": "n8n-nodes-base.set",
-        "typeVersion": 3.4,
-        "position": [
-          1180,
-          100
-        ],
-        "parameters": {
-          "mode": "raw",
-          "jsonOutput": "={{ { \"success\": true, \"operation\": \"list_files\", \"data\": { \"files\": $json.files || [], \"folder_id\": $('Webhook').first().json.body.folder_id }, \"meta\": { \"provider\": \"google_drive\", \"count\": ($json.files || []).length } } }}"
-        }
-      },
-      {
-        "id": "format-ocr-output",
-        "name": "Format OCR Output",
-        "type": "n8n-nodes-base.set",
-        "typeVersion": 3.4,
-        "position": [
-          1420,
-          300
-        ],
-        "parameters": {
-          "mode": "raw",
-          "jsonOutput": "={{ { \"success\": true, \"operation\": \"ocr\", \"data\": { \"text\": $json.pages?.map(p => p.markdown).join('\\n\\n') || '', \"pages\": $json.pages || [], \"file\": { \"id\": $('Webhook').first().json.body.file_id, \"name\": $('Get File Metadata').first().json.name, \"mimeType\": $('Get File Metadata').first().json.mimeType } }, \"meta\": { \"provider\": \"mistral\", \"model\": $json.model || 'mistral-ocr-latest', \"usage\": { \"pages_processed\": $json.usage_info?.pages_processed || 1, \"doc_size_bytes\": $json.usage_info?.doc_size_bytes || 0 } } } }}"
-        }
-      },
-      {
-        "id": "respond-list",
-        "name": "Respond List",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          1420,
-          100
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ $json }}",
-          "options": {}
-        }
-      },
-      {
-        "id": "respond-ocr",
-        "name": "Respond OCR",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          1660,
-          300
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ $json }}",
-          "options": {}
-        }
-      },
-      {
-        "id": "sticky-note-doc",
-        "name": "API Documentation",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          240,
-          60
-        ],
-        "parameters": {
-          "color": 6,
-          "width": 600,
-          "height": 280,
-          "content": "## MCP - Google Drive OCR\n\n**Endpoint:** POST /webhook/google-drive-ocr\n\n**Parameters:**\n- `google_access_token` (required): Google OAuth2 access token\n- `mistral_api_key` (required for OCR): Mistral API key\n- `folder_id` (string): List files in folder\n- `file_id` (string): Process specific file with OCR\n- `max_files` (int): Max files to list (default: 100)\n- `include_images` (bool): Include base64 images in OCR response\n\n**Operations:**\n- List files: provide `folder_id`\n- OCR file: provide `file_id` + `mistral_api_key`\n\n**API:** Mistral OCR (mistral-ocr-latest) + Google Drive v3"
-        }
-      }
-    ],
-    "connections": {
-      "Webhook": {
-        "main": [
-          [
-            {
-              "node": "Validate Input",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Validate Input": {
-        "main": [
-          [
-            {
-              "node": "Route Operation",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Error: Missing Input",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Route Operation": {
-        "main": [
-          [
-            {
-              "node": "Download File",
-              "type": "main",
-              "index": 0
-            },
-            {
-              "node": "Get File Metadata",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "List Drive Files",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "List Drive Files": {
-        "main": [
-          [
-            {
-              "node": "Format List Output",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Download File": {
-        "main": [
-          [
-            {
-              "node": "Mistral OCR API",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Mistral OCR API": {
-        "main": [
-          [
-            {
-              "node": "Format OCR Output",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Format List Output": {
-        "main": [
-          [
-            {
-              "node": "Respond List",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Format OCR Output": {
-        "main": [
-          [
-            {
-              "node": "Respond OCR",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      }
-    },
-    "authors": "import",
-    "name": null,
-    "description": null
-  }
+  "tags": []
 }
