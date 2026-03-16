@@ -7,10 +7,7 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        240,
-        300
-      ],
+      "position": [240, 300],
       "webhookId": "text-generator-webhook",
       "parameters": {
         "httpMethod": "POST",
@@ -24,10 +21,7 @@
       "name": "Validate Input",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [
-        460,
-        300
-      ],
+      "position": [440, 300],
       "parameters": {
         "conditions": {
           "options": {
@@ -55,78 +49,201 @@
       "name": "Error: No Prompt",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [
-        700,
-        460
-      ],
+      "position": [660, 460],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: prompt\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": \"INVALID_INPUT\", \"message\": \"Missing required parameter: prompt\" }, \"meta\": { \"provider\": \"openai\" } } }}",
         "options": {
           "responseCode": 400
         }
       }
     },
     {
-      "id": "openai-generate",
-      "name": "OpenAI Generate Text",
-      "type": "n8n-nodes-base.openAi",
-      "typeVersion": 1.8,
-      "position": [
-        700,
-        200
-      ],
+      "id": "check-callback",
+      "name": "Has Callback URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [660, 300],
       "parameters": {
-        "resource": "chat",
-        "operation": "message",
-        "model": "={{ $json.body.model || 'gpt-4o' }}",
-        "messages": {
-          "values": [
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
             {
-              "content": "={{ $json.body.system_prompt || 'You are a helpful assistant that generates high-quality text based on user instructions.' }}",
-              "role": "system"
+              "leftValue": "={{ $json.body.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare-async",
+      "name": "Prepare Async Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [880, 200],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"context\": {\n    \"job_id\": \"{{ $json.body.job_id || $runId }}\",\n    \"callback_url\": \"{{ $json.body.callback_url }}\",\n    \"conversation_id\": \"{{ $json.body.conversation_id || '' }}\",\n    \"user_id\": \"{{ $json.body.user_id || '' }}\",\n    \"guild_id\": \"{{ $json.body.guild_id || '' }}\",\n    \"channel_id\": \"{{ $json.body.channel_id || '' }}\",\n    \"start_time\": {{ Date.now() }},\n    \"prompt\": {{ JSON.stringify($json.body.prompt) }},\n    \"system_prompt\": {{ JSON.stringify($json.body.system_prompt || 'You are a helpful assistant that generates high-quality text based on user instructions.') }},\n    \"model\": \"{{ $json.body.model || 'gpt-4o' }}\",\n    \"temperature\": {{ $json.body.temperature || 0.7 }},\n    \"max_tokens\": {{ $json.body.max_tokens || 2048 }},\n    \"openai_api_key\": \"{{ $json.body.openai_api_key || $json.body.plugin_context?.api_keys?.openai || '' }}\"\n  }\n}"
+      }
+    },
+    {
+      "id": "prepare-sync",
+      "name": "Prepare Sync Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [880, 400],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"context\": {\n    \"job_id\": \"{{ $json.body.job_id || $runId }}\",\n    \"callback_url\": null,\n    \"start_time\": {{ Date.now() }},\n    \"prompt\": {{ JSON.stringify($json.body.prompt) }},\n    \"system_prompt\": {{ JSON.stringify($json.body.system_prompt || 'You are a helpful assistant that generates high-quality text based on user instructions.') }},\n    \"model\": \"{{ $json.body.model || 'gpt-4o' }}\",\n    \"temperature\": {{ $json.body.temperature || 0.7 }},\n    \"max_tokens\": {{ $json.body.max_tokens || 2048 }},\n    \"openai_api_key\": \"{{ $json.body.openai_api_key || $json.body.plugin_context?.api_keys?.openai || '' }}\"\n  }\n}"
+      }
+    },
+    {
+      "id": "respond-accepted",
+      "name": "Respond 202 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1100, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"status\": \"accepted\", \"job_id\": $json.context.job_id, \"message\": \"Text generation started, callback will be sent on completion\" } }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "openai-generate-async",
+      "name": "OpenAI Generate (Async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.context.openai_api_key }}"
             },
             {
-              "content": "={{ $json.body.prompt }}",
-              "role": "user"
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
         },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.context.model }}\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": {{ JSON.stringify($json.context.system_prompt) }}\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.context.prompt) }}\n    }\n  ],\n  \"temperature\": {{ $json.context.temperature }},\n  \"max_tokens\": {{ $json.context.max_tokens }}\n}",
         "options": {
-          "temperature": "={{ $json.body.temperature || 0.7 }}",
-          "maxTokens": "={{ $json.body.max_tokens || 2048 }}"
+          "timeout": 120000
         }
       },
-      "credentials": {
-        "openAiApi": {
-          "id": "openai-credentials",
-          "name": "OpenAI account"
-        }
-      }
+      "onError": "continueRegularOutput"
     },
     {
-      "id": "format-output",
-      "name": "Format Output",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        920,
-        200
-      ],
+      "id": "openai-generate-sync",
+      "name": "OpenAI Generate (Sync)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 400],
       "parameters": {
-        "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"data\": { \"text\": $json.message.content, \"model\": $json.model || $('Webhook').first().json.body.model || 'gpt-4o', \"finish_reason\": $json.finish_reason || 'stop' }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"usage\": { \"prompt_tokens\": $json.usage?.prompt_tokens || 0, \"completion_tokens\": $json.usage?.completion_tokens || 0, \"total_tokens\": $json.usage?.total_tokens || 0 } } } }}"
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.context.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.context.model }}\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": {{ JSON.stringify($json.context.system_prompt) }}\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.context.prompt) }}\n    }\n  ],\n  \"temperature\": {{ $json.context.temperature }},\n  \"max_tokens\": {{ $json.context.max_tokens }}\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-callback",
+      "name": "Format Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 200],
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst context = $('Prepare Async Context').first().json.context;\nconst processingTime = Date.now() - context.start_time;\n\nconst isSuccess = !result.error && result.choices?.[0]?.message?.content;\nconst text = result.choices?.[0]?.message?.content || '';\n\nlet callback;\n\nif (isSuccess) {\n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: true,\n    result: {\n      text: text,\n      output_type: 'text',\n      model: result.model || context.model,\n      finish_reason: result.choices?.[0]?.finish_reason || 'stop'\n    },\n    metrics: {\n      tokens_used: result.usage?.total_tokens || 0,\n      prompt_tokens: result.usage?.prompt_tokens || 0,\n      completion_tokens: result.usage?.completion_tokens || 0,\n      processing_time_ms: processingTime\n    },\n    error: null\n  };\n} else {\n  const errorCode = result.error?.code || 'INTERNAL_ERROR';\n  const errorMessage = result.error?.message || 'Text generation failed';\n  \n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: false,\n    result: null,\n    metrics: {\n      tokens_used: 0,\n      processing_time_ms: processingTime\n    },\n    error: {\n      code: errorCode,\n      message: errorMessage,\n      retriable: ['rate_limit_exceeded', 'timeout', 'server_error'].includes(errorCode)\n    }\n  };\n}\n\n// RFC-040: Generate HMAC signature\nconst crypto = require('crypto');\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callback);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn {\n  json: {\n    callback: callback,\n    callback_url: context.callback_url,\n    signature: signature,\n    payload: payload\n  }\n};"
       }
     },
     {
-      "id": "respond-success",
-      "name": "Respond Success",
+      "id": "send-callback",
+      "name": "Send Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-sync-response",
+      "name": "Format Sync Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 400],
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst context = $('Prepare Sync Context').first().json.context;\nconst processingTime = Date.now() - context.start_time;\n\nconst isSuccess = !result.error && result.choices?.[0]?.message?.content;\nconst text = result.choices?.[0]?.message?.content || '';\n\nif (isSuccess) {\n  return {\n    json: {\n      success: true,\n      data: {\n        text: text,\n        model: result.model || context.model,\n        finish_reason: result.choices?.[0]?.finish_reason || 'stop'\n      },\n      meta: {\n        provider: 'openai',\n        usage: {\n          prompt_tokens: result.usage?.prompt_tokens || 0,\n          completion_tokens: result.usage?.completion_tokens || 0,\n          total_tokens: result.usage?.total_tokens || 0\n        },\n        processing_time_ms: processingTime\n      }\n    }\n  };\n} else {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: result.error?.code || 'INTERNAL_ERROR',\n        message: result.error?.message || 'Text generation failed'\n      },\n      meta: {\n        provider: 'openai',\n        processing_time_ms: processingTime\n      }\n    }\n  };\n}"
+      }
+    },
+    {
+      "id": "respond-sync",
+      "name": "Respond Sync",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [
-        1140,
-        200
-      ],
+      "position": [1540, 400],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json }}",
@@ -138,15 +255,12 @@
       "name": "API Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        240,
-        80
-      ],
+      "position": [240, 60],
       "parameters": {
         "color": 6,
-        "width": 550,
-        "height": 220,
-        "content": "## MCP - Text Generator\n\n**Endpoint:** POST /webhook/text-generator\n\n**Parameters:**\n- `prompt` (required): Text generation prompt\n- `system_prompt` (optional): System instructions\n- `model` (optional): gpt-4o, gpt-4o-mini, gpt-4-turbo (default: gpt-4o)\n- `temperature` (optional): 0-2 (default: 0.7)\n- `max_tokens` (optional): Max output tokens (default: 2048)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Generated text with usage stats"
+        "width": 600,
+        "height": 280,
+        "content": "## MCP - Text Generator (RFC-014 + RFC-040)\n\n**Endpoint:** POST /webhook/text-generator\n\n**Parameters:**\n- `prompt` (required): Text generation prompt\n- `system_prompt` (optional): System instructions\n- `model` (optional): gpt-4o, gpt-4o-mini, gpt-4-turbo (default: gpt-4o)\n- `temperature` (optional): 0-2 (default: 0.7)\n- `max_tokens` (optional): Max output tokens (default: 2048)\n- `openai_api_key` (required): OpenAI API key\n- `callback_url` (optional): URL for async callback\n\n**RFC-040 Async Pattern:**\n- If `callback_url` present: 202 Accepted + callback POST\n- If no `callback_url`: 200 OK sync response\n\n**Callback Headers (RFC-040):**\n- Content-Type: application/json\n- X-N8N-Signature: HMAC-SHA256(payload)"
       }
     }
   ],
@@ -166,7 +280,7 @@
       "main": [
         [
           {
-            "node": "OpenAI Generate Text",
+            "node": "Has Callback URL?",
             "type": "main",
             "index": 0
           }
@@ -180,22 +294,95 @@
         ]
       ]
     },
-    "OpenAI Generate Text": {
+    "Has Callback URL?": {
       "main": [
         [
           {
-            "node": "Format Output",
+            "node": "Prepare Async Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Sync Context",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Output": {
+    "Prepare Async Context": {
       "main": [
         [
           {
-            "node": "Respond Success",
+            "node": "Respond 202 Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202 Accepted": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Generate (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Generate (Async)": {
+      "main": [
+        [
+          {
+            "node": "Format Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Sync Context": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Generate (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Generate (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Format Sync Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Sync Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Sync",
             "type": "main",
             "index": 0
           }
@@ -205,219 +392,7 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
+    "callerPolicy": "workflowsFromSameOwner"
   },
-  "tags": [],
-  "activeVersion": {
-    "updatedAt": "2026-02-02T17:55:15.060Z",
-    "createdAt": "2026-02-02T17:55:15.060Z",
-    "versionId": "b18adffe-f611-4e32-ad91-e4264f4b7d53",
-    "workflowId": "RipM3vFw09xhPtXR",
-    "nodes": [
-      {
-        "id": "webhook-textgen",
-        "name": "Webhook",
-        "type": "n8n-nodes-base.webhook",
-        "typeVersion": 2,
-        "position": [
-          240,
-          300
-        ],
-        "webhookId": "text-generator-webhook",
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "text-generator",
-          "responseMode": "responseNode",
-          "options": {}
-        }
-      },
-      {
-        "id": "validate-input",
-        "name": "Validate Input",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          460,
-          300
-        ],
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "leftValue": "={{ $json.body.prompt }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "isNotEmpty"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        }
-      },
-      {
-        "id": "error-no-prompt",
-        "name": "Error: No Prompt",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          700,
-          460
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: prompt\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
-          "options": {
-            "responseCode": 400
-          }
-        }
-      },
-      {
-        "id": "openai-generate",
-        "name": "OpenAI Generate Text",
-        "type": "n8n-nodes-base.openAi",
-        "typeVersion": 1.8,
-        "position": [
-          700,
-          200
-        ],
-        "parameters": {
-          "resource": "chat",
-          "operation": "message",
-          "model": "={{ $json.body.model || 'gpt-4o' }}",
-          "messages": {
-            "values": [
-              {
-                "content": "={{ $json.body.system_prompt || 'You are a helpful assistant that generates high-quality text based on user instructions.' }}",
-                "role": "system"
-              },
-              {
-                "content": "={{ $json.body.prompt }}",
-                "role": "user"
-              }
-            ]
-          },
-          "options": {
-            "temperature": "={{ $json.body.temperature || 0.7 }}",
-            "maxTokens": "={{ $json.body.max_tokens || 2048 }}"
-          }
-        },
-        "credentials": {
-          "openAiApi": {
-            "id": "openai-credentials",
-            "name": "OpenAI account"
-          }
-        }
-      },
-      {
-        "id": "format-output",
-        "name": "Format Output",
-        "type": "n8n-nodes-base.set",
-        "typeVersion": 3.4,
-        "position": [
-          920,
-          200
-        ],
-        "parameters": {
-          "mode": "raw",
-          "jsonOutput": "={{ { \"success\": true, \"data\": { \"text\": $json.message.content, \"model\": $json.model || $('Webhook').first().json.body.model || 'gpt-4o', \"finish_reason\": $json.finish_reason || 'stop' }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"usage\": { \"prompt_tokens\": $json.usage?.prompt_tokens || 0, \"completion_tokens\": $json.usage?.completion_tokens || 0, \"total_tokens\": $json.usage?.total_tokens || 0 } } } }}"
-        }
-      },
-      {
-        "id": "respond-success",
-        "name": "Respond Success",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          1140,
-          200
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ $json }}",
-          "options": {}
-        }
-      },
-      {
-        "id": "sticky-note-doc",
-        "name": "API Documentation",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          240,
-          80
-        ],
-        "parameters": {
-          "color": 6,
-          "width": 550,
-          "height": 220,
-          "content": "## MCP - Text Generator\n\n**Endpoint:** POST /webhook/text-generator\n\n**Parameters:**\n- `prompt` (required): Text generation prompt\n- `system_prompt` (optional): System instructions\n- `model` (optional): gpt-4o, gpt-4o-mini, gpt-4-turbo (default: gpt-4o)\n- `temperature` (optional): 0-2 (default: 0.7)\n- `max_tokens` (optional): Max output tokens (default: 2048)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Generated text with usage stats"
-        }
-      }
-    ],
-    "connections": {
-      "Webhook": {
-        "main": [
-          [
-            {
-              "node": "Validate Input",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Validate Input": {
-        "main": [
-          [
-            {
-              "node": "OpenAI Generate Text",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Error: No Prompt",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "OpenAI Generate Text": {
-        "main": [
-          [
-            {
-              "node": "Format Output",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Format Output": {
-        "main": [
-          [
-            {
-              "node": "Respond Success",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      }
-    },
-    "authors": "import",
-    "name": null,
-    "description": null
-  }
+  "tags": []
 }
