@@ -21,7 +21,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $input.first().json.body || {};\n\n// Support RFC-014 structure: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\n// Valider l'entrée - check both structures\nconst hasFile = !!(ctx.file_url || ctx.file_base64 || body.file_url || body.file_base64);\nconst hasJobId = !!(body.job_id || ctx.job_id);\n\nif (!hasFile || !hasJobId) {\n  return {\n    json: {\n      valid: false,\n      response: {\n        success: false,\n        error: {\n          code: 'INVALID_FORMAT',\n          message: 'Missing required fields: file_url/file_base64 and job_id'\n        }\n      },\n      status_code: 400\n    }\n  };\n}\n\n// Extraire le contexte - prefer context.* over root level (RFC-014)\nconst context = {\n  job_id: body.job_id || ctx.job_id,\n  project_id: ctx.project_id || body.project_id || body.plugin_context?.plugin_id,\n  conversation_id: body.conversation_id || ctx.conversation_id,\n  user_id: body.user_id || ctx.user_id,\n  guild_id: body.guild_id || ctx.guild_id,\n  channel_id: body.channel_id || ctx.channel_id,\n  file_url: ctx.file_url || body.file_url,\n  file_base64: ctx.file_base64 || body.file_base64,\n  file_type: ctx.file_type || body.file_type || 'pdf',\n  action: body.action || ctx.action || 'translate',\n  params: body.params || ctx.params || {},\n  plugin_context: body.plugin_context || ctx.plugin_context || {},\n  callback_url: body.callback_url || ctx.callback_url,\n  start_time: Date.now()\n};\n\n// Vérifier si custom action et récupérer l'URL\nconst customActions = context.plugin_context?.custom_actions || {};\nconst isCustomAction = Object.keys(customActions).includes(context.action);\nconst customWebhookUrl = isCustomAction ? customActions[context.action]?.webhook_url : null;\n\n// Valider l'URL du webhook custom\nif (isCustomAction && !customWebhookUrl) {\n  return {\n    json: {\n      valid: false,\n      response: {\n        success: false,\n        error: {\n          code: 'INVALID_CONFIG',\n          message: `Custom action '${context.action}' has no webhook_url configured`\n        }\n      },\n      status_code: 400\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    response: {\n      success: true,\n      message: 'Processing started',\n      job_id: context.job_id\n    },\n    status_code: 200,\n    context: context,\n    is_custom_action: isCustomAction,\n    custom_webhook_url: customWebhookUrl\n  }\n};"
+        "jsCode": "const body = $input.first().json.body || {};\n\n// Support RFC-014 structure: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\n// Valider l'entree - check both structures\nconst hasFile = !!(ctx.file_url || ctx.file_base64 || body.file_url || body.file_base64);\nconst hasJobId = !!(body.job_id || ctx.job_id);\n\nif (!hasFile || !hasJobId) {\n  return {\n    json: {\n      valid: false,\n      has_callback: false,\n      response: {\n        success: false,\n        error: {\n          code: 'INVALID_FORMAT',\n          message: 'Missing required fields: file_url/file_base64 and job_id'\n        }\n      },\n      status_code: 400\n    }\n  };\n}\n\n// Extraire le contexte - prefer context.* over root level (RFC-014)\n// RFC-040: Generate job_id if not provided\nconst crypto = require('crypto');\nconst jobId = body.job_id || ctx.job_id || crypto.randomUUID();\n\nconst context = {\n  job_id: jobId,\n  project_id: ctx.project_id || body.project_id || body.plugin_context?.plugin_id,\n  conversation_id: body.conversation_id || ctx.conversation_id,\n  user_id: body.user_id || ctx.user_id,\n  guild_id: body.guild_id || ctx.guild_id,\n  channel_id: body.channel_id || ctx.channel_id,\n  file_url: ctx.file_url || body.file_url,\n  file_base64: ctx.file_base64 || body.file_base64,\n  file_type: ctx.file_type || body.file_type || 'pdf',\n  action: body.action || ctx.action || 'translate',\n  params: body.params || ctx.params || {},\n  plugin_context: body.plugin_context || ctx.plugin_context || {},\n  callback_url: body.callback_url || ctx.callback_url,\n  start_time: Date.now()\n};\n\n// Verifier si custom action et recuperer l'URL\nconst customActions = context.plugin_context?.custom_actions || {};\nconst isCustomAction = Object.keys(customActions).includes(context.action);\nconst customWebhookUrl = isCustomAction ? customActions[context.action]?.webhook_url : null;\n\n// Valider l'URL du webhook custom\nif (isCustomAction && !customWebhookUrl) {\n  return {\n    json: {\n      valid: false,\n      has_callback: !!context.callback_url,\n      response: {\n        success: false,\n        error: {\n          code: 'INVALID_CONFIG',\n          message: `Custom action '${context.action}' has no webhook_url configured`\n        }\n      },\n      status_code: 400\n    }\n  };\n}\n\n// RFC-040: Check if callback_url is present for async pattern\nconst hasCallback = !!context.callback_url;\n\n// Determine response based on callback presence\nlet response, statusCode;\nif (hasCallback) {\n  // RFC-040: Async pattern - respond with 202 Accepted\n  response = {\n    success: true,\n    job_id: context.job_id,\n    status: 'processing'\n  };\n  statusCode = 202;\n} else {\n  // Sync pattern - respond with 200 (retrocompatibility)\n  response = {\n    success: true,\n    message: 'Processing started',\n    job_id: context.job_id\n  };\n  statusCode = 200;\n}\n\nreturn {\n  json: {\n    valid: true,\n    has_callback: hasCallback,\n    response: response,\n    status_code: statusCode,\n    context: context,\n    is_custom_action: isCustomAction,\n    custom_webhook_url: customWebhookUrl\n  }\n};"
       },
       "id": "validate-and-ack",
       "name": "Validate and Acknowledge",
@@ -34,16 +34,31 @@
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json.response }}",
-        "options": {
-          "responseCode": "={{ $json.status_code }}"
-        }
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "check-has-callback",
+              "leftValue": "={{ $json.has_callback }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
-      "id": "respond-ack",
-      "name": "Respond ACK",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
+      "id": "has-callback-check",
+      "name": "Has Callback URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
       "position": [
         720,
         304
@@ -51,15 +66,62 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\n\n// Si invalide, on s'arrête\nif (!input.valid) {\n  return [];\n}\n\n// Continuer avec le contexte\nreturn {\n  json: input\n};"
+        "respondWith": "json",
+        "responseBody": "={{ $json.response }}",
+        "options": {
+          "responseCode": "={{ $json.status_code }}"
+        }
       },
-      "id": "check-valid",
-      "name": "Check Valid",
+      "id": "respond-async",
+      "name": "Respond 202 Async",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response }}",
+        "options": {
+          "responseCode": "={{ $json.status_code }}"
+        }
+      },
+      "id": "respond-sync",
+      "name": "Respond Sync",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// Si invalide, on s'arrete\nif (!input.valid) {\n  return [];\n}\n\n// Continuer avec le contexte\nreturn {\n  json: input\n};"
+      },
+      "id": "check-valid-async",
+      "name": "Check Valid (Async)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        960,
-        304
+        1200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// Si invalide, on s'arrete\nif (!input.valid) {\n  return [];\n}\n\n// Continuer avec le contexte\nreturn {\n  json: input\n};"
+      },
+      "id": "check-valid-sync",
+      "name": "Check Valid (Sync)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        400
       ]
     },
     {
@@ -82,59 +144,70 @@
           "timeout": 300000
         }
       },
-      "id": "route-and-process",
-      "name": "Route and Process",
+      "id": "route-and-process-async",
+      "name": "Route and Process (Async)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1200,
-        304
+        1440,
+        200
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const result = $input.first().json;\nconst prevNode = $('Check Valid').first().json;\nconst context = prevNode.context;\nconst startTime = context.start_time;\nconst processingTime = Date.now() - startTime;\n\n// Déterminer si succès ou erreur\nconst isSuccess = result.success !== false && !result.error;\nconst hasData = result.data || result.text || result.result;\n\nlet callback;\n\nif (isSuccess && hasData) {\n  // Succès\n  const text = result.data?.text || result.data?.translated_text || result.text || JSON.stringify(result.data || result);\n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: true,\n    result: {\n      text: text,\n      output_type: 'text',\n      word_count: text.split(/\\s+/).length\n    },\n    metrics: {\n      tokens_used: result.meta?.usage?.total_tokens || result.usage?.total_tokens || Math.ceil(text.length / 4),\n      processing_time_ms: processingTime,\n      ocr_confidence: result.meta?.ocr_confidence || result.data?.ocr_confidence || 0.9,\n      pages_processed: result.meta?.usage?.pages_processed || result.data?.page_count || 1\n    },\n    error: null\n  };\n} else {\n  // Erreur\n  const errorCode = result.error?.code || result.error?.status || 'INTERNAL_ERROR';\n  const errorMessage = result.error?.message || 'Processing failed';\n  \n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: false,\n    result: null,\n    metrics: {\n      tokens_used: 0,\n      processing_time_ms: processingTime,\n      ocr_confidence: 0,\n      pages_processed: 0\n    },\n    error: {\n      code: errorCode,\n      message: errorMessage,\n      retriable: ['LLM_RATE_LIMITED', 'TIMEOUT', 'INTERNAL_ERROR'].includes(errorCode),\n      refund: {\n        recommended: true,\n        percentage: errorCode === 'PARTIAL_SUCCESS' ? 50 : 100,\n        reason: `Processing failed: ${errorMessage}`\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    callback: callback,\n    callback_url: context.callback_url\n  }\n};"
+        "method": "POST",
+        "url": "={{ $json.is_custom_action ? $json.custom_webhook_url : ($json.context.action === 'translate' ? ($env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678') + '/webhook/pdf-layout-translator' : ($env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678') + '/webhook/image-ocr') }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.is_custom_action ? { file_url: $json.context.file_url, file_base64: $json.context.file_base64, file_type: $json.context.file_type, context: { project_id: $json.context.project_id, guild_id: $json.context.guild_id, user_id: $json.context.user_id, channel_id: $json.context.channel_id }, params: $json.context.params, plugin_context: $json.context.plugin_context, job_id: $json.context.job_id } : ($json.context.action === 'translate' ? { file_url: $json.context.file_url, file_base64: $json.context.file_base64, file_type: $json.context.file_type, context: { project_id: $json.context.project_id, guild_id: $json.context.guild_id, user_id: $json.context.user_id, channel_id: $json.context.channel_id }, target_language: $json.context.params.target_language || 'en', mistral_api_key: $json.context.plugin_context.api_keys?.mistral, api_key: $json.context.plugin_context.api_keys?.anthropic, openai_api_key: $json.context.plugin_context.api_keys?.openai, ocr_thresholds: $json.context.plugin_context.ocr_thresholds } : { image_url: $json.context.file_url, image_base64: $json.context.file_base64, file_type: $json.context.file_type, context: { project_id: $json.context.project_id, guild_id: $json.context.guild_id, user_id: $json.context.user_id, channel_id: $json.context.channel_id }, mistral_api_key: $json.context.plugin_context.api_keys?.mistral, ocr_thresholds: $json.context.plugin_context.ocr_thresholds })) }}",
+        "options": {
+          "timeout": 300000
+        }
       },
-      "id": "format-callback",
-      "name": "Format Callback",
+      "id": "route-and-process-sync",
+      "name": "Route and Process (Sync)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst prevNode = $('Check Valid (Async)').first().json;\nconst context = prevNode.context;\nconst startTime = context.start_time;\nconst processingTime = Date.now() - startTime;\n\n// Determiner si succes ou erreur\nconst isSuccess = result.success !== false && !result.error;\nconst hasData = result.data || result.text || result.result;\n\nlet callback;\n\nif (isSuccess && hasData) {\n  // Succes\n  const text = result.data?.text || result.data?.translated_text || result.text || JSON.stringify(result.data || result);\n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: true,\n    result: {\n      text: text,\n      output_type: 'text',\n      word_count: text.split(/\\s+/).length\n    },\n    metrics: {\n      tokens_used: result.meta?.usage?.total_tokens || result.usage?.total_tokens || Math.ceil(text.length / 4),\n      processing_time_ms: processingTime,\n      ocr_confidence: result.meta?.ocr_confidence || result.data?.ocr_confidence || 0.9,\n      pages_processed: result.meta?.usage?.pages_processed || result.data?.page_count || 1\n    },\n    error: null\n  };\n} else {\n  // Erreur\n  const errorCode = result.error?.code || result.error?.status || 'INTERNAL_ERROR';\n  const errorMessage = result.error?.message || 'Processing failed';\n  \n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: false,\n    result: null,\n    metrics: {\n      tokens_used: 0,\n      processing_time_ms: processingTime,\n      ocr_confidence: 0,\n      pages_processed: 0\n    },\n    error: {\n      code: errorCode,\n      message: errorMessage,\n      retriable: ['LLM_RATE_LIMITED', 'TIMEOUT', 'INTERNAL_ERROR'].includes(errorCode),\n      refund: {\n        recommended: true,\n        percentage: errorCode === 'PARTIAL_SUCCESS' ? 50 : 100,\n        reason: `Processing failed: ${errorMessage}`\n      }\n    }\n  };\n}\n\n// RFC-040: Generate HMAC signature\nconst crypto = require('crypto');\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callback);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn {\n  json: {\n    callback: callback,\n    callback_url: context.callback_url,\n    signature: signature,\n    payload: payload\n  }\n};"
+      },
+      "id": "format-callback-async",
+      "name": "Format Callback (Async)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1440,
-        304
+        1680,
+        200
       ]
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "loose"
-          },
-          "conditions": [
-            {
-              "id": "check-callback-url",
-              "leftValue": "={{ $json.callback_url }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "notEmpty"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
+        "jsCode": "const result = $input.first().json;\nconst prevNode = $('Check Valid (Sync)').first().json;\nconst context = prevNode.context;\nconst startTime = context.start_time;\nconst processingTime = Date.now() - startTime;\n\n// Determiner si succes ou erreur\nconst isSuccess = result.success !== false && !result.error;\nconst hasData = result.data || result.text || result.result;\n\nlet callback;\n\nif (isSuccess && hasData) {\n  // Succes\n  const text = result.data?.text || result.data?.translated_text || result.text || JSON.stringify(result.data || result);\n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: true,\n    result: {\n      text: text,\n      output_type: 'text',\n      word_count: text.split(/\\s+/).length\n    },\n    metrics: {\n      tokens_used: result.meta?.usage?.total_tokens || result.usage?.total_tokens || Math.ceil(text.length / 4),\n      processing_time_ms: processingTime,\n      ocr_confidence: result.meta?.ocr_confidence || result.data?.ocr_confidence || 0.9,\n      pages_processed: result.meta?.usage?.pages_processed || result.data?.page_count || 1\n    },\n    error: null\n  };\n} else {\n  // Erreur\n  const errorCode = result.error?.code || result.error?.status || 'INTERNAL_ERROR';\n  const errorMessage = result.error?.message || 'Processing failed';\n  \n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: false,\n    result: null,\n    metrics: {\n      tokens_used: 0,\n      processing_time_ms: processingTime,\n      ocr_confidence: 0,\n      pages_processed: 0\n    },\n    error: {\n      code: errorCode,\n      message: errorMessage,\n      retriable: ['LLM_RATE_LIMITED', 'TIMEOUT', 'INTERNAL_ERROR'].includes(errorCode),\n      refund: {\n        recommended: true,\n        percentage: errorCode === 'PARTIAL_SUCCESS' ? 50 : 100,\n        reason: `Processing failed: ${errorMessage}`\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    callback: callback,\n    status: 'sync_completed'\n  }\n};"
       },
-      "id": "has-callback-url",
-      "name": "Has Callback URL?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
+      "id": "format-callback-sync",
+      "name": "Format Result (Sync)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1680,
-        304
+        400
       ]
     },
     {
@@ -147,12 +220,16 @@
             {
               "name": "Content-Type",
               "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.callback) }}",
+        "jsonBody": "={{ $json.payload }}",
         "options": {
           "timeout": 30000
         }
@@ -169,10 +246,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// Log no callback\nconst input = $input.first().json;\nreturn {\n  status: 'no_callback_url',\n  callback: input.callback\n};"
+        "jsCode": "// Log sync completion - no callback needed\nconst input = $input.first().json;\nreturn {\n  json: {\n    status: 'sync_completed',\n    callback: input.callback\n  }\n};"
       },
-      "id": "log-no-callback",
-      "name": "Log No Callback",
+      "id": "log-sync-complete",
+      "name": "Log Sync Complete",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -182,8 +259,21 @@
     },
     {
       "parameters": {
-        "content": "## MCP - Documents Process (RFC-014)\n\n**Endpoint:** POST /webhook/documents/process\n\n**Input:**\n```json\n{\n  \"job_id\": \"uuid\",\n  \"context\": {\n    \"project_id\": \"...\",\n    \"file_url\": \"https://...\",\n    \"action\": \"translate|process\"\n  },\n  \"plugin_context\": { \"api_keys\": {...} },\n  \"callback_url\": \"https://...\"\n}\n```\n\n**Response:** ACK then callback",
-        "height": 280,
+        "jsCode": "// RFC-040: Log callback result\nconst input = $input.first().json;\nconst callbackNode = $('Format Callback (Async)').first().json;\n\n// Check if callback succeeded or failed\nconst callbackSuccess = !input.error && input.statusCode >= 200 && input.statusCode < 300;\n\nreturn {\n  json: {\n    status: callbackSuccess ? 'callback_sent' : 'callback_failed',\n    callback_status_code: input.statusCode || input.status,\n    callback_response: input.body || input.data || input,\n    original_callback: callbackNode.callback\n  }\n};"
+      },
+      "id": "log-callback-result",
+      "name": "Log Callback Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## MCP - Documents Process (RFC-014 + RFC-040)\n\n**Endpoint:** POST /webhook/documents/process\n\n**Input:**\n```json\n{\n  \"job_id\": \"uuid\",\n  \"context\": {\n    \"project_id\": \"...\",\n    \"file_url\": \"https://...\",\n    \"action\": \"translate|process\"\n  },\n  \"plugin_context\": { \"api_keys\": {...} },\n  \"callback_url\": \"https://...\" // Optional\n}\n```\n\n**RFC-040 Async Pattern:**\n- If `callback_url` present: 202 Accepted + callback\n- If no `callback_url`: 200 OK sync response\n\n**Callback Headers (RFC-040):**\n- Content-Type: application/json\n- X-N8N-Signature: HMAC-SHA256(payload)",
+        "height": 360,
         "width": 400,
         "color": 6
       },
@@ -193,7 +283,7 @@
       "typeVersion": 1,
       "position": [
         240,
-        64
+        -20
       ]
     }
   ],
@@ -213,50 +303,6 @@
       "main": [
         [
           {
-            "node": "Respond ACK",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Respond ACK": {
-      "main": [
-        [
-          {
-            "node": "Check Valid",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Check Valid": {
-      "main": [
-        [
-          {
-            "node": "Route and Process",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Route and Process": {
-      "main": [
-        [
-          {
-            "node": "Format Callback",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format Callback": {
-      "main": [
-        [
-          {
             "node": "Has Callback URL?",
             "type": "main",
             "index": 0
@@ -268,14 +314,113 @@
       "main": [
         [
           {
-            "node": "Send Callback",
+            "node": "Respond 202 Async",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Log No Callback",
+            "node": "Respond Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202 Async": {
+      "main": [
+        [
+          {
+            "node": "Check Valid (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Sync": {
+      "main": [
+        [
+          {
+            "node": "Check Valid (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Valid (Async)": {
+      "main": [
+        [
+          {
+            "node": "Route and Process (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Valid (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Route and Process (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route and Process (Async)": {
+      "main": [
+        [
+          {
+            "node": "Format Callback (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route and Process (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Format Result (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Callback (Async)": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Result (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Log Sync Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Callback": {
+      "main": [
+        [
+          {
+            "node": "Log Callback Result",
             "type": "main",
             "index": 0
           }
@@ -288,296 +433,5 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "tags": [],
-  "activeVersion": {
-    "updatedAt": "2026-02-02T17:55:15.060Z",
-    "createdAt": "2026-02-02T17:55:15.060Z",
-    "versionId": "ad844061-157c-4ad0-a285-c710a8e45279",
-    "workflowId": "TShWGHDZkUgur5e7",
-    "nodes": [
-      {
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "documents/process",
-          "responseMode": "responseNode",
-          "options": {}
-        },
-        "id": "webhook-process",
-        "name": "Webhook",
-        "type": "n8n-nodes-base.webhook",
-        "typeVersion": 2,
-        "position": [
-          240,
-          304
-        ],
-        "webhookId": "documents-process-webhook"
-      },
-      {
-        "parameters": {
-          "jsCode": "const body = $input.first().json.body || {};\n\n// Support RFC-014 structure: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\n// Valider l'entrée - check both structures\nconst hasFile = !!(ctx.file_url || ctx.file_base64 || body.file_url || body.file_base64);\nconst hasJobId = !!(body.job_id || ctx.job_id);\n\nif (!hasFile || !hasJobId) {\n  return {\n    json: {\n      valid: false,\n      response: {\n        success: false,\n        error: {\n          code: 'INVALID_FORMAT',\n          message: 'Missing required fields: file_url/file_base64 and job_id'\n        }\n      },\n      status_code: 400\n    }\n  };\n}\n\n// Extraire le contexte - prefer context.* over root level (RFC-014)\nconst context = {\n  job_id: body.job_id || ctx.job_id,\n  project_id: ctx.project_id || body.project_id || body.plugin_context?.plugin_id,\n  conversation_id: body.conversation_id || ctx.conversation_id,\n  user_id: body.user_id || ctx.user_id,\n  guild_id: body.guild_id || ctx.guild_id,\n  channel_id: body.channel_id || ctx.channel_id,\n  file_url: ctx.file_url || body.file_url,\n  file_base64: ctx.file_base64 || body.file_base64,\n  file_type: ctx.file_type || body.file_type || 'pdf',\n  action: body.action || ctx.action || 'translate',\n  params: body.params || ctx.params || {},\n  plugin_context: body.plugin_context || ctx.plugin_context || {},\n  callback_url: body.callback_url || ctx.callback_url,\n  start_time: Date.now()\n};\n\n// Vérifier si custom action et récupérer l'URL\nconst customActions = context.plugin_context?.custom_actions || {};\nconst isCustomAction = Object.keys(customActions).includes(context.action);\nconst customWebhookUrl = isCustomAction ? customActions[context.action]?.webhook_url : null;\n\n// Valider l'URL du webhook custom\nif (isCustomAction && !customWebhookUrl) {\n  return {\n    json: {\n      valid: false,\n      response: {\n        success: false,\n        error: {\n          code: 'INVALID_CONFIG',\n          message: `Custom action '${context.action}' has no webhook_url configured`\n        }\n      },\n      status_code: 400\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    response: {\n      success: true,\n      message: 'Processing started',\n      job_id: context.job_id\n    },\n    status_code: 200,\n    context: context,\n    is_custom_action: isCustomAction,\n    custom_webhook_url: customWebhookUrl\n  }\n};"
-        },
-        "id": "validate-and-ack",
-        "name": "Validate and Acknowledge",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          480,
-          304
-        ]
-      },
-      {
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ $json.response }}",
-          "options": {
-            "responseCode": "={{ $json.status_code }}"
-          }
-        },
-        "id": "respond-ack",
-        "name": "Respond ACK",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1,
-        "position": [
-          720,
-          304
-        ]
-      },
-      {
-        "parameters": {
-          "jsCode": "const input = $input.first().json;\n\n// Si invalide, on s'arrête\nif (!input.valid) {\n  return [];\n}\n\n// Continuer avec le contexte\nreturn {\n  json: input\n};"
-        },
-        "id": "check-valid",
-        "name": "Check Valid",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          960,
-          304
-        ]
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "={{ $json.is_custom_action ? $json.custom_webhook_url : ($json.context.action === 'translate' ? ($env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678') + '/webhook/pdf-layout-translator' : ($env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678') + '/webhook/image-ocr') }}",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify($json.is_custom_action ? { file_url: $json.context.file_url, file_base64: $json.context.file_base64, file_type: $json.context.file_type, context: { project_id: $json.context.project_id, guild_id: $json.context.guild_id, user_id: $json.context.user_id, channel_id: $json.context.channel_id }, params: $json.context.params, plugin_context: $json.context.plugin_context, job_id: $json.context.job_id } : ($json.context.action === 'translate' ? { file_url: $json.context.file_url, file_base64: $json.context.file_base64, file_type: $json.context.file_type, context: { project_id: $json.context.project_id, guild_id: $json.context.guild_id, user_id: $json.context.user_id, channel_id: $json.context.channel_id }, target_language: $json.context.params.target_language || 'en', mistral_api_key: $json.context.plugin_context.api_keys?.mistral, api_key: $json.context.plugin_context.api_keys?.anthropic, openai_api_key: $json.context.plugin_context.api_keys?.openai, ocr_thresholds: $json.context.plugin_context.ocr_thresholds } : { image_url: $json.context.file_url, image_base64: $json.context.file_base64, file_type: $json.context.file_type, context: { project_id: $json.context.project_id, guild_id: $json.context.guild_id, user_id: $json.context.user_id, channel_id: $json.context.channel_id }, mistral_api_key: $json.context.plugin_context.api_keys?.mistral, ocr_thresholds: $json.context.plugin_context.ocr_thresholds })) }}",
-          "options": {
-            "timeout": 300000
-          }
-        },
-        "id": "route-and-process",
-        "name": "Route and Process",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          1200,
-          304
-        ],
-        "onError": "continueRegularOutput"
-      },
-      {
-        "parameters": {
-          "jsCode": "const result = $input.first().json;\nconst prevNode = $('Check Valid').first().json;\nconst context = prevNode.context;\nconst startTime = context.start_time;\nconst processingTime = Date.now() - startTime;\n\n// Déterminer si succès ou erreur\nconst isSuccess = result.success !== false && !result.error;\nconst hasData = result.data || result.text || result.result;\n\nlet callback;\n\nif (isSuccess && hasData) {\n  // Succès\n  const text = result.data?.text || result.data?.translated_text || result.text || JSON.stringify(result.data || result);\n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: true,\n    result: {\n      text: text,\n      output_type: 'text',\n      word_count: text.split(/\\s+/).length\n    },\n    metrics: {\n      tokens_used: result.meta?.usage?.total_tokens || result.usage?.total_tokens || Math.ceil(text.length / 4),\n      processing_time_ms: processingTime,\n      ocr_confidence: result.meta?.ocr_confidence || result.data?.ocr_confidence || 0.9,\n      pages_processed: result.meta?.usage?.pages_processed || result.data?.page_count || 1\n    },\n    error: null\n  };\n} else {\n  // Erreur\n  const errorCode = result.error?.code || result.error?.status || 'INTERNAL_ERROR';\n  const errorMessage = result.error?.message || 'Processing failed';\n  \n  callback = {\n    job_id: context.job_id,\n    conversation_id: context.conversation_id,\n    user_id: context.user_id,\n    guild_id: context.guild_id,\n    channel_id: context.channel_id,\n    success: false,\n    result: null,\n    metrics: {\n      tokens_used: 0,\n      processing_time_ms: processingTime,\n      ocr_confidence: 0,\n      pages_processed: 0\n    },\n    error: {\n      code: errorCode,\n      message: errorMessage,\n      retriable: ['LLM_RATE_LIMITED', 'TIMEOUT', 'INTERNAL_ERROR'].includes(errorCode),\n      refund: {\n        recommended: true,\n        percentage: errorCode === 'PARTIAL_SUCCESS' ? 50 : 100,\n        reason: `Processing failed: ${errorMessage}`\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    callback: callback,\n    callback_url: context.callback_url\n  }\n};"
-        },
-        "id": "format-callback",
-        "name": "Format Callback",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          1440,
-          304
-        ]
-      },
-      {
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "loose"
-            },
-            "conditions": [
-              {
-                "id": "check-callback-url",
-                "leftValue": "={{ $json.callback_url }}",
-                "rightValue": "",
-                "operator": {
-                  "type": "string",
-                  "operation": "notEmpty"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        },
-        "id": "has-callback-url",
-        "name": "Has Callback URL?",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          1680,
-          304
-        ]
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "={{ $json.callback_url }}",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify($json.callback) }}",
-          "options": {
-            "timeout": 30000
-          }
-        },
-        "id": "send-callback",
-        "name": "Send Callback",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          1920,
-          200
-        ],
-        "onError": "continueRegularOutput"
-      },
-      {
-        "parameters": {
-          "jsCode": "// Log no callback\nconst input = $input.first().json;\nreturn {\n  status: 'no_callback_url',\n  callback: input.callback\n};"
-        },
-        "id": "log-no-callback",
-        "name": "Log No Callback",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          1920,
-          400
-        ]
-      },
-      {
-        "parameters": {
-          "content": "## MCP - Documents Process (RFC-014)\n\n**Endpoint:** POST /webhook/documents/process\n\n**Input:**\n```json\n{\n  \"job_id\": \"uuid\",\n  \"context\": {\n    \"project_id\": \"...\",\n    \"file_url\": \"https://...\",\n    \"action\": \"translate|process\"\n  },\n  \"plugin_context\": { \"api_keys\": {...} },\n  \"callback_url\": \"https://...\"\n}\n```\n\n**Response:** ACK then callback",
-          "height": 280,
-          "width": 400,
-          "color": 6
-        },
-        "id": "sticky-note-doc",
-        "name": "API Documentation",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          240,
-          64
-        ]
-      }
-    ],
-    "connections": {
-      "Webhook": {
-        "main": [
-          [
-            {
-              "node": "Validate and Acknowledge",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Validate and Acknowledge": {
-        "main": [
-          [
-            {
-              "node": "Respond ACK",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Respond ACK": {
-        "main": [
-          [
-            {
-              "node": "Check Valid",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Check Valid": {
-        "main": [
-          [
-            {
-              "node": "Route and Process",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Route and Process": {
-        "main": [
-          [
-            {
-              "node": "Format Callback",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Format Callback": {
-        "main": [
-          [
-            {
-              "node": "Has Callback URL?",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Has Callback URL?": {
-        "main": [
-          [
-            {
-              "node": "Send Callback",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Log No Callback",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      }
-    },
-    "authors": "import",
-    "name": null,
-    "description": null
-  }
+  "tags": []
 }

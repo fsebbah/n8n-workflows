@@ -4,8 +4,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## MCP - Image OCR\n\n**Endpoint:** POST /webhook/image-ocr\n\n**Input (RFC-014):**\n```json\n{\n  \"context\": {\n    \"image_url\": \"https://...\",\n    \"file_type\": \"jpg\",\n    \"project_id\": \"...\",\n    \"guild_id\": \"...\",\n    \"user_id\": \"...\"\n  },\n  \"plugin_context\": {\n    \"api_keys\": { \"mistral\": \"...\" }\n  }\n}\n```\n\n**Legacy Input:**\n```json\n{\n  \"image_url\": \"https://...\",\n  \"mistral_api_key\": \"...\"\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"data\": { \"text\": \"...\", \"pages\": [...] },\n  \"meta\": { \"provider\": \"mistral\" }\n}\n```",
-        "height": 420,
+        "content": "## MCP - Image OCR\n\n**Endpoint:** POST /webhook/image-ocr\n\n**Input (RFC-014):**\n```json\n{\n  \"context\": {\n    \"image_url\": \"https://...\",\n    \"file_type\": \"jpg\",\n    \"project_id\": \"...\",\n    \"guild_id\": \"...\",\n    \"user_id\": \"...\"\n  },\n  \"plugin_context\": {\n    \"api_keys\": { \"mistral\": \"...\" }\n  }\n}\n```\n\n**Async (RFC-040):**\n```json\n{\n  \"context\": { ... },\n  \"callback_url\": \"https://...\",\n  \"job_id\": \"optional-uuid\"\n}\n```\n\n**Response (sync):**\n```json\n{\n  \"success\": true,\n  \"data\": { \"text\": \"...\", \"pages\": [...] },\n  \"meta\": { \"provider\": \"mistral\" }\n}\n```\n\n**Response (async 202):**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"uuid\",\n  \"status\": \"processing\"\n}\n```",
+        "height": 520,
         "width": 340,
         "color": 6
       },
@@ -37,7 +37,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - RFC-014 Compatible\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\n// --- Extract image ---\nconst imageUrl_raw = ctx.image_url || ctx.file_url || body.image_url;\nconst imageBase64_raw = ctx.image_base64 || ctx.file_base64 || body.image_base64;\nconst fileType = ctx.file_type || body.file_type;\n\n// --- Extract API key ---\nconst mistralKey = body.mistral_api_key \n  || ctx.mistral_api_key \n  || body.plugin_context?.api_keys?.mistral \n  || ctx.plugin_context?.api_keys?.mistral;\n\n// --- Extract context fields ---\nconst projectId = ctx.project_id || body.project_id || body.plugin_context?.plugin_id;\nconst guildId = ctx.guild_id || body.guild_id;\nconst userId = ctx.user_id || body.user_id;\nconst channelId = ctx.channel_id || body.channel_id;\n\n// --- Validation ---\nconst hasImage = !!(imageUrl_raw || imageBase64_raw);\nconst hasMistralKey = !!mistralKey;\n\nconst errors = [];\nif (!hasImage) errors.push('image_url ou image_base64 requis');\nif (!hasMistralKey) errors.push('mistral_api_key requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors\n  };\n}\n\n// --- Detect MIME type ---\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  return 'image/png';\n}\n\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// --- Prepare image URL ---\nlet imageUrl = '';\nlet detectedMime = 'image/png';\n\nif (imageUrl_raw) {\n  imageUrl = imageUrl_raw;\n} else if (imageBase64_raw) {\n  detectedMime = fileType ? (getMimeFromExtension(fileType) || 'image/png') : detectMimeFromBase64(imageBase64_raw);\n  imageUrl = 'data:' + detectedMime + ';base64,' + imageBase64_raw;\n}\n\nreturn {\n  valid: true,\n  imageUrl: imageUrl,\n  detectedMime: detectedMime,\n  mistralApiKey: mistralKey,\n  includeImages: body.include_images || ctx.include_images || false,\n  source: imageUrl_raw ? 'url' : 'base64',\n  context: {\n    project_id: projectId,\n    guild_id: guildId,\n    user_id: userId,\n    channel_id: channelId\n  }\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - RFC-014 Compatible + RFC-040 Async\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\n// --- Extract image ---\nconst imageUrl_raw = ctx.image_url || ctx.file_url || body.image_url;\nconst imageBase64_raw = ctx.image_base64 || ctx.file_base64 || body.image_base64;\nconst fileType = ctx.file_type || body.file_type;\n\n// --- Extract API key ---\nconst mistralKey = body.mistral_api_key \n  || ctx.mistral_api_key \n  || body.plugin_context?.api_keys?.mistral \n  || ctx.plugin_context?.api_keys?.mistral;\n\n// --- Extract context fields ---\nconst projectId = ctx.project_id || body.project_id || body.plugin_context?.plugin_id;\nconst guildId = ctx.guild_id || body.guild_id;\nconst userId = ctx.user_id || body.user_id;\nconst channelId = ctx.channel_id || body.channel_id;\n\n// --- RFC-040: Extract async callback fields ---\nconst callbackUrl = body.callback_url || ctx.callback_url;\nconst jobId = body.job_id || ctx.job_id || crypto.randomUUID();\n\n// --- Validation ---\nconst hasImage = !!(imageUrl_raw || imageBase64_raw);\nconst hasMistralKey = !!mistralKey;\n\nconst errors = [];\nif (!hasImage) errors.push('image_url ou image_base64 requis');\nif (!hasMistralKey) errors.push('mistral_api_key requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    callbackUrl: callbackUrl,\n    jobId: jobId\n  };\n}\n\n// --- Detect MIME type ---\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  return 'image/png';\n}\n\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// --- Prepare image URL ---\nlet imageUrl = '';\nlet detectedMime = 'image/png';\n\nif (imageUrl_raw) {\n  imageUrl = imageUrl_raw;\n} else if (imageBase64_raw) {\n  detectedMime = fileType ? (getMimeFromExtension(fileType) || 'image/png') : detectMimeFromBase64(imageBase64_raw);\n  imageUrl = 'data:' + detectedMime + ';base64,' + imageBase64_raw;\n}\n\nreturn {\n  valid: true,\n  imageUrl: imageUrl,\n  detectedMime: detectedMime,\n  mistralApiKey: mistralKey,\n  includeImages: body.include_images || ctx.include_images || false,\n  source: imageUrl_raw ? 'url' : 'base64',\n  callbackUrl: callbackUrl,\n  jobId: jobId,\n  context: {\n    project_id: projectId,\n    guild_id: guildId,\n    user_id: userId,\n    channel_id: channelId\n  }\n};"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -82,6 +82,63 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-callback",
+              "leftValue": "={{ $json.callbackUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-callback",
+      "name": "Has Callback URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'processing' }) }}",
+        "options": {
+          "responseCode": 202,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-accepted",
+      "name": "Respond 202 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        400
+      ]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "https://api.mistral.ai/v1/ocr",
         "sendHeaders": true,
@@ -109,32 +166,131 @@
           "timeout": 120000
         }
       },
-      "id": "mistral-ocr",
-      "name": "Mistral OCR",
+      "id": "mistral-ocr-sync",
+      "name": "Mistral OCR (Sync)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        660,
+        880,
         200
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT SUCCESS/ERROR RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error) {\n  const errorMessage = data.message || data.error?.message || input.error?.message || 'Mistral API error';\n  return {\n    success: false,\n    error: {\n      code: 'OCR_API_ERROR',\n      message: errorMessage,\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    context: prevData.context\n  };\n}\n\n// --- Extract text from pages ---\nconst text = data.pages?.map(p => p.markdown).join('\\n\\n') || '';\n\nreturn {\n  success: true,\n  data: {\n    text: text,\n    pages: data.pages || [],\n    model: data.model || 'mistral-ocr-latest',\n    source: prevData.source\n  },\n  meta: {\n    provider: 'mistral',\n    usage: {\n      pages_processed: data.usage_info?.pages_processed || 1,\n      doc_size_bytes: data.usage_info?.doc_size_bytes || 0\n    }\n  },\n  context: prevData.context\n};"
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/ocr",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Validate Input').first().json.mistralApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'mistral-ocr-latest', document: { type: 'image_url', image_url: $('Validate Input').first().json.imageUrl }, include_image_base64: $('Validate Input').first().json.includeImages }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 120000
+        }
       },
-      "id": "format-response",
-      "name": "Format Response",
+      "id": "mistral-ocr-async",
+      "name": "Mistral OCR (Async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT SUCCESS/ERROR RESPONSE (SYNC)\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error) {\n  const errorMessage = data.message || data.error?.message || input.error?.message || 'Mistral API error';\n  return {\n    success: false,\n    error: {\n      code: 'OCR_API_ERROR',\n      message: errorMessage,\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    context: prevData.context\n  };\n}\n\n// --- Extract text from pages ---\nconst text = data.pages?.map(p => p.markdown).join('\\n\\n') || '';\n\nreturn {\n  success: true,\n  data: {\n    text: text,\n    pages: data.pages || [],\n    model: data.model || 'mistral-ocr-latest',\n    source: prevData.source\n  },\n  meta: {\n    provider: 'mistral',\n    usage: {\n      pages_processed: data.usage_info?.pages_processed || 1,\n      doc_size_bytes: data.usage_info?.doc_size_bytes || 0\n    }\n  },\n  context: prevData.context\n};"
+      },
+      "id": "format-response-sync",
+      "name": "Format Response (Sync)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
+        1100,
         200
       ]
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  }\n};"
+        "jsCode": "// ============================================\n// FORMAT ASYNC RESPONSE + PREPARE CALLBACK\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nconst callbackUrl = prevData.callbackUrl;\nconst jobId = prevData.jobId;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error) {\n  const errorMessage = data.message || data.error?.message || input.error?.message || 'Mistral API error';\n  return {\n    callbackUrl: callbackUrl,\n    callbackBody: {\n      success: false,\n      job_id: jobId,\n      status: 'failed',\n      error: {\n        code: 'OCR_API_ERROR',\n        message: errorMessage,\n        http_status: statusCode >= 400 ? statusCode : 500\n      },\n      context: prevData.context\n    }\n  };\n}\n\n// --- Extract text from pages ---\nconst text = data.pages?.map(p => p.markdown).join('\\n\\n') || '';\n\nreturn {\n  callbackUrl: callbackUrl,\n  callbackBody: {\n    success: true,\n    job_id: jobId,\n    status: 'completed',\n    data: {\n      text: text,\n      pages: data.pages || [],\n      model: data.model || 'mistral-ocr-latest',\n      source: prevData.source\n    },\n    meta: {\n      provider: 'mistral',\n      usage: {\n        pages_processed: data.usage_info?.pages_processed || 1,\n        doc_size_bytes: data.usage_info?.doc_size_bytes || 0\n      }\n    },\n    context: prevData.context\n  }\n};"
+      },
+      "id": "format-response-async",
+      "name": "Format Response (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE CALLBACK WITH HMAC SIGNATURE (RFC-040)\n// ============================================\n\nconst crypto = require('crypto');\n\nconst input = $input.first().json;\nconst callbackUrl = input.callbackUrl;\nconst callbackBody = input.callbackBody;\n\n// Generate HMAC signature\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callbackBody);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn {\n  callbackUrl: callbackUrl,\n  callbackBody: callbackBody,\n  signature: signature\n};"
+      },
+      "id": "prepare-callback",
+      "name": "Prepare Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callbackBody) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send-callback",
+      "name": "Send Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  callbackUrl: input.callbackUrl,\n  jobId: input.jobId\n};"
       },
       "id": "build-error",
       "name": "Build Error Response",
@@ -142,8 +298,112 @@
       "typeVersion": 2,
       "position": [
         660,
-        400
+        500
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-error-callback",
+              "leftValue": "={{ $json.callbackUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-error-has-callback",
+      "name": "Error Has Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE ERROR CALLBACK WITH HMAC (RFC-040)\n// ============================================\n\nconst crypto = require('crypto');\n\nconst input = $input.first().json;\nconst callbackUrl = input.callbackUrl;\n\nconst callbackBody = {\n  success: false,\n  job_id: input.jobId,\n  status: 'failed',\n  error: input.error\n};\n\n// Generate HMAC signature\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callbackBody);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn {\n  callbackUrl: callbackUrl,\n  callbackBody: callbackBody,\n  signature: signature,\n  syncResponse: input\n};"
+      },
+      "id": "prepare-error-callback",
+      "name": "Prepare Error Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.syncResponse.jobId, status: 'processing' }) }}",
+        "options": {
+          "responseCode": 202,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error-accepted",
+      "name": "Respond Error 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callbackBody) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send-error-callback",
+      "name": "Send Error Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        700
+      ],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -166,7 +426,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1100,
+        1320,
         200
       ]
     },
@@ -191,8 +451,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        880,
-        400
+        1100,
+        600
       ]
     }
   ],
@@ -223,7 +483,7 @@
       "main": [
         [
           {
-            "node": "Mistral OCR",
+            "node": "Has Callback URL?",
             "type": "main",
             "index": 0
           }
@@ -237,18 +497,58 @@
         ]
       ]
     },
-    "Mistral OCR": {
+    "Has Callback URL?": {
       "main": [
         [
           {
-            "node": "Format Response",
+            "node": "Respond 202 Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mistral OCR (Sync)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Response": {
+    "Respond 202 Accepted": {
+      "main": [
+        [
+          {
+            "node": "Mistral OCR (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral OCR (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Format Response (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral OCR (Async)": {
+      "main": [
+        [
+          {
+            "node": "Format Response (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response (Sync)": {
       "main": [
         [
           {
@@ -259,11 +559,73 @@
         ]
       ]
     },
+    "Format Response (Async)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Build Error Response": {
       "main": [
         [
           {
+            "node": "Error Has Callback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Has Callback?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Error Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Error Callback": {
+      "main": [
+        [
+          {
+            "node": "Respond Error 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Error 202": {
+      "main": [
+        [
+          {
+            "node": "Send Error Callback",
             "type": "main",
             "index": 0
           }
@@ -276,284 +638,5 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "tags": [],
-  "activeVersion": {
-    "updatedAt": "2026-02-02T17:55:15.060Z",
-    "createdAt": "2026-02-02T17:55:15.060Z",
-    "versionId": "d2928d66-07fc-429e-941a-c69edcb4ae96",
-    "workflowId": "yJO9eAWF92oaDd6x",
-    "nodes": [
-      {
-        "parameters": {
-          "content": "## MCP - Image OCR\n\n**Endpoint:** POST /webhook/image-ocr\n\n**Input (RFC-014):**\n```json\n{\n  \"context\": {\n    \"image_url\": \"https://...\",\n    \"file_type\": \"jpg\",\n    \"project_id\": \"...\",\n    \"guild_id\": \"...\",\n    \"user_id\": \"...\"\n  },\n  \"plugin_context\": {\n    \"api_keys\": { \"mistral\": \"...\" }\n  }\n}\n```\n\n**Legacy Input:**\n```json\n{\n  \"image_url\": \"https://...\",\n  \"mistral_api_key\": \"...\"\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"data\": { \"text\": \"...\", \"pages\": [...] },\n  \"meta\": { \"provider\": \"mistral\" }\n}\n```",
-          "height": 420,
-          "width": 340,
-          "color": 6
-        },
-        "id": "doc-sticky",
-        "name": "Documentation",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          -60,
-          -140
-        ]
-      },
-      {
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "image-ocr",
-          "responseMode": "responseNode",
-          "options": {}
-        },
-        "id": "webhook-ocr",
-        "name": "Webhook",
-        "type": "n8n-nodes-base.webhook",
-        "typeVersion": 2,
-        "position": [
-          0,
-          300
-        ],
-        "webhookId": "image-ocr"
-      },
-      {
-        "parameters": {
-          "jsCode": "// ============================================\n// VALIDATION INPUT - RFC-014 Compatible\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\n// --- Extract image ---\nconst imageUrl_raw = ctx.image_url || ctx.file_url || body.image_url;\nconst imageBase64_raw = ctx.image_base64 || ctx.file_base64 || body.image_base64;\nconst fileType = ctx.file_type || body.file_type;\n\n// --- Extract API key ---\nconst mistralKey = body.mistral_api_key \n  || ctx.mistral_api_key \n  || body.plugin_context?.api_keys?.mistral \n  || ctx.plugin_context?.api_keys?.mistral;\n\n// --- Extract context fields ---\nconst projectId = ctx.project_id || body.project_id || body.plugin_context?.plugin_id;\nconst guildId = ctx.guild_id || body.guild_id;\nconst userId = ctx.user_id || body.user_id;\nconst channelId = ctx.channel_id || body.channel_id;\n\n// --- Validation ---\nconst hasImage = !!(imageUrl_raw || imageBase64_raw);\nconst hasMistralKey = !!mistralKey;\n\nconst errors = [];\nif (!hasImage) errors.push('image_url ou image_base64 requis');\nif (!hasMistralKey) errors.push('mistral_api_key requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors\n  };\n}\n\n// --- Detect MIME type ---\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  return 'image/png';\n}\n\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// --- Prepare image URL ---\nlet imageUrl = '';\nlet detectedMime = 'image/png';\n\nif (imageUrl_raw) {\n  imageUrl = imageUrl_raw;\n} else if (imageBase64_raw) {\n  detectedMime = fileType ? (getMimeFromExtension(fileType) || 'image/png') : detectMimeFromBase64(imageBase64_raw);\n  imageUrl = 'data:' + detectedMime + ';base64,' + imageBase64_raw;\n}\n\nreturn {\n  valid: true,\n  imageUrl: imageUrl,\n  detectedMime: detectedMime,\n  mistralApiKey: mistralKey,\n  includeImages: body.include_images || ctx.include_images || false,\n  source: imageUrl_raw ? 'url' : 'base64',\n  context: {\n    project_id: projectId,\n    guild_id: guildId,\n    user_id: userId,\n    channel_id: channelId\n  }\n};"
-        },
-        "id": "validate-input",
-        "name": "Validate Input",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          220,
-          300
-        ]
-      },
-      {
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "id": "check-valid",
-                "leftValue": "={{ $json.valid }}",
-                "rightValue": true,
-                "operator": {
-                  "type": "boolean",
-                  "operation": "equals"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        },
-        "id": "if-valid",
-        "name": "Input Valid?",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          440,
-          300
-        ]
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "https://api.mistral.ai/v1/ocr",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "=Bearer {{ $json.mistralApiKey }}"
-              },
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify({ model: 'mistral-ocr-latest', document: { type: 'image_url', image_url: $json.imageUrl }, include_image_base64: $json.includeImages }) }}",
-          "options": {
-            "response": {
-              "response": {
-                "fullResponse": true
-              }
-            },
-            "timeout": 120000
-          }
-        },
-        "id": "mistral-ocr",
-        "name": "Mistral OCR",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          660,
-          200
-        ],
-        "onError": "continueRegularOutput"
-      },
-      {
-        "parameters": {
-          "jsCode": "// ============================================\n// FORMAT SUCCESS/ERROR RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error) {\n  const errorMessage = data.message || data.error?.message || input.error?.message || 'Mistral API error';\n  return {\n    success: false,\n    error: {\n      code: 'OCR_API_ERROR',\n      message: errorMessage,\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    context: prevData.context\n  };\n}\n\n// --- Extract text from pages ---\nconst text = data.pages?.map(p => p.markdown).join('\\n\\n') || '';\n\nreturn {\n  success: true,\n  data: {\n    text: text,\n    pages: data.pages || [],\n    model: data.model || 'mistral-ocr-latest',\n    source: prevData.source\n  },\n  meta: {\n    provider: 'mistral',\n    usage: {\n      pages_processed: data.usage_info?.pages_processed || 1,\n      doc_size_bytes: data.usage_info?.doc_size_bytes || 0\n    }\n  },\n  context: prevData.context\n};"
-        },
-        "id": "format-response",
-        "name": "Format Response",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          880,
-          200
-        ]
-      },
-      {
-        "parameters": {
-          "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  }\n};"
-        },
-        "id": "build-error",
-        "name": "Build Error Response",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          660,
-          400
-        ]
-      },
-      {
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ JSON.stringify($json) }}",
-          "options": {
-            "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
-            "responseHeaders": {
-              "entries": [
-                {
-                  "name": "Content-Type",
-                  "value": "application/json"
-                }
-              ]
-            }
-          }
-        },
-        "id": "respond-success",
-        "name": "Respond",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1.1,
-        "position": [
-          1100,
-          200
-        ]
-      },
-      {
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ JSON.stringify($json) }}",
-          "options": {
-            "responseCode": 400,
-            "responseHeaders": {
-              "entries": [
-                {
-                  "name": "Content-Type",
-                  "value": "application/json"
-                }
-              ]
-            }
-          }
-        },
-        "id": "respond-error",
-        "name": "Respond Error",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1.1,
-        "position": [
-          880,
-          400
-        ]
-      }
-    ],
-    "connections": {
-      "Webhook": {
-        "main": [
-          [
-            {
-              "node": "Validate Input",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Validate Input": {
-        "main": [
-          [
-            {
-              "node": "Input Valid?",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Input Valid?": {
-        "main": [
-          [
-            {
-              "node": "Mistral OCR",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Build Error Response",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Mistral OCR": {
-        "main": [
-          [
-            {
-              "node": "Format Response",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Format Response": {
-        "main": [
-          [
-            {
-              "node": "Respond",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Build Error Response": {
-        "main": [
-          [
-            {
-              "node": "Respond Error",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      }
-    },
-    "authors": "import",
-    "name": null,
-    "description": null
-  }
+  "tags": []
 }
