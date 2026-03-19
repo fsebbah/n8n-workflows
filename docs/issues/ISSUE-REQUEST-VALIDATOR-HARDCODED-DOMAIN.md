@@ -206,8 +206,10 @@ Ces sections sont universelles et n'ont pas besoin d'être externalisées :
 
 ## Actions requises
 
-- [ ] Modifier `Prepare LLM Request` pour construire le prompt dynamiquement
-- [ ] Mettre à jour la documentation du webhook
+- [x] Modifier `Prepare LLM Request` pour construire le prompt dynamiquement
+- [x] Modifier `Parse Response` pour gérer les contraintes dynamiques
+- [x] Mettre à jour la documentation du webhook (sticky note)
+- [x] Intégrer suggestions équipe plugin (validation stricte, hints configurable, out_of_scope_examples)
 - [ ] Fournir des exemples de `domain` pour chess, torah, etc.
 - [ ] Tester avec différents domaines
 
@@ -215,7 +217,7 @@ Ces sections sont universelles et n'ont pas besoin d'être externalisées :
 
 ## Priorité
 
-**P2** - Le webhook fonctionne mais retourne des données incohérentes pour les domaines non-cuisine.
+**P2** → **Résolu** - Implémenté le 2026-03-18
 
 ---
 
