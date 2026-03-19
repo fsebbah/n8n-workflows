@@ -1,0 +1,1094 @@
+{
+  "name": "MCP - PDF OCR",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - PDF OCR (Multi-Provider)\n\n**Endpoint:** POST /webhook/pdf-ocr\n\n**Providers supportés:**\n- `mistral` (défaut) - Mistral OCR\n- `google` - Google Cloud Vision\n- `mathpix` - Formules mathématiques\n\n**Input:**\n```json\n{\n  \"file_url\": \"https://...\",\n  \"provider\": \"mistral|google|mathpix\",\n  \"mistral_api_key\": \"...\",\n  \"google_api_key\": \"...\",\n  \"mathpix_app_id\": \"...\",\n  \"mathpix_app_key\": \"...\"\n}\n```\n\n**Async (RFC-040):**\n```json\n{\n  \"file_url\": \"...\",\n  \"provider\": \"mistral\",\n  \"callback_url\": \"https://...\"\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"data\": {\n    \"text\": \"...\",\n    \"pages\": [...]\n  },\n  \"meta\": {\n    \"provider\": \"mistral\",\n    \"pages_processed\": 50\n  }\n}\n```",
+        "height": 520,
+        "width": 340,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pdf-ocr",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "pdf-ocr"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Multi-Provider PDF OCR\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Valid providers ---\nconst validProviders = ['mistral', 'google', 'mathpix'];\nconst provider = body.provider || ctx.provider || 'mistral';\n\nif (!validProviders.includes(provider)) {\n  errors.push(`Invalid provider: '${provider}'. Valid options: ${validProviders.join(', ')}`);\n}\n\n// --- Extract PDF URL ---\nconst fileUrl = ctx.file_url || ctx.pdf_url || body.file_url || body.pdf_url;\nif (!fileUrl) {\n  errors.push('file_url requis');\n}\n\n// --- Check required API keys based on provider ---\nconst mistralKey = body.mistral_api_key || ctx.mistral_api_key || body.plugin_context?.api_keys?.mistral;\nconst googleKey = body.google_api_key || ctx.google_api_key || body.plugin_context?.api_keys?.google;\nconst mathpixAppId = body.mathpix_app_id || ctx.mathpix_app_id || body.plugin_context?.api_keys?.mathpix_app_id;\nconst mathpixAppKey = body.mathpix_app_key || ctx.mathpix_app_key || body.plugin_context?.api_keys?.mathpix_app_key;\n\nif (provider === 'mistral' && !mistralKey) {\n  errors.push('mistral_api_key requis pour provider mistral');\n}\nif (provider === 'google' && !googleKey) {\n  errors.push('google_api_key requis pour provider google');\n}\nif (provider === 'mathpix' && (!mathpixAppId || !mathpixAppKey)) {\n  errors.push('mathpix_app_id et mathpix_app_key requis pour provider mathpix');\n}\n\n// --- Extract context fields ---\nconst projectId = ctx.project_id || body.project_id || body.plugin_context?.plugin_id;\nconst guildId = ctx.guild_id || body.guild_id;\nconst userId = ctx.user_id || body.user_id;\n\n// --- RFC-040: Extract async callback fields ---\nconst callbackUrl = body.callback_url || ctx.callback_url;\nconst jobId = body.job_id || ctx.job_id || crypto.randomUUID();\n\n// --- Options ---\nconst includeImages = body.include_images || ctx.include_images || false;\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    callbackUrl: callbackUrl,\n    jobId: jobId\n  };\n}\n\nreturn {\n  valid: true,\n  fileUrl: fileUrl,\n  provider: provider,\n  mistralApiKey: mistralKey,\n  googleApiKey: googleKey,\n  mathpixAppId: mathpixAppId,\n  mathpixAppKey: mathpixAppKey,\n  includeImages: includeImages,\n  callbackUrl: callbackUrl,\n  jobId: jobId,\n  context: {\n    project_id: projectId,\n    guild_id: guildId,\n    user_id: userId\n  }\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-callback",
+              "leftValue": "={{ $json.callbackUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-callback",
+      "name": "Has Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'processing' }) }}",
+        "options": {
+          "responseCode": 202,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-202",
+      "name": "Respond 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-mistral",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "mistral"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "mistral"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-google",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "google"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "google"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-mathpix",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "mathpix"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "mathpix"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "id": "switch-provider-sync",
+      "name": "Switch Provider (Sync)",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-mistral-async",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $('Validate Input').first().json.provider }}",
+                    "rightValue": "mistral"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "mistral"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-google-async",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $('Validate Input').first().json.provider }}",
+                    "rightValue": "google"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "google"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-mathpix-async",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $('Validate Input').first().json.provider }}",
+                    "rightValue": "mathpix"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "mathpix"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "id": "switch-provider-async",
+      "name": "Switch Provider (Async)",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/ocr",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.mistralApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'mistral-ocr-latest', document: { type: 'document_url', document_url: $json.fileUrl }, include_image_base64: $json.includeImages }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "id": "mistral-ocr-sync",
+      "name": "Mistral OCR (Sync)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/ocr",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Validate Input').first().json.mistralApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'mistral-ocr-latest', document: { type: 'document_url', document_url: $('Validate Input').first().json.fileUrl }, include_image_base64: $('Validate Input').first().json.includeImages }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "id": "mistral-ocr-async",
+      "name": "Mistral OCR (Async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        280
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vision.googleapis.com/v1/files:asyncBatchAnnotate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $json.googleApiKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ requests: [{ inputConfig: { gcsSource: { uri: $json.fileUrl }, mimeType: 'application/pdf' }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }], outputConfig: { gcsDestination: { uri: 'gs://temp-ocr-output/' }, batchSize: 100 } }] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "id": "google-ocr-sync",
+      "name": "Google Vision (Sync)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vision.googleapis.com/v1/files:asyncBatchAnnotate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $('Validate Input').first().json.googleApiKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ requests: [{ inputConfig: { gcsSource: { uri: $('Validate Input').first().json.fileUrl }, mimeType: 'application/pdf' }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }], outputConfig: { gcsDestination: { uri: 'gs://temp-ocr-output/' }, batchSize: 100 } }] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "id": "google-ocr-async",
+      "name": "Google Vision (Async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mathpix.com/v3/pdf",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "app_id",
+              "value": "={{ $json.mathpixAppId }}"
+            },
+            {
+              "name": "app_key",
+              "value": "={{ $json.mathpixAppKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ url: $json.fileUrl, conversion_formats: { md: true, docx: false, tex: { zip: false } }, math_inline_delimiters: ['$', '$'], math_display_delimiters: ['$$', '$$'] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "id": "mathpix-ocr-sync",
+      "name": "Mathpix OCR (Sync)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        320
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mathpix.com/v3/pdf",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "app_id",
+              "value": "={{ $('Validate Input').first().json.mathpixAppId }}"
+            },
+            {
+              "name": "app_key",
+              "value": "={{ $('Validate Input').first().json.mathpixAppKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ url: $('Validate Input').first().json.fileUrl, conversion_formats: { md: true, docx: false, tex: { zip: false } }, math_inline_delimiters: ['$', '$'], math_display_delimiters: ['$$', '$$'] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "id": "mathpix-ocr-async",
+      "name": "Mathpix OCR (Async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        520
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NORMALIZE MISTRAL OCR RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error) {\n  const errorMessage = data.message || data.error?.message || input.error?.message || 'Mistral API error';\n  return {\n    success: false,\n    error: {\n      code: 'OCR_API_ERROR',\n      message: errorMessage,\n      provider: 'mistral',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    context: prevData.context\n  };\n}\n\n// --- Extract text from pages ---\nconst pages = data.pages || [];\nconst text = pages.map(p => p.markdown).join('\\n\\n');\n\nconst pageDetails = pages.map((p, idx) => ({\n  page: idx + 1,\n  markdown: p.markdown,\n  has_images: p.images?.length > 0 || false\n}));\n\nreturn {\n  success: true,\n  data: {\n    text: text,\n    pages: pageDetails,\n    page_count: pages.length\n  },\n  meta: {\n    provider: 'mistral',\n    model: data.model || 'mistral-ocr-latest',\n    usage: {\n      pages_processed: data.usage_info?.pages_processed || pages.length,\n      doc_size_bytes: data.usage_info?.doc_size_bytes || 0\n    }\n  },\n  context: prevData.context\n};"
+      },
+      "id": "normalize-mistral-sync",
+      "name": "Normalize Mistral (Sync)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NORMALIZE MISTRAL OCR RESPONSE (ASYNC)\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nconst callbackUrl = prevData.callbackUrl;\nconst jobId = prevData.jobId;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error) {\n  const errorMessage = data.message || data.error?.message || input.error?.message || 'Mistral API error';\n  return {\n    callbackUrl: callbackUrl,\n    callbackBody: {\n      success: false,\n      job_id: jobId,\n      status: 'failed',\n      error: {\n        code: 'OCR_API_ERROR',\n        message: errorMessage,\n        provider: 'mistral',\n        http_status: statusCode >= 400 ? statusCode : 500\n      },\n      context: prevData.context\n    }\n  };\n}\n\n// --- Extract text from pages ---\nconst pages = data.pages || [];\nconst text = pages.map(p => p.markdown).join('\\n\\n');\n\nconst pageDetails = pages.map((p, idx) => ({\n  page: idx + 1,\n  markdown: p.markdown,\n  has_images: p.images?.length > 0 || false\n}));\n\nreturn {\n  callbackUrl: callbackUrl,\n  callbackBody: {\n    success: true,\n    job_id: jobId,\n    status: 'completed',\n    data: {\n      text: text,\n      pages: pageDetails,\n      page_count: pages.length\n    },\n    meta: {\n      provider: 'mistral',\n      model: data.model || 'mistral-ocr-latest',\n      usage: {\n        pages_processed: data.usage_info?.pages_processed || pages.length,\n        doc_size_bytes: data.usage_info?.doc_size_bytes || 0\n      }\n    },\n    context: prevData.context\n  }\n};"
+      },
+      "id": "normalize-mistral-async",
+      "name": "Normalize Mistral (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NORMALIZE GOOGLE VISION RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error || data.error) {\n  const errorMessage = data.error?.message || data.message || input.error?.message || 'Google Vision API error';\n  return {\n    success: false,\n    error: {\n      code: 'OCR_API_ERROR',\n      message: errorMessage,\n      provider: 'google',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    context: prevData.context\n  };\n}\n\n// --- Extract text from responses ---\nconst responses = data.responses || [];\nlet fullText = '';\nconst pageDetails = [];\n\nresponses.forEach((resp, idx) => {\n  const annotation = resp.fullTextAnnotation || {};\n  const pageText = annotation.text || '';\n  fullText += pageText + '\\n\\n';\n  pageDetails.push({\n    page: idx + 1,\n    markdown: pageText,\n    confidence: resp.textAnnotations?.[0]?.confidence || null,\n    detected_languages: annotation.pages?.[0]?.property?.detectedLanguages || []\n  });\n});\n\nreturn {\n  success: true,\n  data: {\n    text: fullText.trim(),\n    pages: pageDetails,\n    page_count: pageDetails.length\n  },\n  meta: {\n    provider: 'google',\n    model: 'cloud-vision-v1'\n  },\n  context: prevData.context\n};"
+      },
+      "id": "normalize-google-sync",
+      "name": "Normalize Google (Sync)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NORMALIZE GOOGLE VISION RESPONSE (ASYNC)\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nconst callbackUrl = prevData.callbackUrl;\nconst jobId = prevData.jobId;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error || data.error) {\n  const errorMessage = data.error?.message || data.message || input.error?.message || 'Google Vision API error';\n  return {\n    callbackUrl: callbackUrl,\n    callbackBody: {\n      success: false,\n      job_id: jobId,\n      status: 'failed',\n      error: {\n        code: 'OCR_API_ERROR',\n        message: errorMessage,\n        provider: 'google',\n        http_status: statusCode >= 400 ? statusCode : 500\n      },\n      context: prevData.context\n    }\n  };\n}\n\n// --- Extract text from responses ---\nconst responses = data.responses || [];\nlet fullText = '';\nconst pageDetails = [];\n\nresponses.forEach((resp, idx) => {\n  const annotation = resp.fullTextAnnotation || {};\n  const pageText = annotation.text || '';\n  fullText += pageText + '\\n\\n';\n  pageDetails.push({\n    page: idx + 1,\n    markdown: pageText,\n    confidence: resp.textAnnotations?.[0]?.confidence || null,\n    detected_languages: annotation.pages?.[0]?.property?.detectedLanguages || []\n  });\n});\n\nreturn {\n  callbackUrl: callbackUrl,\n  callbackBody: {\n    success: true,\n    job_id: jobId,\n    status: 'completed',\n    data: {\n      text: fullText.trim(),\n      pages: pageDetails,\n      page_count: pageDetails.length\n    },\n    meta: {\n      provider: 'google',\n      model: 'cloud-vision-v1'\n    },\n    context: prevData.context\n  }\n};"
+      },
+      "id": "normalize-google-async",
+      "name": "Normalize Google (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NORMALIZE MATHPIX RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error || data.error) {\n  const errorMessage = data.error?.message || data.error || data.message || input.error?.message || 'Mathpix API error';\n  return {\n    success: false,\n    error: {\n      code: 'OCR_API_ERROR',\n      message: errorMessage,\n      provider: 'mathpix',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    context: prevData.context\n  };\n}\n\n// --- Mathpix returns a pdf_id for async processing ---\n// For now, we handle it as if the markdown is returned (simplified)\nconst markdown = data.md || data.text || '';\nconst pageCount = data.num_pages || 1;\n\nreturn {\n  success: true,\n  data: {\n    text: markdown,\n    pages: [{ page: 1, markdown: markdown }],\n    page_count: pageCount,\n    has_math: markdown.includes('$') || markdown.includes('\\\\(')\n  },\n  meta: {\n    provider: 'mathpix',\n    model: 'mathpix-pdf',\n    pdf_id: data.pdf_id || null\n  },\n  context: prevData.context\n};"
+      },
+      "id": "normalize-mathpix-sync",
+      "name": "Normalize Mathpix (Sync)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NORMALIZE MATHPIX RESPONSE (ASYNC)\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nconst callbackUrl = prevData.callbackUrl;\nconst jobId = prevData.jobId;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error || data.error) {\n  const errorMessage = data.error?.message || data.error || data.message || input.error?.message || 'Mathpix API error';\n  return {\n    callbackUrl: callbackUrl,\n    callbackBody: {\n      success: false,\n      job_id: jobId,\n      status: 'failed',\n      error: {\n        code: 'OCR_API_ERROR',\n        message: errorMessage,\n        provider: 'mathpix',\n        http_status: statusCode >= 400 ? statusCode : 500\n      },\n      context: prevData.context\n    }\n  };\n}\n\n// --- Mathpix returns a pdf_id for async processing ---\nconst markdown = data.md || data.text || '';\nconst pageCount = data.num_pages || 1;\n\nreturn {\n  callbackUrl: callbackUrl,\n  callbackBody: {\n    success: true,\n    job_id: jobId,\n    status: 'completed',\n    data: {\n      text: markdown,\n      pages: [{ page: 1, markdown: markdown }],\n      page_count: pageCount,\n      has_math: markdown.includes('$') || markdown.includes('\\\\(')\n    },\n    meta: {\n      provider: 'mathpix',\n      model: 'mathpix-pdf',\n      pdf_id: data.pdf_id || null\n    },\n    context: prevData.context\n  }\n};"
+      },
+      "id": "normalize-mathpix-async",
+      "name": "Normalize Mathpix (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        520
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "merge-sync",
+      "name": "Merge (Sync)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1540,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "merge-async",
+      "name": "Merge (Async)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1760,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-sync",
+      "name": "Respond (Sync)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE CALLBACK WITH HMAC SIGNATURE (RFC-040)\n// ============================================\n\nconst crypto = require('crypto');\n\nconst input = $input.first().json;\nconst callbackUrl = input.callbackUrl;\nconst callbackBody = input.callbackBody;\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callbackBody);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn {\n  callbackUrl: callbackUrl,\n  callbackBody: callbackBody,\n  signature: signature\n};"
+      },
+      "id": "prepare-callback",
+      "name": "Prepare Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callbackBody) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send-callback",
+      "name": "Send Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  callbackUrl: input.callbackUrl,\n  jobId: input.jobId\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Has Callback?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Callback?": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Switch Provider (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202": {
+      "main": [
+        [
+          {
+            "node": "Switch Provider (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Provider (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Mistral OCR (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Vision (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mathpix OCR (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Provider (Async)": {
+      "main": [
+        [
+          {
+            "node": "Mistral OCR (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Vision (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mathpix OCR (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral OCR (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Mistral (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Vision (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Google (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mathpix OCR (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Mathpix (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral OCR (Async)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Mistral (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Vision (Async)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Google (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mathpix OCR (Async)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Mathpix (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Mistral (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Google (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Mathpix (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Mistral (Async)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Google (Async)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Mathpix (Async)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Respond (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge (Async)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": []
+}
