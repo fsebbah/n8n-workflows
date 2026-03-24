@@ -24,6 +24,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
+from pathlib import Path
 
 try:
     from rich.console import Console
@@ -36,9 +37,29 @@ try:
 except ImportError:
     RICH_AVAILABLE = False
 
-# Configuration
-N8N_API_URL = os.environ.get("N8N_API_URL", "http://pi6.local:5678/api/v1")
-N8N_API_KEY = os.environ.get("N8N_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2MjliMWE2ZS1hMjQxLTQxNjAtYTExNS01MGI5NDA0YjIxNmMiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzY0NzgxODYxfQ.qzNk9ixI5t8xQ9L3PF9ZF-fsRgIf_YwIcx91LqcPpX0")
+
+def load_env() -> dict:
+    """Load configuration from .env.local file."""
+    env_file = Path(__file__).parent.parent.parent / ".env.local"
+    config = {}
+    if env_file.exists():
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    config[key] = value
+    return config
+
+
+# Configuration - load from .env.local with fallback to environment
+_config = load_env()
+N8N_API_URL = os.environ.get("N8N_API_URL") or _config.get("N8N_API_URL", "http://pi6.local:5678/api/v1")
+N8N_API_KEY = os.environ.get("N8N_API_KEY") or _config.get("N8N_API_KEY", "")
+
+if not N8N_API_KEY:
+    print("Error: N8N_API_KEY not configured in .env.local or environment")
+    sys.exit(1)
 
 # Category detection patterns
 CATEGORIES = [

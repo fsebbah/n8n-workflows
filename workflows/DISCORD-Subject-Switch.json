@@ -1,0 +1,463 @@
+{
+  "name": "DISCORD - Subject Switch",
+  "active": true,
+  "nodes": [
+    {
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 520,
+        "height": 380,
+        "content": "## DISCORD - Subject Switch (M3)\n\n**Endpoint:** POST /webhook/discord/subject-switch\n\n**Description:** Changement de contexte matiere - When chatbot-core receives `/matiere maths`, it calls azy.mcp to reload the correct expert + RAG + session.\n\n**Request:**\n```json\n{\n  \"guild_id\": \"123456789\",\n  \"user_id\": \"987654321\",\n  \"thread_id\": \"111222333\",\n  \"new_subject_slug\": \"maths\"\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"data\": {\n    \"previous_subject\": \"optique\",\n    \"new_subject\": \"maths\",\n    \"expert\": { ... }\n  },\n  \"_trace\": { ... }\n}\n```\n\n**RFC:** RFC-048 (Discord Education Architecture)\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"previous_subject\", \"new_subject\", \"expert\"],\n  \"domain\": \"education\"\n}\n```"
+      }
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "discord-subject-switch",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "discord/subject-switch",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Validate required input fields for subject switch\nconst body = $input.first().json.body || {};\n\nconst guildId = body.guild_id;\nconst userId = body.user_id;\nconst threadId = body.thread_id; // Optional\nconst newSubjectSlug = body.new_subject_slug;\n\nconst errors = [];\nif (!guildId) errors.push('guild_id');\nif (!userId) errors.push('user_id');\nif (!newSubjectSlug) errors.push('new_subject_slug');\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// Validate subject slug format (lowercase, alphanumeric, hyphens)\nconst slugRegex = /^[a-z0-9-]+$/;\nif (!slugRegex.test(newSubjectSlug)) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'new_subject_slug doit etre en minuscules, alphanumerique avec tirets uniquement',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    startTime: Date.now(),\n    guild_id: guildId,\n    user_id: userId,\n    thread_id: threadId || null,\n    new_subject_slug: newSubjectSlug\n  }\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        550
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get-current-subject",
+      "name": "Get Current Subject",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        400
+      ],
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/v1/promotions/students/by-discord",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "guild_id",
+              "value": "={{ $json.guild_id }}"
+            },
+            {
+              "name": "discord_user_id",
+              "value": "={{ $json.user_id }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Guild-ID",
+              "value": "={{ $json.guild_id }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "process-current-subject",
+      "name": "Process Current Subject",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Process current subject response and prepare for update\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst statusCode = input.statusCode || 200;\nconst body = input.body || input;\n\n// Handle student not found\nif (statusCode === 404 || !body || body.error) {\n  return {\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: 'Etudiant non trouve dans cette promotion',\n        status: 'STUDENT_NOT_FOUND'\n      },\n      startTime: prevData.startTime\n    }\n  };\n}\n\n// Handle other API errors\nif (statusCode >= 400) {\n  return {\n    json: {\n      found: false,\n      error: {\n        code: statusCode,\n        message: body.error?.message || 'Erreur API backend',\n        status: 'API_ERROR'\n      },\n      startTime: prevData.startTime\n    }\n  };\n}\n\n// Extract student data\nconst student = body.student || body;\nconst previousSubject = student.current_subject_slug || null;\nconst promotionId = student.promotion_id;\nconst studentId = student.id;\n\nreturn {\n  json: {\n    found: true,\n    student_id: studentId,\n    promotion_id: promotionId,\n    previous_subject: previousSubject,\n    new_subject_slug: prevData.new_subject_slug,\n    guild_id: prevData.guild_id,\n    user_id: prevData.user_id,\n    thread_id: prevData.thread_id,\n    startTime: prevData.startTime\n  }\n};"
+      }
+    },
+    {
+      "id": "check-student-found",
+      "name": "Student Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-student-not-found",
+      "name": "Respond Student Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1680,
+        550
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error, _trace: { reasoning: [{ step: 'lookup_student', result: 'not_found' }], latency_ms: Date.now() - $json.startTime } }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 404 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "update-subject",
+      "name": "Update Subject (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1680,
+        400
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.API_URL }}/api/v1/promotions/{{ $json.promotion_id }}/students/{{ $json.student_id }}/subject",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Guild-ID",
+              "value": "={{ $json.guild_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ subject_slug: $json.new_subject_slug }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "get-expert-config",
+      "name": "Get Expert Config",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1920,
+        400
+      ],
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/v1/promotions/{{ $('Process Current Subject').first().json.promotion_id }}/subjects/{{ $('Validate Input').first().json.new_subject_slug }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Guild-ID",
+              "value": "={{ $('Validate Input').first().json.guild_id }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "build-response",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Build final response with expert config and _trace\nconst expertResponse = $input.first().json;\nconst processData = $('Process Current Subject').first().json;\nconst validateData = $('Validate Input').first().json;\nconst updateResponse = $('Update Subject (API)').first().json;\n\nconst expertStatusCode = expertResponse.statusCode || 200;\nconst expertBody = expertResponse.body || expertResponse;\n\nconst updateStatusCode = updateResponse.statusCode || 200;\n\n// Check if update failed\nif (updateStatusCode >= 400) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: updateStatusCode,\n        message: 'Echec de la mise a jour du contexte matiere',\n        status: 'UPDATE_FAILED'\n      },\n      _trace: {\n        reasoning: [\n          { step: 'lookup_student', result: 'found', student_id: processData.student_id },\n          { step: 'update_subject', result: 'failed', status_code: updateStatusCode }\n        ],\n        latency_ms: Date.now() - processData.startTime\n      }\n    }\n  };\n}\n\n// Check if subject/expert not found\nif (expertStatusCode === 404 || !expertBody || expertBody.error) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: `Matiere '${validateData.new_subject_slug}' non trouvee dans cette promotion`,\n        status: 'SUBJECT_NOT_FOUND'\n      },\n      _trace: {\n        reasoning: [\n          { step: 'lookup_student', result: 'found', student_id: processData.student_id },\n          { step: 'update_subject', result: 'success' },\n          { step: 'fetch_expert', result: 'not_found', subject_slug: validateData.new_subject_slug }\n        ],\n        latency_ms: Date.now() - processData.startTime\n      }\n    }\n  };\n}\n\n// Handle other API errors for expert config\nif (expertStatusCode >= 400) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: expertStatusCode,\n        message: expertBody.error?.message || 'Erreur lors de la recuperation de la configuration expert',\n        status: 'EXPERT_API_ERROR'\n      },\n      _trace: {\n        reasoning: [\n          { step: 'lookup_student', result: 'found', student_id: processData.student_id },\n          { step: 'update_subject', result: 'success' },\n          { step: 'fetch_expert', result: 'error', status_code: expertStatusCode }\n        ],\n        latency_ms: Date.now() - processData.startTime\n      }\n    }\n  };\n}\n\n// Extract expert configuration\nconst subject = expertBody.subject || expertBody;\nconst expert = subject.expert || {};\n\n// Build successful response\nreturn {\n  json: {\n    success: true,\n    data: {\n      previous_subject: processData.previous_subject,\n      new_subject: validateData.new_subject_slug,\n      subject: {\n        id: subject.id,\n        name: subject.name,\n        slug: subject.slug || validateData.new_subject_slug,\n        course_channel_id: subject.course_channel_id || null,\n        prof_channel_id: subject.prof_channel_id || null\n      },\n      expert: {\n        expert_id: expert.id || expert.expert_id || `expert-${validateData.new_subject_slug}-001`,\n        name: expert.name || subject.name || `Expert ${validateData.new_subject_slug}`,\n        rag_collection: expert.rag_collection || `education_${validateData.new_subject_slug}`,\n        system_prompt: expert.system_prompt || `Tu es un expert en ${subject.name || validateData.new_subject_slug}. Tu aides les etudiants a comprendre les concepts et a resoudre leurs exercices.`\n      },\n      student: {\n        student_id: processData.student_id,\n        promotion_id: processData.promotion_id,\n        thread_id: processData.thread_id\n      }\n    },\n    _trace: {\n      reasoning: [\n        { step: 'lookup_student', result: 'found', student_id: processData.student_id },\n        { step: 'update_subject', result: 'success', from: processData.previous_subject, to: validateData.new_subject_slug },\n        { step: 'fetch_expert', result: 'success', expert_id: expert.id || expert.expert_id }\n      ],\n      context_switched: true,\n      previous_subject: processData.previous_subject,\n      new_subject: validateData.new_subject_slug,\n      latency_ms: Date.now() - processData.startTime\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2400,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Current Subject",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current Subject": {
+      "main": [
+        [
+          {
+            "node": "Process Current Subject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Current Subject": {
+      "main": [
+        [
+          {
+            "node": "Student Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Student Found?": {
+      "main": [
+        [
+          {
+            "node": "Update Subject (API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Student Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Subject (API)": {
+      "main": [
+        [
+          {
+            "node": "Get Expert Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Expert Config": {
+      "main": [
+        [
+          {
+            "node": "Build Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "availableInMCP": false
+  },
+  "tags": []
+}
