@@ -1,0 +1,366 @@
+{
+  "updatedAt": "2026-01-20T19:54:02.000Z",
+  "createdAt": "2026-01-15T12:04:09.792Z",
+  "id": "X4ofmCCIZRQSiMzV",
+  "name": "CHANNELS---Private-Handle-Unknown-Channel",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "private-channel-unknown",
+        "options": {}
+      },
+      "id": "channel-unknown-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        304
+      ],
+      "webhookId": "private-channel-unknown-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE INPUT (RFC-004 Phase 2)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extraction Project ID ---\nconst projectId = headers['x-project-id'] \n  || headers['X-Project-ID'] \n  || headers['X-Project-Id']\n  || body.project_id\n  || 'unknown';\n\n// --- Validate required fields ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis'\n  };\n}\n\nif (!body.guild_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_GUILD_ID',\n    message: 'Le champ \"guild_id\" est requis'\n  };\n}\n\nif (!body.old_channel_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_OLD_CHANNEL_ID',\n    message: 'Le champ \"old_channel_id\" (channel supprimé) est requis'\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: body.discord_user_id,\n    guild_id: body.guild_id,\n    old_channel_id: body.old_channel_id,\n    channel_type: body.channel_type || 'support',\n    project_id: projectId,\n    metadata: body.metadata || {}\n  }\n};"
+      },
+      "id": "channel-unknown-0002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "channel-unknown-0003",
+      "name": "Check Validation Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.API_URL }}/api/channels/private/{{ $json.data.discord_user_id }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "guild_id",
+              "value": "={{ $json.data.guild_id }}"
+            },
+            {
+              "name": "channel_type",
+              "value": "={{ $json.data.channel_type }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.data.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "channel-unknown-0004",
+      "name": "Delete Obsolete Channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE REDIS STREAM MESSAGE FOR NEW CHANNEL\n// ============================================\n\nconst validationData = $('Validate Input').first().json.data;\nconst deleteResult = $input.first().json;\n\n// Callback URL for chatbot-core\nconst callbackUrl = $json.callback_url;\n\n// Generate request ID\nconst requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\nreturn {\n  redis_message: {\n    type: 'notification',\n    actions: {\n      create_private_channel: true\n    },\n    discord_user_id: validationData.discord_user_id,\n    guild_id: validationData.guild_id,\n    channel_type: validationData.channel_type,\n    callback_url: callbackUrl,\n    metadata: {\n      request_id: requestId,\n      project_id: validationData.project_id,\n      recreated_from: validationData.old_channel_id,\n      reason: 'unknown_channel_error',\n      ...validationData.metadata\n    }\n  },\n  request_id: requestId,\n  validation_data: validationData,\n  delete_result: deleteResult\n};"
+      },
+      "id": "channel-unknown-0005",
+      "name": "Prepare Redis Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xAdd"
+      },
+      "id": "channel-unknown-0006",
+      "name": "Publish Redis Stream",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        208
+      ],
+      "credentials": {
+        "redis": {
+          "id": "redis-credentials",
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT SUCCESS RESPONSE\n// ============================================\n\nconst prepareData = $('Prepare Redis Message').first().json;\n\nreturn {\n  success: true,\n  status: 'recreating',\n  message: 'Obsolete channel deleted. New channel creation requested.',\n  request_id: prepareData.request_id,\n  old_channel_id: prepareData.validation_data.old_channel_id,\n  channel_type: prepareData.validation_data.channel_type\n};"
+      },
+      "id": "channel-unknown-0007",
+      "name": "Format Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT VALIDATION ERROR RESPONSE\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation',\n    http_status: 400\n  }\n};"
+      },
+      "id": "channel-unknown-0008",
+      "name": "Format Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "channel-unknown-0009",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1728,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.http_status || 400 }}"
+        }
+      },
+      "id": "channel-unknown-0010",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7b0066bf-6f40-4173-8a75-c8eab03c4470",
+              "name": "callback_url",
+              "value": "={{ $env.N8N_WEBHOOK_BASE_URL }}/private-channel-callback",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        864,
+        208
+      ],
+      "id": "1ef78f43-90cc-4769-9d5a-658d29156e7d",
+      "name": "Set Callback URL"
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Check Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Format Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete Obsolete Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Obsolete Channel": {
+      "main": [
+        [
+          {
+            "node": "Set Callback URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Redis Message": {
+      "main": [
+        [
+          {
+            "node": "Publish Redis Stream",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Redis Stream": {
+      "main": [
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Callback URL": {
+      "main": [
+        [
+          {
+            "node": "Prepare Redis Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "2311d9d8-c3fe-41c3-892b-af045bb9a6ac",
+  "activeVersionId": "2311d9d8-c3fe-41c3-892b-af045bb9a6ac",
+  "versionCounter": 29,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-15T12:04:09.794Z",
+      "createdAt": "2026-01-15T12:04:09.794Z",
+      "role": "workflow:owner",
+      "workflowId": "X4ofmCCIZRQSiMzV",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

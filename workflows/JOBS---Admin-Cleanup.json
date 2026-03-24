@@ -1,0 +1,388 @@
+{
+  "updatedAt": "2026-01-22T10:28:42.000Z",
+  "createdAt": "2026-01-21T10:34:03.114Z",
+  "id": "zFOKwZABmUlo7tg6",
+  "name": "JOBS---Admin-Cleanup",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 20
+            }
+          ]
+        }
+      },
+      "id": "jobs-admin-0001",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/admin/document-jobs/stats?max_age_minutes=15",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "jobs-admin-0002",
+      "name": "Get Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        304
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CHECK FOR ZOMBIES\n// ============================================\n\nconst stats = $input.first().json;\n\n// --- Check API errors ---\nif (!stats.success) {\n  return {\n    has_zombies: false,\n    error: true,\n    message: 'Erreur API stats: ' + (stats.error?.message || 'Unknown')\n  };\n}\n\nreturn {\n  has_zombies: (stats.zombie_jobs || 0) > 0,\n  zombie_count: stats.zombie_jobs || 0,\n  total_jobs: stats.total_jobs || 0,\n  active_jobs: stats.active_jobs || 0,\n  jobs_by_user: stats.jobs_by_user || {}\n};"
+      },
+      "id": "jobs-admin-0003",
+      "name": "Check Zombies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-zombies",
+              "leftValue": "={{ $json.has_zombies }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "jobs-admin-0004",
+      "name": "Has Zombies?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        672,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/admin/document-jobs/cleanup?max_age_minutes=15",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "jobs-admin-0005",
+      "name": "Call Cleanup API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESS CLEANUP RESULT\n// ============================================\n\nconst result = $input.first().json;\n\n// --- Check API errors ---\nif (!result.success) {\n  return {\n    cleanup_success: false,\n    refund_required: false,\n    error: result.error?.message || 'Cleanup failed'\n  };\n}\n\n// --- Extract refund details ---\nconst refundDetails = result.refund_details || [];\n\nreturn {\n  cleanup_success: true,\n  cleaned_count: result.cleaned_count || 0,\n  refund_required: result.refund_required === true && refundDetails.length > 0,\n  refund_details: refundDetails,\n  cleaned_jobs: result.cleaned_jobs || []\n};"
+      },
+      "id": "jobs-admin-0006",
+      "name": "Process Cleanup Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-refund",
+              "leftValue": "={{ $json.refund_required }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "jobs-admin-0007",
+      "name": "Refund Required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE REFUND ITEMS\n// ============================================\n\nconst data = $input.first().json;\nconst refundDetails = data.refund_details || [];\n\n// --- Return array of refund items for loop ---\nreturn refundDetails.map(item => ({\n  user_id: item.user_id,\n  job_id: item.job_id,\n  guild_id: item.guild_id,\n  filename: item.filename,\n  age_minutes: item.age_minutes,\n  credits_to_refund: item.credits_to_refund || 1\n}));"
+      },
+      "id": "jobs-admin-0008",
+      "name": "Prepare Refund Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/webhook/account/credit",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  discord_user_id: $json.user_id,\n  guild_id: $json.guild_id,\n  amount: $json.credits_to_refund,\n  reason: 'Refund job zombie: ' + $json.filename + ' (age: ' + Math.round($json.age_minutes) + ' min)'\n}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "jobs-admin-0009",
+      "name": "Refund Credits",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        112
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// LOG REFUND RESULT\n// ============================================\n\nconst refundResult = $input.first().json;\nconst refundItem = $('Prepare Refund Items').first().json;\n\nreturn {\n  action: 'refund',\n  user_id: refundItem.user_id,\n  credits_refunded: refundItem.credits_to_refund,\n  job_id: refundItem.job_id,\n  refund_success: refundResult.success !== false,\n  refund_response: refundResult\n};"
+      },
+      "id": "jobs-admin-0010",
+      "name": "Log Refund Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// LOG NO REFUND NEEDED\n// ============================================\n\nconst data = $input.first().json;\n\nreturn {\n  action: 'cleanup_only',\n  cleaned_count: data.cleaned_count,\n  refund_required: false,\n  message: 'Cleanup terminé sans remboursement nécessaire'\n};"
+      },
+      "id": "jobs-admin-0011",
+      "name": "Log No Refund",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// LOG NO ZOMBIES\n// ============================================\n\nconst stats = $input.first().json;\n\nreturn {\n  action: 'no_action',\n  total_jobs: stats.total_jobs,\n  active_jobs: stats.active_jobs,\n  zombie_count: 0,\n  message: 'Aucun job zombie détecté'\n};"
+      },
+      "id": "jobs-admin-0012",
+      "name": "Log No Zombies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Stats": {
+      "main": [
+        [
+          {
+            "node": "Check Zombies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Zombies": {
+      "main": [
+        [
+          {
+            "node": "Has Zombies?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Zombies?": {
+      "main": [
+        [
+          {
+            "node": "Call Cleanup API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log No Zombies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Cleanup API": {
+      "main": [
+        [
+          {
+            "node": "Process Cleanup Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Cleanup Result": {
+      "main": [
+        [
+          {
+            "node": "Refund Required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund Required?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Refund Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log No Refund",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Refund Items": {
+      "main": [
+        [
+          {
+            "node": "Refund Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund Credits": {
+      "main": [
+        [
+          {
+            "node": "Log Refund Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Cron Trigger": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": {},
+  "versionId": "a213337e-7259-41f1-8cef-5ed8bac5881b",
+  "activeVersionId": "a213337e-7259-41f1-8cef-5ed8bac5881b",
+  "versionCounter": 15,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-21T10:34:03.119Z",
+      "createdAt": "2026-01-21T10:34:03.119Z",
+      "role": "workflow:owner",
+      "workflowId": "zFOKwZABmUlo7tg6",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

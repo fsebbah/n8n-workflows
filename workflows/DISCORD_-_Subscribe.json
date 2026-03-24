@@ -1,0 +1,495 @@
+{
+  "updatedAt": "2026-01-12T11:31:44.000Z",
+  "createdAt": "2026-01-07T20:01:10.970Z",
+  "id": "z3ptm83NqfKA1Qed",
+  "name": "DISCORD - Subscribe",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## DISCORD - Subscribe\n\n**Endpoint:** POST /webhook/discord-subscribe\n\n**Description:** Cree une session Stripe Checkout pour un abonnement.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah\",\n  \"discord_user_id\": \"123456789\",\n  \"plan_id\": \"price_xxx\",\n  \"customer_email\": \"user@example.com\"\n}\n```\n\n**Note:** `customer_email` est optionnel mais recommande pour pre-remplir le checkout.\n\n**Flow:**\n1. Valider les parametres\n2. Lire stripe_key depuis Redis\n3. Creer session Stripe Checkout\n4. Retourner l'URL de paiement\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"checkout_url\": \"https://checkout.stripe.com/xxx\"\n}\n```",
+        "height": 480,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "discord-subscribe",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        448,
+        304
+      ],
+      "webhookId": "discord-subscribe"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valider les parametres requis\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst projectId = body.project_id || null;\nconst discordUserId = body.discord_user_id || null;\nconst planId = body.plan_id || null;\nconst customerEmail = body.customer_email || null;\nconst discordUsername = body.discord_username || null;\nconst discordGuildId = body.discord_guild_id || body.guild_id || null;\nconst discordChannelId = body.discord_channel_id || body.channel_id || null;\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!discordUserId) errors.push('discord_user_id');\nif (!planId) errors.push('plan_id');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Valider le format du plan_id\nif (!planId.startsWith('price_')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'plan_id doit etre un ID de prix Stripe (price_xxx)',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Valider le format de l'email si fourni\nif (customerEmail && !customerEmail.includes('@')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'customer_email doit etre une adresse email valide',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    discord_user_id: discordUserId,\n    plan_id: planId,\n    customer_email: customerEmail,\n    discord_username: discordUsername,\n    discord_guild_id: discordGuildId,\n    discord_channel_id: discordChannelId,    \n    redis_key: `project:${projectId}`\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "={{ $json.redis_key }}",
+        "options": {}
+      },
+      "id": "get-stripe-config",
+      "name": "Get Stripe Config (Redis)",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        208
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verifier que le projet existe dans Redis\nconst redisResult = $('Get Stripe Config (Redis)').first();\nconst inputData = $('Validate Input').first().json;\n\n// Redis retourne la valeur dans propertyName, value, ou directement\nconst redisJson = redisResult?.json || {};\nconst rawValue = redisJson.propertyName || redisJson.value || redisJson;\n\nif (!rawValue || rawValue === null) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Projet '${inputData.project_id}' non enregistre. Le plugin doit appeler /stripe-register-project au demarrage.`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Parser le JSON stocke dans Redis\nlet project;\ntry {\n  project = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;\n} catch (e) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 500,\n        message: `Erreur parsing Redis: ${e.message}`,\n        status: 'INTERNAL_ERROR'\n      }\n    }\n  }];\n}\n\nif (!project.stripe_key) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `Projet '${inputData.project_id}' n'a pas de cle Stripe configuree`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    found: true,\n    project_id: inputData.project_id,\n    discord_user_id: inputData.discord_user_id,\n    plan_id: inputData.plan_id,\n    customer_email: inputData.customer_email,\n    discord_username: inputData.discord_username,\n    discord_guild_id: inputData.discord_guild_id,\n    discord_channel_id: inputData.discord_channel_id,    \n    stripe_key: project.stripe_key,\n    display_name: project.display_name || inputData.project_id\n  }\n}];"
+      },
+      "id": "check-project",
+      "name": "Check Project",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "project-found",
+      "name": "Project Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1552,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.stripe.com/v1/checkout/sessions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.stripe_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "mode",
+              "value": "subscription"
+            },
+            {
+              "name": "line_items[0][price]",
+              "value": "={{ $json.plan_id }}"
+            },
+            {
+              "name": "line_items[0][quantity]",
+              "value": "1"
+            },
+            {
+              "name": "success_url",
+              "value": "={{ $env.STRIPE_WEBHOOK_URL }}/webhook/subscription-result?project_id={{ $json.project_id }}&action=success&session_id={CHECKOUT_SESSION_ID}"
+            },
+            {
+              "name": "cancel_url",
+              "value": "={{ $env.STRIPE_WEBHOOK_URL }}/webhook/subscription-result?project_id={{ $json.project_id }}&action=cancel&session_id={CHECKOUT_SESSION_ID}"
+            },
+            {
+              "name": "metadata[project_id]",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "metadata[discord_user_id]",
+              "value": "={{ $json.discord_user_id }}"
+            },
+            {
+              "name": "subscription_data[metadata][project_id]",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "subscription_data[metadata][discord_user_id]",
+              "value": "={{ $json.discord_user_id }}"
+            },
+            {
+              "name": "customer_email",
+              "value": "={{ $json.customer_email || '' }}"
+            },
+            {
+              "name": "metadata[discord_username]",
+              "value": "={{ $json.discord_username }}"
+            },
+            {
+              "name": "metadata[discord_guild_id]",
+              "value": "={{ $json.discord_guild_id }}"
+            },
+            {
+              "name": "metadata[discord_channel_id]",
+              "value": "= {{ $json.discord_channel_id }}"
+            },
+            {
+              "name": "metadata[plan_id]",
+              "value": "={{ $json.plan_id }}"
+            },
+            {
+              "name": "metadata[credits_per_month]",
+              "value": "{{ $json.credits_per_month}}"
+            },
+            {
+              "name": "subscription_data[metadata][discord_username]",
+              "value": "={{ $json.discord_username }}"
+            },
+            {
+              "name": "subscription_data[metadata][discord_guild_id]",
+              "value": "= {{ $json.discord_guild_id }}"
+            },
+            {
+              "name": "subscription_data[metadata][discord_channel_id]",
+              "value": "={{ $json.discord_channel_id }}"
+            },
+            {
+              "name": "subscription_data[metadata][plan_id]",
+              "value": "={{ $json.plan_id }}"
+            },
+            {
+              "name": "subscription_data[metadata][credits_per_month]",
+              "value": "={{ $json.credits_per_month}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "create-checkout",
+      "name": "Create Stripe Checkout",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la reponse Stripe\nconst input = $input.first().json;\nconst projectData = $('Check Project').first().json;\n\nconst statusCode = input.statusCode || 200;\nconst data = input.body || input;\n\n// Verifier les erreurs Stripe\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || 'Erreur Stripe API',\n        status: 'STRIPE_ERROR',\n        type: data.error?.type || 'api_error'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    checkout_url: data.url,\n    session_id: data.id,\n    project_id: projectData.project_id,\n    discord_user_id: projectData.discord_user_id,\n    plan_id: projectData.plan_id,\n    expires_at: new Date(data.expires_at * 1000).toISOString()\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2208,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1104,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 404 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-not-found",
+      "name": "Respond Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        304
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Stripe Config (Redis)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Stripe Config (Redis)": {
+      "main": [
+        [
+          {
+            "node": "Check Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Project": {
+      "main": [
+        [
+          {
+            "node": "Project Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Found?": {
+      "main": [
+        [
+          {
+            "node": "Create Stripe Checkout",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Stripe Checkout": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "ae0fcd69-0076-49f3-9e8b-fad4a99b8947",
+  "activeVersionId": "ae0fcd69-0076-49f3-9e8b-fad4a99b8947",
+  "versionCounter": 80,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-07T20:01:10.973Z",
+      "createdAt": "2026-01-07T20:01:10.973Z",
+      "role": "workflow:owner",
+      "workflowId": "z3ptm83NqfKA1Qed",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

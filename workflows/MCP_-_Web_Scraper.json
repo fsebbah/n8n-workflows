@@ -1,0 +1,253 @@
+{
+  "updatedAt": "2026-01-30T14:26:11.000Z",
+  "createdAt": "2025-12-18T10:04:02.097Z",
+  "id": "A2L4SZvj4JcfcZQJ",
+  "name": "MCP - Web Scraper",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "web-scraper",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-scraper",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ],
+      "webhookId": "web-scraper-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: url\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"http-scraper\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "error-no-url",
+      "name": "Error: No URL",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        704,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.body.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "en-US,en;q=0.9,fr;q=0.8"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "gzip, deflate, br"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {
+              "maxRedirects": 5
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": "={{ $('Webhook').first().json.body.options?.timeout_ms || 60000 }}"
+        }
+      },
+      "id": "fetch-page",
+      "name": "Fetch Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        704,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst startTime = Date.now();\n\n// Simple readability-like extraction\nfunction extractContent(html) {\n  if (!html) return { title: '', content: '', excerpt: '', byline: '', length: 0 };\n  \n  // Remove scripts, styles, and comments\n  let clean = html\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<!--[\\s\\S]*?-->/g, '')\n    .replace(/<noscript[^>]*>[\\s\\S]*?<\\/noscript>/gi, '');\n  \n  // Extract title\n  const titleMatch = clean.match(/<title[^>]*>([^<]*)<\\/title>/i);\n  const title = titleMatch ? titleMatch[1].trim() : '';\n  \n  // Try to find main content\n  let content = '';\n  \n  // Look for article or main content areas\n  const articleMatch = clean.match(/<article[^>]*>([\\s\\S]*?)<\\/article>/i);\n  const mainMatch = clean.match(/<main[^>]*>([\\s\\S]*?)<\\/main>/i);\n  const contentMatch = clean.match(/<div[^>]*(?:class|id)=[\"'][^\"']*(?:content|article|post|entry)[^\"']*[\"'][^>]*>([\\s\\S]*?)<\\/div>/i);\n  \n  if (articleMatch) {\n    content = articleMatch[1];\n  } else if (mainMatch) {\n    content = mainMatch[1];\n  } else if (contentMatch) {\n    content = contentMatch[1];\n  } else {\n    // Fallback: get body content\n    const bodyMatch = clean.match(/<body[^>]*>([\\s\\S]*?)<\\/body>/i);\n    content = bodyMatch ? bodyMatch[1] : clean;\n  }\n  \n  // Remove remaining HTML tags and clean up\n  const textContent = content\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .trim();\n  \n  // Extract author/byline\n  let byline = '';\n  const bylineMatch = clean.match(/<[^>]*(?:class|rel)=[\"'][^\"']*(?:author|byline)[^\"']*[\"'][^>]*>([^<]*)</i);\n  if (bylineMatch) byline = bylineMatch[1].trim();\n  \n  return {\n    title: title,\n    content: textContent,\n    excerpt: textContent.substring(0, 200) + (textContent.length > 200 ? '...' : ''),\n    byline: byline,\n    length: textContent.length,\n    text_direction: 'ltr'\n  };\n}\n\nconst results = items.map(item => {\n  const fetchTime = Date.now() - startTime;\n  \n  // Check for errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.statusCode || 500,\n          message: item.json.error.message || 'Failed to fetch URL',\n          status: 'FETCH_ERROR'\n        },\n        data: null,\n        meta: {\n          provider: 'web-scraper',\n          search_performed: false,\n          sources_count: 0\n        },\n        usage: null\n      }\n    };    \n  };\n  }\n  \n  const statusCode = item.json.statusCode || 200;\n  const html = item.json.body || '';\n  const finalUrl = item.json.headers?.location || webhookData.body.url;\n  \n  // Check status code\n  if (statusCode >= 400) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: `HTTP ${statusCode} error`,\n        status: 'HTTP_ERROR'\n      },\n      data: null,\n      meta: {\n        provider: 'web-scraper',\n        search_performed: false,\n        sources_count: 0\n      },\n      usage: null\n    }\n  };  \n  }\n  \n  const extractStart = Date.now();\n  const extracted = webhookData.body.options?.extract_content !== false ? extractContent(html) : null;\n  const extractTime = Date.now() - extractStart;  \n  const urlObj = new URL(webhookData.body.url);\n  const domain = urlObj.hostname;\n\n  return {\n    json: {\n      success: true,\n      data: {\n        query: webhookData.body.url,\n        content: extracted ? extracted.content : '',\n        sources: [{\n          title: extracted ? extracted.title : '',\n          url: webhookData.body.url,\n          domain: domain\n        }]\n      },\n      meta: {\n        provider: 'web-scraper',\n        search_performed: false,\n        sources_count: 1,\n        // Keep detailed info in _debug for troubleshooting\n        _debug: {\n          final_url: finalUrl,\n          status_code: statusCode,\n          crawler_type: 'http-request',\n          execution_mode: webhookData.body.execution_mode || 'online',\n          timings: {\n            fetch_ms: fetchTime,\n            render_ms: 0,\n            extract_ms: extractTime\n          },\n          extracted_length: extracted ? extracted.length : 0\n        }\n      },\n      usage: null\n    }\n  };\n\nreturn results;"
+      },
+      "id": "extract-content",
+      "name": "Extract Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1152,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## MCP - Web Scraper\n\n**Endpoint:** POST /webhook/web-scraper\n\n**Parameters:**\n- `url` (required): URL to scrape\n- `options.render_js` (optional): auto | true | false (default: false)\n- `options.extract_content` (optional): boolean (default: true)\n- `options.include_html` (optional): boolean (default: true)\n- `options.screenshot` (optional): boolean (default: false)\n- `options.wait_for` (optional): networkidle | domcontentloaded | selector:#main\n- `options.timeout_ms` (optional): Timeout in ms (default: 60000)\n- `execution_mode` (optional): online | offline\n\n**Returns:** HTML, extracted content (title, text, excerpt, byline), status code\n\n**Note:** This is a simple HTTP-based scraper. For JS-heavy sites, use render_js: true (requires Playwright microservice)",
+        "height": 300,
+        "width": 600,
+        "color": 6
+      },
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        64
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Fetch Page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Page": {
+      "main": [
+        [
+          {
+            "node": "Extract Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Content": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "9346e17e-2586-4cd0-9534-db3143fbb836",
+  "activeVersionId": "9346e17e-2586-4cd0-9534-db3143fbb836",
+  "versionCounter": 373,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2025-12-18T10:04:02.102Z",
+      "createdAt": "2025-12-18T10:04:02.102Z",
+      "role": "workflow:owner",
+      "workflowId": "A2L4SZvj4JcfcZQJ",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

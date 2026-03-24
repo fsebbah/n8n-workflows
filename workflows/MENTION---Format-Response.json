@@ -1,0 +1,262 @@
+{
+  "updatedAt": "2026-01-20T19:56:42.000Z",
+  "createdAt": "2026-01-16T08:50:17.494Z",
+  "id": "UA6ZDXVwVsYmpNXX",
+  "name": "MENTION---Format-Response",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## RFC-007: Format Response\n\n**Sub-workflow** appelé par On-Mention-Handler\n\n**Input:**\n- success, response, intent\n- tokens_used, credits_consumed\n- project_id, user_id, guild_id\n- request_content\n\n**Output:**\n- MentionResult (sans _metadata)\n\n**Side effect:**\n- POST /api/mention/log (si success)",
+        "height": 260,
+        "width": 280,
+        "color": 6
+      },
+      "id": "format-response-note",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "format-response-0001",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT MENTION RESULT (RFC-007)\n// Formate la réponse pour chatbot-core\n// ============================================\n\nconst input = $input.first().json;\n\n// --- Build MentionResult ---\nconst result = {\n  success: input.success !== false,\n  response: input.response || null,\n  embed: input.embed || null,\n  error: input.error || null,\n  intent: input.intent || 'unknown',\n  confidence: input.confidence || 0.5\n};\n\n// --- Add metadata for logging ---\nconst metadata = {\n  tokens_used: input.tokens_used || 0,\n  credits_consumed: input.credits_consumed || 0,\n  project_id: input.project_id,\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  request_content: input.request_content || '',\n  response_text: input.response || ''\n};\n\nreturn {\n  ...result,\n  _metadata: metadata\n};"
+      },
+      "id": "format-response-0002",
+      "name": "Build MentionResult",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-should-log",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "format-response-0003",
+      "name": "Should Log?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/mention/log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json._metadata.project_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"discord_user_id\": {{ JSON.stringify($json._metadata.user_id) }},\n  \"guild_id\": {{ JSON.stringify($json._metadata.guild_id) }},\n  \"request_content\": {{ JSON.stringify($json._metadata.request_content) }},\n  \"intent\": {{ JSON.stringify($json.intent) }},\n  \"response_text\": {{ JSON.stringify($json._metadata.response_text) }},\n  \"tokens_used\": {{ $json._metadata.tokens_used }},\n  \"credits_consumed\": {{ $json._metadata.credits_consumed }},\n  \"success\": {{ $json.success }}\n}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "format-response-0004",
+      "name": "Log to API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        208
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CLEAN OUTPUT (remove internal metadata)\n// ============================================\n\nconst input = $input.first().json;\n\n// Remove internal _metadata before returning to chatbot-core\nconst { _metadata, ...result } = input;\n\nreturn result;"
+      },
+      "id": "format-response-0005",
+      "name": "Clean Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CLEAN OUTPUT (skip logging path)\n// ============================================\n\nconst input = $input.first().json;\n\n// Remove internal _metadata before returning to chatbot-core\nconst { _metadata, ...result } = input;\n\nreturn result;"
+      },
+      "id": "format-response-0006",
+      "name": "Clean Output (No Log)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        400
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "format-response-0007",
+      "name": "Merge Final",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1104,
+        304
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Build MentionResult",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build MentionResult": {
+      "main": [
+        [
+          {
+            "node": "Should Log?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Log?": {
+      "main": [
+        [
+          {
+            "node": "Clean Output (No Log)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log to API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to API": {
+      "main": [
+        [
+          {
+            "node": "Clean Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Output": {
+      "main": [
+        [
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Output (No Log)": {
+      "main": [
+        [
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "5aef18a0-2095-4d46-9550-d2f6756c9e9b",
+  "activeVersionId": null,
+  "versionCounter": 4,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-16T08:50:17.498Z",
+      "createdAt": "2026-01-16T08:50:17.498Z",
+      "role": "workflow:owner",
+      "workflowId": "UA6ZDXVwVsYmpNXX",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+{
+  "updatedAt": "2026-01-20T11:58:40.000Z",
+  "createdAt": "2026-01-20T11:41:32.094Z",
+  "id": "UzGcjCJp3jTHLwSC",
+  "name": "MCP - Documents Validate",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "documents/validate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-validate",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ],
+      "webhookId": "documents-validate-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\n// Check required fields\nconst hasFile = !!(body.file_url || body.file_base64);\nconst hasAction = !!body.action;\n\n// If missing required fields, return error\nif (!hasFile || !hasAction) {\n  const missing = [];\n  const errors = [];\n  \n  if (!hasFile) {\n    missing.push('file');\n    errors.push('Document requis (file_url ou file_base64)');\n  }\n  if (!hasAction) {\n    missing.push('action');\n    errors.push('Action requise');\n  }\n  \n  return {\n    json: {\n      valid: false,\n      can_proceed: false,\n      missing: missing,\n      errors: errors,\n      questions: []\n    }\n  };\n}\n\n// Extract config\nconst action = body.action;\nconst params = body.params || {};\nconst userMessage = body.user_message || '';\nconst availableActions = body.available_actions || body.plugin_context?.available_actions || ['translate', 'summarize', 'process'];\nconst requiredParams = body.plugin_context?.required_params || { translate: ['target_language'], summarize: ['format'] };\nconst customActions = body.plugin_context?.custom_actions || {};\n\n// Check if action is valid\nconst isProcessAction = action === 'process';\nconst isStandardAction = availableActions.includes(action);\nconst isCustomAction = Object.keys(customActions).includes(action);\n\nif (!isProcessAction && !isStandardAction && !isCustomAction) {\n  return {\n    json: {\n      valid: false,\n      can_proceed: false,\n      missing: [],\n      errors: [`Action '${action}' non disponible. Actions valides: ${[...availableActions,\n...Object.keys(customActions)].join(', ')}`],\n      questions: []\n    }\n  };\n}\n\nif (isProcessAction && !userMessage) {\n  return {\n    json: {\n      valid: false,\n      can_proceed: false,\n      missing: ['user_message'],\n      errors: ['user_message requis pour action \"process\"'],\n      questions: []\n    }\n  };\n}\n\n\n// Check required params for the action\nconst finalRequiredParams = customActions[action]?.required_params || requiredParams[action] || [];\n\nconst missingParams = [];\nconst questions = [];\n\nconst paramQuestions = {\n  target_language: {\n    question: 'Dans quelle langue veux-tu la traduction ?',\n    type: 'text',\n    examples: 'français, anglais, espagnol...'\n  },\n  format: {\n    question: 'Quel format de synthèse souhaites-tu ?',\n    type: 'choice',\n    options: [\n      { value: 'express', label: 'Résumé express (2-3 phrases)' },\n      { value: 'points', label: 'Points clés (liste à puces)' },\n      { value: 'structured', label: 'Résumé structuré (paragraphes)' }\n    ]\n  }\n};\n\nfor (const param of finalRequiredParams) {\n  if (!params[param] || params[param] === '') {\n    missingParams.push(param);\n    questions.push({\n      param: param,\n      ...(paramQuestions[param] || { question: `Veuillez fournir: ${param}`, type: 'text' })\n    });\n  }\n}\n\nreturn {\n  json: {\n    valid: missingParams.length === 0,\n    can_proceed: missingParams.length === 0,\n    missing: missingParams,\n    errors: [],\n    questions: questions,\n    action: action,\n    user_message: userMessage,\n    params: params,\n    file_url: body.file_url || '',\n    file_type: body.file_type || '',\n    is_custom_action: isCustomAction,\n    custom_webhook_url: customActions[action]?.webhook_url || null\n  }\n};"
+      },
+      "id": "validate-all",
+      "name": "Validate All",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-result",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        720,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## MCP - Documents Validate\n\n**Endpoint:** POST /webhook/documents/validate\n\n**Input:**\n- `file_url` ou `file_base64`: Document\n- `action`: process | translate | summarize\n- `user_message`: Message utilisateur à interpréter\n- `available_actions`: Actions disponibles\n- `plugin_context`: Config plugin\n\n**Output:**\n- `valid`: boolean\n- `can_proceed`: boolean\n- `missing`: params manquants\n- `questions`: questions à poser",
+        "height": 220,
+        "width": 500,
+        "color": 6
+      },
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        64
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate All": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "4a9fe4ac-8e02-4ee0-8140-e1a88944e6a2",
+  "activeVersionId": "4a9fe4ac-8e02-4ee0-8140-e1a88944e6a2",
+  "versionCounter": 20,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-20T11:41:32.097Z",
+      "createdAt": "2026-01-20T11:41:32.097Z",
+      "role": "workflow:owner",
+      "workflowId": "UzGcjCJp3jTHLwSC",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

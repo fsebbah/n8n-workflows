@@ -1,0 +1,444 @@
+{
+  "updatedAt": "2025-12-03T19:39:42.822Z",
+  "createdAt": "2025-12-03T19:39:42.822Z",
+  "id": "zgbdkF7r6hXkP4Wf",
+  "name": "Code Workflow",
+  "description": "Automated workflow: Code Workflow. This workflow integrates 10 different services: filter, httpRequest, stickyNote, wait, code. It contains 16 nodes and follows best practices for error handling and security.",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "4fe13927-84cb-4227-9daa-d6cef72d10b9",
+      "name": "CarrierNameLookup",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        740,
+        320
+      ],
+      "parameters": {
+        "jsCode": "var carrierCodes={}\nJSON.parse($('Get Carrier Codes').first().json.data).data.forEach(datum=>{\n  carrierCodes[datum.iataCode] = {icao:datum.icaoCode, name:datum.commonName}\n})\nreturn carrierCodes"
+      },
+      "typeVersion": 2,
+      "notes": "This code node performs automated tasks as part of the workflow."
+    },
+    {
+      "id": "cb0ab93c-5fc5-402d-8ac9-672960b14112",
+      "name": "Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "position": [
+        2080,
+        400
+      ],
+      "parameters": {
+        "message": "=Hi! We just found a bargain flight:\nDeparture Time: {{ $json.time }}\n[{{ $json.legs[0].carrier }}] {{ $json.duration }} flight from {{ $('FromTo').first().json.from }} to {{ $('FromTo').first().json.to }}\n",
+        "options": {},
+        "subject": "=Bargain Flight Found! {{ $('FromTo').first().json.from }} -> {{ $('FromTo').first().json.to }} @ {{ $json.price }} on {{ $json.time }}"
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "1MUdv1HbrQUFABiZ",
+          "name": "Gmail account"
+        }
+      },
+      "typeVersion": 2.1,
+      "notes": "This gmail node performs automated tasks as part of the workflow."
+    },
+    {
+      "id": "2f98b3e2-8a25-496e-89f3-b1ebe7e33192",
+      "name": "Get Dates",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        940,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const getNextSevenDays = () => {\n    const dates = [];\n    const today = new Date();\n\n    for (const i of [7, 14]) {\n        const nextDate = new Date(today);\n        nextDate.setDate(today.getDate() + i);\n        \n        // Format the date as YYYY-MM-DD\n        const formattedDate = nextDate.toISOString().split('T')[0];\n        dates.push({date:formattedDate});\n    }\n\n    return dates;\n};\n\nreturn getNextSevenDays()"
+      },
+      "typeVersion": 2,
+      "notes": "This code node performs automated tasks as part of the workflow."
+    },
+    {
+      "id": "3d8cf3fa-6ce7-422a-978f-afe2884c1e1a",
+      "name": "Merge & Extract",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1660,
+        400
+      ],
+      "parameters": {
+        "jsCode": "//Merge\nresult = []\nfor (const item of $input.all()) {\n result = result.concat(JSON.parse(item.json.data).data)\n}\n\n//Extract data fields\nfinal_result = []\nfor (x of result){\n  let legs = x.itineraries[0].segments.map(y=>{\n          let a = $('CarrierNameLookup').item.json[y.carrierCode];\n           let carrier = a.name? a.name: a.icao;\n           return {carrier:carrier, duration:y.duration}})\n\n\n  console.log(x.itineraries[0].segments[0].departure.at)\n  let duration = x.itineraries[0].duration\n  let price = x.price.total+' '+x.price.currency\n\n  final_result.push({legs:legs, time:x.itineraries[0].segments[0].departure.at, duration:duration, price:price})\n}\n\nreturn final_result"
+      },
+      "typeVersion": 2,
+      "notes": "This code node performs automated tasks as part of the workflow."
+    },
+    {
+      "id": "89df1c9b-c863-4cf5-88a2-18793d542f02",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [
+        1200,
+        240
+      ],
+      "parameters": {
+        "options": {}
+      },
+      "typeVersion": 3,
+      "notes": "This splitInBatches node performs automated tasks as part of the workflow."
+    },
+    {
+      "id": "5595e34d-3736-42f6-ad64-e7f3c72c7f0a",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "position": [
+        1060,
+        440
+      ],
+      "webhookId": "f1f32ed2-cead-4ced-ba43-d15613316721",
+      "parameters": {
+        "amount": 3
+      },
+      "typeVersion": 1.1,
+      "notes": "This wait node performs automated tasks as part of the workflow."
+    },
+    {
+      "id": "550005ad-ea97-4d83-90ac-67c7c583f2dc",
+      "name": "Under Price",
+      "type": "n8n-nodes-base.filter",
+      "position": [
+        1880,
+        400
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "bc2a9b61-41eb-45b1-9ee3-00fe211dadc3",
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              },
+              "leftValue": "={{ parseFloat($json.price) }}",
+              "rightValue": 600
+            }
+          ]
+        }
+      },
+      "typeVersion": 2.1,
+      "notes": "This filter node performs automated tasks as part of the workflow."
+    },
+    {
+      "id": "ce1beef1-4189-4cd7-b8c6-dd5bef2d9963",
+      "name": "FromTo",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        560,
+        320
+      ],
+      "parameters": {
+        "options": {},
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1944c696-6cfd-4d4d-8f3d-31cb89b37d3d",
+              "name": "from",
+              "type": "string",
+              "value": "LHR"
+            },
+            {
+              "id": "9c4d5ac9-fa75-4fa7-a369-2b0493150203",
+              "name": "to",
+              "type": "string",
+              "value": "JFK"
+            }
+          ]
+        }
+      },
+      "typeVersion": 3.4,
+      "notes": "This set node performs automated tasks as part of the workflow."
+    },
+    {
+      "id": "a4956257-28ce-4014-b549-ad413264c012",
+      "name": "Amadeus Flight Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1340,
+        440
+      ],
+      "parameters": {
+        "url": "{{ $env.API_BASE_URL }}",
+        "options": {},
+        "sendQuery": true,
+        "authentication": "{{ $credentials.genericCredentialType }}",
+        "genericAuthType": "oAuth2Api",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "originLocationCode",
+              "value": "={{ $('FromTo').item.json.from }}"
+            },
+            {
+              "name": "destinationLocationCode",
+              "value": "={{ $('FromTo').item.json.to }}"
+            },
+            {
+              "name": "adults",
+              "value": "1"
+            },
+            {
+              "name": "departureDate",
+              "value": "={{ $json.date }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "oAuth2Api": {
+          "id": "dVIDzfKxdhu5ZEpE",
+          "name": "Amadeus"
+        }
+      },
+      "typeVersion": 4.2,
+      "notes": "This httpRequest node performs automated tasks as part of the workflow."
+    },
+    {
+      "id": "b7a41d45-799d-4f65-a904-f8fa82e59620",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        260,
+        -320
+      ],
+      "parameters": {
+        "width": 490.02125360646824,
+        "height": 538.1571460797832,
+        "content": "# Amadeus Flight Bargains\nEvery day checks for bargain flights for an itinerary and price target of your choosing, and emails you if it finds a match.\n\n## Setup\n1. Create an api account on {{ $env.WEBHOOK_URL }}\n2. In **Amadeus Flight Search**, connect to Oauth2 API:\n  -- Grant Type - Client Credentials\n  -- Access Token URL - {{ $env.API_BASE_URL }}\n  -- Client ID/Secret - from your account\n3. Set your details in **Gmail**\n4. Set your desired Origin/Destination airports in FromTo\n5. Set the dates ahead you wish to search in **Get Dates** (default is 7 days and 14 days)\n6. Set the price target in **Under Price**\n\n## Test\nHit 'Test workflow'!"
+      },
+      "typeVersion": 1,
+      "notes": "This stickyNote node performs automated tasks as part of the workflow."
+    },
+    {
+      "id": "88126395-c96a-4905-87db-57ad19cead23",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        360,
+        320
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "typeVersion": 1.2,
+      "notes": "This scheduleTrigger node performs automated tasks as part of the workflow."
+    },
+    {
+      "id": "0fa74451-6053-470c-b5c5-9b25fd2e5b55",
+      "name": "Get Carrier Codes",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        360,
+        600
+      ],
+      "parameters": {
+        "url": "{{ $env.API_BASE_URL }}",
+        "options": {},
+        "authentication": "{{ $credentials.genericCredentialType }}",
+        "genericAuthType": "oAuth2Api"
+      },
+      "credentials": {
+        "oAuth2Api": {
+          "id": "dVIDzfKxdhu5ZEpE",
+          "name": "Amadeus"
+        }
+      },
+      "typeVersion": 4.2,
+      "notes": "This httpRequest node performs automated tasks as part of the workflow."
+    }
+  ],
+  "connections": {
+    "a4956257-28ce-4014-b549-ad413264c012": {
+      "main": [
+        [
+          {
+            "node": "error-handler-a4956257-28ce-4014-b549-ad413264c012",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-a4956257-28ce-4014-b549-ad413264c012-f9154ba9",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-a4956257-28ce-4014-b549-ad413264c012-8be085ef",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-a4956257-28ce-4014-b549-ad413264c012-72d79496",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-a4956257-28ce-4014-b549-ad413264c012-27169a11",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-a4956257-28ce-4014-b549-ad413264c012-7fd1e6a2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-a4956257-28ce-4014-b549-ad413264c012-c389d7fe",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-a4956257-28ce-4014-b549-ad413264c012-a617d962",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-a4956257-28ce-4014-b549-ad413264c012-fee8efe1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "0fa74451-6053-470c-b5c5-9b25fd2e5b55": {
+      "main": [
+        [
+          {
+            "node": "error-handler-0fa74451-6053-470c-b5c5-9b25fd2e5b55",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-0fa74451-6053-470c-b5c5-9b25fd2e5b55-6792f93e",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-0fa74451-6053-470c-b5c5-9b25fd2e5b55-fdccd758",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-0fa74451-6053-470c-b5c5-9b25fd2e5b55-db2c9aae",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-0fa74451-6053-470c-b5c5-9b25fd2e5b55-f311136c",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-0fa74451-6053-470c-b5c5-9b25fd2e5b55-b4fc7b36",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-0fa74451-6053-470c-b5c5-9b25fd2e5b55-81390e06",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-0fa74451-6053-470c-b5c5-9b25fd2e5b55-e4d63ae3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-handler-0fa74451-6053-470c-b5c5-9b25fd2e5b55-406ba5a5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": null,
+    "timezone": "UTC",
+    "executionTimeout": 3600,
+    "maxExecutions": 1000,
+    "retryOnFail": true,
+    "retryCount": 3,
+    "retryDelay": 1000
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "c0f102c7-28f2-4fd2-b080-e5d80d488990",
+  "activeVersionId": null,
+  "versionCounter": 1,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2025-12-03T19:39:42.829Z",
+      "createdAt": "2025-12-03T19:39:42.829Z",
+      "role": "workflow:owner",
+      "workflowId": "zgbdkF7r6hXkP4Wf",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

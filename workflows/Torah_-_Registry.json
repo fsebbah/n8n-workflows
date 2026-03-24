@@ -1,0 +1,153 @@
+{
+  "updatedAt": "2026-01-05T22:56:24.922Z",
+  "createdAt": "2026-01-05T22:56:17.747Z",
+  "id": "LO1vnAueSD669pcd",
+  "name": "Torah - Registry",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "torah-registry",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-registry",
+      "name": "Webhook Registry",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        304,
+        304
+      ],
+      "webhookId": "torah-registry",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "url": "http://pi6.local:5678/api/v1/workflows?active=true&limit=250",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-get-workflows",
+      "name": "Get Active Workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        512,
+        304
+      ],
+      "typeVersion": 4.2,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "aHxvULwe4es6Gnmh",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// TORAH REGISTRY - Build Registry with Metadata\n// ============================================================================\n\n// Torah Workflow Metadata\nconst torahMetadata = {\n  \"torah-discord-message\": {\n    \"label\": \"Discord Commentary Bot\",\n    \"icon\": \"💬\",\n    \"description\": \"Recherche de commentaires talmudiques via Discord\",\n    \"tags\": [\"discord\", \"talmud\", \"commentaires\"],\n    \"scope\": \"user\",\n    \"example\": \"Sukkah 28b Rashi\"\n  },\n  \"torah-translate\": {\n    \"label\": \"Translation Orchestrator\",\n    \"icon\": \"🎯\",\n    \"description\": \"Orchestration du pipeline de traduction Torah\",\n    \"tags\": [\"traduction\", \"orchestration\"],\n    \"scope\": \"system\"\n  },\n  \"torah-batch-translate\": {\n    \"label\": \"Batch Translation\",\n    \"icon\": \"📚\",\n    \"description\": \"Traduction en lot avec extraction de commentaires\",\n    \"tags\": [\"traduction\", \"batch\", \"commentaires\"],\n    \"scope\": \"user\"\n  },\n  \"torah-submit-review\": {\n    \"label\": \"Review Submission\",\n    \"icon\": \"✅\",\n    \"description\": \"Soumission de traductions pour révision\",\n    \"tags\": [\"revision\", \"validation\"],\n    \"scope\": \"user\"\n  },\n  \"torah-review-action\": {\n    \"label\": \"Review Action\",\n    \"icon\": \"📝\",\n    \"description\": \"Actions de validation (approuver/rejeter/modifier)\",\n    \"tags\": [\"revision\", \"validation\"],\n    \"scope\": \"user\"\n  },\n  \"torah-generate-pdf\": {\n    \"label\": \"PDF Generator\",\n    \"icon\": \"📄\",\n    \"description\": \"Génération de PDF avec traductions et commentaires\",\n    \"tags\": [\"pdf\", \"export\", \"document\"],\n    \"scope\": \"user\"\n  }\n};\n\n// ============================================================================\n// BUILD REGISTRY\n// ============================================================================\n\nconst workflows = $input.first().json.data || [];\n\n// Filter active Torah workflows (excluding this registry)\nconst torahWorkflows = workflows.filter(w => \n  w.active && \n  w.name.startsWith('Torah') && \n  w.name !== 'Torah - Registry'\n);\n\n// Build tools object\nconst tools = {};\n\nfor (const workflow of torahWorkflows) {\n  // Find all webhook nodes in the workflow\n  const webhookNodes = workflow.nodes?.filter(n => n.type === 'n8n-nodes-base.webhook') || [];\n  \n  for (const webhookNode of webhookNodes) {\n    const webhookPath = webhookNode.parameters?.path || webhookNode.webhookId;\n    const toolName = webhookPath;\n    \n    // Get metadata\n    const meta = torahMetadata[toolName] || {};\n    \n    tools[toolName] = {\n      name: workflow.name,\n      label: meta.label || workflow.name.replace('Torah ', ''),\n      icon: meta.icon || '📜',\n      description: meta.description || `Torah Tool: ${workflow.name}`,\n      tags: meta.tags || ['torah'],\n      scope: meta.scope || 'user',\n      workflow_id: workflow.id,\n      endpoint: `/webhook/${webhookPath}`,\n      webhook_url: `http://pi6.local:5678/webhook/${webhookPath}`,\n      method: webhookNode.parameters?.httpMethod || 'POST',\n      active: workflow.active,\n      example: meta.example || null\n    };\n  }\n}\n\n// Build final registry response\nconst registry = {\n  version: \"1.0\",\n  updated_at: new Date().toISOString(),\n  n8n: {\n    host: \"pi6.local\",\n    port: 5678,\n    protocol: \"http\",\n    webhook_base: \"http://pi6.local:5678/webhook\"\n  },\n  scopes: {\n    user: \"Endpoint accessible par l'utilisateur\",\n    system: \"Endpoint interne pour orchestration\"\n  },\n  total_tools: Object.keys(tools).length,\n  tools: tools\n};\n\nreturn { json: registry };"
+      },
+      "id": "code-registry",
+      "name": "Build Registry",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        704,
+        304
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-registry",
+      "name": "Respond Registry",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        912,
+        304
+      ],
+      "typeVersion": 1.1
+    }
+  ],
+  "connections": {
+    "Webhook Registry": {
+      "main": [
+        [
+          {
+            "node": "Get Active Workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Workflows": {
+      "main": [
+        [
+          {
+            "node": "Build Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Registry": {
+      "main": [
+        [
+          {
+            "node": "Respond Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "d7be2cf8-2da5-49ae-a90b-00fa8632a21c",
+  "activeVersionId": "d7be2cf8-2da5-49ae-a90b-00fa8632a21c",
+  "versionCounter": 44,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-05T22:56:17.752Z",
+      "createdAt": "2026-01-05T22:56:17.752Z",
+      "role": "workflow:owner",
+      "workflowId": "LO1vnAueSD669pcd",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

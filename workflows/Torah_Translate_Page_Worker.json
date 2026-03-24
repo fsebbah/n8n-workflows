@@ -1,0 +1,638 @@
+{
+  "updatedAt": "2026-02-02T09:58:19.000Z",
+  "createdAt": "2025-12-31T16:25:47.428Z",
+  "id": "P0mu8wW6IawH4bVR",
+  "name": "Torah Translate Page Worker",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Page Translation Worker\n\n**Endpoint:** POST /webhook/torah-translate-page-worker\n\n**Called by:** torah-translate-page workflow\n\n**Process:**\n1. Respond immediately (async)\n2. PATCH /api/jobs → in_progress\n3. Loop through each segment:\n   - Claude translation (draft)\n   - GPT-4o verification\n   - POST /api/translations/save\n   - PATCH /api/jobs (progress)\n4. PATCH /api/jobs → completed\n\n**Time:** ~7s per segment",
+        "height": 340,
+        "width": 320,
+        "color": 3
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-translate-page-worker",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        400,
+        304
+      ],
+      "webhookId": "torah-translate-page-worker"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire les données du job\nconst input = $input.first().json;\n\n// Debug complet pour comprendre la structure\nconsole.log('=== WORKER DEBUG ===');\nconsole.log('input keys:', Object.keys(input));\nconsole.log('input.body type:', typeof input.body);\nif (input.body) {\n  console.log('input.body keys:', Object.keys(input.body));\n  console.log('input.body.segments?:', Array.isArray(input.body.segments) ? input.body.segments.length : 'not array');\n}\n\n// Chercher les segments dans toutes les structures possibles\nlet segments = [];\nlet body = input;\n\n// Structure 1: body.segments (webhook standard)\nif (input.body && Array.isArray(input.body.segments)) {\n  segments = input.body.segments;\n  body = input.body;\n  console.log('Found segments in input.body.segments:', segments.length);\n}\n// Structure 2: segments direct (données passées directement)\nelse if (Array.isArray(input.segments)) {\n  segments = input.segments;\n  console.log('Found segments in input.segments:', segments.length);\n}\n// Structure 3: body est une string JSON\nelse if (input.body && typeof input.body === 'string') {\n  try {\n    const parsed = JSON.parse(input.body);\n    if (Array.isArray(parsed.segments)) {\n      segments = parsed.segments;\n      body = parsed;\n      console.log('Found segments in parsed body string:', segments.length);\n    }\n  } catch(e) {\n    console.log('Failed to parse body as JSON:', e.message);\n  }\n}\n\nconsole.log('Final segments count:', segments.length);\nconsole.log('=== END DEBUG ===');\n\n// Stocker les données pour le traitement async\nreturn [{\n  json: {\n    jobId: body.job_id || input.job_id,\n    traite: body.traite || input.traite,\n    page: body.page || input.page,\n    mode: body.mode || input.mode || 'premium',\n    targetLanguage: body.target_language || input.target_language || 'fr',\n    apiKey: body.api_key || input.api_key,\n    openaiApiKey: body.openai_api_key || input.openai_api_key,\n    sourceTextId: body.source_text_id || input.source_text_id,\n    reference: body.reference || input.reference,\n    segments: segments,\n    requestId: body.request_id || input.request_id,\n    _debug: {\n      inputKeys: Object.keys(input),\n      hasBody: !!input.body,\n      bodyType: typeof input.body,\n      bodyKeys: input.body ? Object.keys(input.body) : [],\n      segmentsLength: segments.length\n    }\n  }\n}];"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ received: true, job_id: $json.jobId, segments_count: $json.segments.length, _debug: $json._debug }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-immediately",
+      "name": "Respond Immediately",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        848,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'processing' }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "update-status-in-progress",
+      "name": "Set In Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1072,
+        304
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Passer les données originales\nconst prevData = $('Parse Input').first().json;\nreturn [{ json: prevData }];"
+      },
+      "id": "pass-data",
+      "name": "Pass Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convertir les segments en items pour la boucle\nconst input = $input.first().json;\n\nconst items = input.segments.map((segment, index) => ({\n  json: {\n    segmentIndex: index,\n    segmentText: segment,\n    totalSegments: input.segments.length,\n    jobId: input.jobId,\n    traite: input.traite,\n    page: input.page,\n    mode: input.mode,\n    targetLanguage: input.targetLanguage,\n    apiKey: input.apiKey,\n    openaiApiKey: input.openaiApiKey,\n    sourceTextId: input.sourceTextId,\n    reference: input.reference,\n    requestId: input.requestId\n  }\n}));\n\nreturn items;"
+      },
+      "id": "split-segments",
+      "name": "Split Segments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "loop-segments",
+      "name": "Loop Segments",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1584,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.apiKey }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 2048,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Tu es un expert en textes talmudiques et rabbiniques. Traduis ce segment du Talmud ({{ $json.reference }}, segment {{ $json.segmentIndex + 1 }}/{{ $json.totalSegments }}) en {{ $json.targetLanguage === 'fr' ? 'français' : $json.targetLanguage }}.\\n\\nTexte à traduire:\\n{{ $json.segmentText }}\\n\\nRéponds UNIQUEMENT avec la traduction, sans commentaires ni explications.\"\n    }\n  ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "call-claude",
+      "name": "Claude Translation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1808,
+        80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire la traduction Claude\nconst input = $input.first().json;\nconst prevData = $('Loop Segments').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nlet claudeTranslation = '';\nlet claudeError = null;\nlet claudeUsage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n\nif (statusCode >= 400 || data.type === 'error' || data.error) {\n  claudeError = data.error?.message || data.message || `Erreur Claude HTTP ${statusCode}`;\n} else if (data.content?.[0]?.text) {\n  claudeTranslation = data.content[0].text.trim();\n  claudeUsage = {\n    input_tokens: data.usage?.input_tokens || 0,\n    output_tokens: data.usage?.output_tokens || 0,\n    total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)\n  };\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    claudeTranslation: claudeTranslation,\n    claudeError: claudeError,\n    claudeUsage: claudeUsage\n  }\n}];"
+      },
+      "id": "extract-claude",
+      "name": "Extract Claude",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-claude-ok",
+              "leftValue": "={{ $json.claudeTranslation }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-claude-ok",
+      "name": "Claude OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2160,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openaiApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', temperature: 0.1, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: 'Tu es un expert en textes talmudiques. Vérifie et améliore cette traduction. Réponds en JSON.' }, { role: 'user', content: 'Vérifie cette traduction du Talmud (' + $json.reference + ', segment ' + ($json.segmentIndex + 1) + '/' + $json.totalSegments + '):\\n\\nTexte original (hébreu/araméen):\\n' + $json.segmentText + '\\n\\nTraduction proposée:\\n' + $json.claudeTranslation + '\\n\\nRéponds en JSON:\\n{\\n  \"my_translation\": \"ta traduction corrigée ou identique\",\\n  \"approved\": true/false,\\n  \"confidence\": 0.0-1.0,\\n  \"issues\": []\\n}' }] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "call-gpt4o",
+      "name": "GPT-4o Verify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2384,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire et combiner les résultats\nconst input = $input.first().json;\nconst prevData = $('Claude OK?').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nlet gptVerification = {\n  my_translation: prevData.claudeTranslation,\n  approved: true,\n  confidence: 0.8,\n  issues: []\n};\nlet gptUsage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n\nif (statusCode < 400 && data.choices?.[0]?.message?.content) {\n  try {\n    gptVerification = JSON.parse(data.choices[0].message.content);\n    gptUsage = {\n      input_tokens: data.usage?.prompt_tokens || 0,\n      output_tokens: data.usage?.completion_tokens || 0,\n      total_tokens: (data.usage?.prompt_tokens || 0) + (data.usage?.completion_tokens || 0)\n    };\n  } catch (e) {\n    // Garder les valeurs par défaut\n  }\n}\n\n// Déterminer la traduction finale\nconst finalTranslation = gptVerification.approved ? prevData.claudeTranslation : (gptVerification.my_translation || prevData.claudeTranslation);\n\nreturn [{\n  json: {\n    ...prevData,\n    gptVerification: gptVerification,\n    gptUsage: gptUsage,\n    finalTranslation: finalTranslation,\n    confidence: gptVerification.confidence || 0.8,\n    approved: gptVerification.approved\n  }\n}];"
+      },
+      "id": "extract-gpt",
+      "name": "Extract GPT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2416,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/translations/save",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.segmentText, translated_text: $json.finalTranslation, source_text_id: $json.sourceTextId, segment_index: $json.segmentIndex, traite: $json.traite, page: $json.page, source_language: 'he', target_language: $json.targetLanguage, quality_score: $json.confidence, provider: 'claude+openai', model: 'claude-sonnet-4+gpt-4o', mode: $json.mode, request_id: $json.requestId, llm_usage: [{ model: 'claude-sonnet-4-20250514', provider: 'anthropic', ...($json.claudeUsage) }, { model: 'gpt-4o', provider: 'openai', ...($json.gptUsage) }] }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "save-translation",
+      "name": "Save Translation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2832,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "  // Préparer les données pour la mise à jour\n  const input = $input.first().json;\n  const prevData = $('Extract GPT').first().json;\n\n  const segmentIndex = prevData.segmentIndex;\n  const totalSegments = prevData.totalSegments;\n  const isComplete = segmentIndex + 1 >= totalSegments;\n\n  // Récupérer les tokens Claude et GPT\n  const claudeUsage = prevData.claudeUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n  const gptUsage = prevData.gptUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n\n  // Construire l'objet tokens avec détail par provider\n  const tokens = {\n    claude: {\n      input_tokens: claudeUsage.input_tokens || 0,\n      output_tokens: claudeUsage.output_tokens || 0,\n      total_tokens: claudeUsage.total_tokens || 0\n    },\n    gpt: {\n      input_tokens: gptUsage.input_tokens || 0,\n      output_tokens: gptUsage.output_tokens || 0,\n      total_tokens: gptUsage.total_tokens || 0\n    },\n    total: {\n      input_tokens: (claudeUsage.input_tokens || 0) + (gptUsage.input_tokens || 0),\n      output_tokens: (claudeUsage.output_tokens || 0) + (gptUsage.output_tokens || 0),\n      total_tokens: (claudeUsage.total_tokens || 0) + (gptUsage.total_tokens || 0)\n    }\n  };\n\n  // Calculer le pourcentage de progression\n  const current = segmentIndex + 1;\n  const percentage = Math.round((current / totalSegments) * 100);\n\n  return [{\n    json: {\n      ...prevData,\n      isComplete: isComplete,\n      updatePayload: isComplete ? {\n        status: 'completed',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: 100,\n          step: 'completed'\n        },\n        output: {\n          translations_saved: current,\n          tokens: tokens\n        }\n      } : {\n        status: 'processing',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: percentage,\n          step: 'translating'\n        },\n        output: {\n          current_segment_text: prevData.segmentText.substring(0, 100),\n          translations_saved: current,\n          tokens: tokens\n        }\n      }\n    }\n  }];"
+      },
+      "id": "prepare-update",
+      "name": "Prepare Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2736,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.updatePayload) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "update-progress-api",
+      "name": "Update Progress (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3264,
+        16
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "  // Préparer la mise à jour pour erreur\n  const input = $input.first().json;\n\n  const segmentIndex = input.segmentIndex;\n  const totalSegments = input.totalSegments;\n  const isComplete = segmentIndex + 1 >= totalSegments;\n  const current = segmentIndex + 1;\n  const percentage = Math.round((current / totalSegments) * 100);\n\n  return [{\n    json: {\n      ...input,\n      isComplete: isComplete,\n      updatePayload: isComplete ? {\n        status: 'completed',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: 100,\n          step: 'completed_with_errors'\n        },\n        output: {\n          translations_saved: segmentIndex,\n          error: input.claudeError || 'Translation failed'\n        }\n      } : {\n        status: 'processing',\n        progress: {\n          current: current,\n          total: totalSegments,\n          percentage: percentage,\n          step: 'error_recovery'\n        },\n        output: {\n          translations_saved: segmentIndex,\n          error: input.claudeError || 'Translation failed'\n        }\n      }\n    }\n  }];"
+      },
+      "id": "prepare-error-update",
+      "name": "Prepare Error Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2384,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.updatePayload) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "update-error-api",
+      "name": "Update Error (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2608,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        3248,
+        752
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "noop-end",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3344,
+        304
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Respond Immediately",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Immediately": {
+      "main": [
+        [
+          {
+            "node": "Set In Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set In Progress": {
+      "main": [
+        [
+          {
+            "node": "Pass Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pass Data": {
+      "main": [
+        [
+          {
+            "node": "Split Segments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Segments": {
+      "main": [
+        [
+          {
+            "node": "Loop Segments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Segments": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Claude Translation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Translation": {
+      "main": [
+        [
+          {
+            "node": "Extract Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Claude": {
+      "main": [
+        [
+          {
+            "node": "Claude OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o Verify": {
+      "main": [
+        [
+          {
+            "node": "Extract GPT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract GPT": {
+      "main": [
+        [
+          {
+            "node": "Save Translation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Translation": {
+      "main": [
+        [
+          {
+            "node": "Prepare Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Update": {
+      "main": [
+        [
+          {
+            "node": "Update Progress (API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Progress (API)": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude OK?": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o Verify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Error Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Error Update": {
+      "main": [
+        [
+          {
+            "node": "Update Error (API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Error (API)": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Loop Segments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "50d26a3c-f7c0-4b0a-b749-59a972f21d15",
+  "activeVersionId": "50d26a3c-f7c0-4b0a-b749-59a972f21d15",
+  "versionCounter": 86,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2025-12-31T16:25:47.434Z",
+      "createdAt": "2025-12-31T16:25:47.434Z",
+      "role": "workflow:owner",
+      "workflowId": "P0mu8wW6IawH4bVR",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}
