@@ -1,0 +1,435 @@
+{
+  "updatedAt": "2025-12-15T15:05:45.028Z",
+  "createdAt": "2025-12-15T15:05:40.031Z",
+  "id": "zOwekZmlRQbfEoZD",
+  "name": "MCP - Vector Store",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "webhook-vector",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "vector-store-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vector-store",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "route-action",
+      "name": "Route Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "store",
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.action }}",
+                    "rightValue": "store",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "search",
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.action }}",
+                    "rightValue": "search",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "delete",
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.action }}",
+                    "rightValue": "delete",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      }
+    },
+    {
+      "id": "qdrant-store",
+      "name": "Qdrant Store (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        100
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.QDRANT_URL || 'http://localhost:6333' }}/collections/{{ $json.body.collection || 'default' }}/points",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $env.QDRANT_API_KEY || '' }}"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"points\": [{ \"id\": $json.body.id || Date.now(), \"vector\": $json.body.vector, \"payload\": $json.body.payload || {} }] } }}"
+      }
+    },
+    {
+      "id": "qdrant-search",
+      "name": "Qdrant Search (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        250
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QDRANT_URL || 'http://localhost:6333' }}/collections/{{ $json.body.collection || 'default' }}/points/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $env.QDRANT_API_KEY || '' }}"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"vector\": $json.body.vector, \"limit\": $json.body.limit || 10, \"with_payload\": true } }}"
+      }
+    },
+    {
+      "id": "qdrant-delete",
+      "name": "Qdrant Delete (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QDRANT_URL || 'http://localhost:6333' }}/collections/{{ $json.body.collection || 'default' }}/points/delete",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $env.QDRANT_API_KEY || '' }}"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"points\": Array.isArray($json.body.ids) ? $json.body.ids : [$json.body.id] } }}"
+      }
+    },
+    {
+      "id": "error-invalid-action",
+      "name": "Error: Invalid Action",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        550
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Invalid action. Use: store, search, delete\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"qdrant\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "format-store",
+      "name": "Format Store Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        920,
+        100
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ { \"success\": true, \"data\": { \"action\": \"store\", \"collection\": $('Webhook').first().json.body.collection || 'default', \"status\": $json.status || 'completed' }, \"meta\": { \"provider\": \"qdrant\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
+      }
+    },
+    {
+      "id": "format-search",
+      "name": "Format Search Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        920,
+        250
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ { \"success\": true, \"data\": { \"action\": \"search\", \"collection\": $('Webhook').first().json.body.collection || 'default', \"results\": ($json.result || []).map(r => ({ \"id\": r.id, \"score\": r.score, \"payload\": r.payload })), \"count\": ($json.result || []).length }, \"meta\": { \"provider\": \"qdrant\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
+      }
+    },
+    {
+      "id": "format-delete",
+      "name": "Format Delete Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        920,
+        400
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ { \"success\": true, \"data\": { \"action\": \"delete\", \"collection\": $('Webhook').first().json.body.collection || 'default', \"status\": $json.status || 'completed' }, \"meta\": { \"provider\": \"qdrant\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        250
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 600,
+        "height": 280,
+        "content": "## MCP - Vector Store\n\n**Endpoint:** POST /webhook/vector-store\n\n**Parameters:**\n- `action` (required): store | search | delete\n- `collection` (optional): Collection name (default: 'default')\n- `vector` (for store/search): Vector array\n- `payload` (for store): Metadata to store with vector\n- `id` (for store/delete): Vector ID\n- `ids` (for delete): Array of IDs to delete\n- `limit` (for search): Max results (default: 10)\n- `execution_mode` (optional): online | offline\n\n**Environment:**\n- `QDRANT_URL`: Qdrant server URL\n- `QDRANT_API_KEY`: API key (optional)\n\n**Returns:** Operation result with stored/found/deleted data"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Route Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Action": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Store (HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Qdrant Search (HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Qdrant Delete (HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Invalid Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Store (HTTP)": {
+      "main": [
+        [
+          {
+            "node": "Format Store Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Search (HTTP)": {
+      "main": [
+        [
+          {
+            "node": "Format Search Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Delete (HTTP)": {
+      "main": [
+        [
+          {
+            "node": "Format Delete Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Store Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Search Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Delete Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "21b5359f-7f3e-4ef3-a003-f95687a6b941",
+  "activeVersionId": "21b5359f-7f3e-4ef3-a003-f95687a6b941",
+  "versionCounter": 383,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2025-12-15T15:05:40.035Z",
+      "createdAt": "2025-12-15T15:05:40.035Z",
+      "role": "workflow:owner",
+      "workflowId": "zOwekZmlRQbfEoZD",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

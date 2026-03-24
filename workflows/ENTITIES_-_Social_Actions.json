@@ -1,0 +1,778 @@
+{
+  "updatedAt": "2026-01-20T19:52:28.000Z",
+  "createdAt": "2026-01-13T14:21:52.467Z",
+  "id": "r3IriZ4hmS6PACNz",
+  "name": "ENTITIES - Social Actions",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## ENTITIES - Social Actions (Generic)\n\n**Endpoint:** POST /webhook/entity-social-actions\n\n**Body Parameters:**\n- `entity_type`: recipes, translations, trainings, articles...\n- `entity_id`: UUID of the entity\n- `action`: comments, rating, favorite, favorites\n- `method`: GET, POST, DELETE (default: POST)\n\n**Headers:**\n- `X-Project-ID`: bot-appetit, torah-bot, torah-fun...\n\n**Body (depends on action):**\n- comments: `discord_user_id`, `content`, `discord_username`\n- rating: `discord_user_id`, `score` (1-5)\n- favorite: `discord_user_id`\n\n**Replaces:**\n- recipes-add-comment\n- recipes-get-comments\n- recipes-add-rating\n- recipes-get-ratings\n- recipes-delete-comment",
+        "height": 520,
+        "width": 380,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "entity-social-actions",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        304,
+        304
+      ],
+      "webhookId": "entity-social-actions"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Configuration\nconst validEntityTypes = ['recipes', 'translations', 'trainings', 'articles', 'posts'];\nconst validActions = ['comments', 'rating', 'favorite', 'favorites'];\nconst validMethods = ['GET', 'POST', 'DELETE'];\nconst validProjects = ['bot-appetit', 'torah-bot', 'torah-fun'];\n\n// Entity type to API path mapping\nconst entityApiMapping = {\n  'recipes': '/api/entities/recipes',\n  'translations': '/api/entities/translations',\n  'trainings': '/api/entities/trainings',\n  'articles': '/api/entities/articles',\n  'posts': '/api/entities/posts'\n};\n\nconst errors = [];\n\n// Validate entity_type\nconst entity_type = body.entity_type;\nif (!entity_type || !validEntityTypes.includes(entity_type)) {\n  errors.push(`Invalid entity_type: '${entity_type}'. Valid: ${validEntityTypes.join(', ')}`);\n}\n\n// Validate action\nconst action = body.action;\nif (!action || !validActions.includes(action)) {\n  errors.push(`Invalid action: '${action}'. Valid: ${validActions.join(', ')}`);\n}\n\n// Validate method (default POST)\nconst method = (body.method || 'POST').toUpperCase();\nif (!validMethods.includes(method)) {\n  errors.push(`Invalid method: '${method}'. Valid: ${validMethods.join(', ')}`);\n}\n\n// Validate entity_id (UUID format)\nconst entity_id = body.entity_id;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nif (!entity_id) {\n  errors.push('Missing entity_id');\n} else if (!uuidRegex.test(entity_id)) {\n  errors.push('Invalid entity_id: must be UUID format');\n}\n\n// Validate project_id from header\nconst project_id = headers['x-project-id'];\nif (!project_id || !validProjects.includes(project_id)) {\n  errors.push(`Missing or invalid X-Project-ID header. Valid: ${validProjects.join(', ')}`);\n}\n\n// Validate discord_user_id for non-GET requests\nif (method !== 'GET' && !body.discord_user_id) {\n  errors.push('Missing discord_user_id in body');\n}\n\n// Action-specific validations\nif (action === 'comments' && method === 'POST') {\n  if (!body.content || body.content.trim().length === 0) {\n    errors.push('Missing or empty content for comment');\n  } else if (body.content.length > 500) {\n    errors.push('Comment content exceeds 500 characters');\n  }\n}\n\nif (action === 'rating' && method === 'POST') {\n  const score = parseInt(body.score);\n  if (isNaN(score) || score < 1 || score > 5) {\n    errors.push('Invalid score: must be integer 1-5');\n  }\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Build API path for entity lookup\nconst apiBasePath = entityApiMapping[entity_type];\n\nreturn [{\n  json: {\n    valid: true,\n    entity_type,\n    entity_id,\n    action,\n    method,\n    project_id,\n    api_base_path: apiBasePath,\n    discord_user_id: body.discord_user_id || null,\n    discord_username: body.discord_username || null,\n    content: body.content ? body.content.trim() : null,\n    score: body.score ? parseInt(body.score) : null,\n    comment_id: body.comment_id || null\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        752,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}{{ $json.api_base_path }}/{{ $json.entity_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "get-entity",
+      "name": "Get Entity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const apiResponse = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\nconst statusCode = apiResponse.statusCode || 200;\nconst body = apiResponse.body || apiResponse;\n\nif (statusCode >= 400 || !body || body.detail) {\n  return [{\n    json: {\n      found: false,\n      error: {\n        code: 404,\n        message: `${inputData.entity_type} with id '${inputData.entity_id}' not found`,\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Extract entity info for notifications\nlet entityTitle = body.title || body.name || 'Untitled';\nlet creatorDiscordUserId = body.discord_user_id || body.creator_discord_user_id || null;\n\nreturn [{\n  json: {\n    found: true,\n    ...inputData,\n    entity_title: entityTitle,\n    creator_discord_user_id: creatorDiscordUserId\n  }\n}];"
+      },
+      "id": "check-entity",
+      "name": "Check Entity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "entity-found",
+      "name": "Entity Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1408,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "comments",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "rating",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "favorite",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "favorites",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "id": "switch-action",
+      "name": "Switch Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1632,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\n// Comments action handler\nif (data.method === 'GET') {\n  return [{\n    json: {\n      ...data,\n      api_method: 'GET',\n      api_url: `${data.api_base_path}/${data.entity_id}/comments`,\n      api_body: null\n    }\n  }];\n}\n\nif (data.method === 'POST') {\n  return [{\n    json: {\n      ...data,\n      api_method: 'POST',\n      api_url: `${data.api_base_path}/${data.entity_id}/comments`,\n      api_body: {\n        discord_user_id: data.discord_user_id,\n        discord_username: data.discord_username,\n        content: data.content\n      }\n    }\n  }];\n}\n\nif (data.method === 'DELETE') {\n  return [{\n    json: {\n      ...data,\n      api_method: 'DELETE',\n      api_url: `${data.api_base_path}/${data.entity_id}/comments/${data.comment_id}`,\n      api_body: {\n        discord_user_id: data.discord_user_id\n      }\n    }\n  }];\n}\n\nreturn [{ json: data }];"
+      },
+      "id": "handle-comments",
+      "name": "Handle Comments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\n// Rating action handler\nif (data.method === 'GET') {\n  return [{\n    json: {\n      ...data,\n      api_method: 'GET',\n      api_url: `${data.api_base_path}/${data.entity_id}/rating`,\n      api_body: null\n    }\n  }];\n}\n\nif (data.method === 'POST') {\n  return [{\n    json: {\n      ...data,\n      api_method: 'POST',\n      api_url: `${data.api_base_path}/${data.entity_id}/rating`,\n      api_body: {\n        discord_user_id: data.discord_user_id,\n        rating: data.score\n      }\n    }\n  }];\n}\n\nreturn [{ json: data }];"
+      },
+      "id": "handle-rating",
+      "name": "Handle Rating",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\n// Favorite action handler (toggle)\nif (data.method === 'GET') {\n  // Check if favorited\n  return [{\n    json: {\n      ...data,\n      api_method: 'GET',\n      api_url: `${data.api_base_path}/${data.entity_id}/favorite?discord_user_id=${data.discord_user_id}`,\n      api_body: null\n    }\n  }];\n}\n\nif (data.method === 'POST') {\n  // Toggle favorite\n  return [{\n    json: {\n      ...data,\n      api_method: 'POST',\n      api_url: `${data.api_base_path}/${data.entity_id}/favorite`,\n      api_body: {\n        discord_user_id: data.discord_user_id\n      }\n    }\n  }];\n}\n\nif (data.method === 'DELETE') {\n  // Remove favorite\n  return [{\n    json: {\n      ...data,\n      api_method: 'DELETE',\n      api_url: `${data.api_base_path}/${data.entity_id}/favorite`,\n      api_body: {\n        discord_user_id: data.discord_user_id\n      }\n    }\n  }];\n}\n\nreturn [{ json: data }];"
+      },
+      "id": "handle-favorite",
+      "name": "Handle Favorite",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\n// Get user's favorites list\n// Note: For this action, entity_id in the body is actually user_id\nreturn [{\n  json: {\n    ...data,\n    api_method: 'GET',\n    api_url: `${data.api_base_path}/favorites/${data.discord_user_id}`,\n    api_body: null\n  }\n}];"
+      },
+      "id": "handle-favorites",
+      "name": "Handle Favorites",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "={{ $json.api_method }}",
+        "url": "={{ $env.API_URL }}{{ $json.api_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "execute-api",
+      "name": "Execute API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2112,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const apiResponse = $input.first().json;\n\n// Get action data - try multiple sources\nlet actionData;\ntry {\n  actionData = $('Switch Action').first().json;\n} catch (e) {\n  // Fallback to Check Entity if Switch Action not found\n  actionData = $('Check Entity').first().json;\n}\n\nconst statusCode = apiResponse.statusCode || 200;\nconst body = apiResponse.body || apiResponse;\n\n// Handle API errors\nif (statusCode >= 400 || body.detail) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode >= 400 ? statusCode : 500,\n        message: body.detail || 'API request failed',\n        status: 'API_ERROR'\n      },\n      meta: {\n        entity_type: actionData.entity_type,\n        entity_id: actionData.entity_id,\n        action: actionData.action,\n        project_id: actionData.project_id\n      }\n    }\n  }];\n}\n\n// Build success response based on action\nlet response = {\n  success: true,\n  data: null,\n  meta: {\n    entity_type: actionData.entity_type,\n    entity_id: actionData.entity_id,\n    action: actionData.action,\n    project_id: actionData.project_id,\n    method: actionData.method\n  }\n};\n\nswitch (actionData.action) {\n  case 'comments':\n    if (actionData.method === 'GET') {\n      response.data = { comments: Array.isArray(body) ? body : [body] };\n    } else if (actionData.method === 'POST') {\n      response.data = {\n        comment: {\n          id: body.id,\n          content: body.content,\n          discord_user_id: body.discord_user_id,\n          created_at: body.created_at\n        }\n      };\n      // Notify creator if different from commenter\n      if (actionData.creator_discord_user_id &&\n          actionData.creator_discord_user_id !== actionData.discord_user_id) {\n        response.notify = {\n          type: 'new_comment',\n          to_discord_user_id: actionData.creator_discord_user_id,\n          entity_type: actionData.entity_type,\n          entity_id: actionData.entity_id,\n          entity_title: actionData.entity_title,\n          from_username: actionData.discord_username || actionData.discord_user_id,\n          preview: actionData.content ? actionData.content.substring(0, 100) : ''\n        };\n      }\n    } else if (actionData.method === 'DELETE') {\n      response.data = { deleted: true };\n    }\n    break;\n    \n  case 'rating':\n    if (actionData.method === 'GET') {\n      response.data = {\n        average: parseFloat(body.average) || 0,\n        count: parseInt(body.count) || 0,\n        ratings: body.ratings || []\n      };\n    } else {\n      response.data = {\n        rating: {\n          id: body.id,\n          score: body.rating || body.score,\n          discord_user_id: body.discord_user_id\n        }\n      };\n      // Notify creator\n      if (actionData.creator_discord_user_id &&\n          actionData.creator_discord_user_id !== actionData.discord_user_id) {\n        response.notify = {\n          type: 'new_rating',\n          to_discord_user_id: actionData.creator_discord_user_id,\n          entity_type: actionData.entity_type,\n          entity_id: actionData.entity_id,\n          entity_title: actionData.entity_title,\n          from_username: actionData.discord_username || actionData.discord_user_id,\n          score: actionData.score,\n          stars: '⭐'.repeat(actionData.score || 0)\n        };\n      }\n    }\n    break;\n    \n  case 'favorite':\n    if (actionData.method === 'GET') {\n      response.data = { is_favorite: body.is_favorite || false };\n    } else {\n      response.data = {\n        is_favorite: body.is_favorite !== undefined ? body.is_favorite : true,\n        action_taken: body.action || (actionData.method === 'DELETE' ? 'removed' : 'added')\n      };\n    }\n    break;\n    \n  case 'favorites':\n    response.data = { favorites: Array.isArray(body) ? body : [] };\n    break;\n    \n  default:\n    response.data = body;\n}\n\nreturn [{ json: response }];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2704,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2976,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 404 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-not-found",
+      "name": "Respond Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1632,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "759b21a7-2a06-468b-812c-cc837d1782a0",
+              "leftValue": "={{ $('Handle Favorite').item.json.method }}",
+              "rightValue": "POST",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "5a9b4794-76de-4f43-976d-486d023943dd",
+              "leftValue": "={{ $json.body.data.already_exists }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        448
+      ],
+      "id": "557a2511-7810-4649-a60b-ddf810d8020f",
+      "name": "Is Toggle Already Exists?"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.API_URL }}{{$('Handle Favorite').item.json.api_base_path }}/{{ $('Handle Favorite').item.json.entity_id }}/favorite",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $('Handle Favorite').item.json.project_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "value": "={\"discord_user_id\": \"{{ $('Handle Favorite').item.json.discord_user_id }}\"}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2448,
+        352
+      ],
+      "id": "94f47085-883f-4993-ade9-7729ebb2a429",
+      "name": "Delete Favorite (Toggle)"
+    },
+    {
+      "parameters": {
+        "jsCode": "Code JavaScript :\n  return [{\n    json: {\n      statusCode: 200,\n      body: {\n        success: true,\n        data: {\n          is_favorite: false,\n          action_taken: \"removed\",\n          was_toggle: true\n        }\n      }\n    }\n  }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2656,
+        352
+      ],
+      "id": "c5f5c788-63db-44a8-ad36-7ae9b90a0087",
+      "name": "Format Toggle Response"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Entity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Entity": {
+      "main": [
+        [
+          {
+            "node": "Check Entity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Entity": {
+      "main": [
+        [
+          {
+            "node": "Entity Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entity Found?": {
+      "main": [
+        [
+          {
+            "node": "Switch Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Action": {
+      "main": [
+        [
+          {
+            "node": "Handle Comments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Rating",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Favorite",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Favorites",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Comments": {
+      "main": [
+        [
+          {
+            "node": "Execute API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Rating": {
+      "main": [
+        [
+          {
+            "node": "Execute API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Favorite": {
+      "main": [
+        [
+          {
+            "node": "Execute API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Favorites": {
+      "main": [
+        [
+          {
+            "node": "Execute API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute API": {
+      "main": [
+        [
+          {
+            "node": "Is Toggle Already Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Toggle Already Exists?": {
+      "main": [
+        [
+          {
+            "node": "Delete Favorite (Toggle)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Favorite (Toggle)": {
+      "main": [
+        [
+          {
+            "node": "Format Toggle Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Toggle Response": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "6b1a9f86-641a-40b1-baf3-db0a40cad183",
+  "activeVersionId": "6b1a9f86-641a-40b1-baf3-db0a40cad183",
+  "versionCounter": 33,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-13T14:21:52.477Z",
+      "createdAt": "2026-01-13T14:21:52.477Z",
+      "role": "workflow:owner",
+      "workflowId": "r3IriZ4hmS6PACNz",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

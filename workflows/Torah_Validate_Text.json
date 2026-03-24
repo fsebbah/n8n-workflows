@@ -1,0 +1,269 @@
+{
+  "updatedAt": "2026-01-20T19:58:54.000Z",
+  "createdAt": "2026-01-20T19:58:24.015Z",
+  "id": "X89Y430u5cwutSi0",
+  "name": "Torah Validate Text",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Validate Text v1\n\n**Endpoint:** POST /webhook/torah-validate-text\n\n**Required:**\n- `query`: Terme saisi par l'utilisateur (ex: \"soukkah\")\n\n**Optional:**\n- `category`: Filtrer par catégorie (bavli, yerushalmi, mishnah)\n\n**Response:**\n```json\n{\n  \"found\": true,\n  \"canonical\": \"Sukkah\",\n  \"heTitle\": \"סוכה\",\n  \"confidence\": 0.95,\n  \"category\": \"bavli\"\n}\n```",
+        "height": 340,
+        "width": 320,
+        "color": 4
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-validate-text",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        400,
+        304
+      ],
+      "webhookId": "torah-validate-text"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validation et préparation\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst query = (body.query || '').trim();\nconst category = body.category || null;\n\n// Validation\nif (!query) {\n  return [{\n    json: {\n      valid: false,\n      error: 'Le champ \"query\" est requis'\n    }\n  }];\n}\n\n// Construire les paramètres de recherche\nlet searchParams = `query=${encodeURIComponent(query)}`;\nif (category) {\n  searchParams += `&category=${encodeURIComponent(category)}`;\n}\n\nreturn [{\n  json: {\n    valid: true,\n    query: query,\n    category: category,\n    searchParams: searchParams\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-validation",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/sefaria/texts/search?{{ $json.searchParams }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 5000
+        }
+      },
+      "id": "search-api",
+      "name": "Search Torah API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1072,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Traiter la réponse de l'API\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Erreur API\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      found: false,\n      query: prevData.query,\n      error: data.error?.message || data.message || data.detail || `Erreur API ${statusCode}`,\n      suggestions: []\n    }\n  }];\n}\n\n// Résultat trouvé\nif (data.found && data.canonical_name) {\n  return [{\n    json: {\n      found: true,\n      query: prevData.query,\n      canonical: data.canonical_name,\n      heTitle: data.hebrew_name || null,\n      category: data.category || null,\n      subcategory: data.subcategory || null,\n      sefaria_ref: data.sefaria_ref || data.canonical_name,\n      match_type: data.match_type || 'exact'\n    }\n  }];\n}\n\n// Pas trouvé\nreturn [{\n  json: {\n    found: false,\n    query: prevData.query,\n    suggestions: data.suggestions || [],\n    message: 'Aucun texte correspondant trouvé'\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.found ? 200 : ($json.error ? 500 : 404) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1504,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ found: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1072,
+        432
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Search Torah API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Torah API": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "94668fba-4cd1-4355-92c7-e7aaaf49398e",
+  "activeVersionId": "94668fba-4cd1-4355-92c7-e7aaaf49398e",
+  "versionCounter": 20,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-20T19:58:24.018Z",
+      "createdAt": "2026-01-20T19:58:24.018Z",
+      "role": "workflow:owner",
+      "workflowId": "X89Y430u5cwutSi0",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

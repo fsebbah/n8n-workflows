@@ -1,0 +1,390 @@
+{
+  "updatedAt": "2026-01-21T07:49:53.000Z",
+  "createdAt": "2025-12-31T08:10:23.939Z",
+  "id": "2uFfsvu6V723B2sR",
+  "name": "Torah Translation Status",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Traites API\n\n**Endpoints:**\n- GET /webhook/torah-translation-status\n- GET /webhook/torah-translation-status?traite={name}\n\n**Paramètres:**\n- `traite` (optionnel): Nom du traité\n- `discord_webhook`: URL webhook Discord\n\n**Réponses:**\n- Sans traite: Liste des traités\n- Avec traite: Liste des pages\n\n**Source:** torah.api endpoints\n- /api/talmud/traites\n- /api/talmud/traite/{traite}/pages",
+        "height": 340,
+        "width": 300,
+        "color": 4
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "path": "torah-translation-status",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        400,
+        304
+      ],
+      "webhookId": "torah-translation-status"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire les paramètres de la requête\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst traite = query.traite || null;\nconst targetLanguage = query.target_language || 'fr';\nconst discord = query.discord_webhook || null;\n\nreturn [{\n  json: {\n    traite: traite,\n    targetLanguage: targetLanguage,\n    discord: discord ? { webhook_url: discord } : null,\n    hasTraite: !!traite\n  }\n}];"
+      },
+      "id": "parse-params",
+      "name": "Parse Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-traite",
+              "leftValue": "={{ $json.hasTraite }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-traite",
+      "name": "Traite Specified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/talmud/traite/{{ $json.traite }}/pages",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "get-traite-status",
+      "name": "Get Traite Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1072,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/talmud/traites",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "get-global-status",
+      "name": "Get Global Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1072,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la réponse pour un traité spécifique (liste des pages)\nconst input = $input.first().json;\nconst params = $('Parse Parameters').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur API Torah',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Liste des pages du traité\nconst pages = data.pages || [];\n\n// Construire la réponse\nconst response = {\n  success: true,\n  type: 'traite_pages',\n  traite: data.traite || params.traite,\n  total_pages: pages.length,\n  pages: pages,\n  discord: params.discord\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "format-traite-response",
+      "name": "Format Traite Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la réponse globale avec statistiques\nconst input = $input.first().json;\nconst params = $('Parse Parameters').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Erreur API Torah',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Liste des traités\nconst traites = data.traites || [];\nconst torahApiUrl = $env.API_URL || 'http://pi6.local:3031';\n\n// Récupérer le nombre de pages pour chaque traité\nlet totalPages = 0;\nconst traitesWithPages = [];\n\nfor (const traite of traites) {\n  try {\n    const pageData = await this.helpers.httpRequest({\n      method: 'GET',\n      url: `${torahApiUrl}/api/talmud/traite/${encodeURIComponent(traite)}/pages`,\n      json: true\n    });\n    const pageCount = pageData.pages ? pageData.pages.length : 0;\n    totalPages += pageCount;\n    traitesWithPages.push({ name: traite, pages: pageCount });\n  } catch (e) {\n    traitesWithPages.push({ name: traite, pages: 0 });\n  }\n}\n\n// Construire la réponse avec statistics\nconst response = {\n  success: true,\n  statistics: {\n    total_traites: traites.length,\n    total_pages: totalPages,\n    translated: 0,\n    pending: totalPages,\n    percentage: 0\n  },\n  traites: traitesWithPages,\n  traites_not_started: traites,\n  discord: params.discord\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "format-global-response",
+      "name": "Format Global Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "check-discord",
+              "leftValue": "={{ $json.discord?.webhook_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-discord",
+      "name": "Send to Discord?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1728,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.discord.webhook_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"{{ $json.type === 'traite_pages' ? '📖 ' + $json.traite : '📚 Statut des Traductions' }}\",\n    \"color\": 5763719,\n    \"fields\": [\n      {{ $json.statistics ? '{\"name\": \"Progression\", \"value\": \"' + $json.statistics.translated + '/' + $json.statistics.total_pages + ' pages (' + $json.statistics.percentage + '%)\", \"inline\": true}' : '' }}\n      {{ $json.statistics ? ',{\"name\": \"Traités\", \"value\": \"' + $json.statistics.total_traites + ' traités\", \"inline\": true}' : '' }}\n      {{ $json.traites_not_started && $json.traites_not_started.length > 0 ? ',{\"name\": \"Non commencés\", \"value\": \"' + $json.traites_not_started.slice(0,5).join(', ') + ($json.traites_not_started.length > 5 ? '...' : '') + '\", \"inline\": false}' : '' }}\n      {{ $json.type === 'traite_pages' ? '{\"name\": \"Total pages\", \"value\": \"' + $json.total_pages + ' pages\", \"inline\": true}' : '' }}\n      {{ $json.type === 'traite_pages' ? ',{\"name\": \"Pages\", \"value\": \"' + $json.pages.slice(0,15).join(', ') + ($json.pages.length > 15 ? '...' : '') + '\", \"inline\": false}' : '' }}\n    ],\n    \"footer\": { \"text\": \"Torah API\" },\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-discord",
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1952,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2160,
+        304
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Parameters": {
+      "main": [
+        [
+          {
+            "node": "Traite Specified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traite Specified?": {
+      "main": [
+        [
+          {
+            "node": "Get Traite Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Global Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Traite Status": {
+      "main": [
+        [
+          {
+            "node": "Format Traite Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Global Status": {
+      "main": [
+        [
+          {
+            "node": "Format Global Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Traite Response": {
+      "main": [
+        [
+          {
+            "node": "Send to Discord?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Global Response": {
+      "main": [
+        [
+          {
+            "node": "Send to Discord?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Discord?": {
+      "main": [
+        [
+          {
+            "node": "Send to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Discord": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "bb34f7c6-2c54-4f52-a0c5-5df2152b4766",
+  "activeVersionId": "bb34f7c6-2c54-4f52-a0c5-5df2152b4766",
+  "versionCounter": 82,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2025-12-31T08:10:23.942Z",
+      "createdAt": "2025-12-31T08:10:23.942Z",
+      "role": "workflow:owner",
+      "workflowId": "2uFfsvu6V723B2sR",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

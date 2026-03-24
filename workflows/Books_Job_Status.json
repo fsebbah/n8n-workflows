@@ -1,0 +1,268 @@
+{
+  "updatedAt": "2026-01-20T19:21:30.000Z",
+  "createdAt": "2026-01-04T15:21:06.146Z",
+  "id": "xSwPuIY9Lp9IoqPj",
+  "name": "Books Job Status",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Books Job Status\n\n**Endpoint:** GET /webhook/books-job-status\n\n**Request:**\n```\nGET /webhook/books-job-status?job_id=job_abc123\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_abc123\",\n  \"status\": \"in_progress\",\n  \"text_name\": \"The Book of Maccabees II\",\n  \"chapter\": 1,\n  \"current_verse\": 15,\n  \"total_verses\": 41,\n  \"translations_saved\": 14,\n  \"progress_percent\": 34.1,\n  \"tokens\": {\n    \"total\": 25000\n  }\n}\n```",
+        "height": 380,
+        "width": 320,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "path": "books-job-status",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        400,
+        304
+      ],
+      "webhookId": "books-job-status"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire le job_id des query params\nconst input = $input.first().json;\n\nconst jobId = input.query?.job_id || input.params?.job_id || '';\n\nif (!jobId) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'Le paramètre \"job_id\" est requis',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    jobId: jobId\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-validation",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "fetch-job",
+      "name": "Fetch Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1072,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la réponse\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nif (statusCode >= 400 || data.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || data.detail || 'Job non trouvé',\n        status: 'JOB_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Calculer la progression\nconst totalVerses = data.verses_count || data.metadata?.verses_count || 0;\nconst translationsSaved = data.translations_saved || 0;\nconst progressPercent = totalVerses > 0 ? Math.round((translationsSaved / totalVerses) * 1000) / 10 : 0;\n\nreturn [{\n  json: {\n    success: true,\n    job_id: data.job_id || prevData.jobId,\n    status: data.status || 'unknown',\n    job_type: data.job_type,\n    text_name: data.text_name || data.metadata?.text_name,\n    chapter: data.chapter || data.metadata?.chapter,\n    current_verse: data.current_verse,\n    total_verses: totalVerses,\n    translations_saved: translationsSaved,\n    progress_percent: progressPercent,\n    tokens: data.tokens,\n    error: data.error,\n    created_at: data.created_at,\n    updated_at: data.updated_at\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.code || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-result",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1504,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1072,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Job Status": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "6d1828f2-2e3b-4919-aa66-b2d269fc17f4",
+  "activeVersionId": "6d1828f2-2e3b-4919-aa66-b2d269fc17f4",
+  "versionCounter": 49,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-04T15:21:06.155Z",
+      "createdAt": "2026-01-04T15:21:06.155Z",
+      "role": "workflow:owner",
+      "workflowId": "xSwPuIY9Lp9IoqPj",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

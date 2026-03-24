@@ -1,0 +1,419 @@
+{
+  "updatedAt": "2025-12-23T09:20:43.000Z",
+  "createdAt": "2025-12-18T15:13:38.216Z",
+  "id": "GLVqpBuluIyiQJuO",
+  "name": "MCP - Bulk Cloud Uploader",
+  "description": null,
+  "active": false,
+  "isArchived": true,
+  "nodes": [
+    {
+      "id": "webhook-upload",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "bulk-cloud-uploader-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bulk-cloud-uploader",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-files",
+              "leftValue": "={{ $json.body.files }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            },
+            {
+              "id": "condition-provider",
+              "leftValue": "={{ $json.body.provider }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-input",
+      "name": "Error: Missing Input",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameters: files (array) and provider (s3, gcs, azure, cloudflare)\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"cloud-uploader\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "route-provider",
+      "name": "Route Provider",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        700,
+        300
+      ],
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "value": "s3",
+              "outputKey": "s3"
+            },
+            {
+              "value": "gcs",
+              "outputKey": "gcs"
+            },
+            {
+              "value": "azure",
+              "outputKey": "azure"
+            },
+            {
+              "value": "cloudflare",
+              "outputKey": "cloudflare"
+            }
+          ],
+          "fallbackOutput": {
+            "fallbackOutputIndex": 4
+          }
+        },
+        "dataType": "string",
+        "value": "={{ $json.body.provider }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "s3-upload",
+      "name": "S3 Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst bucket = body.bucket;\nconst prefix = body.prefix || '';\nconst credentials = body.credentials || {};\n\n// S3 upload simulation - in production, use AWS SDK\nconst results = files.map((file, index) => {\n  const key = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    key: key,\n    bucket: bucket,\n    url: `https://${bucket}.s3.amazonaws.com/${key}`,\n    status: 'pending',\n    note: 'S3 upload requires AWS SDK configuration in n8n'\n  };\n});\n\nreturn [{\n  json: {\n    provider: 's3',\n    bucket: bucket,\n    results: results,\n    total: files.length\n  }\n}];"
+      }
+    },
+    {
+      "id": "gcs-upload",
+      "name": "GCS Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        220
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst bucket = body.bucket;\nconst prefix = body.prefix || '';\n\nconst results = files.map((file, index) => {\n  const path = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    path: path,\n    bucket: bucket,\n    url: `https://storage.googleapis.com/${bucket}/${path}`,\n    status: 'pending',\n    note: 'GCS upload requires Google Cloud credentials in n8n'\n  };\n});\n\nreturn [{\n  json: {\n    provider: 'gcs',\n    bucket: bucket,\n    results: results,\n    total: files.length\n  }\n}];"
+      }
+    },
+    {
+      "id": "azure-upload",
+      "name": "Azure Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        340
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst container = body.container || body.bucket;\nconst prefix = body.prefix || '';\nconst accountName = body.credentials?.account_name || 'account';\n\nconst results = files.map((file, index) => {\n  const blobName = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    blob_name: blobName,\n    container: container,\n    url: `https://${accountName}.blob.core.windows.net/${container}/${blobName}`,\n    status: 'pending',\n    note: 'Azure upload requires Azure Storage credentials in n8n'\n  };\n});\n\nreturn [{\n  json: {\n    provider: 'azure',\n    container: container,\n    results: results,\n    total: files.length\n  }\n}];"
+      }
+    },
+    {
+      "id": "cloudflare-upload",
+      "name": "Cloudflare R2 Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        460
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body;\nconst files = body.files || [];\nconst bucket = body.bucket;\nconst prefix = body.prefix || '';\nconst accountId = body.credentials?.account_id || 'account';\n\nconst results = files.map((file, index) => {\n  const key = prefix ? `${prefix}/${file.name}` : file.name;\n  return {\n    index: index,\n    name: file.name,\n    key: key,\n    bucket: bucket,\n    url: `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${key}`,\n    status: 'pending',\n    note: 'Cloudflare R2 upload requires R2 API credentials'\n  };\n});\n\nreturn [{\n  json: {\n    provider: 'cloudflare',\n    bucket: bucket,\n    results: results,\n    total: files.length\n  }\n}];"
+      }
+    },
+    {
+      "id": "error-unknown",
+      "name": "Error: Unknown Provider",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        920,
+        580
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Unknown provider: \" + $('Webhook').first().json.body.provider + \". Supported: s3, gcs, azure, cloudflare\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"cloud-uploader\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1140,
+        280
+      ],
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "all",
+        "numberInputs": 4
+      }
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        280
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst results = items.map(item => {\n  return {\n    json: {\n      success: true,\n      data: {\n        provider: item.json.provider,\n        bucket: item.json.bucket || item.json.container,\n        files: item.json.results,\n        summary: {\n          total: item.json.total,\n          uploaded: 0,\n          pending: item.json.total,\n          failed: 0\n        }\n      },\n      meta: {\n        provider: 'cloud-uploader',\n        target: item.json.provider,\n        note: 'Configure cloud provider credentials in n8n for actual uploads'\n      }\n    }\n  };\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1580,
+        280
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 700,
+        "height": 340,
+        "content": "## MCP - Bulk Cloud Uploader\n\n**Endpoint:** POST /webhook/bulk-cloud-uploader\n\n**Parameters:**\n- `files` (required): Array of files to upload\n  - Each file: {name: 'file.txt', content_base64: '...', content_url: '...'}\n- `provider` (required): s3 | gcs | azure | cloudflare\n- `bucket` (required): Bucket/container name\n- `prefix` (optional): Path prefix for uploaded files\n- `credentials` (required for each provider):\n  - S3: {access_key, secret_key, region}\n  - GCS: {project_id, credentials_json}\n  - Azure: {account_name, account_key}\n  - Cloudflare: {account_id, access_key, secret_key}\n\n**Returns:**\n- Upload results for each file\n- Summary: total, uploaded, pending, failed\n\n**Note:** Cloud credentials must be configured in n8n for actual uploads"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Route Provider",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Missing Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Provider": {
+      "main": [
+        [
+          {
+            "node": "S3 Upload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GCS Upload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Azure Upload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cloudflare R2 Upload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Unknown Provider",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S3 Upload": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GCS Upload": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Azure Upload": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Cloudflare R2 Upload": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "a37004c2-7c10-4723-a99e-c8d3940662ed",
+  "activeVersionId": null,
+  "versionCounter": 12,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2025-12-18T15:13:38.219Z",
+      "createdAt": "2025-12-18T15:13:38.219Z",
+      "role": "workflow:owner",
+      "workflowId": "GLVqpBuluIyiQJuO",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

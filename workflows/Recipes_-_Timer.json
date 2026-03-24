@@ -1,0 +1,442 @@
+{
+  "updatedAt": "2026-01-07T11:26:49.936Z",
+  "createdAt": "2026-01-07T11:15:20.602Z",
+  "id": "JcY4uCJQzUW1uoYZ",
+  "name": "Recipes - Timer",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "recipes-timer-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recipes-timer",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\nconst action = body.action || 'create';\n\n// Common validation\nif (!body.user_id) {\n  errors.push('Missing required parameter: user_id');\n}\n\n// Action-specific validation\nif (action === 'create') {\n  // discord_channel_id is optional (used for tracking, not required for DM notifications)\n  if (!body.label) {\n    errors.push('Missing required parameter: label');\n  }\n  if (!body.duration_minutes) {\n    errors.push('Missing required parameter: duration_minutes');\n  } else if (body.duration_minutes < 1 || body.duration_minutes > 1440) {\n    errors.push('duration_minutes must be between 1 and 1440 (24h max)');\n  }\n} else if (action === 'cancel') {\n  if (!body.timer_id) {\n    errors.push('Missing required parameter: timer_id');\n  }\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    action: action,\n    user_id: body.user_id,\n    discord_channel_id: body.discord_channel_id || null,  // Optional - for tracking\n    timer_id: body.timer_id,\n    label: body.label,\n    duration_minutes: body.duration_minutes,\n    recipe_id: body.recipe_id,\n    recipe_title: body.recipe_title,\n    status_filter: body.status || 'active',\n    api_base_url: body.api_base_url || process.env.API_BASE_URL || 'http://api.torah.solutions/api'\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'api' } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "action-switch",
+      "name": "Action Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        900,
+        260
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "create",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "create",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "list",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "list",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "cancel",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "cancel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "api-create-timer",
+      "name": "API: Create Timer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate Input').first().json.api_base_url }}/recipes/timer",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"discord_user_id\": \"{{ $('Validate Input').first().json.user_id }}\",\n  \"discord_channel_id\": \"{{ $('Validate Input').first().json.discord_channel_id }}\",\n  \"discord_webhook_url\": {{ JSON.stringify($('Validate Input').first().json.discord_webhook_url || null) }},\n  \"label\": {{ JSON.stringify($('Validate Input').first().json.label) }},\n  \"duration_minutes\": {{ $('Validate Input').first().json.duration_minutes }},\n  \"recipe_id\": {{ JSON.stringify($('Validate Input').first().json.recipe_id || null) }},\n  \"recipe_title\": {{ JSON.stringify($('Validate Input').first().json.recipe_title || null) }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "api-list-timers",
+      "name": "API: List Timers",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        260
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Validate Input').first().json.api_base_url }}/recipes/timers/{{ $('Validate Input').first().json.user_id }}?status={{ $('Validate Input').first().json.status_filter }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "api-cancel-timer",
+      "name": "API: Cancel Timer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        400
+      ],
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $('Validate Input').first().json.api_base_url }}/recipes/timer/{{ $('Validate Input').first().json.timer_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        260
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\ntry {\n  // Check for API error\n  if (input.detail) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 404,\n          message: input.detail,\n          status: 'NOT_FOUND'\n        },\n        meta: { provider: 'api', action: prevData.action }\n      }\n    }];\n  }\n\n  // Format based on action\n  if (prevData.action === 'create') {\n    return [{\n      json: {\n        success: true,\n        data: {\n          timer_id: input.id,\n          label: input.label,\n          duration_minutes: input.duration_minutes,\n          expires_at: input.expires_at,\n          status: input.status\n        },\n        meta: { provider: 'api', action: 'create' }\n      }\n    }];\n  } else if (prevData.action === 'list') {\n    const timers = (input.timers || []).map(t => ({\n      timer_id: t.id,\n      label: t.label,\n      duration_minutes: t.duration_minutes,\n      expires_at: t.expires_at,\n      remaining_seconds: t.remaining_seconds,\n      recipe_title: t.recipe_title,\n      status: t.status\n    }));\n    return [{\n      json: {\n        success: true,\n        data: {\n          timers: timers,\n          total: input.total || timers.length\n        },\n        meta: { provider: 'api', action: 'list' }\n      }\n    }];\n  } else if (prevData.action === 'cancel') {\n    return [{\n      json: {\n        success: true,\n        data: {\n          message: input.message || 'Timer cancelled'\n        },\n        meta: { provider: 'api', action: 'cancel' }\n      }\n    }];\n  }\n\n  return [{ json: { success: true, data: input, meta: { provider: 'api' } } }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to process API response: ' + e.message,\n        status: 'PROCESS_ERROR'\n      },\n      meta: { provider: 'api' }\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1620,
+        260
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 520,
+        "height": 200,
+        "content": "## Recipes - Timer\n\n**Endpoint:** POST /webhook/recipes-timer\n\n**Actions:**\n- `create`: Create a new timer\n- `list`: List user's timers (active/completed/cancelled/all)\n- `cancel`: Cancel a timer\n\n**Required (create):** user_id, discord_channel_id, label, duration_minutes\n**Required (list):** user_id\n**Required (cancel):** user_id, timer_id\n\n**Note:** duration_minutes must be 1-1440 (24h max)"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Action Switch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Switch": {
+      "main": [
+        [
+          {
+            "node": "API: Create Timer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "API: List Timers",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "API: Cancel Timer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API: Create Timer": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API: List Timers": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API: Cancel Timer": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "df210ea2-5f2a-40ca-b7a8-3c875d93d8ac",
+  "activeVersionId": "df210ea2-5f2a-40ca-b7a8-3c875d93d8ac",
+  "versionCounter": 44,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-07T11:15:20.604Z",
+      "createdAt": "2026-01-07T11:15:20.604Z",
+      "role": "workflow:owner",
+      "workflowId": "JcY4uCJQzUW1uoYZ",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

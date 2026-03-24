@@ -1,0 +1,1156 @@
+{
+  "updatedAt": "2026-01-20T19:24:01.000Z",
+  "createdAt": "2026-01-18T11:51:38.027Z",
+  "id": "7hWKg1eHA1RNeIgj",
+  "name": "Torah Vocalization (Nekudot)",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Vocalization (Nekudot) v2\n\n**Endpoint:** POST /webhook/torah-vocalization\n\n**Required:**\n- `text`: Texte hébreu sans voyelles\n- `openai_api_key`: Clé API OpenAI\n\n**Optional:**\n- `source_text_id`: UUID du texte source\n- `commentary_id`: UUID du commentaire\n- `context`: { traite, page, commentator }\n\n**Pipeline v2:**\n1. Si commentary_id → Check has_nekudot via API\n   → Si existe → retourne vocalisation\n2. Sinon → Check Cache (ancien)\n3. Si cache miss → GPT-4o\n4. Sauvegarde en BDD",
+        "height": 380,
+        "width": 320,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-vocalization",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        400,
+        304
+      ],
+      "webhookId": "torah-vocalization"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validation et préparation des données (avec support batch)\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst startTime = Date.now();\n\n// Extraction des paramètres\nconst openaiApiKey = body.openai_api_key || '';\nconst context = body.context || {};\n\n// Détecter mode batch ou single\nconst isBatch = Array.isArray(body.items) && body.items.length > 0;\n\n// Validation\nconst errors = [];\n\nif (!openaiApiKey || openaiApiKey.trim().length === 0) {\n  errors.push('Le champ \"openai_api_key\" est requis');\n}\n\nif (isBatch) {\n  // Validation batch\n  for (let i = 0; i < body.items.length; i++) {\n    const item = body.items[i];\n    if (!item.text || item.text.trim().length === 0) {\n      errors.push(`Item ${i}: le champ \"text\" est requis`);\n    }\n  }\n} else {\n  // Validation single (existant)\n  const text = body.text || '';\n  if (!text || text.trim().length === 0) {\n    errors.push('Le champ \"text\" est requis');\n  }\n}\n\n// === MODE SINGLE (rétrocompatibilité) ===\nif (!isBatch) {\n  const text = body.text || '';\n  const sourceTextId = body.source_text_id || null;\n  const commentaryId = body.commentary_id || null;\n  \n  let cacheSearchParams = '';\n  if (sourceTextId) {\n    cacheSearchParams = `source_text_id=${sourceTextId}`;\n  } else if (commentaryId) {\n    cacheSearchParams = `commentary_id=${commentaryId}`;\n  } else if (context.traite && context.page) {\n    cacheSearchParams = `traite=${encodeURIComponent(context.traite)}&page=${encodeURIComponent(context.page)}`;\n    if (context.commentator) {\n      cacheSearchParams += `&commentator=${encodeURIComponent(context.commentator)}`;\n    }\n  }\n\n  return [{\n    json: {\n      valid: errors.length === 0,\n      errors: errors,\n      isBatch: false,\n      text: text,\n      openaiApiKey: openaiApiKey,\n      sourceTextId: sourceTextId,\n      commentaryId: commentaryId,\n      context: context,\n      startTime: startTime,\n      cacheSearchParams: cacheSearchParams,\n      canSearchCache: !!(sourceTextId || commentaryId || (context.traite && context.page)),\n      isCommentary: !!commentaryId\n    }\n  }];\n}\n\n// === MODE BATCH ===\nconst items = body.items.map((item, index) => ({\n  index,\n  text: item.text,\n  commentary_id: item.commentary_id || null,\n  source_text_id: item.source_text_id || null\n}));\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    isBatch: true,\n    items: items,\n    itemCount: items.length,\n    openaiApiKey: openaiApiKey,\n    context: context,\n    startTime: startTime\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-validation",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "can-search",
+              "leftValue": "={{ $json.canSearchCache }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-can-cache",
+      "name": "Can Search Cache?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1072,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/vocalization/search?{{ $json.cacheSearchParams }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 5000
+        }
+      },
+      "id": "search-cache",
+      "name": "Search Cache",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vérifier si le cache a retourné une vocalisation\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Cache hit si status 200 et vocalisation trouvée\nconst cacheHit = statusCode === 200 && data.found === true && data.vocalized_text;\n\nif (cacheHit) {\n  return [{\n    json: {\n      cacheHit: true,\n      vocalizedText: data.vocalized_text,\n      vocalizedBy: data.vocalized_by || 'cached',\n      vocalizedAt: data.vocalized_at,\n      // Passer les données pour la réponse\n      originalText: prevData.text,\n      sourceTextId: data.source_text_id || prevData.sourceTextId,\n      commentaryId: data.commentary_id || prevData.commentaryId,\n      context: prevData.context,\n      startTime: prevData.startTime\n    }\n  }];\n}\n\n// Cache miss - passer au LLM\nreturn [{\n  json: {\n    cacheHit: false,\n    ...prevData\n  }\n}];"
+      },
+      "id": "check-cache-result",
+      "name": "Check Cache Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cache-hit",
+              "leftValue": "={{ $json.cacheHit }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-cache-hit",
+      "name": "Cache Hit?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1728,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la réponse depuis le cache\nconst input = $input.first().json;\n\nconst endTime = Date.now();\nconst processingTime = endTime - input.startTime;\n\nreturn [{\n  json: {\n    success: true,\n    cached: true,\n    vocalization: {\n      original: input.originalText,\n      vocalized: input.vocalizedText\n    },\n    metadata: {\n      traite: input.context.traite || null,\n      page: input.context.page || null,\n      commentator: input.context.commentator || null,\n      source_text_id: input.sourceTextId || null,\n      commentary_id: input.commentaryId || null,\n      vocalized_by: input.vocalizedBy,\n      source: 'cache',\n      cached_at: input.vocalizedAt,\n      processing_time_ms: processingTime\n    }\n  }\n}];"
+      },
+      "id": "format-cache-response",
+      "name": "Format Cache Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openaiApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', temperature: 0.1, messages: [{ role: 'system', content: 'Tu es un expert en hébreu biblique et rabbinique. Ta tâche est d\\'ajouter les nekudot (voyelles hébraïques/signes de vocalisation) au texte hébreu fourni. Retourne UNIQUEMENT le texte vocalisé, sans explication ni commentaire.' }, { role: 'user', content: 'Ajoute les nekudot (voyelles hébraïques) à ce texte:\\n\\n' + $json.text }] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "call-gpt-nano",
+      "name": "GPT-4o Vocalize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1952,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire la vocalisation et préparer la sauvegarde\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst endTime = Date.now();\nconst processingTime = endTime - prevData.startTime;\n\n// Gestion fullResponse ou réponse directe\nconst data = input.body || input;\nconst statusCode = input.statusCode;\n\n// Vérifier les erreurs de connexion (n8n retourne error.code comme string)\nif (input.error && typeof input.error.code === 'string') {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 503,\n        message: `Erreur connexion OpenAI: ${input.error.message || input.error.code}`,\n        status: 'CONNECTION_ERROR'\n      }\n    }\n  }];\n}\n\n// Vérifier les erreurs HTTP (statusCode >= 400 ou data.error avec message)\nconst hasHttpError = typeof statusCode === 'number' && statusCode >= 400;\nconst hasApiError = data.error && data.error.message;\nif (hasHttpError || hasApiError) {\n  const errorMsg = data.error?.message || `Erreur HTTP ${statusCode}`;\n  const errorCode = hasHttpError ? statusCode : 500;\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: errorCode,\n        message: `Erreur API OpenAI: ${errorMsg}`,\n        status: 'OPENAI_API_ERROR'\n      }\n    }\n  }];\n}\n\n// Extraire le texte vocalisé\nlet vocalizedText = '';\nif (data.choices && data.choices[0]?.message?.content) {\n  vocalizedText = data.choices[0].message.content.trim();\n}\n\nif (!vocalizedText) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Aucune vocalisation retournée par GPT',\n        status: 'EMPTY_GPT_RESPONSE'\n      }\n    }\n  }];\n}\n\nconst usage = data.usage || {};\n\n// Construire la réponse\nconst response = {\n  success: true,\n  cached: false,\n  vocalization: {\n    original: prevData.text,\n    vocalized: vocalizedText\n  },\n  metadata: {\n    traite: prevData.context.traite || null,\n    page: prevData.context.page || null,\n    commentator: prevData.context.commentator || null,\n    source_text_id: prevData.sourceTextId || null,\n    commentary_id: prevData.commentaryId || null,\n    vocalized_by: 'llm:gpt-4o',\n    model: 'gpt-4o',\n    source: 'generated',\n    processing_time_ms: processingTime,\n    tokens: {\n      prompt_tokens: usage.prompt_tokens || 0,\n      completion_tokens: usage.completion_tokens || 0\n    }\n  },\n  // Données pour sauvegarde\n  _saveData: {\n    source_text_id: prevData.sourceTextId,\n    commentary_id: prevData.commentaryId,\n    vocalized_text: vocalizedText,\n    vocalized_by: 'llm:gpt-4o'\n  }\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "extract-gpt-response",
+      "name": "Extract GPT Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "check-has-id",
+              "leftValue": "={{ $json._saveData?.source_text_id || $json._saveData?.commentary_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "should-save",
+      "name": "Should Save?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2384,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.API_URL }}/api/vocalization/save",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json._saveData) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "save-to-cache",
+      "name": "Save to Cache",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2608,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nettoyer la réponse (supprimer _saveData)\nconst prevResponse = $('Extract GPT Response').first().json;\n\n// Supprimer les données internes\nconst response = { ...prevResponse };\ndelete response._saveData;\n\nreturn [{ json: response }];"
+      },
+      "id": "clean-response",
+      "name": "Clean Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2832,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : (typeof $json.error?.code === 'number' ? $json.error.code : 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3040,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construire la réponse d'erreur de validation\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+      },
+      "id": "build-error-response",
+      "name": "Build Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-commentary",
+              "leftValue": "={{ $json.isCommentary }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-is-commentary",
+      "name": "Is Commentary?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1072,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/commentaries/nekudot",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ids: [$json.commentaryId] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "check-nekudot-api",
+      "name": "Check Nekudot API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vérifier si le commentaire a des nekudot\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode;\n\n// Si erreur de connexion (error.code est une string comme 'ERR_BAD_REQUEST')\nif (input.error && typeof input.error.code === 'string') {\n  return [{\n    json: {\n      hasNekudot: false,\n      ...prevData\n    }\n  }];\n}\n\n// Si erreur HTTP, passer à la vocalisation\nif (typeof statusCode === 'number' && statusCode >= 400) {\n  return [{\n    json: {\n      hasNekudot: false,\n      ...prevData\n    }\n  }];\n}\n\n// Vérifier si les nekudot existent\nconst nekudot = data.nekudot || {};\nconst nekudotData = nekudot[prevData.commentaryId];\n\nif (nekudotData && nekudotData.text) {\n  return [{\n    json: {\n      hasNekudot: true,\n      cachedNekudot: nekudotData.text,\n      cachedAt: nekudotData.vocalized_at,\n      originalText: prevData.text,\n      context: prevData.context,\n      startTime: prevData.startTime,\n      commentaryId: prevData.commentaryId\n    }\n  }];\n}\n\n// Pas de nekudot, passer à GPT-4o\nreturn [{\n  json: {\n    hasNekudot: false,\n    ...prevData\n  }\n}];"
+      },
+      "id": "check-nekudot-result",
+      "name": "Commentary Has Nekudot?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-nekudot",
+              "leftValue": "={{ $json.hasNekudot }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-has-nekudot",
+      "name": "Has Nekudot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1728,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formater la réponse pour les nekudot depuis la BDD\nconst input = $input.first().json;\n\nconst endTime = Date.now();\nconst processingTime = endTime - input.startTime;\n\nreturn [{\n  json: {\n    success: true,\n    cached: true,\n    vocalization: {\n      original: input.originalText,\n      vocalized: input.cachedNekudot\n    },\n    metadata: {\n      traite: input.context.traite || null,\n      page: input.context.page || null,\n      commentator: input.context.commentator || null,\n      commentary_id: input.commentaryId,\n      vocalized_by: 'database',\n      source: 'database',\n      cached_at: input.cachedAt,\n      processing_time_ms: processingTime\n    }\n  }\n}];"
+      },
+      "id": "format-nekudot-response",
+      "name": "Format Nekudot Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "batch-check",
+              "leftValue": "={{ $json.isBatch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-batch",
+      "name": "Is Batch?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Préparer les items pour le traitement en boucle\nconst data = $input.first().json;\n\nreturn data.items.map(item => ({\n  json: {\n    index: item.index,\n    text: item.text,\n    commentary_id: item.commentary_id,\n    source_text_id: item.source_text_id,\n    openaiApiKey: data.openaiApiKey,\n    context: data.context,\n    startTime: data.startTime,\n    // Construire les paramètres de recherche cache\n    cacheSearchParams: item.commentary_id \n      ? `commentary_id=${item.commentary_id}` \n      : (item.source_text_id ? `source_text_id=${item.source_text_id}` : ''),\n    canSearchCache: !!(item.commentary_id || item.source_text_id),\n    isCommentary: !!item.commentary_id\n  }\n}));"
+      },
+      "id": "prepare-batch-items",
+      "name": "Prepare Batch Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1216,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "loop-items",
+      "name": "Loop Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1472,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Préparer l'item courant pour traitement (cache ou GPT)\nconst item = $input.first().json;\n\nreturn [{\n  json: {\n    valid: true,\n    text: item.text,\n    openaiApiKey: item.openaiApiKey,\n    sourceTextId: item.source_text_id,\n    commentaryId: item.commentary_id,\n    context: item.context,\n    startTime: item.startTime,\n    cacheSearchParams: item.cacheSearchParams,\n    canSearchCache: item.canSearchCache,\n    isCommentary: item.isCommentary,\n    // Garder l'index pour le merge\n    _batchIndex: item.index\n  }\n}];"
+      },
+      "id": "process-batch-item",
+      "name": "Process Batch Item",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1712,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collecter le résultat pour cet item\nconst result = $input.first().json;\nconst batchIndex = $('Process Batch Item').first().json._batchIndex;\nconst itemData = $('Process Batch Item').first().json;\n\nreturn [{\n  json: {\n    index: batchIndex,\n    commentary_id: itemData.commentaryId,\n    source_text_id: itemData.sourceTextId,\n    vocalization: result.vocalization || null,\n    cached: result.cached || false,\n    success: result.success !== false,\n    error: result.error || null\n  }\n}];"
+      },
+      "id": "collect-batch-result",
+      "name": "Collect Batch Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2672,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merger tous les résultats batch\nconst allResults = $input.all().map(item => item.json);\nconst startTime = $('Validate Input').first().json.startTime;\n\nconst endTime = Date.now();\nconst processingTime = endTime - startTime;\n\n// Trier par index\nallResults.sort((a, b) => a.index - b.index);\n\n// Calculer les stats\nconst total = allResults.length;\nconst cached = allResults.filter(r => r.cached).length;\nconst generated = allResults.filter(r => !r.cached && r.success).length;\nconst errorsCount = allResults.filter(r => !r.success).length;\n\n// Nettoyer les résultats (enlever l'index interne)\nconst cleanResults = allResults.map(r => ({\n  commentary_id: r.commentary_id,\n  source_text_id: r.source_text_id,\n  vocalization: r.vocalization,\n  cached: r.cached,\n  success: r.success,\n  error: r.error\n}));\n\nreturn [{\n  json: {\n    success: errorsCount < total,  // Au moins un succès\n    results: cleanResults,\n    summary: {\n      total: total,\n      cached: cached,\n      generated: generated,\n      errors: errorsCount,\n      processing_time_ms: processingTime\n    }\n  }\n}];"
+      },
+      "id": "merge-batch-results",
+      "name": "Merge Batch Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.summary.errors === 0 ? 200 : 207 }}"
+        }
+      },
+      "id": "respond-batch-success",
+      "name": "Respond Batch Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3168,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Mode Batch (RFC-011)\n\n**Input:**\n```json\n{\n  \"items\": [\n    {\"commentary_id\": \"...\", \"text\": \"...\"},\n    ...\n  ],\n  \"openai_api_key\": \"...\"\n}\n```\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"results\": [...],\n  \"summary\": {\"total\": N, \"cached\": X, \"generated\": Y}\n}\n```",
+        "height": 280,
+        "width": 350,
+        "color": 6
+      },
+      "id": "batch-doc-note",
+      "name": "Batch Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1264,
+        -560
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-batch-mode",
+              "leftValue": "={{ $('Validate Input').first().json.isBatch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "batch-or-single-response",
+      "name": "Batch or Single?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3024,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-batch-mode-cache",
+              "leftValue": "={{ $('Validate Input').first().json.isBatch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "batch-or-single-cache",
+      "name": "Batch or Single? (Cache)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2144,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-batch-mode-nekudot",
+              "leftValue": "={{ $('Validate Input').first().json.isBatch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "batch-or-single-nekudot",
+      "name": "Batch or Single? (Nekudot)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2144,
+        -96
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Is Batch?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Commentary?": {
+      "main": [
+        [
+          {
+            "node": "Check Nekudot API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Can Search Cache?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Nekudot API": {
+      "main": [
+        [
+          {
+            "node": "Commentary Has Nekudot?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commentary Has Nekudot?": {
+      "main": [
+        [
+          {
+            "node": "Has Nekudot?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Nekudot?": {
+      "main": [
+        [
+          {
+            "node": "Format Nekudot Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GPT-4o Vocalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Nekudot Response": {
+      "main": [
+        [
+          {
+            "node": "Batch or Single? (Nekudot)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can Search Cache?": {
+      "main": [
+        [
+          {
+            "node": "Search Cache",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GPT-4o Vocalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Cache": {
+      "main": [
+        [
+          {
+            "node": "Check Cache Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Cache Result": {
+      "main": [
+        [
+          {
+            "node": "Cache Hit?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache Hit?": {
+      "main": [
+        [
+          {
+            "node": "Format Cache Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GPT-4o Vocalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Cache Response": {
+      "main": [
+        [
+          {
+            "node": "Batch or Single? (Cache)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o Vocalize": {
+      "main": [
+        [
+          {
+            "node": "Extract GPT Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract GPT Response": {
+      "main": [
+        [
+          {
+            "node": "Should Save?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Save?": {
+      "main": [
+        [
+          {
+            "node": "Save to Cache",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clean Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Cache": {
+      "main": [
+        [
+          {
+            "node": "Clean Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Response": {
+      "main": [
+        [
+          {
+            "node": "Batch or Single?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Batch?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Batch Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Commentary?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Batch Items": {
+      "main": [
+        [
+          {
+            "node": "Loop Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Items": {
+      "main": [
+        [
+          {
+            "node": "Process Batch Item",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Batch Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Batch Item": {
+      "main": [
+        [
+          {
+            "node": "Is Commentary?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Batch Result": {
+      "main": [
+        [
+          {
+            "node": "Loop Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Batch Results": {
+      "main": [
+        [
+          {
+            "node": "Respond Batch Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch or Single?": {
+      "main": [
+        [
+          {
+            "node": "Collect Batch Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch or Single? (Cache)": {
+      "main": [
+        [
+          {
+            "node": "Collect Batch Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch or Single? (Nekudot)": {
+      "main": [
+        [
+          {
+            "node": "Collect Batch Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "377850d7-423a-47b1-a0de-c56659fc733a",
+  "activeVersionId": "377850d7-423a-47b1-a0de-c56659fc733a",
+  "versionCounter": 25,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-18T11:51:38.035Z",
+      "createdAt": "2026-01-18T11:51:38.035Z",
+      "role": "workflow:owner",
+      "workflowId": "7hWKg1eHA1RNeIgj",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

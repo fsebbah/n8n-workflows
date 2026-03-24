@@ -1,0 +1,311 @@
+{
+  "updatedAt": "2025-12-18T08:40:02.000Z",
+  "createdAt": "2025-12-18T08:39:56.166Z",
+  "id": "VW7DqZcclwqtuqyT",
+  "name": "MCP - CSV Processor",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "csv-processor",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "csv-processor-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-data",
+              "leftValue": "={{ $json.body.data }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Missing required field: data (URL or base64 CSV)' } }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "error-invalid-input",
+      "name": "Error Invalid Input",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        680,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-source",
+              "leftValue": "={{ $json.body.source }}",
+              "rightValue": "base64",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-source-type",
+      "name": "Is Base64?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare base64 CSV data\nconst body = $input.first().json.body;\nconst base64Data = body.data;\nconst options = body.options || {};\nconst operation = body.operation || 'parse';\nconst filter = body.filter || null;\nconst transform = body.transform || null;\n\n// Remove data URL prefix if present\nconst cleanBase64 = base64Data.replace(/^data:[^;]+;base64,/, '');\n\n// Decode base64 to string\nconst csvContent = Buffer.from(cleanBase64, 'base64').toString('utf-8');\n\nreturn {\n  json: {\n    csvContent: csvContent,\n    options: options,\n    operation: operation,\n    filter: filter,\n    transform: transform,\n    startTime: Date.now()\n  }\n};"
+      },
+      "id": "decode-base64",
+      "name": "Decode Base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.body.data }}",
+        "options": {}
+      },
+      "id": "fetch-csv-url",
+      "name": "Fetch CSV URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare fetched CSV data\nconst body = $('Webhook').first().json.body;\nconst csvContent = $input.first().json;\nconst options = body.options || {};\nconst operation = body.operation || 'parse';\nconst filter = body.filter || null;\nconst transform = body.transform || null;\n\n// Handle if response is string or has data property\nlet content = '';\nif (typeof csvContent === 'string') {\n  content = csvContent;\n} else if (csvContent.data) {\n  content = csvContent.data;\n} else {\n  content = JSON.stringify(csvContent);\n}\n\nreturn {\n  json: {\n    csvContent: content,\n    options: options,\n    operation: operation,\n    filter: filter,\n    transform: transform,\n    startTime: Date.now()\n  }\n};"
+      },
+      "id": "prepare-url-data",
+      "name": "Prepare URL Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse CSV and apply operations\nconst input = $input.first().json;\nconst csvContent = input.csvContent;\nconst options = input.options || {};\nconst operation = input.operation || 'parse';\nconst filter = input.filter;\nconst transform = input.transform;\nconst startTime = input.startTime;\n\n// Detect delimiter if not specified\nlet delimiter = options.delimiter || ',';\nif (!options.delimiter) {\n  const firstLine = csvContent.split('\\n')[0] || '';\n  if (firstLine.includes(';') && !firstLine.includes(',')) {\n    delimiter = ';';\n  } else if (firstLine.includes('\\t')) {\n    delimiter = '\\t';\n  }\n}\n\n// Remove BOM if present\nlet content = csvContent;\nif (content.charCodeAt(0) === 0xFEFF) {\n  content = content.slice(1);\n}\n\n// Split into lines\nconst lines = content.split(/\\r?\\n/).filter(line => line.trim());\nif (lines.length === 0) {\n  return {\n    json: {\n      success: true,\n      data: {\n        rows: [],\n        columns: [],\n        row_count: 0,\n        operation_applied: operation\n      },\n      meta: {\n        provider: 'n8n-native',\n        execution_mode: 'online',\n        processing_time_ms: Date.now() - startTime\n      }\n    }\n  };\n}\n\n// Parse CSV with proper quote handling\nfunction parseCSVLine(line, delim) {\n  const result = [];\n  let current = '';\n  let inQuotes = false;\n  \n  for (let i = 0; i < line.length; i++) {\n    const char = line[i];\n    const nextChar = line[i + 1];\n    \n    if (char === '\"') {\n      if (inQuotes && nextChar === '\"') {\n        current += '\"';\n        i++;\n      } else {\n        inQuotes = !inQuotes;\n      }\n    } else if (char === delim && !inQuotes) {\n      result.push(current.trim());\n      current = '';\n    } else {\n      current += char;\n    }\n  }\n  result.push(current.trim());\n  return result;\n}\n\n// Get headers and data\nconst hasHeader = options.has_header !== false;\nlet columns = [];\nlet dataLines = [];\n\nif (hasHeader) {\n  columns = parseCSVLine(lines[0], delimiter);\n  dataLines = lines.slice(1);\n} else {\n  const firstRow = parseCSVLine(lines[0], delimiter);\n  columns = firstRow.map((_, i) => `column_${i + 1}`);\n  dataLines = lines;\n}\n\n// Parse all rows\nlet rows = dataLines.map(line => {\n  const values = parseCSVLine(line, delimiter);\n  const row = {};\n  columns.forEach((col, i) => {\n    row[col] = values[i] || '';\n  });\n  return row;\n});\n\n// Apply filter operation\nif (operation === 'filter' && filter) {\n  const { column, operator, value } = filter;\n  rows = rows.filter(row => {\n    const cellValue = row[column];\n    if (cellValue === undefined) return false;\n    \n    switch (operator) {\n      case 'equals':\n        return cellValue === value;\n      case 'contains':\n        return cellValue.toString().includes(value);\n      case 'gt':\n        return parseFloat(cellValue) > parseFloat(value);\n      case 'lt':\n        return parseFloat(cellValue) < parseFloat(value);\n      case 'gte':\n        return parseFloat(cellValue) >= parseFloat(value);\n      case 'lte':\n        return parseFloat(cellValue) <= parseFloat(value);\n      case 'not_equals':\n        return cellValue !== value;\n      default:\n        return true;\n    }\n  });\n}\n\n// Apply transform operation\nif (operation === 'transform' && transform) {\n  // Select specific columns\n  if (transform.select_columns && transform.select_columns.length > 0) {\n    columns = transform.select_columns.filter(col => columns.includes(col));\n    rows = rows.map(row => {\n      const newRow = {};\n      columns.forEach(col => {\n        newRow[col] = row[col];\n      });\n      return newRow;\n    });\n  }\n  \n  // Rename columns\n  if (transform.rename) {\n    const renames = transform.rename;\n    columns = columns.map(col => renames[col] || col);\n    rows = rows.map(row => {\n      const newRow = {};\n      Object.keys(row).forEach(key => {\n        const newKey = renames[key] || key;\n        newRow[newKey] = row[key];\n      });\n      return newRow;\n    });\n  }\n}\n\n// Apply aggregate operation\nif (operation === 'aggregate') {\n  const aggregations = {};\n  columns.forEach(col => {\n    const values = rows.map(r => parseFloat(r[col])).filter(v => !isNaN(v));\n    if (values.length > 0) {\n      aggregations[col] = {\n        count: rows.length,\n        numeric_count: values.length,\n        sum: values.reduce((a, b) => a + b, 0),\n        avg: values.reduce((a, b) => a + b, 0) / values.length,\n        min: Math.min(...values),\n        max: Math.max(...values)\n      };\n    } else {\n      aggregations[col] = {\n        count: rows.length,\n        numeric_count: 0,\n        unique_values: [...new Set(rows.map(r => r[col]))].length\n      };\n    }\n  });\n  \n  return {\n    json: {\n      success: true,\n      data: {\n        aggregations: aggregations,\n        columns: columns,\n        row_count: rows.length,\n        operation_applied: operation\n      },\n      meta: {\n        provider: 'n8n-native',\n        execution_mode: 'online',\n        processing_time_ms: Date.now() - startTime,\n        delimiter_detected: delimiter\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      rows: rows,\n      columns: columns,\n      row_count: rows.length,\n      operation_applied: operation\n    },\n    meta: {\n      provider: 'n8n-native',\n      execution_mode: 'online',\n      processing_time_ms: Date.now() - startTime,\n      delimiter_detected: delimiter,\n      has_header: hasHeader\n    }\n  }\n};"
+      },
+      "id": "process-csv",
+      "name": "Process CSV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Is Base64?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Invalid Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Base64?": {
+      "main": [
+        [
+          {
+            "node": "Decode Base64",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch CSV URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decode Base64": {
+      "main": [
+        [
+          {
+            "node": "Process CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch CSV URL": {
+      "main": [
+        [
+          {
+            "node": "Prepare URL Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare URL Data": {
+      "main": [
+        [
+          {
+            "node": "Process CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process CSV": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "30e32711-463e-4e90-bb1b-4821d1c29cde",
+  "activeVersionId": "30e32711-463e-4e90-bb1b-4821d1c29cde",
+  "versionCounter": 369,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2025-12-18T08:39:56.178Z",
+      "createdAt": "2025-12-18T08:39:56.178Z",
+      "role": "workflow:owner",
+      "workflowId": "VW7DqZcclwqtuqyT",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}

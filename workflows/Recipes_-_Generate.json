@@ -1,0 +1,422 @@
+{
+  "updatedAt": "2026-01-07T09:46:30.969Z",
+  "createdAt": "2026-01-07T09:36:44.670Z",
+  "id": "4Fr7QmrUlZiLZetb",
+  "name": "Recipes - Generate",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "recipes-generate-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recipes-generate",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\n// Validation\nconst errors = [];\n\nif (!body.query && !body.random) {\n  errors.push('Missing required parameter: query (or set random: true)');\n}\n\nif (!body.anthropic_api_key && !body.openai_api_key) {\n  errors.push('Missing API key: anthropic_api_key or openai_api_key required');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Build prompt based on input type\nlet prompt = '';\nconst preferences = body.preferences || {};\n\nif (body.random) {\n  const category = preferences.category || 'any';\n  prompt = `Generate a random ${category !== 'any' ? category : ''} recipe suggestion. Be creative and surprising.`;\n} else if (preferences.must_use_ingredients && preferences.must_use_ingredients.length > 0) {\n  const ingredients = preferences.must_use_ingredients.join(', ');\n  prompt = `Create a recipe that MUST use these ingredients: ${ingredients}. ${body.query || ''}`;\n} else {\n  prompt = body.query;\n}\n\n// Add preferences to prompt\nif (preferences.vegan) prompt += ' The recipe must be vegan.';\nif (preferences.vegetarian) prompt += ' The recipe must be vegetarian.';\nif (preferences.allergies && preferences.allergies.length > 0) {\n  prompt += ` Avoid these allergens: ${preferences.allergies.join(', ')}.`;\n}\nif (preferences.max_time_minutes) {\n  prompt += ` Total time should be under ${preferences.max_time_minutes} minutes.`;\n}\nif (preferences.difficulty) {\n  prompt += ` Difficulty level: ${preferences.difficulty}.`;\n}\nif (preferences.servings) {\n  prompt += ` For ${preferences.servings} servings.`;\n}\n\nconst language = body.language || 'fr';\nconst languageMap = { fr: 'French', en: 'English', es: 'Spanish', it: 'Italian' };\nprompt += ` Respond in ${languageMap[language] || 'French'}.`;\n\nreturn [{\n  json: {\n    valid: true,\n    prompt,\n    provider: body.anthropic_api_key ? 'anthropic' : 'openai',\n    anthropic_api_key: body.anthropic_api_key,\n    openai_api_key: body.openai_api_key,\n    user_id: body.user_id,\n    language,\n    original_request: {\n      query: body.query,\n      random: body.random || false,\n      preferences\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'none' } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "switch-provider",
+      "name": "Switch Provider",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        900,
+        200
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "anthropic",
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-anthropic",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "anthropic"
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "openai",
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-openai",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "openai"
+                  }
+                ]
+              },
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "call-anthropic",
+      "name": "Call Anthropic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.anthropic_api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.prompt }}\\n\\nRespond with a JSON object containing:\\n{\\n  \\\"title\\\": \\\"Recipe title\\\",\\n  \\\"description\\\": \\\"Brief description\\\",\\n  \\\"servings\\\": number,\\n  \\\"prep_time_minutes\\\": number,\\n  \\\"cook_time_minutes\\\": number,\\n  \\\"difficulty\\\": \\\"facile|moyen|difficile\\\",\\n  \\\"ingredients\\\": [{\\\"name\\\": \\\"\\\", \\\"quantity\\\": number, \\\"unit\\\": \\\"\\\"}],\\n  \\\"steps\\\": [{\\\"order\\\": number, \\\"instruction\\\": \\\"\\\"}],\\n  \\\"tips\\\": [\\\"tip1\\\", \\\"tip2\\\"],\\n  \\\"tags\\\": [\\\"tag1\\\", \\\"tag2\\\"],\\n  \\\"nutrition\\\": {\\\"calories_per_serving\\\": number, \\\"protein_g\\\": number, \\\"carbs_g\\\": number, \\\"fat_g\\\": number}\\n}\\n\\nRespond ONLY with valid JSON, no additional text.\"\n    }\n  ]\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "call-openai",
+      "name": "Call OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"max_tokens\": 4096,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a professional chef assistant. Always respond with valid JSON.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.prompt }}\\n\\nRespond with a JSON object containing:\\n{\\n  \\\"title\\\": \\\"Recipe title\\\",\\n  \\\"description\\\": \\\"Brief description\\\",\\n  \\\"servings\\\": number,\\n  \\\"prep_time_minutes\\\": number,\\n  \\\"cook_time_minutes\\\": number,\\n  \\\"difficulty\\\": \\\"facile|moyen|difficile\\\",\\n  \\\"ingredients\\\": [{\\\"name\\\": \\\"\\\", \\\"quantity\\\": number, \\\"unit\\\": \\\"\\\"}],\\n  \\\"steps\\\": [{\\\"order\\\": number, \\\"instruction\\\": \\\"\\\"}],\\n  \\\"tips\\\": [\\\"tip1\\\", \\\"tip2\\\"],\\n  \\\"tags\\\": [\\\"tag1\\\", \\\"tag2\\\"],\\n  \\\"nutrition\\\": {\\\"calories_per_serving\\\": number, \\\"protein_g\\\": number, \\\"carbs_g\\\": number, \\\"fat_g\\\": number}\\n}\"\n    }\n  ]\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-anthropic",
+      "name": "Format Anthropic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\ntry {\n  if (input.error) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: input.error.status || 500,\n          message: input.error.message || 'Anthropic API error',\n          status: 'API_ERROR'\n        },\n        meta: { provider: 'anthropic' }\n      }\n    }];\n  }\n\n  const content = input.content[0].text;\n  const recipe = JSON.parse(content);\n  \n  return [{\n    json: {\n      success: true,\n      data: {\n        recipe,\n        source: 'llm_generated',\n        original_request: prevData.original_request\n      },\n      meta: {\n        provider: 'anthropic',\n        model: input.model || 'claude-sonnet-4-20250514',\n        tokens_used: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0),\n        usage: input.usage\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to parse recipe: ' + e.message,\n        status: 'PARSE_ERROR'\n      },\n      meta: { provider: 'anthropic' }\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "format-openai",
+      "name": "Format OpenAI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\ntry {\n  if (input.error) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: input.error.code || 500,\n          message: input.error.message || 'OpenAI API error',\n          status: 'API_ERROR'\n        },\n        meta: { provider: 'openai' }\n      }\n    }];\n  }\n\n  const content = input.choices[0].message.content;\n  const recipe = JSON.parse(content);\n  \n  return [{\n    json: {\n      success: true,\n      data: {\n        recipe,\n        source: 'llm_generated',\n        original_request: prevData.original_request\n      },\n      meta: {\n        provider: 'openai',\n        model: input.model || 'gpt-4o',\n        tokens_used: input.usage?.total_tokens || 0,\n        usage: input.usage\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to parse recipe: ' + e.message,\n        status: 'PARSE_ERROR'\n      },\n      meta: { provider: 'openai' }\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1620,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 600,
+        "height": 180,
+        "content": "## Recipes - Generate\n\n**Endpoint:** POST /webhook/recipes-generate\n\n**Parameters:**\n- `query` (required*): Recipe request\n- `random` (optional): true for random suggestion\n- `preferences`: { vegan, vegetarian, allergies[], max_time_minutes, difficulty, servings, must_use_ingredients[] }\n- `anthropic_api_key` or `openai_api_key` (required)\n- `language`: fr (default), en, es, it"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Switch Provider",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Provider": {
+      "main": [
+        [
+          {
+            "node": "Call Anthropic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Anthropic": {
+      "main": [
+        [
+          {
+            "node": "Format Anthropic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Format OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Anthropic": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "96988c8b-0410-4949-8885-11f249fd8732",
+  "activeVersionId": "96988c8b-0410-4949-8885-11f249fd8732",
+  "versionCounter": 44,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-01-07T09:36:44.673Z",
+      "createdAt": "2026-01-07T09:36:44.673Z",
+      "role": "workflow:owner",
+      "workflowId": "4Fr7QmrUlZiLZetb",
+      "projectId": "rkp1YaKKlE3ExOIx",
+      "project": {
+        "updatedAt": "2025-12-03T16:40:05.384Z",
+        "createdAt": "2025-12-03T14:59:10.085Z",
+        "id": "rkp1YaKKlE3ExOIx",
+        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null
+      }
+    }
+  ]
+}
