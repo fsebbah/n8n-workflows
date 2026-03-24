@@ -1,0 +1,409 @@
+{
+  "name": "DISCORD - Student Context",
+  "active": true,
+  "nodes": [
+    {
+      "id": "sticky-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 520,
+        "height": 380,
+        "content": "## DISCORD - Student Context (M4)\n\n**Endpoint:** POST /webhook/discord/student-context\n\n**Description:** Enriches LLM prompt with student info (name, promo, exchange history) to personalize responses. Uses RedisSessionStore for session memory.\n\n**Input:**\n```json\n{\n  \"guild_id\": \"string\",\n  \"user_id\": \"string\",\n  \"thread_id\": \"string\",\n  \"include_history\": true,\n  \"history_limit\": 10\n}\n```\n\n**Output:** Student context with conversation history and prompt context\n\n**RFC:** RFC-048 Discord Education Architecture - M4. Contexte etudiant dans le prompt\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"student\", \"current_subject\", \"conversation_history\", \"prompt_context\"],\n  \"domain\": \"discord-education\"\n}\n```"
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "discord/student-context",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "discord-student-context"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate input parameters and prepare context\nconst input = $input.first().json;\nconst body = input.body || input;\nconst startTime = Date.now();\n\nconst guildId = body.guild_id || null;\nconst userId = body.user_id || null;\nconst threadId = body.thread_id || null;\nconst includeHistory = body.include_history !== false; // default true\nconst historyLimit = body.history_limit || 10;\n\nconst errors = [];\nif (!guildId) errors.push('guild_id');\nif (!userId) errors.push('user_id');\nif (!threadId) errors.push('thread_id');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required parameters: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Validate history_limit is a positive number\nif (historyLimit < 1 || historyLimit > 100) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'history_limit must be between 1 and 100',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    guild_id: guildId,\n    user_id: userId,\n    thread_id: threadId,\n    include_history: includeHistory,\n    history_limit: historyLimit,\n    start_time: startTime,\n    // Redis key for session store\n    session_key: `discord:session:${guildId}:${userId}:${threadId}`,\n    // Backend endpoint for student info\n    student_key: `discord:student:${guildId}:${userId}`\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "={{ $json.student_key }}",
+        "options": {}
+      },
+      "id": "get-student-info",
+      "name": "Get Student Info (Redis)",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        920,
+        100
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "={{ $json.session_key }}",
+        "options": {}
+      },
+      "id": "get-session-history",
+      "name": "Get Session History (Redis)",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        920,
+        300
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "=discord:subject:{{ $('Validate Input').first().json.guild_id }}:{{ $('Validate Input').first().json.thread_id }}",
+        "options": {}
+      },
+      "id": "get-subject-context",
+      "name": "Get Subject Context (Redis)",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        920,
+        500
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag student info result\nconst result = $input.first().json;\nreturn {\n  json: {\n    source: 'student',\n    data: result\n  }\n};"
+      },
+      "id": "tag-student",
+      "name": "Tag Student",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag session history result\nconst result = $input.first().json;\nreturn {\n  json: {\n    source: 'history',\n    data: result\n  }\n};"
+      },
+      "id": "tag-history",
+      "name": "Tag History",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag subject context result\nconst result = $input.first().json;\nreturn {\n  json: {\n    source: 'subject',\n    data: result\n  }\n};"
+      },
+      "id": "tag-subject",
+      "name": "Tag Subject",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 3
+      },
+      "id": "merge-all",
+      "name": "Merge All",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1360,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build enriched context from all data sources\nconst items = $input.all();\nconst inputData = $('Validate Input').first().json;\nconst startTime = inputData.start_time;\nconst historyLimit = inputData.history_limit;\nconst includeHistory = inputData.include_history;\n\n// Find results by source tag\nlet studentData = null;\nlet historyData = null;\nlet subjectData = null;\n\nfor (const item of items) {\n  const source = item.json.source;\n  const data = item.json.data;\n  \n  if (source === 'student') {\n    studentData = data;\n  } else if (source === 'history') {\n    historyData = data;\n  } else if (source === 'subject') {\n    subjectData = data;\n  }\n}\n\n// Parse student info from Redis\nlet student = {\n  name: 'Etudiant',\n  promo: 'Non defini',\n  enrolled_at: null\n};\n\ntry {\n  const rawStudent = studentData?.propertyName || studentData?.value || studentData;\n  if (rawStudent && rawStudent !== null) {\n    const parsed = typeof rawStudent === 'string' ? JSON.parse(rawStudent) : rawStudent;\n    student = {\n      name: parsed.name || parsed.discord_username || 'Etudiant',\n      promo: parsed.promo || parsed.promotion_name || 'Non defini',\n      enrolled_at: parsed.enrolled_at || parsed.joined_at || null,\n      discord_user_id: parsed.discord_user_id || inputData.user_id,\n      discord_username: parsed.discord_username || null\n    };\n  }\n} catch (e) {\n  // Keep defaults\n}\n\n// Parse subject context from Redis\nlet currentSubject = {\n  slug: null,\n  name: 'Contexte general'\n};\n\ntry {\n  const rawSubject = subjectData?.propertyName || subjectData?.value || subjectData;\n  if (rawSubject && rawSubject !== null) {\n    const parsed = typeof rawSubject === 'string' ? JSON.parse(rawSubject) : rawSubject;\n    currentSubject = {\n      slug: parsed.slug || parsed.subject_slug || null,\n      name: parsed.name || parsed.subject_name || 'Contexte general',\n      expert_id: parsed.expert_id || null\n    };\n  }\n} catch (e) {\n  // Keep defaults\n}\n\n// Parse conversation history from Redis (RedisSessionStore format)\nlet conversationHistory = [];\n\nif (includeHistory) {\n  try {\n    const rawHistory = historyData?.propertyName || historyData?.value || historyData;\n    if (rawHistory && rawHistory !== null) {\n      const parsed = typeof rawHistory === 'string' ? JSON.parse(rawHistory) : rawHistory;\n      \n      // Handle RedisSessionStore format: { messages: [...] } or direct array\n      const messages = Array.isArray(parsed) ? parsed : (parsed.messages || parsed.history || []);\n      \n      // Get last N messages based on history_limit\n      conversationHistory = messages.slice(-historyLimit).map(msg => ({\n        role: msg.role || (msg.is_user ? 'user' : 'assistant'),\n        content: msg.content || msg.text || msg.message || '',\n        timestamp: msg.timestamp || msg.created_at || null\n      }));\n    }\n  } catch (e) {\n    // Keep empty history\n  }\n}\n\n// Build personalized prompt context\nlet promptContext = `Tu parles a ${student.name}`;\nif (student.promo && student.promo !== 'Non defini') {\n  promptContext += `, etudiant en ${student.promo}`;\n}\nif (student.enrolled_at) {\n  const enrollDate = new Date(student.enrolled_at);\n  const monthsEnrolled = Math.floor((Date.now() - enrollDate.getTime()) / (1000 * 60 * 60 * 24 * 30));\n  if (monthsEnrolled > 0) {\n    promptContext += ` (inscrit depuis ${monthsEnrolled} mois)`;\n  }\n}\npromptContext += '.';\n\nif (currentSubject.slug) {\n  promptContext += ` Le contexte actuel est la matiere \"${currentSubject.name}\".`;\n}\n\nif (conversationHistory.length > 0) {\n  promptContext += ` Tu as deja eu ${conversationHistory.length} echange(s) avec cet etudiant dans cette session.`;\n}\n\n// Calculate latency\nconst latencyMs = Date.now() - startTime;\n\n// Build response\nconst response = {\n  success: true,\n  data: {\n    student: student,\n    current_subject: currentSubject,\n    conversation_history: conversationHistory,\n    prompt_context: promptContext\n  },\n  _trace: {\n    reasoning: [\n      { step: 'fetch_student', result: student.name !== 'Etudiant' ? 'found' : 'not_found', latency_ms: null },\n      { step: 'fetch_history', result: `${conversationHistory.length} messages`, latency_ms: null },\n      { step: 'fetch_subject', result: currentSubject.slug || 'none', latency_ms: null },\n      { step: 'build_context', result: 'success', latency_ms: null }\n    ],\n    sources: ['redis:student', 'redis:session', 'redis:subject'],\n    parallel: true,\n    latency_ms: latencyMs\n  }\n};\n\nreturn { json: response };"
+      },
+      "id": "build-context",
+      "name": "Build Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1800,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Student Info (Redis)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Session History (Redis)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Subject Context (Redis)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Student Info (Redis)": {
+      "main": [
+        [
+          {
+            "node": "Tag Student",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Session History (Redis)": {
+      "main": [
+        [
+          {
+            "node": "Tag History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Subject Context (Redis)": {
+      "main": [
+        [
+          {
+            "node": "Tag Subject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Student": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag History": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Tag Subject": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge All": {
+      "main": [
+        [
+          {
+            "node": "Build Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Context": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": []
+}
