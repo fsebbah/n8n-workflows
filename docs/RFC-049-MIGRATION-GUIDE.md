@@ -25,6 +25,7 @@ Les nouveaux webhooks remplacent les anciens webhooks Qdrant-only.
 | `MCP Qdrant - Search` | **MCP - Entity - Search** | + Enrichissement depuis MongoDB<br>+ Filtrage tenant_id obligatoire<br>+ Endpoint batch pour performance |
 | *(nouveau)* | **MCP - Entity - Rating** | Notes 1-5 stockées en PostgreSQL |
 | *(nouveau)* | **MCP - Entity - Comment** | Commentaires stockés en PostgreSQL |
+| *(nouveau)* | **MCP - Entity - Favorite** | Sauvegarder/retirer des favoris (PostgreSQL) |
 | *(nouveau)* | **MCP - Tenant - Resolve** | Résout Discord user_id → tenant_id |
 
 ---
@@ -188,6 +189,96 @@ X-Tenant-ID: {tenant_id}
 
 ---
 
+### MCP - Entity - Favorite
+
+**URL:** `POST /webhook/entity-favorite`
+
+**Description:** Permet à un utilisateur de sauvegarder une entité dans ses favoris ou de la retirer.
+
+**Payload (save):**
+```json
+{
+  "action": "save",
+  "entity_id": "5606c365-...",
+  "entity_type": "recipe",
+  "user_id": "636639897767378954",
+  "guild_id": "123456789"
+}
+```
+
+**Payload (unsave):**
+```json
+{
+  "action": "unsave",
+  "entity_id": "5606c365-...",
+  "entity_type": "recipe",
+  "user_id": "636639897767378954",
+  "guild_id": "123456789"
+}
+```
+
+**Payload (list):**
+```json
+{
+  "action": "list",
+  "entity_type": "recipe",
+  "user_id": "636639897767378954",
+  "guild_id": "123456789",
+  "limit": 20,
+  "offset": 0
+}
+```
+
+**Réponse (action=save):**
+```json
+{
+  "success": true,
+  "data": {
+    "entity_id": "5606c365-...",
+    "saved": true,
+    "saved_at": "2026-03-27T10:30:00Z"
+  },
+  "_trace": {...}
+}
+```
+
+**Réponse (action=unsave):**
+```json
+{
+  "success": true,
+  "data": {
+    "entity_id": "5606c365-...",
+    "saved": false
+  },
+  "_trace": {...}
+}
+```
+
+**Réponse (action=list):**
+```json
+{
+  "success": true,
+  "data": {
+    "favorites": [
+      {
+        "entity_id": "5606c365-...",
+        "entity_type": "recipe",
+        "saved_at": "2026-03-27T10:30:00Z"
+      }
+    ],
+    "total": 12
+  },
+  "_trace": {...}
+}
+```
+
+**API Backend appelée:**
+- `POST /api/n8n/entities/{type}/{id}/save` (action=save)
+- `DELETE /api/n8n/entities/{type}/{id}/save?user_id=X&guild_id=Y` (action=unsave)
+- `GET /api/n8n/entities/{type}/saved?user_id=X&guild_id=Y` (action=list)
+
+---
+
 ### MCP - Tenant - Resolve
 
 **URL:** `POST /webhook/tenant-resolve`
@@ -263,12 +354,60 @@ Qdrant est une instance partagée. Le filtrage par `tenant_id` est **automatique
 
 ### 4. Enrichissement batch
 
-Pour éviter N appels séquentiels lors d'un Search, l'API Backend expose un endpoint batch:
+Pour éviter N appels séquentiels lors d'un Search, l'API Backend expose un endpoint batch.
+
+**Comportement interne de MCP - Entity - Search:**
+
+Quand `enrich: true` est passé, le workflow:
+1. Recherche dans Qdrant → obtient N `entity_id`
+2. Appelle l'endpoint batch avec tous les IDs en un seul appel
+3. Fusionne les résultats Qdrant + MongoDB
+
+```
+MCP - Entity - Search (avec enrich: true)
+    │
+    ├── 1. Search Qdrant
+    │   └── Résultat: [{ id: "uuid1", score: 0.9 }, { id: "uuid2", score: 0.8 }, ...]
+    │
+    ├── 2. Batch enrichissement (1 seul appel API)
+    │   POST /api/n8n/entities/{type}/batch
+    │   Body: { "ids": ["uuid1", "uuid2", ...], "fields": ["title", "ingredients"] }
+    │   └── Résultat: [{ id: "uuid1", data: {...} }, { id: "uuid2", data: {...} }]
+    │
+    └── 3. Fusion
+        └── [{ entity_id: "uuid1", score: 0.9, entity: {...} }, ...]
+```
+
+**Endpoint batch (côté API Backend):**
 
 ```
 POST /api/n8n/entities/{type}/batch
-Body: { "ids": ["uuid1", "uuid2", ...], "fields": ["title", "ingredients"] }
+Headers:
+  X-API-Key: {N8N_API_KEY}
+  X-Tenant-ID: {tenant_id}
+Body:
+{
+  "ids": ["uuid1", "uuid2", "uuid3"],
+  "fields": ["title", "ingredients", "tags"]  // optionnel, tout si absent
+}
 ```
+
+**Réponse:**
+```json
+{
+  "success": true,
+  "data": [
+    { "id": "uuid1", "data": { "title": "...", "ingredients": [...] } },
+    { "id": "uuid2", "data": { "title": "...", "ingredients": [...] } }
+  ],
+  "found": 2,
+  "not_found": ["uuid3"]
+}
+```
+
+**Limites:**
+- Maximum 50 IDs par appel
+- Les IDs introuvables sont listés dans `not_found` (pas d'erreur 404)
 
 ---
 
@@ -334,6 +473,9 @@ Les nouveaux webhooks appellent l'API Backend. Ces endpoints doivent être dispo
 | `POST /api/n8n/entities/{type}/{id}/rate` | A implémenter |
 | `POST /api/n8n/entities/{type}/{id}/comment` | A implémenter |
 | `GET /api/n8n/entities/{type}/{id}/comments` | A implémenter |
+| `POST /api/n8n/entities/{type}/{id}/save` | A implémenter |
+| `DELETE /api/n8n/entities/{type}/{id}/save` | A implémenter |
+| `GET /api/n8n/entities/{type}/saved` | A implémenter |
 
 Voir [RFC-049](./rfc/RFC-049-ENTITY-STORAGE-ARCHITECTURE.md) pour les spécifications complètes.
 
@@ -351,6 +493,7 @@ Les anciens webhooks `MCP Qdrant - Save` et `MCP Qdrant - Search` restent foncti
 | MCP - Entity - Search | **Actif** |
 | MCP - Entity - Rating | **Actif** |
 | MCP - Entity - Comment | **Actif** |
+| MCP - Entity - Favorite | **Actif** |
 | MCP - Tenant - Resolve | **Actif** |
 
 ---
