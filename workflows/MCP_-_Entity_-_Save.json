@@ -1,0 +1,1134 @@
+{
+  "name": "MCP - Entity - Save",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - Entity - Save\n\n**Endpoint:** POST /webhook/entity-save\n\n**Description:** RFC-049 Entity Storage Architecture. Saves entities to both MongoDB (via API) AND Qdrant. Uses same UUID for entity_id and qdrant_point_id.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"action\", \"entity_type\", \"data\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"save\", \"update\", \"delete\"] },\n    \"entity_type\": { \"type\": \"string\", \"enum\": [\"recipe\", \"document\", \"course\", \"quiz\", \"flashcard\"] },\n    \"entity_id\": { \"type\": \"string\", \"description\": \"UUID (requis pour update/delete)\" },\n    \"data\": { \"type\": \"object\", \"description\": \"Entity data\" },\n    \"embedding\": { \"type\": \"array\", \"description\": \"Pre-computed embedding (optional)\" },\n    \"user_id\": { \"type\": \"string\" },\n    \"guild_id\": { \"type\": \"string\" },\n    \"qdrant_host\": { \"type\": \"string\" },\n    \"qdrant_port\": { \"type\": \"integer\" },\n    \"qdrant_collection\": { \"type\": \"string\" },\n    \"api_key\": { \"type\": \"string\", \"description\": \"Qdrant API key (fallback)\" },\n    \"openai_api_key\": { \"type\": \"string\" }\n  }\n}\n```\n\n**Headers:**\n- X-Tenant-ID: Required (resolved by MCP - Tenant - Resolve)",
+        "height": 620,
+        "width": 420,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 80]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "entity-save",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [500, 400],
+      "webhookId": "entity-save-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Entity Save\n// RFC-049 Entity Storage Architecture\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Get tenant_id from header (RFC-049) ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || null;\n\n// --- OPTIONAL context fields (for tracing) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\n\n// --- REQUIRED fields ---\nconst action = body.action || ctx.action;\nconst entityType = body.entity_type || ctx.entity_type;\nconst data = body.data || ctx.data;\n\n// Validate required fields\nif (!action) {\n  errors.push('action requis');\n} else if (!['save', 'update', 'delete'].includes(action)) {\n  errors.push('action doit etre save, update ou delete');\n}\n\nif (!entityType) {\n  errors.push('entity_type requis');\n} else if (!['recipe', 'document', 'course', 'quiz', 'flashcard'].includes(entityType)) {\n  errors.push('entity_type invalide');\n}\n\nif (!data && action !== 'delete') {\n  errors.push('data requis');\n}\n\n// entity_id required for update/delete\nconst entityId = body.entity_id || ctx.entity_id || null;\nif ((action === 'update' || action === 'delete') && !entityId) {\n  errors.push('entity_id requis pour update/delete');\n}\n\n// Qdrant parameters\nconst qdrantHost = body.qdrant_host || ctx.qdrant_host || null;\nconst qdrantPort = body.qdrant_port || ctx.qdrant_port || null;\nconst qdrantCollection = body.qdrant_collection || ctx.qdrant_collection || null;\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || null;\n\n// API key fallback (RFC-049)\nconst qdrantApiKey = body.qdrant_api_key || body.api_key || ctx.qdrant_api_key || ctx.api_key || null;\n\n// Pre-computed embedding (optional)\nconst embedding = body.embedding || ctx.embedding || null;\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    tenant_id: tenantId\n  };\n}\n\n// Build text for embedding (generic)\nconst embeddingText = data ? [\n  data.title || '',\n  data.description || '',\n  (data.tags || []).join(' '),\n  (data.ingredients || []).map(i => typeof i === 'string' ? i : i.name).join(' '),\n  data.content || ''\n].join(' ').trim() : '';\n\nconst qdrantUrl = qdrantHost && qdrantPort ? `http://${qdrantHost}:${qdrantPort}` : null;\n\nreturn {\n  valid: true,\n  action: action,\n  entity_type: entityType,\n  entity_id: entityId,\n  data: data,\n  embedding: embedding,\n  embedding_text: embeddingText,\n  tenant_id: tenantId,\n  user_id: userId,\n  guild_id: guildId,\n  qdrant_url: qdrantUrl,\n  qdrant_collection: qdrantCollection,\n  qdrant_api_key: qdrantApiKey,\n  openai_api_key: openaiApiKey,\n  has_qdrant_config: !!(qdrantUrl && qdrantCollection),\n  startTime: Date.now()\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [940, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  }\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 560]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1380, 560]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "save",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "save"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "update",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "update"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "delete",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "delete"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-action",
+      "name": "Switch Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1160, 280]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE SAVE - Generate UUID for entity_id\n// RFC-049: Same UUID for entity_id and qdrant_point_id\n// ============================================\n\nconst input = $input.first().json;\n\nfunction generateUUID() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {\n    var r = Math.random() * 16 | 0;\n    var v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n}\n\n// Generate a single UUID for both entity_id and qdrant_point_id\nconst entityId = generateUUID();\n\nreturn {\n  ...input,\n  entity_id: entityId,\n  qdrant_point_id: entityId\n};"
+      },
+      "id": "prepare-save",
+      "name": "Prepare Save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.N8N_API_KEY }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"entity_id\": \"{{ $json.entity_id }}\",\n  \"guild_id\": {{ $json.guild_id ? '\"' + $json.guild_id + '\"' : 'null' }},\n  \"user_id\": {{ $json.user_id ? '\"' + $json.user_id + '\"' : 'null' }},\n  \"data\": {{ JSON.stringify($json.data) }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "api-save",
+      "name": "API Save",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1640, 100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.N8N_API_KEY }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"guild_id\": {{ $json.guild_id ? '\"' + $json.guild_id + '\"' : 'null' }},\n  \"user_id\": {{ $json.user_id ? '\"' + $json.user_id + '\"' : 'null' }},\n  \"data\": {{ JSON.stringify($json.data) }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "api-update",
+      "name": "API Update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 280],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.N8N_API_KEY }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "api-delete",
+      "name": "API Delete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 460],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESS API SAVE RESPONSE\n// Prepare for Qdrant storage\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Prepare Save').first().json;\n\n// Check for API errors\nif (input.error || input.statusCode >= 400) {\n  return {\n    ...prevData,\n    api_success: false,\n    api_error: input.error?.message || input.message || 'API save failed',\n    api_response: input\n  };\n}\n\nreturn {\n  ...prevData,\n  api_success: true,\n  api_response: input,\n  // Use entity_id from API response if provided, otherwise use our generated one\n  entity_id: input.data?.entity_id || input.entity_id || prevData.entity_id,\n  qdrant_point_id: input.data?.entity_id || input.entity_id || prevData.entity_id\n};"
+      },
+      "id": "process-api-save",
+      "name": "Process API Save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1880, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_qdrant_config }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "check-qdrant-config"
+            },
+            {
+              "leftValue": "={{ $json.api_success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "check-api-success"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-qdrant-save",
+      "name": "Store in Qdrant?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2120, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.embedding?.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "check-has-embedding"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-has-embedding",
+      "name": "Has Embedding?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2360, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": \"{{ $json.embedding_text }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "generate-embedding",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2600, 100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE EMBEDDING FROM OPENAI RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Process API Save').first().json;\n\nif (input.error) {\n  return {\n    ...prevData,\n    embedding: null,\n    embedding_error: input.error.message\n  };\n}\n\nconst embedding = input.data?.[0]?.embedding;\n\nreturn {\n  ...prevData,\n  embedding: embedding\n};"
+      },
+      "id": "prepare-embedding",
+      "name": "Prepare Embedding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2840, 100]
+    },
+    {
+      "parameters": {},
+      "id": "merge-embedding",
+      "name": "Merge Embedding",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [3080, 0]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.qdrant_url }}/collections/{{ $json.qdrant_collection }}/points",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $json.qdrant_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [\n    {\n      \"id\": \"{{ $json.qdrant_point_id }}\",\n      \"vector\": {{ JSON.stringify($json.embedding) }},\n      \"payload\": {\n        \"tenant_id\": {{ $json.tenant_id ? '\"' + $json.tenant_id + '\"' : 'null' }},\n        \"guild_id\": {{ $json.guild_id ? '\"' + $json.guild_id + '\"' : 'null' }},\n        \"entity_type\": \"{{ $json.entity_type }}\",\n        \"title\": {{ $json.data.title ? '\"' + $json.data.title.replace(/\"/g, '\\\\\"') + '\"' : 'null' }},\n        \"tags\": {{ JSON.stringify($json.data.tags || []) }}\n      }\n    }\n  ]\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "qdrant-save",
+      "name": "Qdrant Save",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3320, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "skip-qdrant-save",
+      "name": "Skip Qdrant",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2360, 200]
+    },
+    {
+      "parameters": {},
+      "id": "merge-save-final",
+      "name": "Merge Save",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [3560, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD SAVE SUCCESS RESPONSE\n// RFC-049 Format\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Process API Save').first().json;\nconst startTime = $('Validate Input').first().json.startTime || Date.now();\n\nconst qdrantSuccess = input.status === 'ok' || input.result?.status === 'acknowledged';\n\nreturn {\n  success: true,\n  data: {\n    entity_id: prevData.entity_id,\n    qdrant_point_id: prevData.qdrant_point_id,\n    entity_type: prevData.entity_type,\n    saved_in_db: prevData.api_success,\n    saved_in_qdrant: qdrantSuccess\n  },\n  _trace: {\n    service_response: {\n      api: prevData.api_response,\n      qdrant: input\n    },\n    provider: 'api+qdrant',\n    latency_ms: Date.now() - startTime,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+      },
+      "id": "build-save-success",
+      "name": "Build Save Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3800, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESS API UPDATE RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\n// Check for API errors\nif (input.error || input.statusCode >= 400) {\n  return {\n    ...prevData,\n    api_success: false,\n    api_error: input.error?.message || input.message || 'API update failed',\n    api_response: input,\n    qdrant_point_id: prevData.entity_id\n  };\n}\n\nreturn {\n  ...prevData,\n  api_success: true,\n  api_response: input,\n  qdrant_point_id: prevData.entity_id\n};"
+      },
+      "id": "process-api-update",
+      "name": "Process API Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1640, 280]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_qdrant_config }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "check-qdrant-config"
+            },
+            {
+              "leftValue": "={{ $json.api_success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "check-api-success"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-qdrant-update",
+      "name": "Update Qdrant?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1880, 280]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.qdrant_url }}/collections/{{ $json.qdrant_collection }}/points/payload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $json.qdrant_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [\"{{ $json.qdrant_point_id }}\"],\n  \"payload\": {\n    \"tenant_id\": {{ $json.tenant_id ? '\"' + $json.tenant_id + '\"' : 'null' }},\n    \"guild_id\": {{ $json.guild_id ? '\"' + $json.guild_id + '\"' : 'null' }},\n    \"entity_type\": \"{{ $json.entity_type }}\",\n    \"title\": {{ $json.data.title ? '\"' + $json.data.title.replace(/\"/g, '\\\\\"') + '\"' : 'null' }},\n    \"tags\": {{ JSON.stringify($json.data.tags || []) }}\n  }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "qdrant-update",
+      "name": "Qdrant Update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2120, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "skip-qdrant-update",
+      "name": "Skip Qdrant Update",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2120, 360]
+    },
+    {
+      "parameters": {},
+      "id": "merge-update-final",
+      "name": "Merge Update",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2360, 280]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD UPDATE SUCCESS RESPONSE\n// RFC-049 Format\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Process API Update').first().json;\nconst startTime = $('Validate Input').first().json.startTime || Date.now();\n\nconst qdrantSuccess = input.status === 'ok' || input.result?.status === 'acknowledged';\n\nreturn {\n  success: true,\n  data: {\n    entity_id: prevData.entity_id,\n    qdrant_point_id: prevData.qdrant_point_id,\n    entity_type: prevData.entity_type,\n    saved_in_db: prevData.api_success,\n    saved_in_qdrant: qdrantSuccess\n  },\n  _trace: {\n    service_response: {\n      api: prevData.api_response,\n      qdrant: input\n    },\n    provider: 'api+qdrant',\n    latency_ms: Date.now() - startTime,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+      },
+      "id": "build-update-success",
+      "name": "Build Update Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2600, 280]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESS API DELETE RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\n// Check for API errors\nif (input.error || input.statusCode >= 400) {\n  return {\n    ...prevData,\n    api_success: false,\n    api_error: input.error?.message || input.message || 'API delete failed',\n    api_response: input,\n    qdrant_point_id: prevData.entity_id\n  };\n}\n\nreturn {\n  ...prevData,\n  api_success: true,\n  api_response: input,\n  qdrant_point_id: prevData.entity_id\n};"
+      },
+      "id": "process-api-delete",
+      "name": "Process API Delete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1640, 460]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_qdrant_config }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "check-qdrant-config"
+            },
+            {
+              "leftValue": "={{ $json.api_success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "check-api-success"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-qdrant-delete",
+      "name": "Delete from Qdrant?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1880, 460]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.qdrant_url }}/collections/{{ $json.qdrant_collection }}/points/delete",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $json.qdrant_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [\"{{ $json.qdrant_point_id }}\"]\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "qdrant-delete",
+      "name": "Qdrant Delete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2120, 380],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "skip-qdrant-delete",
+      "name": "Skip Qdrant Delete",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2120, 540]
+    },
+    {
+      "parameters": {},
+      "id": "merge-delete-final",
+      "name": "Merge Delete",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2360, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD DELETE SUCCESS RESPONSE\n// RFC-049 Format\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Process API Delete').first().json;\nconst startTime = $('Validate Input').first().json.startTime || Date.now();\n\nconst qdrantSuccess = input.status === 'ok' || input.result?.status === 'acknowledged';\n\nreturn {\n  success: true,\n  data: {\n    entity_id: prevData.entity_id,\n    qdrant_point_id: prevData.qdrant_point_id,\n    entity_type: prevData.entity_type,\n    deleted_from_db: prevData.api_success,\n    deleted_from_qdrant: qdrantSuccess\n  },\n  _trace: {\n    service_response: {\n      api: prevData.api_response,\n      qdrant: input\n    },\n    provider: 'api+qdrant',\n    latency_ms: Date.now() - startTime,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+      },
+      "id": "build-delete-success",
+      "name": "Build Delete Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2600, 460]
+    },
+    {
+      "parameters": {},
+      "id": "merge-all-actions",
+      "name": "Merge All Actions",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [4040, 280],
+      "parameters_count": 3
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [4280, 280]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Switch Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Action": {
+      "main": [
+        [
+          {
+            "node": "Prepare Save",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "API Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "API Delete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Save": {
+      "main": [
+        [
+          {
+            "node": "API Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Save": {
+      "main": [
+        [
+          {
+            "node": "Process API Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process API Save": {
+      "main": [
+        [
+          {
+            "node": "Store in Qdrant?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store in Qdrant?": {
+      "main": [
+        [
+          {
+            "node": "Has Embedding?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Embedding?": {
+      "main": [
+        [
+          {
+            "node": "Merge Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embedding": {
+      "main": [
+        [
+          {
+            "node": "Prepare Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Embedding": {
+      "main": [
+        [
+          {
+            "node": "Merge Embedding",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Embedding": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Save": {
+      "main": [
+        [
+          {
+            "node": "Merge Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Merge Save",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Save": {
+      "main": [
+        [
+          {
+            "node": "Build Save Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Save Success": {
+      "main": [
+        [
+          {
+            "node": "Merge All Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Update": {
+      "main": [
+        [
+          {
+            "node": "Process API Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process API Update": {
+      "main": [
+        [
+          {
+            "node": "Update Qdrant?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Qdrant?": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Qdrant Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Update": {
+      "main": [
+        [
+          {
+            "node": "Merge Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Qdrant Update": {
+      "main": [
+        [
+          {
+            "node": "Merge Update",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Update": {
+      "main": [
+        [
+          {
+            "node": "Build Update Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Update Success": {
+      "main": [
+        [
+          {
+            "node": "Merge All Actions",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "API Delete": {
+      "main": [
+        [
+          {
+            "node": "Process API Delete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process API Delete": {
+      "main": [
+        [
+          {
+            "node": "Delete from Qdrant?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete from Qdrant?": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Delete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Qdrant Delete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Delete": {
+      "main": [
+        [
+          {
+            "node": "Merge Delete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Qdrant Delete": {
+      "main": [
+        [
+          {
+            "node": "Merge Delete",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Delete": {
+      "main": [
+        [
+          {
+            "node": "Build Delete Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Delete Success": {
+      "main": [
+        [
+          {
+            "node": "Merge All Actions",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge All Actions": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  }
+}
