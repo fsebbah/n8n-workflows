@@ -1,38 +1,44 @@
 {
-  "updatedAt": "2025-12-15T15:08:09.498Z",
-  "createdAt": "2025-12-15T15:08:02.653Z",
-  "id": "cf4qppzmHzEYasfU",
   "name": "MCP - LLM Summarizer",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
-      "id": "webhook-llm-sum",
-      "name": "Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        240,
-        300
-      ],
-      "webhookId": "llm-summarizer-webhook",
+      "parameters": {
+        "content": "## MCP - LLM Summarizer\n\n**Endpoint:** POST /webhook/llm-summarizer\n\n**Description:** Summarizes text using multiple LLM providers (Anthropic, OpenAI, Mistral).\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"text\"],\n  \"properties\": {\n    \"text\": { \"type\": \"string\", \"description\": \"Text to summarize (required)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"User request context for personalized summary\" },\n    \"provider\": { \"type\": \"string\", \"description\": \"LLM provider: anthropic (default), openai, mistral\" },\n    \"format\": { \"type\": \"string\", \"description\": \"Output format: bullet-points, paragraph, executive-summary\" },\n    \"max_tokens\": { \"type\": \"integer\", \"description\": \"Max output tokens (default: 1024)\" },\n    \"user_id\": { \"type\": \"string\", \"description\": \"User ID for tracing\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Guild ID for tracing\" }\n  }\n}\n```\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"summary\", \"original_length\", \"summary_length\"],\n  \"domain\": \"nlp\"\n}\n```",
+        "height": 520,
+        "width": 380,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
       "parameters": {
         "httpMethod": "POST",
         "path": "llm-summarizer",
         "responseMode": "responseNode",
         "options": {}
-      }
+      },
+      "id": "webhook-llm-sum",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "llm-summarizer-webhook"
     },
     {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - LLM Summarizer\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required field ---\nconst text = body.text || ctx.text;\nif (!text || typeof text !== 'string' || text.trim().length === 0) {\n  errors.push('text requis (chaine non vide)');\n}\n\n// --- Context fields for tracing ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Optional parameters ---\nconst provider = (body.provider || ctx.provider || 'anthropic').toLowerCase();\nconst format = body.format || ctx.format || null;\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 1024);\n\n// Validate provider\nconst validProviders = ['anthropic', 'openai', 'mistral'];\nif (!validProviders.includes(provider)) {\n  errors.push(`provider invalide: ${provider} (doit etre: ${validProviders.join(', ')})`);\n}\n\n// Validate format if provided\nconst validFormats = ['bullet-points', 'paragraph', 'executive-summary'];\nif (format && !validFormats.includes(format)) {\n  errors.push(`format invalide: ${format} (doit etre: ${validFormats.join(', ')})`);\n}\n\n// --- API Keys from env or request ---\nconst anthropicKey = body.anthropic_api_key || body.plugin_context?.api_keys?.anthropic || $env.ANTHROPIC_API_KEY || '';\nconst openaiKey = body.openai_api_key || body.plugin_context?.api_keys?.openai || $env.OPENAI_API_KEY || '';\nconst mistralKey = body.mistral_api_key || body.plugin_context?.api_keys?.mistral || $env.MISTRAL_API_KEY || '';\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  text: text.trim(),\n  provider: provider,\n  format: format,\n  max_tokens: maxTokens,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  anthropicKey: anthropicKey,\n  openaiKey: openaiKey,\n  mistralKey: mistralKey,\n  startTime: Date.now()\n};"
+      },
       "id": "validate-input",
       "name": "Validate Input",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        460,
-        300
-      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
       "parameters": {
         "conditions": {
           "options": {
@@ -42,45 +48,58 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ $json.body.text }}",
-              "rightValue": "",
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "isNotEmpty"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
     },
     {
-      "id": "error-no-text",
-      "name": "Error: No Text",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        700,
-        460
-      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 480]
+    },
+    {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: text\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": $json.body.provider || \"anthropic\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 400
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
-      }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 480]
     },
     {
-      "id": "route-provider",
-      "name": "Route Provider",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3.2,
-      "position": [
-        700,
-        200
-      ],
       "parameters": {
         "rules": {
           "values": [
@@ -94,7 +113,7 @@
                 },
                 "conditions": [
                   {
-                    "leftValue": "={{ $json.body.provider }}",
+                    "leftValue": "={{ $json.provider }}",
                     "rightValue": "openai",
                     "operator": {
                       "type": "string",
@@ -116,7 +135,7 @@
                 },
                 "conditions": [
                   {
-                    "leftValue": "={{ $json.body.provider }}",
+                    "leftValue": "={{ $json.provider }}",
                     "rightValue": "mistral",
                     "operator": {
                       "type": "string",
@@ -133,176 +152,164 @@
         "options": {
           "fallbackOutput": "extra"
         }
-      }
-    },
-    {
-      "id": "openai-summarize",
-      "name": "OpenAI Summarize",
-      "type": "n8n-nodes-base.openAi",
-      "typeVersion": 1.8,
-      "position": [
-        940,
-        100
-      ],
-      "parameters": {
-        "resource": "chat",
-        "operation": "message",
-        "model": "gpt-4o-mini",
-        "messages": {
-          "values": [
-            {
-              "content": "You are a professional summarizer. Create clear, concise summaries that capture the main points and key information.",
-              "role": "system"
-            },
-            {
-              "content": "={{ 'Summarize the following text' + ($json.body.format ? ' in ' + $json.body.format + ' format' : '') + ':\\n\\n' + $json.body.text }}",
-              "role": "user"
-            }
-          ]
-        },
-        "options": {
-          "temperature": 0.3,
-          "maxTokens": "={{ $json.body.max_tokens || 1024 }}"
-        }
       },
-      "credentials": {
-        "openAiApi": {
-          "id": "openai-credentials",
-          "name": "OpenAI account"
-        }
-      }
+      "id": "route-provider",
+      "name": "Route Provider",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [920, 200]
     },
     {
-      "id": "mistral-summarize",
-      "name": "Mistral Summarize",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        940,
-        250
-      ],
       "parameters": {
         "method": "POST",
-        "url": "https://api.mistral.ai/v1/chat/completions",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "mistralCloudApi",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ { \"model\": \"mistral-small-latest\", \"messages\": [{ \"role\": \"system\", \"content\": \"You are a professional summarizer. Create clear, concise summaries.\" }, { \"role\": \"user\", \"content\": \"Summarize the following text\" + ($json.body.format ? \" in \" + $json.body.format + \" format\" : \"\") + \":\\n\\n\" + $json.body.text }], \"max_tokens\": $json.body.max_tokens || 1024, \"temperature\": 0.3 } }}"
-      },
-      "credentials": {
-        "mistralCloudApi": {
-          "id": "mistral-credentials",
-          "name": "Mistral account"
-        }
-      }
-    },
-    {
-      "id": "anthropic-summarize",
-      "name": "Anthropic Summarize (Default)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        940,
-        400
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "anthropicApi",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openaiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { \"model\": \"claude-3-5-sonnet-20241022\", \"max_tokens\": $json.body.max_tokens || 1024, \"messages\": [{ \"role\": \"user\", \"content\": \"Summarize the following text\" + ($json.body.format ? \" in \" + $json.body.format + \" format\" : \"\") + \":\\n\\n\" + $json.body.text }] } }}"
-      },
-      "credentials": {
-        "anthropicApi": {
-          "id": "anthropic-credentials",
-          "name": "Anthropic account"
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  let prompt = 'Summarize the following text';\n  if (data.format) prompt += ` in ${data.format} format`;\n  if (data.user_request) prompt += `. User context: ${data.user_request}`;\n  prompt += `:\\n\\n${data.text}`;\n  return JSON.stringify({\n    model: 'gpt-4o-mini',\n    messages: [\n      { role: 'system', content: 'You are a professional summarizer. Create clear, concise summaries that capture the main points and key information.' },\n      { role: 'user', content: prompt }\n    ],\n    max_tokens: data.max_tokens || 1024,\n    temperature: 0.3\n  });\n})() }}",
+        "options": {
+          "timeout": 60000
         }
-      }
+      },
+      "id": "openai-summarize",
+      "name": "OpenAI Summarize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 60],
+      "onError": "continueRegularOutput"
     },
     {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.mistralKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  let prompt = 'Summarize the following text';\n  if (data.format) prompt += ` in ${data.format} format`;\n  if (data.user_request) prompt += `. User context: ${data.user_request}`;\n  prompt += `:\\n\\n${data.text}`;\n  return JSON.stringify({\n    model: 'mistral-small-latest',\n    messages: [\n      { role: 'system', content: 'You are a professional summarizer. Create clear, concise summaries.' },\n      { role: 'user', content: prompt }\n    ],\n    max_tokens: data.max_tokens || 1024,\n    temperature: 0.3\n  });\n})() }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "mistral-summarize",
+      "name": "Mistral Summarize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.anthropicKey }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  let prompt = 'Summarize the following text';\n  if (data.format) prompt += ` in ${data.format} format`;\n  if (data.user_request) prompt += `. User context: ${data.user_request}`;\n  prompt += `:\\n\\n${data.text}`;\n  return JSON.stringify({\n    model: 'claude-sonnet-4-20250514',\n    max_tokens: data.max_tokens || 1024,\n    messages: [{ role: 'user', content: prompt }]\n  });\n})() }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "anthropic-summarize",
+      "name": "Anthropic Summarize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 340],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT OPENAI RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\n// Handle error response\nif (input.error) {\n  return {\n    success: false,\n    error: {\n      code: 'LLM_ERROR',\n      message: input.error.message || 'OpenAI API error',\n      http_status: 500\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: {\n      llm_response: null,\n      service_response: input,\n      provider: 'openai',\n      model: 'gpt-4o-mini',\n      tokens: { input: 0, output: 0 },\n      latency_ms: Date.now() - startTime,\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest\n    }\n  };\n}\n\nconst summary = input.choices?.[0]?.message?.content || '';\nconst originalLength = prevData.text.length;\nconst summaryLength = summary.length;\n\nconst _trace = {\n  llm_response: summary,\n  service_response: input,\n  provider: 'openai',\n  model: 'gpt-4o-mini',\n  tokens: {\n    input: input.usage?.prompt_tokens || 0,\n    output: input.usage?.completion_tokens || 0\n  },\n  latency_ms: Date.now() - startTime,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\nreturn {\n  success: true,\n  data: {\n    summary: summary,\n    original_length: originalLength,\n    summary_length: summaryLength\n  },\n  meta: {\n    provider: 'openai',\n    model: 'gpt-4o-mini',\n    format: prevData.format\n  },\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  _trace: _trace\n};"
+      },
       "id": "format-openai",
       "name": "Format OpenAI",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        1160,
-        100
-      ],
-      "parameters": {
-        "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"data\": { \"summary\": $json.message.content, \"original_length\": $('Webhook').first().json.body.text.length, \"summary_length\": $json.message.content.length }, \"meta\": { \"provider\": \"openai\", \"model\": \"gpt-4o-mini\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
-      }
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 60]
     },
     {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT MISTRAL RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\n// Handle error response\nif (input.error || input.message) {\n  return {\n    success: false,\n    error: {\n      code: 'LLM_ERROR',\n      message: input.error?.message || input.message || 'Mistral API error',\n      http_status: 500\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: {\n      llm_response: null,\n      service_response: input,\n      provider: 'mistral',\n      model: 'mistral-small-latest',\n      tokens: { input: 0, output: 0 },\n      latency_ms: Date.now() - startTime,\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest\n    }\n  };\n}\n\nconst summary = input.choices?.[0]?.message?.content || '';\nconst originalLength = prevData.text.length;\nconst summaryLength = summary.length;\n\nconst _trace = {\n  llm_response: summary,\n  service_response: input,\n  provider: 'mistral',\n  model: 'mistral-small-latest',\n  tokens: {\n    input: input.usage?.prompt_tokens || 0,\n    output: input.usage?.completion_tokens || 0\n  },\n  latency_ms: Date.now() - startTime,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\nreturn {\n  success: true,\n  data: {\n    summary: summary,\n    original_length: originalLength,\n    summary_length: summaryLength\n  },\n  meta: {\n    provider: 'mistral',\n    model: 'mistral-small-latest',\n    format: prevData.format\n  },\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  _trace: _trace\n};"
+      },
       "id": "format-mistral",
       "name": "Format Mistral",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        1160,
-        250
-      ],
-      "parameters": {
-        "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"data\": { \"summary\": $json.choices[0]?.message?.content || '', \"original_length\": $('Webhook').first().json.body.text.length, \"summary_length\": ($json.choices[0]?.message?.content || '').length }, \"meta\": { \"provider\": \"mistral\", \"model\": \"mistral-small-latest\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
-      }
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 200]
     },
     {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT ANTHROPIC RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\n// Handle error response\nif (input.error || input.type === 'error') {\n  return {\n    success: false,\n    error: {\n      code: 'LLM_ERROR',\n      message: input.error?.message || 'Anthropic API error',\n      http_status: 500\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: {\n      llm_response: null,\n      service_response: input,\n      provider: 'anthropic',\n      model: 'claude-sonnet-4-20250514',\n      tokens: { input: 0, output: 0 },\n      latency_ms: Date.now() - startTime,\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest\n    }\n  };\n}\n\nconst summary = input.content?.[0]?.text || '';\nconst originalLength = prevData.text.length;\nconst summaryLength = summary.length;\n\nconst _trace = {\n  llm_response: summary,\n  service_response: input,\n  provider: 'anthropic',\n  model: input.model || 'claude-sonnet-4-20250514',\n  tokens: {\n    input: input.usage?.input_tokens || 0,\n    output: input.usage?.output_tokens || 0\n  },\n  latency_ms: Date.now() - startTime,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\nreturn {\n  success: true,\n  data: {\n    summary: summary,\n    original_length: originalLength,\n    summary_length: summaryLength\n  },\n  meta: {\n    provider: 'anthropic',\n    model: input.model || 'claude-sonnet-4-20250514',\n    format: prevData.format\n  },\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  _trace: _trace\n};"
+      },
       "id": "format-anthropic",
       "name": "Format Anthropic",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        1160,
-        400
-      ],
-      "parameters": {
-        "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"data\": { \"summary\": $json.content[0]?.text || '', \"original_length\": $('Webhook').first().json.body.text.length, \"summary_length\": ($json.content[0]?.text || '').length }, \"meta\": { \"provider\": \"anthropic\", \"model\": \"claude-3-5-sonnet-20241022\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\" } } }}"
-      }
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 340]
     },
     {
-      "id": "respond-success",
-      "name": "Respond Success",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1380,
-        250
-      ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
-      }
-    },
-    {
-      "id": "sticky-note-doc",
-      "name": "API Documentation",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        240,
-        80
-      ],
-      "parameters": {
-        "color": 6,
-        "width": 550,
-        "height": 220,
-        "content": "## MCP - LLM Summarizer\n\n**Endpoint:** POST /webhook/llm-summarizer\n\n**Parameters:**\n- `text` (required): Text to summarize\n- `provider` (optional): anthropic (default), openai, mistral\n- `format` (optional): bullet-points, paragraph, executive-summary\n- `max_tokens` (optional): Max output tokens (default: 1024)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Summary with length stats and provider info"
-      }
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1640, 200]
     }
   ],
   "connections": {
@@ -321,6 +328,17 @@
       "main": [
         [
           {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
             "node": "Route Provider",
             "type": "main",
             "index": 0
@@ -328,7 +346,18 @@
         ],
         [
           {
-            "node": "Error: No Text",
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -353,7 +382,7 @@
         ],
         [
           {
-            "node": "Anthropic Summarize (Default)",
+            "node": "Anthropic Summarize",
             "type": "main",
             "index": 0
           }
@@ -382,7 +411,7 @@
         ]
       ]
     },
-    "Anthropic Summarize (Default)": {
+    "Anthropic Summarize": {
       "main": [
         [
           {
@@ -397,7 +426,7 @@
       "main": [
         [
           {
-            "node": "Respond Success",
+            "node": "Respond",
             "type": "main",
             "index": 0
           }
@@ -408,7 +437,7 @@
       "main": [
         [
           {
-            "node": "Respond Success",
+            "node": "Respond",
             "type": "main",
             "index": 0
           }
@@ -419,7 +448,7 @@
       "main": [
         [
           {
-            "node": "Respond Success",
+            "node": "Respond",
             "type": "main",
             "index": 0
           }
@@ -430,32 +459,6 @@
   "settings": {
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "bde58db0-3494-452e-943f-86b2183fd5ae",
-  "activeVersionId": "bde58db0-3494-452e-943f-86b2183fd5ae",
-  "versionCounter": 383,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2025-12-15T15:08:02.656Z",
-      "createdAt": "2025-12-15T15:08:02.656Z",
-      "role": "workflow:owner",
-      "workflowId": "cf4qppzmHzEYasfU",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+    "availableInMCP": true
+  }
 }

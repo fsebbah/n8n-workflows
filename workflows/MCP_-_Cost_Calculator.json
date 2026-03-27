@@ -1,21 +1,12 @@
 {
-  "updatedAt": "2025-12-18T15:17:20.000Z",
-  "createdAt": "2025-12-18T15:14:01.788Z",
-  "id": "sUkUNxu36VISWzke",
   "name": "MCP - Cost Calculator",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "id": "webhook-cost",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        240,
-        300
-      ],
+      "position": [240, 300],
       "webhookId": "cost-calculator-webhook",
       "parameters": {
         "httpMethod": "POST",
@@ -27,12 +18,19 @@
     {
       "id": "validate-input",
       "name": "Validate Input",
-      "type": "n8n-nodes-base.if",
+      "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        460,
-        300
-      ],
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Cost Calculator\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required context fields ---\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst userRequest = body.user_request || ctx.user_request;\n\nif (!userId) {\n  errors.push('user_id requis');\n}\nif (!guildId) {\n  errors.push('guild_id requis');\n}\nif (!userRequest) {\n  errors.push('user_request requis');\n}\n\n// --- Parametres specifiques au webhook ---\nconst model = body.model || ctx.model;\nconst inputTokens = body.input_tokens || ctx.input_tokens || 0;\nconst outputTokens = body.output_tokens || ctx.output_tokens || 0;\nconst requests = body.requests || ctx.requests || 1;\n\nif (!model) {\n  errors.push('model requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  model: model,\n  input_tokens: inputTokens,\n  output_tokens: outputTokens,\n  requests: requests,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
       "parameters": {
         "conditions": {
           "options": {
@@ -42,12 +40,12 @@
           },
           "conditions": [
             {
-              "id": "condition-model",
-              "leftValue": "={{ $json.body.model }}",
-              "rightValue": "",
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "exists"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],
@@ -57,19 +55,34 @@
       }
     },
     {
-      "id": "error-no-model",
-      "name": "Error: No Model",
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 460],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'calculator',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      }
+    },
+    {
+      "id": "respond-error",
+      "name": "Respond Error",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        700,
-        460
-      ],
+      "typeVersion": 1.1,
+      "position": [1120, 460],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: model\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"calculator\" } } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 400
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       }
     },
@@ -78,12 +91,9 @@
       "name": "Calculate Cost",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        700,
-        200
-      ],
+      "position": [900, 200],
       "parameters": {
-        "jsCode": "const body = $('Webhook').first().json.body;\n\n// LLM pricing per 1M tokens (as of 2024)\nconst PRICING = {\n  // OpenAI\n  'gpt-4o': { input: 2.50, output: 10.00 },\n  'gpt-4o-mini': { input: 0.15, output: 0.60 },\n  'gpt-4-turbo': { input: 10.00, output: 30.00 },\n  'gpt-4': { input: 30.00, output: 60.00 },\n  'gpt-3.5-turbo': { input: 0.50, output: 1.50 },\n  'o1-preview': { input: 15.00, output: 60.00 },\n  'o1-mini': { input: 3.00, output: 12.00 },\n  \n  // Anthropic\n  'claude-3-opus': { input: 15.00, output: 75.00 },\n  'claude-3-sonnet': { input: 3.00, output: 15.00 },\n  'claude-3-haiku': { input: 0.25, output: 1.25 },\n  'claude-3.5-sonnet': { input: 3.00, output: 15.00 },\n  \n  // Mistral\n  'mistral-large': { input: 2.00, output: 6.00 },\n  'mistral-medium': { input: 2.70, output: 8.10 },\n  'mistral-small': { input: 0.20, output: 0.60 },\n  'mistral-7b': { input: 0.25, output: 0.25 },\n  'mixtral-8x7b': { input: 0.70, output: 0.70 },\n  \n  // Google\n  'gemini-1.5-pro': { input: 1.25, output: 5.00 },\n  'gemini-1.5-flash': { input: 0.075, output: 0.30 },\n  'gemini-1.0-pro': { input: 0.50, output: 1.50 },\n  \n  // Embeddings\n  'text-embedding-3-small': { input: 0.02, output: 0 },\n  'text-embedding-3-large': { input: 0.13, output: 0 },\n  'text-embedding-ada-002': { input: 0.10, output: 0 }\n};\n\nconst model = body.model;\nconst inputTokens = body.input_tokens || 0;\nconst outputTokens = body.output_tokens || 0;\nconst requests = body.requests || 1;\n\nconst pricing = PRICING[model];\n\nif (!pricing) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: `Unknown model: ${model}. Available: ${Object.keys(PRICING).join(', ')}`,\n        status: 'UNKNOWN_MODEL'\n      },\n      meta: { provider: 'calculator' }\n    }\n  }];\n}\n\nconst inputCost = (inputTokens / 1000000) * pricing.input;\nconst outputCost = (outputTokens / 1000000) * pricing.output;\nconst totalCost = (inputCost + outputCost) * requests;\n\nreturn [{\n  json: {\n    success: true,\n    data: {\n      model: model,\n      input_tokens: inputTokens,\n      output_tokens: outputTokens,\n      requests: requests,\n      costs: {\n        input_cost_usd: inputCost,\n        output_cost_usd: outputCost,\n        total_cost_usd: totalCost,\n        cost_per_request_usd: totalCost / requests\n      },\n      pricing: {\n        input_per_1m: pricing.input,\n        output_per_1m: pricing.output,\n        currency: 'USD'\n      }\n    },\n    meta: {\n      provider: 'calculator',\n      pricing_date: '2024-12'\n    }\n  }\n}];"
+        "jsCode": "// ============================================\n// CALCULATE COST - MCP Cost Calculator\n// ============================================\n\nconst prevData = $('Validate Input').first().json;\n\n// LLM pricing per 1M tokens (as of 2024)\nconst PRICING = {\n  // OpenAI\n  'gpt-4o': { input: 2.50, output: 10.00 },\n  'gpt-4o-mini': { input: 0.15, output: 0.60 },\n  'gpt-4-turbo': { input: 10.00, output: 30.00 },\n  'gpt-4': { input: 30.00, output: 60.00 },\n  'gpt-3.5-turbo': { input: 0.50, output: 1.50 },\n  'o1-preview': { input: 15.00, output: 60.00 },\n  'o1-mini': { input: 3.00, output: 12.00 },\n  \n  // Anthropic\n  'claude-3-opus': { input: 15.00, output: 75.00 },\n  'claude-3-sonnet': { input: 3.00, output: 15.00 },\n  'claude-3-haiku': { input: 0.25, output: 1.25 },\n  'claude-3.5-sonnet': { input: 3.00, output: 15.00 },\n  \n  // Mistral\n  'mistral-large': { input: 2.00, output: 6.00 },\n  'mistral-medium': { input: 2.70, output: 8.10 },\n  'mistral-small': { input: 0.20, output: 0.60 },\n  'mistral-7b': { input: 0.25, output: 0.25 },\n  'mixtral-8x7b': { input: 0.70, output: 0.70 },\n  \n  // Google\n  'gemini-1.5-pro': { input: 1.25, output: 5.00 },\n  'gemini-1.5-flash': { input: 0.075, output: 0.30 },\n  'gemini-1.0-pro': { input: 0.50, output: 1.50 },\n  \n  // Embeddings\n  'text-embedding-3-small': { input: 0.02, output: 0 },\n  'text-embedding-3-large': { input: 0.13, output: 0 },\n  'text-embedding-ada-002': { input: 0.10, output: 0 }\n};\n\nconst model = prevData.model;\nconst inputTokens = prevData.input_tokens;\nconst outputTokens = prevData.output_tokens;\nconst requests = prevData.requests;\n\nconst pricing = PRICING[model];\n\nif (!pricing) {\n  return {\n    success: false,\n    error: {\n      code: 'UNKNOWN_MODEL',\n      message: `Unknown model: ${model}. Available: ${Object.keys(PRICING).join(', ')}`,\n      http_status: 400\n    },\n    _trace: {\n      service_response: { error: 'unknown_model', model: model },\n      provider: 'calculator',\n      mode: 'error',\n      latency_ms: Date.now() - prevData.startTime,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  };\n}\n\nconst inputCost = (inputTokens / 1000000) * pricing.input;\nconst outputCost = (outputTokens / 1000000) * pricing.output;\nconst totalCost = (inputCost + outputCost) * requests;\n\nconst result = {\n  model: model,\n  input_tokens: inputTokens,\n  output_tokens: outputTokens,\n  requests: requests,\n  costs: {\n    input_cost_usd: inputCost,\n    output_cost_usd: outputCost,\n    total_cost_usd: totalCost,\n    cost_per_request_usd: totalCost / requests\n  },\n  pricing: {\n    input_per_1m: pricing.input,\n    output_per_1m: pricing.output,\n    currency: 'USD'\n  }\n};\n\nreturn {\n  success: true,\n  data: result,\n  meta: {\n    provider: 'calculator',\n    pricing_date: '2024-12'\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  user_request: prevData.user_request,\n  _trace: {\n    service_response: result,\n    provider: 'calculator',\n    mode: 'success',\n    latency_ms: Date.now() - prevData.startTime,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  }\n};"
       }
     },
     {
@@ -91,10 +101,7 @@
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [
-        920,
-        200
-      ],
+      "position": [1120, 200],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json }}",
@@ -103,18 +110,15 @@
     },
     {
       "id": "sticky-note-doc",
-      "name": "API Documentation",
+      "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        240,
-        60
-      ],
+      "position": [-100, -80],
       "parameters": {
         "color": 6,
-        "width": 650,
-        "height": 280,
-        "content": "## MCP - Cost Calculator\n\n**Endpoint:** POST /webhook/cost-calculator\n\n**Parameters:**\n- `model` (required): LLM model name (gpt-4o, claude-3-sonnet, etc.)\n- `input_tokens` (optional): Number of input tokens (default: 0)\n- `output_tokens` (optional): Number of output tokens (default: 0)\n- `requests` (optional): Number of requests (default: 1)\n\n**Supported models:**\n- OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo, o1-preview, o1-mini\n- Anthropic: claude-3-opus, claude-3-sonnet, claude-3-haiku, claude-3.5-sonnet\n- Mistral: mistral-large, mistral-medium, mistral-small, mixtral-8x7b\n- Google: gemini-1.5-pro, gemini-1.5-flash\n- Embeddings: text-embedding-3-small/large, ada-002\n\n**Returns:** Cost breakdown in USD"
+        "width": 340,
+        "height": 580,
+        "content": "## MCP - Cost Calculator\n\n**Endpoint:** POST /webhook/cost-calculator\n\n**Description:** Calcule le cout d'utilisation des modeles LLM en USD.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"user_id\", \"guild_id\", \"user_request\", \"model\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (credits, quotas)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale\" },\n    \"model\": { \"type\": \"string\", \"description\": \"Nom du modele LLM (gpt-4o, claude-3-sonnet, etc.)\" },\n    \"input_tokens\": { \"type\": \"integer\", \"description\": \"Nombre de tokens en entree (default: 0)\" },\n    \"output_tokens\": { \"type\": \"integer\", \"description\": \"Nombre de tokens en sortie (default: 0)\" },\n    \"requests\": { \"type\": \"integer\", \"description\": \"Nombre de requetes (default: 1)\" }\n  }\n}\n```\n\n**Modeles supportes:**\n- OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo, o1-preview, o1-mini\n- Anthropic: claude-3-opus, claude-3-sonnet, claude-3-haiku, claude-3.5-sonnet\n- Mistral: mistral-large, mistral-medium, mistral-small, mixtral-8x7b\n- Google: gemini-1.5-pro, gemini-1.5-flash\n- Embeddings: text-embedding-3-small/large, ada-002\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"costs\", \"pricing\"],\n  \"domain\": \"utility\"\n}\n```"
       }
     }
   ],
@@ -134,6 +138,17 @@
       "main": [
         [
           {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
             "node": "Calculate Cost",
             "type": "main",
             "index": 0
@@ -141,7 +156,18 @@
         ],
         [
           {
-            "node": "Error: No Model",
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -162,33 +188,6 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "4880ee5f-fb0f-4528-9944-f14892834dfb",
-  "activeVersionId": "4880ee5f-fb0f-4528-9944-f14892834dfb",
-  "versionCounter": 369,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2025-12-18T15:14:01.791Z",
-      "createdAt": "2025-12-18T15:14:01.791Z",
-      "role": "workflow:owner",
-      "workflowId": "sUkUNxu36VISWzke",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+    "callerPolicy": "workflowsFromSameOwner"
+  }
 }

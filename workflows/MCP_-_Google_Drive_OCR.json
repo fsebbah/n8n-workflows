@@ -1,11 +1,5 @@
 {
-  "updatedAt": "2025-12-23T09:23:42.456Z",
-  "createdAt": "2025-12-23T09:23:34.859Z",
-  "id": "syDUdlVjTrV9QqPI",
   "name": "MCP - Google Drive OCR",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "id": "webhook-drive-ocr",
@@ -25,60 +19,87 @@
       }
     },
     {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Google Drive OCR\n// RFC-014 compliant extraction\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- OPTIONAL context fields (for tracing only, NO validation errors) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- REQUIRED fields ---\nconst googleAccessToken = body.google_access_token || ctx.google_access_token;\nconst fileId = body.file_id || ctx.file_id || null;\nconst folderId = body.folder_id || ctx.folder_id || null;\n\nif (!googleAccessToken) {\n  errors.push('google_access_token requis');\n}\nif (!fileId && !folderId) {\n  errors.push('file_id ou folder_id requis');\n}\n\n// --- Optional fields with defaults ---\nconst mistralApiKey = body.mistral_api_key || ctx.mistral_api_key || '';\nconst maxFiles = body.max_files || ctx.max_files || 100;\nconst includeImages = body.include_images || ctx.include_images || false;\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  google_access_token: googleAccessToken,\n  mistral_api_key: mistralApiKey,\n  file_id: fileId,\n  folder_id: folderId,\n  max_files: maxFiles,\n  include_images: includeImages,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
+      },
       "id": "validate-input",
       "name": "Validate Input",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         460,
         300
-      ],
+      ]
+    },
+    {
       "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "loose"
+            "typeValidation": "strict"
           },
           "conditions": [
             {
-              "leftValue": "={{ $json.body.google_access_token }}",
-              "rightValue": "",
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "isNotEmpty"
-              }
-            },
-            {
-              "leftValue": "={{ $json.body.file_id || $json.body.folder_id }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "isNotEmpty"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ]
     },
     {
-      "id": "error-no-input",
-      "name": "Error: Missing Input",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        700,
-        460
-      ],
+        900,
+        480
+      ]
+    },
+    {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameters. Provide google_access_token and either file_id or folder_id.\", \"status\": \"BAD_REQUEST\" } } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 400
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
-      }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        480
+      ]
     },
     {
       "id": "route-operation",
@@ -86,7 +107,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        700,
+        900,
         200
       ],
       "parameters": {
@@ -98,7 +119,7 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ $json.body.file_id }}",
+              "leftValue": "={{ $json.file_id }}",
               "rightValue": "",
               "operator": {
                 "type": "string",
@@ -117,7 +138,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        940,
+        1140,
         100
       ],
       "parameters": {
@@ -129,7 +150,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $('Webhook').first().json.body.google_access_token }}"
+              "value": "=Bearer {{ $('Validate Input').first().json.google_access_token }}"
             }
           ]
         },
@@ -138,7 +159,7 @@
           "parameters": [
             {
               "name": "q",
-              "value": "='\"{{ $('Webhook').first().json.body.folder_id }}\" in parents and (mimeType=\"image/png\" or mimeType=\"image/jpeg\" or mimeType=\"application/pdf\")'"
+              "value": "='\"{{ $('Validate Input').first().json.folder_id }}\" in parents and (mimeType=\"image/png\" or mimeType=\"image/jpeg\" or mimeType=\"application/pdf\")'"
             },
             {
               "name": "fields",
@@ -146,7 +167,7 @@
             },
             {
               "name": "pageSize",
-              "value": "={{ $('Webhook').first().json.body.max_files || 100 }}"
+              "value": "={{ $('Validate Input').first().json.max_files }}"
             }
           ]
         },
@@ -162,19 +183,19 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        940,
+        1140,
         300
       ],
       "parameters": {
         "method": "GET",
-        "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Webhook').first().json.body.file_id }}?alt=media",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Validate Input').first().json.file_id }}?alt=media",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $('Webhook').first().json.body.google_access_token }}"
+              "value": "=Bearer {{ $('Validate Input').first().json.google_access_token }}"
             }
           ]
         },
@@ -195,19 +216,19 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        940,
+        1140,
         500
       ],
       "parameters": {
         "method": "GET",
-        "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Webhook').first().json.body.file_id }}",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $('Validate Input').first().json.file_id }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $('Webhook').first().json.body.google_access_token }}"
+              "value": "=Bearer {{ $('Validate Input').first().json.google_access_token }}"
             }
           ]
         },
@@ -232,7 +253,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1180,
+        1380,
         300
       ],
       "parameters": {
@@ -244,7 +265,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $('Webhook').first().json.body.mistral_api_key }}"
+              "value": "=Bearer {{ $('Validate Input').first().json.mistral_api_key }}"
             },
             {
               "name": "Content-Type",
@@ -254,7 +275,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { \"model\": \"mistral-ocr-latest\", \"document\": { \"type\": \"image_url\", \"image_url\": 'data:' + ($('Get File Metadata').first().json.mimeType || 'image/png') + ';base64,' + $binary.data.data }, \"include_image_base64\": $('Webhook').first().json.body.include_images || false } }}",
+        "jsonBody": "={{ { \"model\": \"mistral-ocr-latest\", \"document\": { \"type\": \"image_url\", \"image_url\": 'data:' + ($('Get File Metadata').first().json.mimeType || 'image/png') + ';base64,' + $binary.data.data }, \"include_image_base64\": $('Validate Input').first().json.include_images || false } }}",
         "options": {
           "timeout": 120000
         }
@@ -264,75 +285,93 @@
     {
       "id": "format-list-output",
       "name": "Format List Output",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        1180,
+        1380,
         100
       ],
       "parameters": {
-        "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"operation\": \"list_files\", \"data\": { \"files\": $json.files || [], \"folder_id\": $('Webhook').first().json.body.folder_id }, \"meta\": { \"provider\": \"google_drive\", \"count\": ($json.files || []).length } } }}"
+        "jsCode": "// ============================================\n// FORMAT LIST OUTPUT - with _trace\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime;\n\nconst files = input.files || [];\n\nreturn {\n  success: true,\n  operation: 'list_files',\n  data: {\n    files: files,\n    folder_id: prevData.folder_id\n  },\n  meta: {\n    provider: 'google_drive',\n    count: files.length\n  },\n  _trace: {\n    service_response: { file_count: files.length },\n    provider: 'google_drive',\n    mode: 'list',\n    latency_ms: Date.now() - startTime,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  user_request: prevData.user_request\n};"
       }
     },
     {
       "id": "format-ocr-output",
       "name": "Format OCR Output",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        1420,
+        1620,
         300
       ],
       "parameters": {
-        "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"operation\": \"ocr\", \"data\": { \"text\": $json.pages?.map(p => p.markdown).join('\\n\\n') || '', \"pages\": $json.pages || [], \"file\": { \"id\": $('Webhook').first().json.body.file_id, \"name\": $('Get File Metadata').first().json.name, \"mimeType\": $('Get File Metadata').first().json.mimeType } }, \"meta\": { \"provider\": \"mistral\", \"model\": $json.model || 'mistral-ocr-latest', \"usage\": { \"pages_processed\": $json.usage_info?.pages_processed || 1, \"doc_size_bytes\": $json.usage_info?.doc_size_bytes || 0 } } } }}"
+        "jsCode": "// ============================================\n// FORMAT OCR OUTPUT - with _trace\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst metadata = $('Get File Metadata').first().json;\nconst startTime = prevData.startTime;\n\nconst pages = input.pages || [];\nconst text = pages.map(p => p.markdown).join('\\n\\n') || '';\n\nreturn {\n  success: true,\n  operation: 'ocr',\n  data: {\n    text: text,\n    pages: pages,\n    file: {\n      id: prevData.file_id,\n      name: metadata.name,\n      mimeType: metadata.mimeType\n    }\n  },\n  meta: {\n    provider: 'mistral',\n    model: input.model || 'mistral-ocr-latest',\n    usage: {\n      pages_processed: input.usage_info?.pages_processed || 1,\n      doc_size_bytes: input.usage_info?.doc_size_bytes || 0\n    }\n  },\n  _trace: {\n    service_response: {\n      pages_processed: input.usage_info?.pages_processed || pages.length,\n      text_length: text.length\n    },\n    provider: 'mistral',\n    mode: 'ocr',\n    latency_ms: Date.now() - startTime,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  user_request: prevData.user_request\n};"
       }
     },
     {
       "id": "respond-list",
       "name": "Respond List",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
+      "typeVersion": 1.1,
       "position": [
-        1420,
+        1620,
         100
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
       }
     },
     {
       "id": "respond-ocr",
       "name": "Respond OCR",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
+      "typeVersion": 1.1,
       "position": [
-        1660,
+        1860,
         300
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
       }
     },
     {
       "id": "sticky-note-doc",
-      "name": "API Documentation",
+      "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
         240,
-        60
+        0
       ],
       "parameters": {
         "color": 6,
-        "width": 600,
-        "height": 280,
-        "content": "## MCP - Google Drive OCR\n\n**Endpoint:** POST /webhook/google-drive-ocr\n\n**Parameters:**\n- `google_access_token` (required): Google OAuth2 access token\n- `mistral_api_key` (required for OCR): Mistral API key\n- `folder_id` (string): List files in folder\n- `file_id` (string): Process specific file with OCR\n- `max_files` (int): Max files to list (default: 100)\n- `include_images` (bool): Include base64 images in OCR response\n\n**Operations:**\n- List files: provide `folder_id`\n- OCR file: provide `file_id` + `mistral_api_key`\n\n**API:** Mistral OCR (mistral-ocr-latest) + Google Drive v3"
+        "width": 660,
+        "height": 400,
+        "content": "## MCP - Google Drive OCR\n\n**Endpoint:** POST /webhook/google-drive-ocr\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"google_access_token\"],\n  \"properties\": {\n    \"google_access_token\": { \"type\": \"string\", \"description\": \"Google OAuth2 access token\" },\n    \"folder_id\": { \"type\": \"string\", \"description\": \"List files in folder\" },\n    \"file_id\": { \"type\": \"string\", \"description\": \"Process specific file with OCR\" },\n    \"mistral_api_key\": { \"type\": \"string\", \"description\": \"Mistral API key (required for OCR)\" },\n    \"max_files\": { \"type\": \"integer\", \"description\": \"Max files to list\", \"default\": 100 },\n    \"include_images\": { \"type\": \"boolean\", \"description\": \"Include base64 images in OCR response\", \"default\": false },\n    \"user_id\": { \"type\": \"string\", \"description\": \"User ID (optional, for tracing)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Guild ID (optional, for tracing)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"User request (optional, for tracing)\" }\n  }\n}\n```\n\n**Note:** Requires `google_access_token` AND (`folder_id` OR `file_id`).\n\n**Operations:**\n- List files: provide `folder_id`\n- OCR file: provide `file_id` + `mistral_api_key`\n\n**API:** Mistral OCR (mistral-ocr-latest) + Google Drive v3"
       }
     }
   ],
@@ -352,6 +391,17 @@
       "main": [
         [
           {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
             "node": "Route Operation",
             "type": "main",
             "index": 0
@@ -359,7 +409,18 @@
         ],
         [
           {
-            "node": "Error: Missing Input",
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -449,31 +510,5 @@
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "3bf3f117-9848-4b11-ae71-72fdb5dc2def",
-  "activeVersionId": "3bf3f117-9848-4b11-ae71-72fdb5dc2def",
-  "versionCounter": 352,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2025-12-23T09:23:34.863Z",
-      "createdAt": "2025-12-23T09:23:34.863Z",
-      "role": "workflow:owner",
-      "workflowId": "syDUdlVjTrV9QqPI",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+  }
 }

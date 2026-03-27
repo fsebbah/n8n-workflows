@@ -1,21 +1,12 @@
 {
-  "updatedAt": "2025-12-18T15:17:05.000Z",
-  "createdAt": "2025-12-18T15:15:24.436Z",
-  "id": "hKjyL9mPtl8H8N0C",
   "name": "MCP - Tokenizer",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "id": "webhook-tokenizer",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        240,
-        300
-      ],
+      "position": [240, 300],
       "webhookId": "tokenizer-webhook",
       "parameters": {
         "httpMethod": "POST",
@@ -27,12 +18,19 @@
     {
       "id": "validate-input",
       "name": "Validate Input",
-      "type": "n8n-nodes-base.if",
+      "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        460,
-        300
-      ],
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Tokenizer\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required context fields ---\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst userRequest = body.user_request || ctx.user_request;\n\nif (!userId) {\n  errors.push('user_id requis');\n}\nif (!guildId) {\n  errors.push('guild_id requis');\n}\nif (!userRequest) {\n  errors.push('user_request requis');\n}\n\n// --- Parametres specifiques au webhook ---\nconst text = body.text || ctx.text;\nconst model = body.model || ctx.model || 'gpt-4o';\n\nif (!text) {\n  errors.push('text requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  text: text,\n  model: model,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
       "parameters": {
         "conditions": {
           "options": {
@@ -42,12 +40,12 @@
           },
           "conditions": [
             {
-              "id": "condition-text",
-              "leftValue": "={{ $json.body.text }}",
-              "rightValue": "",
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "exists"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],
@@ -57,19 +55,34 @@
       }
     },
     {
-      "id": "error-no-text",
-      "name": "Error: No Text",
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 460],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'tokenizer',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      }
+    },
+    {
+      "id": "respond-error",
+      "name": "Respond Error",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        700,
-        460
-      ],
+      "typeVersion": 1.1,
+      "position": [1120, 460],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: text\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"tokenizer\" } } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 400
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       }
     },
@@ -78,12 +91,9 @@
       "name": "Count Tokens",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        700,
-        200
-      ],
+      "position": [900, 200],
       "parameters": {
-        "jsCode": "const body = $('Webhook').first().json.body;\nconst text = body.text;\nconst model = body.model || 'gpt-4o';\n\n// Approximate token counting based on model family\n// These are estimates - actual counts may vary slightly\n\n// Character-based estimation for different encodings\nconst estimateTokens = (text, encoding) => {\n  // GPT-4/3.5 use cl100k_base encoding (~4 chars per token for English)\n  // GPT-2 uses gpt2 encoding (~4 chars per token)\n  // Claude uses similar tokenization\n  \n  const charCount = text.length;\n  const wordCount = text.split(/\\s+/).filter(w => w.length > 0).length;\n  \n  // Different ratios for different content types\n  const hasCode = /[{}\\[\\]();=<>]/.test(text);\n  const hasCJK = /[\\u4e00-\\u9fff\\u3040-\\u309f\\u30a0-\\u30ff]/.test(text);\n  const hasEmoji = /[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}]/u.test(text);\n  \n  let charsPerToken;\n  \n  if (hasCJK) {\n    // CJK characters are typically 1-2 tokens each\n    charsPerToken = 1.5;\n  } else if (hasCode) {\n    // Code tends to have more tokens per character\n    charsPerToken = 3;\n  } else {\n    // English text averages ~4 chars per token\n    charsPerToken = 4;\n  }\n  \n  const estimatedTokens = Math.ceil(charCount / charsPerToken);\n  \n  return {\n    estimated_tokens: estimatedTokens,\n    char_count: charCount,\n    word_count: wordCount,\n    avg_word_length: wordCount > 0 ? (charCount / wordCount).toFixed(2) : 0,\n    has_code: hasCode,\n    has_cjk: hasCJK,\n    has_emoji: hasEmoji,\n    chars_per_token_estimate: charsPerToken\n  };\n};\n\n// Model context limits\nconst MODEL_LIMITS = {\n  'gpt-4o': 128000,\n  'gpt-4o-mini': 128000,\n  'gpt-4-turbo': 128000,\n  'gpt-4': 8192,\n  'gpt-3.5-turbo': 16385,\n  'claude-3-opus': 200000,\n  'claude-3-sonnet': 200000,\n  'claude-3-haiku': 200000,\n  'claude-3.5-sonnet': 200000,\n  'mistral-large': 128000,\n  'mistral-small': 32000,\n  'gemini-1.5-pro': 1000000,\n  'gemini-1.5-flash': 1000000\n};\n\nconst analysis = estimateTokens(text, model);\nconst contextLimit = MODEL_LIMITS[model] || 128000;\nconst usagePercent = ((analysis.estimated_tokens / contextLimit) * 100).toFixed(2);\n\nreturn [{\n  json: {\n    success: true,\n    data: {\n      model: model,\n      estimated_tokens: analysis.estimated_tokens,\n      context_limit: contextLimit,\n      usage_percent: parseFloat(usagePercent),\n      fits_context: analysis.estimated_tokens < contextLimit,\n      remaining_tokens: Math.max(0, contextLimit - analysis.estimated_tokens),\n      statistics: {\n        char_count: analysis.char_count,\n        word_count: analysis.word_count,\n        avg_word_length: parseFloat(analysis.avg_word_length),\n        chars_per_token: analysis.chars_per_token_estimate\n      },\n      content_type: {\n        has_code: analysis.has_code,\n        has_cjk: analysis.has_cjk,\n        has_emoji: analysis.has_emoji\n      }\n    },\n    meta: {\n      provider: 'tokenizer',\n      note: 'Token counts are estimates. Actual counts may vary by ~5-10%.'\n    }\n  }\n}];"
+        "jsCode": "// ============================================\n// COUNT TOKENS - MCP Tokenizer\n// ============================================\n\nconst prevData = $('Validate Input').first().json;\nconst text = prevData.text;\nconst model = prevData.model;\n\n// Approximate token counting based on model family\n// These are estimates - actual counts may vary slightly\n\n// Character-based estimation for different encodings\nconst estimateTokens = (text, encoding) => {\n  // GPT-4/3.5 use cl100k_base encoding (~4 chars per token for English)\n  // GPT-2 uses gpt2 encoding (~4 chars per token)\n  // Claude uses similar tokenization\n  \n  const charCount = text.length;\n  const wordCount = text.split(/\\s+/).filter(w => w.length > 0).length;\n  \n  // Different ratios for different content types\n  const hasCode = /[{}\\[\\]();=<>]/.test(text);\n  const hasCJK = /[\\u4e00-\\u9fff\\u3040-\\u309f\\u30a0-\\u30ff]/.test(text);\n  const hasEmoji = /[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}]/u.test(text);\n  \n  let charsPerToken;\n  \n  if (hasCJK) {\n    // CJK characters are typically 1-2 tokens each\n    charsPerToken = 1.5;\n  } else if (hasCode) {\n    // Code tends to have more tokens per character\n    charsPerToken = 3;\n  } else {\n    // English text averages ~4 chars per token\n    charsPerToken = 4;\n  }\n  \n  const estimatedTokens = Math.ceil(charCount / charsPerToken);\n  \n  return {\n    estimated_tokens: estimatedTokens,\n    char_count: charCount,\n    word_count: wordCount,\n    avg_word_length: wordCount > 0 ? (charCount / wordCount).toFixed(2) : 0,\n    has_code: hasCode,\n    has_cjk: hasCJK,\n    has_emoji: hasEmoji,\n    chars_per_token_estimate: charsPerToken\n  };\n};\n\n// Model context limits\nconst MODEL_LIMITS = {\n  'gpt-4o': 128000,\n  'gpt-4o-mini': 128000,\n  'gpt-4-turbo': 128000,\n  'gpt-4': 8192,\n  'gpt-3.5-turbo': 16385,\n  'claude-3-opus': 200000,\n  'claude-3-sonnet': 200000,\n  'claude-3-haiku': 200000,\n  'claude-3.5-sonnet': 200000,\n  'mistral-large': 128000,\n  'mistral-small': 32000,\n  'gemini-1.5-pro': 1000000,\n  'gemini-1.5-flash': 1000000\n};\n\nconst analysis = estimateTokens(text, model);\nconst contextLimit = MODEL_LIMITS[model] || 128000;\nconst usagePercent = ((analysis.estimated_tokens / contextLimit) * 100).toFixed(2);\n\nconst result = {\n  model: model,\n  estimated_tokens: analysis.estimated_tokens,\n  context_limit: contextLimit,\n  usage_percent: parseFloat(usagePercent),\n  fits_context: analysis.estimated_tokens < contextLimit,\n  remaining_tokens: Math.max(0, contextLimit - analysis.estimated_tokens),\n  statistics: {\n    char_count: analysis.char_count,\n    word_count: analysis.word_count,\n    avg_word_length: parseFloat(analysis.avg_word_length),\n    chars_per_token: analysis.chars_per_token_estimate\n  },\n  content_type: {\n    has_code: analysis.has_code,\n    has_cjk: analysis.has_cjk,\n    has_emoji: analysis.has_emoji\n  }\n};\n\nreturn {\n  success: true,\n  data: result,\n  meta: {\n    provider: 'tokenizer',\n    note: 'Token counts are estimates. Actual counts may vary by ~5-10%.'\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  user_request: prevData.user_request,\n  _trace: {\n    service_response: result,\n    provider: 'tokenizer',\n    mode: 'success',\n    latency_ms: Date.now() - prevData.startTime,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  }\n};"
       }
     },
     {
@@ -91,10 +101,7 @@
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [
-        920,
-        200
-      ],
+      "position": [1120, 200],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json }}",
@@ -103,18 +110,15 @@
     },
     {
       "id": "sticky-note-doc",
-      "name": "API Documentation",
+      "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        240,
-        60
-      ],
+      "position": [-100, -80],
       "parameters": {
         "color": 6,
-        "width": 650,
-        "height": 300,
-        "content": "## MCP - Tokenizer\n\n**Endpoint:** POST /webhook/tokenizer\n\n**Parameters:**\n- `text` (required): Text to tokenize/count\n- `model` (optional): Model for context limit (default: gpt-4o)\n\n**Returns:**\n- `estimated_tokens`: Estimated token count\n- `context_limit`: Model's context window size\n- `usage_percent`: Percentage of context used\n- `fits_context`: Boolean if text fits in context\n- `remaining_tokens`: Tokens available\n- `statistics`: char_count, word_count, avg_word_length\n- `content_type`: has_code, has_cjk, has_emoji\n\n**Note:** Token counts are estimates (~5-10% variance).\nFor exact counts, use OpenAI's tiktoken library.\n\n**No API key required** - uses local estimation"
+        "width": 340,
+        "height": 620,
+        "content": "## MCP - Tokenizer\n\n**Endpoint:** POST /webhook/tokenizer\n\n**Description:** Estime le nombre de tokens pour un texte donne et calcule l'utilisation du contexte pour differents modeles LLM.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"user_id\", \"guild_id\", \"user_request\", \"text\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (credits, quotas)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale\" },\n    \"text\": { \"type\": \"string\", \"description\": \"Texte a tokenizer\" },\n    \"model\": { \"type\": \"string\", \"description\": \"Modele pour limite de contexte (default: gpt-4o)\" }\n  }\n}\n```\n\n**Modeles supportes:**\n- OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-4, gpt-3.5-turbo\n- Anthropic: claude-3-opus, claude-3-sonnet, claude-3-haiku, claude-3.5-sonnet\n- Mistral: mistral-large, mistral-small\n- Google: gemini-1.5-pro, gemini-1.5-flash\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"estimated_tokens\", \"context_limit\", \"usage_percent\", \"statistics\"],\n  \"domain\": \"utility\"\n}\n```\n\n**Note:** Les comptes de tokens sont des estimations (~5-10% variance)."
       }
     }
   ],
@@ -134,6 +138,17 @@
       "main": [
         [
           {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
             "node": "Count Tokens",
             "type": "main",
             "index": 0
@@ -141,7 +156,18 @@
         ],
         [
           {
-            "node": "Error: No Text",
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -162,33 +188,6 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "9c97acd9-dd35-48ce-b32f-c6114cc3c58c",
-  "activeVersionId": "9c97acd9-dd35-48ce-b32f-c6114cc3c58c",
-  "versionCounter": 369,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2025-12-18T15:15:24.438Z",
-      "createdAt": "2025-12-18T15:15:24.438Z",
-      "role": "workflow:owner",
-      "workflowId": "hKjyL9mPtl8H8N0C",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+    "callerPolicy": "workflowsFromSameOwner"
+  }
 }

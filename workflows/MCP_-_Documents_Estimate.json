@@ -1,21 +1,12 @@
 {
-  "updatedAt": "2026-01-19T14:52:12.934Z",
-  "createdAt": "2026-01-19T14:52:01.701Z",
-  "id": "6T0xLTZnCo750HEf",
   "name": "MCP - Documents Estimate",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "id": "webhook-estimate",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        240,
-        300
-      ],
+      "position": [240, 300],
       "webhookId": "documents-estimate-webhook",
       "parameters": {
         "httpMethod": "POST",
@@ -25,27 +16,92 @@
       }
     },
     {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Documents Estimate\n// RFC-014 Extraction Pattern\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- OPTIONAL context fields (extract for tracing, NO validation errors) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Required: file_url OR file_base64 ---\nconst fileUrl = body.file_url || ctx.file_url;\nconst fileBase64 = body.file_base64 || ctx.file_base64;\n\nconst hasFile = !!(fileUrl || fileBase64);\nif (!hasFile) {\n  errors.push('file_url or file_base64 required');\n}\n\n// --- Optional parameters with defaults ---\nconst fileType = body.file_type || ctx.file_type || (fileUrl?.split('.').pop()?.toLowerCase()) || 'unknown';\nconst action = body.action || ctx.action || 'translate';\nconst pluginContext = body.plugin_context || ctx.plugin_context || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  file_url: fileUrl,\n  file_base64: fileBase64,\n  file_type: fileType,\n  action: action,\n  plugin_context: pluginContext,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 460],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'documents-estimate',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      }
+    },
+    {
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
       "id": "estimate-logic",
       "name": "Estimate and Calculate",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        480,
-        300
-      ],
+      "position": [900, 200],
       "parameters": {
-        "jsCode": "const body = $input.first().json.body || {};\n\n// Valider l'entrée\nconst hasFile = !!(body.file_url || body.file_base64);\nif (!hasFile) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'INVALID_FORMAT',\n        message: 'Missing file_url or file_base64'\n      }\n    }\n  };\n}\n\n// Détecter le type de fichier\nconst fileType = body.file_type || (body.file_url?.split('.').pop()?.toLowerCase()) || 'unknown';\nconst action = body.action || 'translate';\n\n// Pricing par défaut\nconst defaultPricing = {\n  translate: { base: 5, per_1k_tokens: 1.0, per_page: 2, ocr_bonus: 3, max: 50 },\n  summarize: { base: 3, per_1k_tokens: 0.5, per_page: 1, ocr_bonus: 3, max: 30 }\n};\nconst pricing = body.plugin_context?.pricing?.[action] || defaultPricing[action] || defaultPricing.translate;\n\n// OCR thresholds configurables (Phase 2.2)\nconst defaultOcrThresholds = {\n  min_confidence: 0.7,\n  hebrew_min_confidence: 0.6,\n  aramaic_min_confidence: 0.5,\n  retry_on_low_confidence: true\n};\nconst ocrThresholds = body.plugin_context?.ocr_thresholds || defaultOcrThresholds;\n\n// Déterminer si OCR est requis\nconst imageTypes = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff'];\nconst isImage = imageTypes.includes(fileType?.toLowerCase());\nconst ocrRequired = isImage || fileType === 'pdf';\n\n// Détecter langue potentielle pour ajuster seuils OCR\nconst detectedLanguage = body.params?.source_language || body.plugin_context?.detected_language || 'unknown';\nconst isHebrewContent = detectedLanguage === 'hebrew' || detectedLanguage === 'he';\nconst isAramaicContent = detectedLanguage === 'aramaic' || detectedLanguage === 'arc';\n\n// Ajuster le seuil de confiance selon la langue\nlet minConfidenceThreshold = ocrThresholds.min_confidence;\nif (isHebrewContent) {\n  minConfidenceThreshold = ocrThresholds.hebrew_min_confidence;\n} else if (isAramaicContent) {\n  minConfidenceThreshold = ocrThresholds.aramaic_min_confidence;\n}\n\n// Estimation selon le type\nlet estimatedPages, estimatedTokens, ocrConfidencePreview;\n\nif (isImage) {\n  estimatedPages = 1;\n  estimatedTokens = 500;\n  ocrConfidencePreview = isHebrewContent ? 0.75 : (isAramaicContent ? 0.65 : 0.85);\n} else if (fileType === 'pdf') {\n  estimatedPages = 5;\n  estimatedTokens = 2500;\n  ocrConfidencePreview = isHebrewContent ? 0.80 : (isAramaicContent ? 0.70 : 0.90);\n} else {\n  estimatedPages = 3;\n  estimatedTokens = 1500;\n  ocrConfidencePreview = 1.0;\n}\n\n// Calcul des crédits: base + (tokens/1000 * rate) + (pages * page_rate) + ocr_bonus\nconst base = pricing.base || 5;\nconst tokenCost = (estimatedTokens / 1000) * (pricing.per_1k_tokens || 1.0);\nconst pageCost = estimatedPages * (pricing.per_page || 2);\nconst ocrCost = ocrRequired ? (pricing.ocr_bonus || 3) : 0;\n\nconst total = base + tokenCost + pageCost + ocrCost;\nconst maxCredits = pricing.max || 50;\nconst estimatedCredits = Math.min(Math.ceil(total), maxCredits);\n\n// Marge de sécurité de 10%\nconst tokensWithMargin = Math.ceil(estimatedTokens * 1.1);\n\n// Warnings\nconst warnings = [];\nif (ocrConfidencePreview < minConfidenceThreshold) {\n  warnings.push(`OCR confidence (${ocrConfidencePreview}) below threshold (${minConfidenceThreshold})`);\n}\nif (ocrConfidencePreview < 0.8) {\n  warnings.push('OCR confidence may vary on full document');\n}\nif (estimatedPages > 10) {\n  warnings.push('Document exceeds recommended 10 pages limit');\n}\nif (isHebrewContent || isAramaicContent) {\n  warnings.push(`${isHebrewContent ? 'Hebrew' : 'Aramaic'} content detected - using specialized OCR thresholds`);\n}\n\nreturn {\n  json: {\n    success: true,\n    estimation: {\n      tokens: tokensWithMargin,\n      pages: estimatedPages,\n      ocr_required: ocrRequired,\n      ocr_confidence_preview: ocrConfidencePreview,\n      detected_language: detectedLanguage\n    },\n    credits: {\n      estimated: estimatedCredits,\n      breakdown: {\n        base: base,\n        tokens: Math.round(tokenCost * 100) / 100,\n        pages: pageCost,\n        ocr: ocrCost\n      },\n      max_possible: maxCredits\n    },\n    ocr_thresholds: {\n      applied: minConfidenceThreshold,\n      config: ocrThresholds\n    },\n    warnings: warnings\n  }\n};"
+        "jsCode": "// ============================================\n// ESTIMATE AND CALCULATE - MCP Documents Estimate\n// ============================================\n\nconst prevData = $('Validate Input').first().json;\n\nconst fileType = prevData.file_type;\nconst action = prevData.action;\nconst pluginContext = prevData.plugin_context || {};\n\n// Pricing par defaut\nconst defaultPricing = {\n  translate: { base: 5, per_1k_tokens: 1.0, per_page: 2, ocr_bonus: 3, max: 50 },\n  summarize: { base: 3, per_1k_tokens: 0.5, per_page: 1, ocr_bonus: 3, max: 30 }\n};\nconst pricing = pluginContext.pricing?.[action] || defaultPricing[action] || defaultPricing.translate;\n\n// OCR thresholds configurables (Phase 2.2)\nconst defaultOcrThresholds = {\n  min_confidence: 0.7,\n  hebrew_min_confidence: 0.6,\n  aramaic_min_confidence: 0.5,\n  retry_on_low_confidence: true\n};\nconst ocrThresholds = pluginContext.ocr_thresholds || defaultOcrThresholds;\n\n// Determiner si OCR est requis\nconst imageTypes = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff'];\nconst isImage = imageTypes.includes(fileType?.toLowerCase());\nconst ocrRequired = isImage || fileType === 'pdf';\n\n// Detecter langue potentielle pour ajuster seuils OCR\nconst detectedLanguage = pluginContext.detected_language || 'unknown';\nconst isHebrewContent = detectedLanguage === 'hebrew' || detectedLanguage === 'he';\nconst isAramaicContent = detectedLanguage === 'aramaic' || detectedLanguage === 'arc';\n\n// Ajuster le seuil de confiance selon la langue\nlet minConfidenceThreshold = ocrThresholds.min_confidence;\nif (isHebrewContent) {\n  minConfidenceThreshold = ocrThresholds.hebrew_min_confidence;\n} else if (isAramaicContent) {\n  minConfidenceThreshold = ocrThresholds.aramaic_min_confidence;\n}\n\n// Estimation selon le type\nlet estimatedPages, estimatedTokens, ocrConfidencePreview;\n\nif (isImage) {\n  estimatedPages = 1;\n  estimatedTokens = 500;\n  ocrConfidencePreview = isHebrewContent ? 0.75 : (isAramaicContent ? 0.65 : 0.85);\n} else if (fileType === 'pdf') {\n  estimatedPages = 5;\n  estimatedTokens = 2500;\n  ocrConfidencePreview = isHebrewContent ? 0.80 : (isAramaicContent ? 0.70 : 0.90);\n} else {\n  estimatedPages = 3;\n  estimatedTokens = 1500;\n  ocrConfidencePreview = 1.0;\n}\n\n// Calcul des credits: base + (tokens/1000 * rate) + (pages * page_rate) + ocr_bonus\nconst base = pricing.base || 5;\nconst tokenCost = (estimatedTokens / 1000) * (pricing.per_1k_tokens || 1.0);\nconst pageCost = estimatedPages * (pricing.per_page || 2);\nconst ocrCost = ocrRequired ? (pricing.ocr_bonus || 3) : 0;\n\nconst total = base + tokenCost + pageCost + ocrCost;\nconst maxCredits = pricing.max || 50;\nconst estimatedCredits = Math.min(Math.ceil(total), maxCredits);\n\n// Marge de securite de 10%\nconst tokensWithMargin = Math.ceil(estimatedTokens * 1.1);\n\n// Warnings\nconst warnings = [];\nif (ocrConfidencePreview < minConfidenceThreshold) {\n  warnings.push(`OCR confidence (${ocrConfidencePreview}) below threshold (${minConfidenceThreshold})`);\n}\nif (ocrConfidencePreview < 0.8) {\n  warnings.push('OCR confidence may vary on full document');\n}\nif (estimatedPages > 10) {\n  warnings.push('Document exceeds recommended 10 pages limit');\n}\nif (isHebrewContent || isAramaicContent) {\n  warnings.push(`${isHebrewContent ? 'Hebrew' : 'Aramaic'} content detected - using specialized OCR thresholds`);\n}\n\nconst latencyMs = Date.now() - prevData.startTime;\n\nconst result = {\n  estimation: {\n    tokens: tokensWithMargin,\n    pages: estimatedPages,\n    ocr_required: ocrRequired,\n    ocr_confidence_preview: ocrConfidencePreview,\n    detected_language: detectedLanguage\n  },\n  credits: {\n    estimated: estimatedCredits,\n    breakdown: {\n      base: base,\n      tokens: Math.round(tokenCost * 100) / 100,\n      pages: pageCost,\n      ocr: ocrCost\n    },\n    max_possible: maxCredits\n  },\n  ocr_thresholds: {\n    applied: minConfidenceThreshold,\n    config: ocrThresholds\n  },\n  warnings: warnings\n};\n\nreturn {\n  success: true,\n  data: result,\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  user_request: prevData.user_request,\n  _trace: {\n    service_response: result,\n    provider: 'documents-estimate',\n    mode: 'success',\n    latency_ms: latencyMs,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  }\n};"
       }
     },
     {
-      "id": "respond-estimate",
+      "id": "respond-success",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [
-        720,
-        300
-      ],
+      "position": [1120, 200],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json }}",
@@ -54,18 +110,15 @@
     },
     {
       "id": "sticky-note-doc",
-      "name": "API Documentation",
+      "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        240,
-        60
-      ],
+      "position": [-100, -80],
       "parameters": {
         "color": 6,
-        "width": 550,
-        "height": 280,
-        "content": "## MCP - Documents Estimate (RFC-014)\n\n**Endpoint:** POST /webhook/documents/estimate\n\n**Input:**\n- `file_url` or `file_base64`: Document\n- `file_type`: pdf | png | jpg | etc.\n- `action`: translate | summarize\n- `plugin_context.pricing`: Pricing config\n- `plugin_context.ocr_thresholds`: { min_confidence, hebrew_min_confidence, aramaic_min_confidence }\n\n**Output:**\n- `estimation`: { tokens, pages, ocr_required, detected_language }\n- `credits`: { estimated, breakdown, max_possible }\n- `ocr_thresholds`: { applied, config }\n- `warnings`: array"
+        "width": 340,
+        "height": 700,
+        "content": "## MCP - Documents Estimate\n\n**Endpoint:** POST /webhook/documents/estimate\n\n**Description:** Estime le nombre de tokens, pages et credits requis pour traiter un document.\n\n**InputSchema:**\n```json\n{\n  \"required\": [],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (optional, tracing)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord (optional, tracing)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur (optional, tracing)\" },\n    \"file_url\": { \"type\": \"string\", \"description\": \"URL du document\" },\n    \"file_base64\": { \"type\": \"string\", \"description\": \"Document en base64\" },\n    \"file_type\": { \"type\": \"string\", \"description\": \"Type de fichier (pdf, png, etc.)\" },\n    \"action\": { \"type\": \"string\", \"description\": \"Action: translate | summarize\" },\n    \"plugin_context\": { \"type\": \"object\", \"description\": \"Config pricing/ocr_thresholds\" }\n  },\n  \"oneOf\": [\n    { \"required\": [\"file_url\"] },\n    { \"required\": [\"file_base64\"] }\n  ]\n}\n```\n\n**Output:**\n- `estimation`: { tokens, pages, ocr_required, detected_language }\n- `credits`: { estimated, breakdown, max_possible }\n- `ocr_thresholds`: { applied, config }\n- `warnings`: array\n- `_trace`: { service_response, provider, mode, latency_ms, user_id, guild_id, user_request }\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"estimation\", \"credits\", \"ocr_thresholds\", \"warnings\"],\n  \"domain\": \"documents\"\n}\n```"
       }
     }
   ],
@@ -74,7 +127,47 @@
       "main": [
         [
           {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
             "node": "Estimate and Calculate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -95,33 +188,6 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "bd872b3b-b72e-4df8-88ac-7d7720bb1649",
-  "activeVersionId": "bd872b3b-b72e-4df8-88ac-7d7720bb1649",
-  "versionCounter": 21,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-01-19T14:52:01.704Z",
-      "createdAt": "2026-01-19T14:52:01.704Z",
-      "role": "workflow:owner",
-      "workflowId": "6T0xLTZnCo750HEf",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+    "callerPolicy": "workflowsFromSameOwner"
+  }
 }

@@ -1,21 +1,25 @@
 {
-  "updatedAt": "2025-12-18T15:17:14.000Z",
-  "createdAt": "2025-12-18T15:14:35.001Z",
-  "id": "HGu8rrdZeX4unms2",
   "name": "MCP - Image Embedder",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - Image Embedder\n\n**Endpoint:** POST /webhook/image-embedder\n\n**Description:** Analyse une image via GPT-4o-mini et genere un embedding semantique\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"user_id\", \"guild_id\", \"user_request\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (credits, quotas)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale\" },\n    \"image_url\": { \"type\": \"string\", \"description\": \"URL de l'image a analyser\" },\n    \"image_base64\": { \"type\": \"string\", \"description\": \"Image encodee en base64\" }\n  }\n}\n```\n\n**Note:** image_url OU image_base64 requis (au moins un des deux). API keys fournies par le systeme.\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": true,\n  \"accepts_media\": false,\n  \"output_fields\": [\"embedding\", \"analysis\", \"dimensions\"],\n  \"domain\": \"vision\"\n}\n```",
+        "height": 580,
+        "width": 340,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-100, -80]
+    },
     {
       "id": "webhook-img-embed",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        240,
-        300
-      ],
+      "position": [240, 300],
       "webhookId": "image-embedder-webhook",
       "parameters": {
         "httpMethod": "POST",
@@ -25,14 +29,16 @@
       }
     },
     {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Image Embedder\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required context fields ---\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst userRequest = body.user_request || ctx.user_request || '';\n\nif (!userId) {\n  errors.push('user_id requis');\n}\nif (!guildId) {\n  errors.push('guild_id requis');\n}\nif (!userRequest) {\n  errors.push('user_request requis');\n}\n\n// --- Image parameters (one of them required) ---\nconst imageUrl = body.image_url || ctx.image_url;\nconst imageBase64 = body.image_base64 || ctx.image_base64;\n\nif (!imageUrl && !imageBase64) {\n  errors.push('image_url ou image_base64 requis');\n}\n\n// --- API Keys (passed by the system) ---\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai || '';\n\nif (!openaiApiKey) {\n  errors.push('openai_api_key requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\n// --- Build image URL for API ---\nlet finalImageUrl = imageUrl;\nif (!imageUrl && imageBase64) {\n  // Check if it's already a data URL\n  if (imageBase64.startsWith('data:')) {\n    finalImageUrl = imageBase64;\n  } else {\n    finalImageUrl = 'data:image/jpeg;base64,' + imageBase64;\n  }\n}\n\nreturn {\n  valid: true,\n  imageUrl: finalImageUrl,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  openaiApiKey: openaiApiKey,\n  startTime: Date.now()\n};"
+      },
       "id": "validate-input",
       "name": "Validate Input",
-      "type": "n8n-nodes-base.if",
+      "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        460,
-        300
-      ],
+      "position": [460, 300]
+    },
+    {
       "parameters": {
         "conditions": {
           "options": {
@@ -42,46 +48,63 @@
           },
           "conditions": [
             {
-              "id": "condition-image",
-              "leftValue": "={{ $json.body.image_url || $json.body.image_base64 }}",
-              "rightValue": "",
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "exists"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
     },
     {
-      "id": "error-no-image",
-      "name": "Error: No Image",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        700,
-        460
-      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 480]
+    },
+    {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: image_url or image_base64\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"model\": \"clip\" } } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 400
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
-      }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 480]
     },
     {
       "id": "openai-vision",
       "name": "OpenAI Vision Embed",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        700,
-        200
-      ],
+      "position": [900, 200],
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/chat/completions",
@@ -91,7 +114,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $json.body.openai_api_key }}"
+              "value": "=Bearer {{ $json.openaiApiKey }}"
             },
             {
               "name": "Content-Type",
@@ -101,7 +124,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an image analysis expert. Generate a detailed semantic description of the image that can be used for similarity search and embedding. Return JSON with:\\n- description: Detailed description (2-3 sentences)\\n- objects: Array of detected objects\\n- scene: Overall scene type (indoor, outdoor, abstract, etc.)\\n- colors: Dominant colors\\n- mood: Image mood/atmosphere\\n- tags: Array of relevant tags for search\\n- style: Image style (photo, illustration, diagram, etc.)\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Analyze this image and generate semantic metadata for embedding:\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"{{ $json.body.image_url || ('data:image/jpeg;base64,' + $json.body.image_base64) }}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"max_tokens\": 500\n}",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an image analysis expert. Generate a detailed semantic description of the image that can be used for similarity search and embedding. Return JSON with:\\n- description: Detailed description (2-3 sentences)\\n- objects: Array of detected objects\\n- scene: Overall scene type (indoor, outdoor, abstract, etc.)\\n- colors: Dominant colors\\n- mood: Image mood/atmosphere\\n- tags: Array of relevant tags for search\\n- style: Image style (photo, illustration, diagram, etc.)\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"**Demande utilisateur:** {{ $json.user_request }}\\n\\nAnalyze this image and generate semantic metadata for embedding:\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"{{ $json.imageUrl }}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"max_tokens\": 500\n}",
         "options": {
           "timeout": 60000
         }
@@ -113,10 +136,7 @@
       "name": "Generate Embedding",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        920,
-        200
-      ],
+      "position": [1120, 200],
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/embeddings",
@@ -126,7 +146,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $('Webhook').first().json.body.openai_api_key }}"
+              "value": "=Bearer {{ $('Validate Input').first().json.openaiApiKey }}"
             },
             {
               "name": "Content-Type",
@@ -148,43 +168,31 @@
       "name": "Parse Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1140,
-        200
-      ],
+      "position": [1340, 200],
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst visionData = $('OpenAI Vision Embed').first().json;\n\nconst results = items.map(item => {\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: 'gpt-4o-mini + text-embedding-3-small'\n        }\n      }\n    };\n  }\n\n  try {\n    // Parse vision analysis\n    let analysis = {};\n    try {\n      analysis = JSON.parse(visionData.choices?.[0]?.message?.content || '{}');\n    } catch (e) {\n      analysis = { description: visionData.choices?.[0]?.message?.content || '' };\n    }\n    \n    // Get embedding\n    const embedding = item.json.data?.[0]?.embedding || [];\n    \n    return {\n      json: {\n        success: true,\n        data: {\n          embedding: embedding,\n          dimensions: embedding.length,\n          analysis: {\n            description: analysis.description || '',\n            objects: analysis.objects || [],\n            scene: analysis.scene || '',\n            colors: analysis.colors || [],\n            mood: analysis.mood || '',\n            tags: analysis.tags || [],\n            style: analysis.style || ''\n          }\n        },\n        meta: {\n          provider: 'openai',\n          vision_model: 'gpt-4o-mini',\n          embedding_model: 'text-embedding-3-small'\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to process image: ' + e.message,\n          status: 'PROCESS_ERROR'\n        },\n        meta: {\n          provider: 'openai'\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+        "jsCode": "// ============================================\n// PARSE RESPONSE - Image Embedder\n// ============================================\n\nconst items = $input.all();\nconst prevData = $('Validate Input').first().json;\nconst visionData = $('OpenAI Vision Embed').first().json;\n\n// --- Build trace helper ---\nconst buildTrace = (serviceResponse) => ({\n  llm_response: visionData,\n  service_response: serviceResponse,\n  provider: 'openai',\n  mode: 'sync',\n  latency_ms: Date.now() - (prevData.startTime || Date.now()),\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  user_request: prevData.user_request\n});\n\nconst results = items.map(item => {\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        _trace: buildTrace(item.json),\n        error: {\n          code: item.json.error.code || 'API_ERROR',\n          message: item.json.error.message || 'API error',\n          http_status: 500\n        },\n        meta: {\n          provider: 'openai',\n          model: 'gpt-4o-mini + text-embedding-3-small'\n        },\n        user_id: prevData.user_id,\n        guild_id: prevData.guild_id,\n        user_request: prevData.user_request\n      }\n    };\n  }\n\n  try {\n    // Parse vision analysis\n    let analysis = {};\n    try {\n      analysis = JSON.parse(visionData.choices?.[0]?.message?.content || '{}');\n    } catch (e) {\n      analysis = { description: visionData.choices?.[0]?.message?.content || '' };\n    }\n    \n    // Get embedding\n    const embedding = item.json.data?.[0]?.embedding || [];\n    \n    return {\n      json: {\n        success: true,\n        _trace: buildTrace(item.json),\n        data: {\n          embedding: embedding,\n          dimensions: embedding.length,\n          analysis: {\n            description: analysis.description || '',\n            objects: analysis.objects || [],\n            scene: analysis.scene || '',\n            colors: analysis.colors || [],\n            mood: analysis.mood || '',\n            tags: analysis.tags || [],\n            style: analysis.style || ''\n          }\n        },\n        meta: {\n          provider: 'openai',\n          vision_model: 'gpt-4o-mini',\n          embedding_model: 'text-embedding-3-small'\n        },\n        user_id: prevData.user_id,\n        guild_id: prevData.guild_id,\n        user_request: prevData.user_request\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        _trace: buildTrace({ error: e.message }),\n        error: {\n          code: 'PROCESS_ERROR',\n          message: 'Failed to process image: ' + e.message,\n          http_status: 500\n        },\n        meta: {\n          provider: 'openai'\n        },\n        user_id: prevData.user_id,\n        guild_id: prevData.guild_id,\n        user_request: prevData.user_request\n      }\n    };\n  }\n});\n\nreturn results;"
       }
     },
     {
       "id": "respond-success",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1360,
-        200
-      ],
+      "typeVersion": 1.1,
+      "position": [1560, 200],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
-      }
-    },
-    {
-      "id": "sticky-note-doc",
-      "name": "API Documentation",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        240,
-        60
-      ],
-      "parameters": {
-        "color": 6,
-        "width": 650,
-        "height": 300,
-        "content": "## MCP - Image Embedder\n\n**Endpoint:** POST /webhook/image-embedder\n\n**Parameters:**\n- `image_url` (required*): URL of image to embed\n- `image_base64` (required*): Base64-encoded image\n- `openai_api_key` (required): OpenAI API key\n\n*One of image_url or image_base64 is required\n\n**Process:**\n1. GPT-4o-mini analyzes image → semantic description\n2. Description embedded via text-embedding-3-small\n\n**Returns:**\n- `embedding`: Vector embedding (1536 dimensions)\n- `analysis`: description, objects, scene, colors, mood, tags, style\n\n**Use case:** Image similarity search, visual search"
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
       }
     }
   ],
@@ -204,6 +212,17 @@
       "main": [
         [
           {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
             "node": "OpenAI Vision Embed",
             "type": "main",
             "index": 0
@@ -211,7 +230,18 @@
         ],
         [
           {
-            "node": "Error: No Image",
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -254,33 +284,6 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "ffb9f253-c488-44fc-894e-990c48e4b035",
-  "activeVersionId": "ffb9f253-c488-44fc-894e-990c48e4b035",
-  "versionCounter": 369,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2025-12-18T15:14:35.003Z",
-      "createdAt": "2025-12-18T15:14:35.003Z",
-      "role": "workflow:owner",
-      "workflowId": "HGu8rrdZeX4unms2",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+    "callerPolicy": "workflowsFromSameOwner"
+  }
 }

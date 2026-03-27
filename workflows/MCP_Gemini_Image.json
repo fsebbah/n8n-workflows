@@ -1,30 +1,49 @@
 {
-  "updatedAt": "2025-12-27T23:45:22.000Z",
-  "createdAt": "2025-12-19T15:38:18.404Z",
-  "id": "De6a7Mdnj7z9hTlP",
   "name": "MCP Gemini Image",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
+      "id": "sticky-note-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-100, -80],
+      "parameters": {
+        "color": 6,
+        "width": 380,
+        "height": 780,
+        "content": "## MCP Gemini Image\n\n**Endpoint:** POST /webhook/gemini-image\n\n**Description:** Generateur d'images IA via Google Gemini/Vertex AI avec support multi-operations (generate, extractCharacter, createCharacterSheet, composeScene).\n\n**InputSchema:**\n```json\n{\n  \"required\": [],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (tracing)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord (tracing)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale\" },\n    \"operation\": { \"type\": \"string\", \"description\": \"Operation: generate, extractCharacter, createCharacterSheet, composeScene (default: generate)\" },\n    \"prompt\": { \"type\": \"string\", \"description\": \"Prompt de generation (operation: generate)\" },\n    \"sourceImage\": { \"type\": \"string\", \"description\": \"Image source base64/URL (operations: extractCharacter, createCharacterSheet)\" },\n    \"scenePrompt\": { \"type\": \"string\", \"description\": \"Description de scene (operation: composeScene)\" },\n    \"referenceImages\": { \"type\": \"array\", \"description\": \"Images de reference (operation: composeScene)\" },\n    \"aspectRatio\": { \"type\": \"string\", \"description\": \"Ratio (default: 16:9)\" },\n    \"outputFormat\": { \"type\": \"string\", \"description\": \"Format sortie (default: png)\" },\n    \"model\": { \"type\": \"string\", \"description\": \"Modele Gemini\" },\n    \"uploadToGcs\": { \"type\": \"boolean\", \"description\": \"Upload vers GCS\" },\n    \"gcsBucket\": { \"type\": \"string\", \"description\": \"Bucket GCS\" }\n  }\n}\n```\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": true,\n  \"accepts_media\": false,\n  \"output_fields\": [\"image\", \"gcs\", \"textFeedback\", \"metadata\"],\n  \"domain\": \"image-generation\"\n}\n```\n\n**Note:** user_id, guild_id, user_request sont optionnels (tracing uniquement)."
+      }
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "gemini-image-webhook",
       "parameters": {
         "httpMethod": "POST",
         "path": "gemini-image",
         "responseMode": "responseNode",
         "options": {}
-      },
-      "id": "webhook-trigger",
-      "name": "Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        240,
-        304
-      ],
-      "webhookId": "gemini-image-webhook"
+      }
     },
     {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Gemini Image\n// RFC-014: Extract context fields for tracing\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Tracing context fields (OPTIONAL - no validation errors) ---\nconst userId = body.user_id || ctx.user_id || body.userId || '';\nconst guildId = body.guild_id || ctx.guild_id || '';\nconst userRequest = body.user_request || ctx.user_request || '';\n\n// --- Operation detection ---\nconst operation = body.operation || ctx.operation || 'generate';\n\n// --- Operation-specific validation ---\nconst hasPrompt = !!(body.prompt || ctx.prompt);\nconst hasSourceImage = !!(body.sourceImage || ctx.sourceImage);\nconst hasScenePrompt = !!(body.scenePrompt || ctx.scenePrompt);\nconst hasReferenceImages = !!(body.referenceImages || ctx.referenceImages);\n\n// Validate based on operation\nswitch (operation) {\n  case 'generate':\n    if (!hasPrompt) {\n      errors.push('prompt requis pour operation generate');\n    }\n    break;\n    \n  case 'extractCharacter':\n  case 'createCharacterSheet':\n    if (!hasSourceImage) {\n      errors.push('sourceImage requis pour operation ' + operation);\n    }\n    break;\n    \n  case 'composeScene':\n    if (!hasScenePrompt) {\n      errors.push('scenePrompt requis pour operation composeScene');\n    }\n    break;\n    \n  default:\n    // For unknown operations, require at least one input\n    if (!hasPrompt && !hasSourceImage && !hasScenePrompt) {\n      errors.push('Au moins un input requis: prompt, sourceImage, ou scenePrompt');\n    }\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    operation: operation\n  };\n}\n\n// --- Extract all parameters ---\nconst aspectRatio = body.aspectRatio || ctx.aspectRatio || '16:9';\nconst outputFormat = body.outputFormat || ctx.outputFormat || 'png';\nconst model = body.model || ctx.model || 'gemini-2.5-flash-preview-native-audio-dialog';\nconst includeTextFeedback = body.includeTextFeedback === true || body.includeTextFeedback === 'true';\n\n// GCS upload parameters\nconst uploadToGcs = body.uploadToGcs === true || body.uploadToGcs === 'true';\nconst gcsBucket = body.gcsBucket || ctx.gcsBucket || '';\nconst gcsPathPrefix = body.gcsPathPrefix || ctx.gcsPathPrefix || 'gemini-images';\nconst signedUrlExpirationHours = body.signedUrlExpirationHours || ctx.signedUrlExpirationHours || 24;\n\nreturn {\n  valid: true,\n  operation: operation,\n  // Generate params\n  prompt: body.prompt || ctx.prompt || '',\n  // Extract/Sheet params\n  sourceImage: body.sourceImage || ctx.sourceImage || '',\n  sourceImageMimeType: body.sourceImageMimeType || ctx.sourceImageMimeType || 'image/png',\n  characterDescription: body.characterDescription || ctx.characterDescription || 'the main character',\n  views: body.views || ctx.views || ['front', 'back'],\n  // Compose params\n  referenceImages: body.referenceImages || ctx.referenceImages || [],\n  scenePrompt: body.scenePrompt || ctx.scenePrompt || '',\n  // Common params\n  aspectRatio: aspectRatio,\n  outputFormat: outputFormat,\n  model: model,\n  includeTextFeedback: includeTextFeedback,\n  uploadToGcs: uploadToGcs,\n  gcsBucket: gcsBucket,\n  gcsPathPrefix: gcsPathPrefix,\n  signedUrlExpirationHours: signedUrlExpirationHours,\n  // Tracing context\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now(),\n  originalRequest: { ...body }\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
       "parameters": {
         "conditions": {
           "options": {
@@ -34,55 +53,64 @@
           },
           "conditions": [
             {
-              "id": "condition-input",
-              "leftValue": "={{ $json.body.prompt || $json.body.sourceImage || $json.body.scenePrompt }}",
-              "rightValue": "",
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "exists"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],
           "combinator": "and"
         },
         "options": {}
-      },
-      "id": "check-input",
-      "name": "Has input?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        464,
-        304
-      ]
+      }
     },
     {
-      "parameters": {
-        "errorMessage": "={{ \"No input provided. Please send prompt (for generate), sourceImage (for extract/sheet), or scenePrompt (for compose) in the request body\" }}"
-      },
-      "id": "error-no-input",
-      "name": "Error: No Input",
-      "type": "n8n-nodes-base.stopAndError",
-      "typeVersion": 1,
-      "position": [
-        688,
-        432
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Prepare data for Gemini Image node\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\n// Get operation from request (default: generate)\nconst operation = body.operation || 'generate';\n\n// Common parameters\nconst aspectRatio = body.aspectRatio || '16:9';\nconst outputFormat = body.outputFormat || 'png';\nconst model = body.model || 'gemini-2.5-flash-preview-native-audio-dialog';\nconst includeTextFeedback = body.includeTextFeedback === true || body.includeTextFeedback === 'true';\n\n// GCS upload parameters\nconst uploadToGcs = body.uploadToGcs === true || body.uploadToGcs === 'true';\nconst gcsBucket = body.gcsBucket || '';\nconst gcsPathPrefix = body.gcsPathPrefix || 'gemini-images';\nconst signedUrlExpirationHours = body.signedUrlExpirationHours || 24;\nconst userId = body.userId || '';\n\n// Operation-specific parameters\nconst result = {\n  operation,\n  aspectRatio,\n  outputFormat,\n  model,\n  includeTextFeedback,\n  uploadToGcs,\n  gcsBucket,\n  gcsPathPrefix,\n  signedUrlExpirationHours,\n  userId,\n  originalRequest: { ...body }\n};\n\nswitch (operation) {\n  case 'generate':\n    result.prompt = body.prompt || '';\n    break;\n    \n  case 'extractCharacter':\n    result.sourceImage = body.sourceImage || '';\n    result.sourceImageMimeType = body.sourceImageMimeType || 'image/png';\n    result.characterDescription = body.characterDescription || 'the main character';\n    break;\n    \n  case 'createCharacterSheet':\n    result.sourceImage = body.sourceImage || '';\n    result.sourceImageMimeType = body.sourceImageMimeType || 'image/png';\n    result.views = body.views || ['front', 'back'];\n    break;\n    \n  case 'composeScene':\n    result.referenceImages = body.referenceImages || [];\n    result.scenePrompt = body.scenePrompt || '';\n    break;\n}\n\nreturn [{ json: result }];"
-      },
-      "id": "prepare-config",
-      "name": "Prepare Config",
+      "id": "build-error",
+      "name": "Build Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        688,
-        192
-      ]
+      "position": [900, 460],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'gemini-image',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  operation: input.operation,\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      }
     },
     {
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "gemini-image",
+      "name": "Gemini Image",
+      "type": "n8n-nodes-gemini-image.geminiImage",
+      "typeVersion": 1,
+      "position": [900, 200],
+      "credentials": {
+        "googleVertexAiApi": {
+          "id": "Yis7YQJ8FMrvHGzl",
+          "name": "Google Vertex AI account"
+        }
+      },
       "parameters": {
         "operation": "={{ $json.operation }}",
         "credentialType": "vertexai",
@@ -104,51 +132,31 @@
           "gcsBucket": "={{ $json.gcsBucket }}",
           "gcsPathPrefix": "={{ $json.gcsPathPrefix }}",
           "signedUrlExpirationHours": "={{ $json.signedUrlExpirationHours }}",
-          "userId": "={{ $json.userId }}"
-        }
-      },
-      "id": "gemini-image",
-      "name": "Gemini Image",
-      "type": "n8n-nodes-gemini-image.geminiImage",
-      "typeVersion": 1,
-      "position": [
-        912,
-        192
-      ],
-      "credentials": {
-        "googleVertexAiApi": {
-          "id": "Yis7YQJ8FMrvHGzl",
-          "name": "Google Vertex AI account"
+          "userId": "={{ $json.user_id }}"
         }
       }
     },
     {
-      "parameters": {
-        "jsCode": "// Format response\nconst input = $input.first().json;\nconst binary = $input.first().binary;\n\nconst response = {\n  success: true,\n  operation: input.operation,\n  image: {\n    base64: input.imageBase64,\n    mimeType: input.mimeType,\n    format: input.mimeType.split('/')[1]\n  },\n  model: input.model,\n  textFeedback: input.textFeedback || null,\n  metadata: input.metadata\n};\n\n// Add GCS info if present\nif (input.gcs) {\n  response.gcs = input.gcs;\n}\n\nreturn [{ json: response }];"
-      },
       "id": "format-response",
       "name": "Format Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1120,
-        192
-      ]
+      "position": [1120, 200],
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT RESPONSE - MCP Gemini Image\n// ============================================\n\nconst prevData = $('Validate Input').first().json;\nconst input = $input.first().json;\n\nconst response = {\n  success: true,\n  operation: input.operation || prevData.operation,\n  image: {\n    base64: input.imageBase64,\n    mimeType: input.mimeType,\n    format: input.mimeType ? input.mimeType.split('/')[1] : 'png'\n  },\n  model: input.model || prevData.model,\n  textFeedback: input.textFeedback || null,\n  metadata: input.metadata || {},\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  user_request: prevData.user_request,\n  _trace: {\n    service_response: {\n      operation: input.operation || prevData.operation,\n      model: input.model || prevData.model,\n      has_image: !!input.imageBase64,\n      has_gcs: !!input.gcs\n    },\n    provider: 'gemini-image',\n    mode: 'success',\n    latency_ms: Date.now() - prevData.startTime,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  }\n};\n\n// Add GCS info if present\nif (input.gcs) {\n  response.gcs = input.gcs;\n}\n\nreturn response;"
+      }
     },
     {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
-      },
       "id": "respond-success",
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1344,
-        192
-      ]
+      "position": [1340, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
     }
   ],
   "connections": {
@@ -156,36 +164,47 @@
       "main": [
         [
           {
-            "node": "Has input?",
+            "node": "Validate Input",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Has input?": {
+    "Validate Input": {
       "main": [
         [
           {
-            "node": "Prepare Config",
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Gemini Image",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Error: No Input",
+            "node": "Build Error",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Prepare Config": {
+    "Build Error": {
       "main": [
         [
           {
-            "node": "Gemini Image",
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -217,33 +236,6 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": {},
-  "versionId": "b297771f-9ce4-4c1c-8848-f8f276acab1e",
-  "activeVersionId": "b297771f-9ce4-4c1c-8848-f8f276acab1e",
-  "versionCounter": 361,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2025-12-19T15:38:18.410Z",
-      "createdAt": "2025-12-19T15:38:18.410Z",
-      "role": "workflow:owner",
-      "workflowId": "De6a7Mdnj7z9hTlP",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+    "callerPolicy": "workflowsFromSameOwner"
+  }
 }

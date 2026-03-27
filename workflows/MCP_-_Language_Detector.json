@@ -1,21 +1,25 @@
 {
-  "updatedAt": "2025-12-18T15:17:10.000Z",
-  "createdAt": "2025-12-18T15:14:50.310Z",
-  "id": "bggGYdqahk01bt0B",
   "name": "MCP - Language Detector",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
+    {
+      "id": "sticky-note-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-100, -80],
+      "parameters": {
+        "color": 6,
+        "width": 340,
+        "height": 580,
+        "content": "## MCP - Language Detector\n\n**Endpoint:** POST /webhook/language-detector\n\n**Description:** Detecte la langue d'un texte et retourne des informations detaillees.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"user_id\", \"guild_id\", \"user_request\", \"text\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (credits, quotas)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale\" },\n    \"text\": { \"type\": \"string\", \"description\": \"Texte a analyser pour detection de langue\" }\n  }\n}\n```\n\n**Note:** API keys fournies par le systeme.\n\n**Returns:**\n- `code`: ISO 639-1 language code (en, fr, es, de, zh, ja, ar, etc.)\n- `name`: Full language name in English\n- `confidence`: Detection confidence (0.0 to 1.0)\n- `script`: Writing script (latin, cyrillic, arabic, han, etc.)\n- `is_mixed`: Boolean if multiple languages detected\n- `languages`: Array of detected languages if mixed\n\n**Model:** gpt-4o-mini (fast, cost-effective)\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"code\", \"name\", \"confidence\", \"script\"],\n  \"domain\": \"language\"\n}\n```"
+      }
+    },
     {
       "id": "webhook-lang",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        240,
-        300
-      ],
+      "position": [240, 300],
       "webhookId": "language-detector-webhook",
       "parameters": {
         "httpMethod": "POST",
@@ -27,12 +31,19 @@
     {
       "id": "validate-input",
       "name": "Validate Input",
-      "type": "n8n-nodes-base.if",
+      "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        460,
-        300
-      ],
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Language Detector\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required context fields ---\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst userRequest = body.user_request || ctx.user_request;\n\nif (!userId) {\n  errors.push('user_id requis');\n}\nif (!guildId) {\n  errors.push('guild_id requis');\n}\nif (!userRequest) {\n  errors.push('user_request requis');\n}\n\n// --- Specific webhook parameters ---\nconst text = body.text || ctx.text;\n\nif (!text) {\n  errors.push('text requis');\n}\n\n// --- API Keys passed from MCP Server ---\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai || '';\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  text: text,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  openaiApiKey: openaiApiKey,\n  startTime: Date.now()\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
       "parameters": {
         "conditions": {
           "options": {
@@ -42,12 +53,12 @@
           },
           "conditions": [
             {
-              "id": "condition-text",
-              "leftValue": "={{ $json.body.text }}",
-              "rightValue": "",
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "exists"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],
@@ -57,19 +68,34 @@
       }
     },
     {
-      "id": "error-no-text",
-      "name": "Error: No Text",
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 460],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'openai',\n    model: 'gpt-4o-mini',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      }
+    },
+    {
+      "id": "respond-error",
+      "name": "Respond Error",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        700,
-        460
-      ],
+      "typeVersion": 1.1,
+      "position": [1120, 460],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: text\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"model\": \"gpt-4o-mini\" } } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 400
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       }
     },
@@ -78,10 +104,7 @@
       "name": "OpenAI Detect Language",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        700,
-        200
-      ],
+      "position": [900, 200],
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/chat/completions",
@@ -91,7 +114,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $json.body.openai_api_key }}"
+              "value": "=Bearer {{ $json.openaiApiKey }}"
             },
             {
               "name": "Content-Type",
@@ -101,7 +124,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a language detection expert. Detect the language of the given text and return a JSON object with:\\n- code: ISO 639-1 code (e.g., 'en', 'fr', 'es', 'de', 'zh', 'ja', 'ar')\\n- name: Full language name in English\\n- confidence: Confidence score 0.0 to 1.0\\n- script: Writing script (latin, cyrillic, arabic, han, etc.)\\n- is_mixed: Boolean if multiple languages detected\\n- languages: Array of detected languages if mixed\\n\\nReturn ONLY valid JSON.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Detect the language of this text:\\n\\n{{ $json.body.text.substring(0, 1000) }}\"\n    }\n  ],\n  \"temperature\": 0.1,\n  \"max_tokens\": 256\n}",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  const userRequest = data.user_request;\n  const textSample = data.text.substring(0, 1000);\n  \n  const systemPrompt = `You are a language detection expert. Detect the language of the given text and return a JSON object with:\n- code: ISO 639-1 code (e.g., 'en', 'fr', 'es', 'de', 'zh', 'ja', 'ar')\n- name: Full language name in English\n- confidence: Confidence score 0.0 to 1.0\n- script: Writing script (latin, cyrillic, arabic, han, etc.)\n- is_mixed: Boolean if multiple languages detected\n- languages: Array of detected languages if mixed\n\nUser context: \"${userRequest}\"\n\nReturn ONLY valid JSON.`;\n\n  return JSON.stringify({\n    model: 'gpt-4o-mini',\n    response_format: { type: 'json_object' },\n    messages: [\n      { role: 'system', content: systemPrompt },\n      { role: 'user', content: `Detect the language of this text:\\n\\n${textSample}` }\n    ],\n    temperature: 0.1,\n    max_tokens: 256\n  });\n})() }}",
         "options": {
           "timeout": 30000
         }
@@ -113,43 +136,31 @@
       "name": "Parse Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        920,
-        200
-      ],
+      "position": [1120, 200],
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst results = items.map(item => {\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'OpenAI API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: 'gpt-4o-mini'\n        }\n      }\n    };\n  }\n\n  try {\n    const content = item.json.choices?.[0]?.message?.content || '{}';\n    const detection = JSON.parse(content);\n    \n    return {\n      json: {\n        success: true,\n        data: {\n          code: detection.code || 'unknown',\n          name: detection.name || 'Unknown',\n          confidence: detection.confidence || 0,\n          script: detection.script || 'unknown',\n          is_mixed: detection.is_mixed || false,\n          languages: detection.languages || null,\n          text_sample: webhookData.body.text.substring(0, 100) + (webhookData.body.text.length > 100 ? '...' : '')\n        },\n        meta: {\n          provider: 'openai',\n          model: 'gpt-4o-mini'\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to parse detection response: ' + e.message,\n          status: 'PARSE_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: 'gpt-4o-mini'\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+        "jsCode": "// ============================================\n// PARSE LLM RESPONSE - Language Detector\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\n// --- Context fields for traceability ---\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\nconst statusCode = input.statusCode || 200;\n\n// Initialize trace with llm_response format\nconst _trace = {\n  llm_response: null,\n  service_response: null,\n  provider: 'openai',\n  model: 'gpt-4o-mini',\n  tokens: { input: 0, output: 0 },\n  latency_ms: 0,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\n// Handle API error\nif (statusCode >= 400 || input.error) {\n  const errorMsg = input.body?.error?.message || input.error?.message || 'OpenAI API error';\n  _trace.llm_response = `Error: ${errorMsg}`;\n  _trace.service_response = input.body || input;\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'LLM_ERROR',\n        message: errorMsg,\n        http_status: statusCode\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n// Extract response\nconst body = input.body || input;\nconst content = body.choices?.[0]?.message?.content || '{}';\nconst usage = body.usage || {};\n\n// Populate trace with LLM response\n_trace.llm_response = content;\n_trace.service_response = body;\n_trace.tokens = {\n  input: usage.prompt_tokens || 0,\n  output: usage.completion_tokens || 0\n};\n\n// Parse JSON from response\nlet detection;\ntry {\n  detection = JSON.parse(content);\n} catch (e) {\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'PARSE_ERROR',\n        message: 'Failed to parse detection response: ' + e.message,\n        http_status: 500\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n_trace.latency_ms = Date.now() - startTime;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      code: detection.code || 'unknown',\n      name: detection.name || 'Unknown',\n      confidence: detection.confidence || 0,\n      script: detection.script || 'unknown',\n      is_mixed: detection.is_mixed || false,\n      languages: detection.languages || null,\n      text_sample: prevData.text.substring(0, 100) + (prevData.text.length > 100 ? '...' : '')\n    },\n    meta: {\n      provider: 'openai',\n      model: 'gpt-4o-mini'\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: _trace\n  }\n};"
       }
     },
     {
       "id": "respond-success",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1140,
-        200
-      ],
+      "typeVersion": 1.1,
+      "position": [1360, 200],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
-      }
-    },
-    {
-      "id": "sticky-note-doc",
-      "name": "API Documentation",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        240,
-        60
-      ],
-      "parameters": {
-        "color": 6,
-        "width": 650,
-        "height": 260,
-        "content": "## MCP - Language Detector\n\n**Endpoint:** POST /webhook/language-detector\n\n**Parameters:**\n- `text` (required): Text to analyze\n- `openai_api_key` (required): OpenAI API key\n\n**Returns:**\n- `code`: ISO 639-1 language code (en, fr, es, de, zh, ja, ar, etc.)\n- `name`: Full language name in English\n- `confidence`: Detection confidence (0.0 to 1.0)\n- `script`: Writing script (latin, cyrillic, arabic, han, etc.)\n- `is_mixed`: Boolean if multiple languages detected\n- `languages`: Array of detected languages if mixed\n\n**Model:** gpt-4o-mini (fast, cost-effective)"
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
       }
     }
   ],
@@ -169,6 +180,17 @@
       "main": [
         [
           {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
             "node": "OpenAI Detect Language",
             "type": "main",
             "index": 0
@@ -176,7 +198,18 @@
         ],
         [
           {
-            "node": "Error: No Text",
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -208,33 +241,6 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "b4eecac0-5b63-4255-806e-39ac4a90b6c0",
-  "activeVersionId": "b4eecac0-5b63-4255-806e-39ac4a90b6c0",
-  "versionCounter": 369,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2025-12-18T15:14:50.313Z",
-      "createdAt": "2025-12-18T15:14:50.313Z",
-      "role": "workflow:owner",
-      "workflowId": "bggGYdqahk01bt0B",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+    "callerPolicy": "workflowsFromSameOwner"
+  }
 }
