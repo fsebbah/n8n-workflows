@@ -1,12 +1,19 @@
 {
-  "updatedAt": "2026-01-20T19:34:14.000Z",
-  "createdAt": "2026-01-07T11:14:58.273Z",
-  "id": "deFTjJpRp8ulaj3H",
   "name": "MCP Qdrant - Save",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP Qdrant - Save\n\n**Endpoint:** POST /webhook/qdrant-save\n\n**Description:** Saves entity data with optional Qdrant vector embedding storage.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"entity_type\", \"data\", \"qdrant_host\", \"qdrant_port\", \"qdrant_collection\", \"openai_api_key\"],\n  \"properties\": {\n    \"entity_type\": { \"type\": \"string\", \"description\": \"Type of entity being saved\" },\n    \"data\": { \"type\": \"object\", \"description\": \"Entity data to save (title, description, tags, etc.)\" },\n    \"qdrant_host\": { \"type\": \"string\", \"description\": \"Qdrant server hostname\" },\n    \"qdrant_port\": { \"type\": \"integer\", \"description\": \"Qdrant server port\" },\n    \"qdrant_collection\": { \"type\": \"string\", \"description\": \"Qdrant collection name\" },\n    \"openai_api_key\": { \"type\": \"string\", \"description\": \"OpenAI API key for embeddings\" },\n    \"user_id\": { \"type\": \"string\", \"description\": \"User ID (optional, for tracing)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Discord guild ID (optional, for tracing)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Original user request (optional, for tracing)\" },\n    \"store_embedding\": { \"type\": \"boolean\", \"description\": \"Whether to store embedding in Qdrant\", \"default\": true },\n    \"llm_metadata\": { \"type\": \"object\", \"description\": \"LLM provider metadata (optional)\" }\n  }\n}\n```\n\n**Note:** user_id, guild_id, user_request are OPTIONAL - extracted for tracing only.",
+        "height": 520,
+        "width": 380,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 80]
+    },
     {
       "parameters": {
         "httpMethod": "POST",
@@ -18,24 +25,18 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        240,
-        304
-      ],
+      "position": [240, 304],
       "webhookId": "recipes-save-webhook"
     },
     {
       "parameters": {
-        "jsCode": "  const input = $input.first().json;\n  const body = input.body || input;\n\n  const errors = [];\n\n  if (!body.entity_type) {\n    errors.push('Missing required parameter: entity_type');\n  }\n  if (!body.data) {\n    errors.push('Missing required parameter: data');\n  }\n  if (!body.user_id && !body.discord_user_id) {\n    errors.push('Missing required parameter: user_id or discord_user_id');\n  }\n  if (!body.qdrant_host) {\n    errors.push('Missing required parameter: qdrant_host');\n  }\n  if (!body.qdrant_port) {\n    errors.push('Missing required parameter: qdrant_port');\n  }\n  if (!body.qdrant_collection) {\n    errors.push('Missing required parameter: qdrant_collection');\n  }\n  if (!body.openai_api_key) {\n    errors.push('Missing required parameter: openai_api_key');\n  }\n\n  if (errors.length > 0) {\n    return [{\n      json: {\n        valid: false,\n        error: {\n          code: 400,\n          message: errors.join(', '),\n          status: 'BAD_REQUEST'\n        }\n      }\n    }];\n  }\n\n  const data = body.data;\n\n  // Build text for embedding (generic)\n  const embeddingText = [\n    data.title || '',\n    data.description || '',\n    (data.tags || []).join(' '),\n    (data.ingredients || []).map(i => typeof i === 'string' ? i : i.name).join(' '),\n    data.content || ''\n  ].join(' ').trim();\n\n  const qdrantUrl = `http://${body.qdrant_host}:${body.qdrant_port}`;\n\n  return [{\n    json: {\n      valid: true,\n      entity_type: body.entity_type,\n      data,\n      embedding_text: embeddingText,\n      user_id: body.user_id || body.discord_user_id,\n      store_embedding: body.store_embedding !== false,\n      llm_metadata: body.llm_metadata || {},\n      qdrant_url: qdrantUrl,\n      qdrant_collection: body.qdrant_collection,\n      openai_api_key: body.openai_api_key\n    }\n  }];"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Qdrant Save\n// RFC-014 Extraction Pattern\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- OPTIONAL context fields (for tracing, NO validation errors if missing) ---\nconst userId = body.user_id || ctx.user_id || body.discord_user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- REQUIRED webhook parameters ---\nconst entityType = body.entity_type || ctx.entity_type;\nconst data = body.data || ctx.data;\nconst qdrantHost = body.qdrant_host || ctx.qdrant_host;\nconst qdrantPort = body.qdrant_port || ctx.qdrant_port;\nconst qdrantCollection = body.qdrant_collection || ctx.qdrant_collection;\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key;\n\nif (!entityType) {\n  errors.push('entity_type requis');\n}\nif (!data) {\n  errors.push('data requis');\n}\nif (!qdrantHost) {\n  errors.push('qdrant_host requis');\n}\nif (!qdrantPort) {\n  errors.push('qdrant_port requis');\n}\nif (!qdrantCollection) {\n  errors.push('qdrant_collection requis');\n}\nif (!openaiApiKey) {\n  errors.push('openai_api_key requis');\n}\n\n// Optional parameters\nconst storeEmbedding = body.store_embedding !== false;\nconst llmMetadata = body.llm_metadata || ctx.llm_metadata || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\n// Build text for embedding (generic)\nconst embeddingText = [\n  data.title || '',\n  data.description || '',\n  (data.tags || []).join(' '),\n  (data.ingredients || []).map(i => typeof i === 'string' ? i : i.name).join(' '),\n  data.content || ''\n].join(' ').trim();\n\nconst qdrantUrl = `http://${qdrantHost}:${qdrantPort}`;\n\nreturn {\n  valid: true,\n  entity_type: entityType,\n  data: data,\n  embedding_text: embeddingText,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  store_embedding: storeEmbedding,\n  llm_metadata: llmMetadata,\n  qdrant_url: qdrantUrl,\n  qdrant_collection: qdrantCollection,\n  openai_api_key: openaiApiKey,\n  startTime: Date.now()\n};"
       },
       "id": "validate-input",
       "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        464,
-        304
-      ]
+      "position": [460, 304]
     },
     {
       "parameters": {
@@ -47,6 +48,7 @@
           },
           "conditions": [
             {
+              "id": "check-valid",
               "leftValue": "={{ $json.valid }}",
               "rightValue": true,
               "operator": {
@@ -63,27 +65,39 @@
       "name": "Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [
-        688,
-        304
-      ]
+      "position": [680, 304]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 480]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'recipes-save' } } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 400
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       },
-      "id": "error-validation",
-      "name": "Error: Validation",
+      "id": "respond-error",
+      "name": "Respond Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        912,
-        464
-      ]
+      "position": [1120, 480]
     },
     {
       "parameters": {
@@ -113,10 +127,7 @@
       "name": "Generate Embedding",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        912,
-        208
-      ],
+      "position": [912, 208],
       "onError": "continueRegularOutput"
     },
     {
@@ -127,10 +138,7 @@
       "name": "Prepare Qdrant",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1152,
-        208
-      ]
+      "position": [1152, 208]
     },
     {
       "parameters": {
@@ -171,10 +179,7 @@
       "name": "Store Embedding?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [
-        1392,
-        208
-      ]
+      "position": [1392, 208]
     },
     {
       "parameters": {
@@ -204,10 +209,7 @@
       "name": "Store in Qdrant",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1632,
-        112
-      ],
+      "position": [1632, 112],
       "onError": "continueRegularOutput"
     },
     {
@@ -216,10 +218,7 @@
       "name": "Skip Qdrant",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [
-        1632,
-        304
-      ]
+      "position": [1632, 304]
     },
     {
       "parameters": {},
@@ -227,10 +226,7 @@
       "name": "Merge",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [
-        1872,
-        208
-      ]
+      "position": [1872, 208]
     },
     {
       "parameters": {
@@ -256,55 +252,40 @@
       "name": "Save to API",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        2256,
-        208
-      ],
+      "position": [2256, 208],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "  const input = $input.first().json;\n  const prevData = $('Validate Input').first().json;\n  const qdrantData = $('Prepare Qdrant').first().json;\n\n  try {\n    if (input.error) {\n      return [{\n        json: {\n          success: false,\n          error: {\n            code: input.error.status || 500,\n            message: input.error.message || 'API save failed',\n            status: 'API_ERROR'\n          },\n          meta: { provider: 'api' }\n        }\n      }];\n    }\n\n    return [{\n      json: {\n        success: true,\n        data: {\n          entity_id: input.data?.id || input.id,\n          entity_type: prevData.entity_type,\n          stored_in_qdrant: !!qdrantData.embedding,\n          qdrant_point_id: qdrantData.point_id || null,\n          entity: prevData.data\n        },\n        meta: {\n          provider: 'api+qdrant',\n          api_response: input\n        }\n      }\n    }];\n  } catch (e) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to process save: ' + e.message,\n          status: 'PROCESS_ERROR'\n        },\n        meta: { provider: 'api' }\n      }\n    }];\n  }"
+        "jsCode": "// ============================================\n// FORMAT OUTPUT - MCP Qdrant Save\n// With _trace for RFC-014 compliance\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst qdrantData = $('Prepare Qdrant').first().json;\nconst startTime = prevData.startTime || Date.now();\n\n// --- Context fields for traceability ---\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\ntry {\n  if (input.error) {\n    return [{\n      json: {\n        success: false,\n        _trace: {\n          service_response: input,\n          provider: 'api',\n          mode: 'error',\n          latency_ms: Date.now() - startTime,\n          user_id: userId,\n          guild_id: guildId,\n          user_request: userRequest\n        },\n        error: {\n          code: 'API_ERROR',\n          message: input.error.message || 'API save failed',\n          http_status: input.error.status || 500\n        },\n        user_id: userId,\n        guild_id: guildId,\n        user_request: userRequest\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      success: true,\n      data: {\n        entity_id: input.data?.id || input.id,\n        entity_type: prevData.entity_type,\n        stored_in_qdrant: !!qdrantData.embedding,\n        qdrant_point_id: qdrantData.point_id || null,\n        entity: prevData.data\n      },\n      _trace: {\n        service_response: { api: input, qdrant: qdrantData.embedding ? 'stored' : 'skipped' },\n        provider: 'api+qdrant',\n        mode: 'success',\n        latency_ms: Date.now() - startTime,\n        user_id: userId,\n        guild_id: guildId,\n        user_request: userRequest\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      _trace: {\n        service_response: { error: e.message },\n        provider: 'api',\n        mode: 'error',\n        latency_ms: Date.now() - startTime,\n        user_id: userId,\n        guild_id: guildId,\n        user_request: userRequest\n      },\n      error: {\n        code: 'PROCESS_ERROR',\n        message: 'Failed to process save: ' + e.message,\n        http_status: 500\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest\n    }\n  }];\n}"
       },
       "id": "format-output",
       "name": "Format Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        2496,
-        208
-      ]
+      "position": [2496, 208]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
       },
       "id": "respond-success",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        2736,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "content": "## Recipes - Save\n\n**Endpoint:** POST /webhook/recipes-save\n\n**Parameters:**\n- `recipe` (required): Full recipe object\n- `user_id` or `discord_user_id` (required): User identifier\n- `store_embedding` (optional): Store in Qdrant (default: true)\n- `llm_metadata` (optional): Provider info for tracking\n\n**Actions:** Generates embedding → Stores in Qdrant → Saves to API",
-        "height": 180,
-        "width": 550,
-        "color": 4
-      },
-      "id": "sticky-note-doc",
-      "name": "API Documentation",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        240,
-        80
-      ]
+      "position": [2736, 208]
     },
     {
       "parameters": {
@@ -312,10 +293,7 @@
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        2048,
-        208
-      ],
+      "position": [2048, 208],
       "id": "3d15bfbd-98da-4453-8922-44f420eef961",
       "name": "Parse json"
     }
@@ -354,7 +332,18 @@
         ],
         [
           {
-            "node": "Error: Validation",
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -472,31 +461,5 @@
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": {},
-  "versionId": "cfdd3ddf-4764-48c5-a23e-169ebafea295",
-  "activeVersionId": "cfdd3ddf-4764-48c5-a23e-169ebafea295",
-  "versionCounter": 78,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-01-07T11:14:58.278Z",
-      "createdAt": "2026-01-07T11:14:58.278Z",
-      "role": "workflow:owner",
-      "workflowId": "deFTjJpRp8ulaj3H",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+  }
 }

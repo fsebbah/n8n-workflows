@@ -1,0 +1,345 @@
+{
+  "name": "MCP - Tenant - Resolve",
+  "nodes": [
+    {
+      "id": "sticky-note-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-100, -80],
+      "parameters": {
+        "color": 6,
+        "width": 340,
+        "height": 480,
+        "content": "## MCP - Tenant - Resolve\n\n**Endpoint:** POST /webhook/tenant-resolve\n\n**Description:** Resolves Discord user_id to tenant_id via API backend.\n\n**InputSchema:**\n```json\n{\n  \"type\": \"object\",\n  \"required\": [\"action\", \"user_id\"],\n  \"properties\": {\n    \"action\": {\n      \"type\": \"string\",\n      \"enum\": [\"resolve\"],\n      \"description\": \"Action a effectuer\"\n    },\n    \"user_id\": {\n      \"type\": \"string\",\n      \"description\": \"Discord user ID\"\n    },\n    \"guild_id\": {\n      \"type\": \"string\",\n      \"description\": \"Discord guild ID (optionnel)\"\n    }\n  }\n}\n```\n\n**Returns:**\n- `tenant_id`: Resolved tenant identifier\n- `user_id`: Original Discord user ID\n- `subscription_status`: Subscription status\n- `_trace`: Traceability information\n\n**RFC:** RFC-049 Entity Storage Architecture"
+      }
+    },
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "tenant-resolve-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tenant-resolve",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Tenant Resolve\n// RFC-049 Entity Storage Architecture\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED fields ---\nconst action = body.action || ctx.action;\nconst userId = body.user_id || ctx.user_id;\n\n// --- OPTIONAL fields ---\nconst guildId = body.guild_id || ctx.guild_id || null;\n\nif (!action) {\n  errors.push('action requis');\n} else if (action !== 'resolve') {\n  errors.push('action doit etre \"resolve\"');\n}\n\nif (!userId) {\n  errors.push('user_id requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId\n  };\n}\n\nreturn {\n  valid: true,\n  action: action,\n  user_id: userId,\n  guild_id: guildId,\n  startTime: Date.now()\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "build-validation-error",
+      "name": "Build Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 460],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'n8n',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', ')\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "call-api-backend",
+      "name": "Call API Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.N8N_API_URL }}/n8n/tenants/resolve",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $json.user_id }}"
+            },
+            {
+              "name": "guild_id",
+              "value": "={{ $json.guild_id || '' }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.N8N_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "if-api-success",
+      "name": "API Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1140, 200],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-tenant-id",
+              "leftValue": "={{ $json.tenant_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "build-success-response",
+      "name": "Build Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1380, 100],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD SUCCESS RESPONSE\n// RFC-049 Entity Storage Architecture\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst latencyMs = Date.now() - startTime;\n\nreturn {\n  success: true,\n  data: {\n    tenant_id: input.tenant_id,\n    user_id: prevData.user_id,\n    subscription_status: input.subscription_status || 'active'\n  },\n  _trace: {\n    service_response: input,\n    provider: 'api-backend',\n    mode: 'resolve',\n    latency_ms: latencyMs,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+      }
+    },
+    {
+      "id": "build-not-found-error",
+      "name": "Build Not Found Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1380, 300],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD NOT FOUND ERROR\n// RFC-049 Entity Storage Architecture\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst latencyMs = Date.now() - startTime;\n\nreturn {\n  success: false,\n  error: {\n    code: 'USER_NOT_FOUND',\n    message: `No tenant found for user_id ${prevData.user_id}`\n  },\n  _trace: {\n    service_response: input,\n    provider: 'api-backend',\n    mode: 'error',\n    latency_ms: latencyMs,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1620, 100],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "respond-not-found",
+      "name": "Respond Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1620, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 404,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Call API Backend",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call API Backend": {
+      "main": [
+        [
+          {
+            "node": "API Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Success?": {
+      "main": [
+        [
+          {
+            "node": "Build Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Not Found Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Success Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Not Found Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

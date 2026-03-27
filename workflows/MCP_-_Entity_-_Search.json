@@ -1,0 +1,665 @@
+{
+  "name": "MCP - Entity - Search",
+  "nodes": [
+    {
+      "id": "sticky-note-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-100, -80],
+      "parameters": {
+        "color": 6,
+        "width": 400,
+        "height": 780,
+        "content": "## MCP - Entity - Search\n\n**Endpoint:** POST /webhook/entity-search\n\n**Description:** Recherche semantique multi-tenant dans Qdrant avec enrichissement MongoDB optionnel. Remplace MCP Qdrant - Search (RFC-049).\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"action\", \"query\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"search\", \"similar\"], \"description\": \"search=par query, similar=par entity_id\" },\n    \"query\": { \"type\": \"string\", \"description\": \"Texte de recherche (pour action=search)\" },\n    \"entity_id\": { \"type\": \"string\", \"description\": \"UUID pour recherche similaire (pour action=similar)\" },\n    \"entity_type\": { \"type\": \"string\", \"description\": \"Filtrer par type d'entite\" },\n    \"limit\": { \"type\": \"integer\", \"default\": 10, \"description\": \"Nombre de resultats max\" },\n    \"enrich\": { \"type\": \"boolean\", \"default\": false, \"description\": \"Enrichir depuis MongoDB\" },\n    \"fields\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"Champs a recuperer depuis DB\" },\n    \"filters\": { \"type\": \"object\", \"description\": \"Filtres additionnels Qdrant\" },\n    \"user_id\": { \"type\": \"string\" },\n    \"guild_id\": { \"type\": \"string\" },\n    \"qdrant_host\": { \"type\": \"string\" },\n    \"qdrant_port\": { \"type\": \"integer\" },\n    \"qdrant_collection\": { \"type\": \"string\" },\n    \"api_key\": { \"type\": \"string\", \"description\": \"Qdrant API key (fallback)\" },\n    \"openai_api_key\": { \"type\": \"string\" }\n  }\n}\n```\n\n**Headers:**\n- `X-Tenant-ID`: Tenant identifier (REQUIRED for multi-tenant isolation)\n\n**Multi-tenant:** CRITICAL - Qdrant queries MUST filter by tenant_id.\n\n**Returns:**\n- `results`: Array avec score et payload\n- `entity`: Donnees enrichies MongoDB (si enrich=true)\n- `_trace`: Informations de tracabilite"
+      }
+    },
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "entity-search-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "entity-search",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Entity Search\n// RFC-049: Multi-tenant Qdrant with MongoDB enrichment\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- CRITICAL: Multi-tenant isolation via X-Tenant-ID header ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || body.tenant_id || ctx.tenant_id;\n\nif (!tenantId) {\n  errors.push('X-Tenant-ID header requis pour isolation multi-tenant');\n}\n\n// --- OPTIONAL context fields (tracing only) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- REQUIRED parameters ---\nconst action = body.action || ctx.action;\nconst query = body.query || ctx.query;\nconst entityId = body.entity_id || ctx.entity_id;\n\nif (!action) {\n  errors.push('action requis (search ou similar)');\n} else if (!['search', 'similar'].includes(action)) {\n  errors.push('action doit etre search ou similar');\n}\n\nif (action === 'search' && !query) {\n  errors.push('query requis pour action=search');\n}\n\nif (action === 'similar' && !entityId) {\n  errors.push('entity_id requis pour action=similar');\n}\n\n// --- Qdrant configuration ---\nconst qdrantHost = body.qdrant_host || ctx.qdrant_host;\nconst qdrantPort = body.qdrant_port || ctx.qdrant_port;\nconst qdrantCollection = body.qdrant_collection || ctx.qdrant_collection;\n\n// Fallback: qdrant_api_key = body.qdrant_api_key || body.api_key (legacy compatibility)\nconst qdrantApiKey = body.qdrant_api_key || ctx.qdrant_api_key || body.api_key || ctx.api_key || '';\n\nif (!qdrantHost) {\n  errors.push('qdrant_host requis');\n}\nif (!qdrantPort) {\n  errors.push('qdrant_port requis');\n}\nif (!qdrantCollection) {\n  errors.push('qdrant_collection requis');\n}\n\n// --- OpenAI for embeddings (required for action=search) ---\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai;\n\nif (action === 'search' && !openaiApiKey) {\n  errors.push('openai_api_key requis pour action=search');\n}\n\n// --- Optional enrichment parameters ---\nconst enrich = body.enrich || ctx.enrich || false;\nconst fields = body.fields || ctx.fields || [];\nconst entityType = body.entity_type || ctx.entity_type || '';\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nconst qdrantUrl = `http://${qdrantHost}:${qdrantPort}`;\n\nreturn {\n  valid: true,\n  action: action,\n  query: query || '',\n  entity_id: entityId || '',\n  entity_type: entityType,\n  limit: body.limit || ctx.limit || 10,\n  filters: body.filters || ctx.filters || {},\n  enrich: enrich,\n  fields: fields,\n  tenant_id: tenantId,\n  qdrant_url: qdrantUrl,\n  qdrant_collection: qdrantCollection,\n  qdrant_api_key: qdrantApiKey,\n  openai_api_key: openaiApiKey || '',\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 460],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'qdrant+api',\n    model: 'text-embedding-3-small',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      }
+    },
+    {
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 460],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "switch-action",
+      "name": "Switch Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [900, 200],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "search",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "search",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "similar",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "similar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      }
+    },
+    {
+      "id": "generate-embedding",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": {{ JSON.stringify($json.query) }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "search-qdrant",
+      "name": "Search Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1380, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate Input').first().json.qdrant_url }}/collections/{{ $('Validate Input').first().json.qdrant_collection }}/points/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $('Validate Input').first().json.qdrant_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.data[0].embedding) }},\n  \"limit\": {{ $('Validate Input').first().json.limit }},\n  \"with_payload\": true,\n  \"with_vector\": false,\n  \"score_threshold\": 0.5,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"tenant_id\",\n        \"match\": {\n          \"value\": {{ JSON.stringify($('Validate Input').first().json.tenant_id) }}\n        }\n      }\n    ]\n  }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "get-entity-vector",
+      "name": "Get Entity Vector",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.qdrant_url }}/collections/{{ $json.qdrant_collection }}/points/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $json.qdrant_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"tenant_id\",\n        \"match\": {\n          \"value\": {{ JSON.stringify($json.tenant_id) }}\n        }\n      },\n      {\n        \"key\": \"entity_id\",\n        \"match\": {\n          \"value\": {{ JSON.stringify($json.entity_id) }}\n        }\n      }\n    ]\n  },\n  \"limit\": 1,\n  \"with_payload\": true,\n  \"with_vector\": true\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "search-similar",
+      "name": "Search Similar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1380, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate Input').first().json.qdrant_url }}/collections/{{ $('Validate Input').first().json.qdrant_collection }}/points/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $('Validate Input').first().json.qdrant_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"vector\": {{ $json.result && $json.result[0] && $json.result[0].vector ? JSON.stringify($json.result[0].vector) : '[]' }},\n  \"limit\": {{ $('Validate Input').first().json.limit + 1 }},\n  \"with_payload\": true,\n  \"with_vector\": false,\n  \"score_threshold\": 0.5,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"tenant_id\",\n        \"match\": {\n          \"value\": {{ JSON.stringify($('Validate Input').first().json.tenant_id) }}\n        }\n      }\n    ],\n    \"must_not\": [\n      {\n        \"key\": \"entity_id\",\n        \"match\": {\n          \"value\": {{ JSON.stringify($('Validate Input').first().json.entity_id) }}\n        }\n      }\n    ]\n  }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1620, 200],
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "empty"
+      }
+    },
+    {
+      "id": "prepare-enrichment",
+      "name": "Prepare Enrichment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 200],
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE ENRICHMENT - Process Qdrant results\n// RFC-049: Prepare for optional MongoDB enrichment\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\n// Handle API errors\nif (input.error || input.status?.error) {\n  return {\n    success: false,\n    qdrant_error: true,\n    error_message: input.error?.message || input.status?.error || 'Qdrant search failed',\n    raw_response: input,\n    prevData: prevData\n  };\n}\n\n// Extract results from Qdrant response\nconst results = (input.result || []).map(item => ({\n  entity_id: item.payload?.entity_id || item.id,\n  score: item.score,\n  payload: item.payload || {}\n}));\n\n// Extract entity IDs for batch enrichment\nconst entityIds = results.map(r => r.entity_id).filter(id => id);\n\nreturn {\n  success: true,\n  results: results,\n  entity_ids: entityIds,\n  enrich: prevData.enrich,\n  entity_type: prevData.entity_type,\n  fields: prevData.fields,\n  tenant_id: prevData.tenant_id,\n  prevData: prevData\n};"
+      }
+    },
+    {
+      "id": "if-enrich",
+      "name": "Enrich?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2060, 200],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-enrich",
+              "leftValue": "={{ $json.enrich }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "check-entity-type",
+              "leftValue": "={{ $json.entity_type }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "batch-enrich",
+      "name": "Batch Enrich MongoDB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2280, 100],
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:3000/api/n8n/entities/{{ $json.entity_type }}/batch",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $json.prevData.qdrant_api_key }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"ids\": {{ JSON.stringify($json.entity_ids) }},\n  \"fields\": {{ JSON.stringify($json.fields) }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "merge-enriched",
+      "name": "Merge Enriched",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2520, 100],
+      "parameters": {
+        "jsCode": "// ============================================\n// MERGE ENRICHED - Combine Qdrant with MongoDB data\n// RFC-049: Join search results with entity details\n// ============================================\n\nconst input = $input.first().json;\nconst prepData = $('Prepare Enrichment').first().json;\n\n// If enrichment request failed, continue with Qdrant data only\nif (input.error || !input.data) {\n  return {\n    results: prepData.results,\n    enrichment_failed: true,\n    enrichment_error: input.error?.message || 'Batch enrichment failed',\n    prevData: prepData.prevData\n  };\n}\n\n// Create lookup map from MongoDB response\nconst entityMap = {};\nif (input.data && Array.isArray(input.data)) {\n  input.data.forEach(entity => {\n    if (entity._id || entity.id) {\n      entityMap[entity._id || entity.id] = entity;\n    }\n  });\n}\n\n// Merge Qdrant results with MongoDB entities\nconst mergedResults = prepData.results.map(result => {\n  const entityData = entityMap[result.entity_id] || null;\n  return {\n    entity_id: result.entity_id,\n    score: result.score,\n    payload: result.payload,\n    entity: entityData\n  };\n});\n\nreturn {\n  results: mergedResults,\n  enriched: true,\n  prevData: prepData.prevData\n};"
+      }
+    },
+    {
+      "id": "skip-enrichment",
+      "name": "Skip Enrichment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2280, 300],
+      "parameters": {
+        "jsCode": "// ============================================\n// SKIP ENRICHMENT - Pass through Qdrant results\n// ============================================\n\nconst input = $input.first().json;\n\nconst results = input.results.map(result => ({\n  entity_id: result.entity_id,\n  score: result.score,\n  payload: result.payload,\n  entity: null\n}));\n\nreturn {\n  results: results,\n  enriched: false,\n  prevData: input.prevData\n};"
+      }
+    },
+    {
+      "id": "merge-final",
+      "name": "Merge Final",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2740, 200],
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "empty"
+      }
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2960, 200],
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT OUTPUT - MCP Entity Search\n// RFC-049: Final response with _trace\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = input.prevData || $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\n// --- Context fields for traceability ---\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\n// Initialize trace\nconst _trace = {\n  service_response: {},\n  provider: 'qdrant+api',\n  model: 'text-embedding-3-small',\n  latency_ms: 0,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\ntry {\n  // Check for Qdrant error from Prepare Enrichment\n  const prepData = $('Prepare Enrichment').first().json;\n  \n  if (prepData.qdrant_error) {\n    _trace.service_response = { qdrant: prepData.raw_response };\n    _trace.latency_ms = Date.now() - startTime;\n    \n    return {\n      json: {\n        success: false,\n        error: {\n          code: 'SEARCH_ERROR',\n          message: prepData.error_message,\n          http_status: 500\n        },\n        meta: { provider: 'qdrant+api', collection: prevData.qdrant_collection },\n        user_id: userId,\n        guild_id: guildId,\n        user_request: userRequest,\n        _trace: _trace\n      }\n    };\n  }\n\n  const results = input.results || [];\n\n  // Apply additional filters if any\n  let filtered = results;\n  const filters = prevData.filters || {};\n\n  if (filters.entity_type && prevData.entity_type) {\n    filtered = filtered.filter(r => r.payload?.entity_type === prevData.entity_type);\n  }\n\n  // Populate trace\n  _trace.service_response = {\n    qdrant: { result_count: results.length },\n    api: input.enriched ? { enriched_count: results.filter(r => r.entity).length } : null\n  };\n  _trace.latency_ms = Date.now() - startTime;\n\n  return {\n    json: {\n      success: true,\n      data: {\n        results: filtered.slice(0, prevData.limit),\n        total: filtered.length\n      },\n      meta: {\n        provider: 'qdrant+api',\n        collection: prevData.qdrant_collection,\n        action: prevData.action,\n        enriched: input.enriched || false,\n        tenant_id: prevData.tenant_id\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n} catch (e) {\n  _trace.service_response = { error: e.message };\n  _trace.latency_ms = Date.now() - startTime;\n\n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'PROCESS_ERROR',\n        message: 'Failed to process search results: ' + e.message,\n        http_status: 500\n      },\n      meta: { provider: 'qdrant+api' },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3180, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Switch Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Action": {
+      "main": [
+        [
+          {
+            "node": "Generate Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Entity Vector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embedding": {
+      "main": [
+        [
+          {
+            "node": "Search Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Entity Vector": {
+      "main": [
+        [
+          {
+            "node": "Search Similar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Similar": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Prepare Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Enrich?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich?": {
+      "main": [
+        [
+          {
+            "node": "Batch Enrich MongoDB",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Enrich MongoDB": {
+      "main": [
+        [
+          {
+            "node": "Merge Enriched",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Enriched": {
+      "main": [
+        [
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Final": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

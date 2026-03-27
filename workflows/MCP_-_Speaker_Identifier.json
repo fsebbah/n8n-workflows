@@ -1,12 +1,22 @@
 {
-  "updatedAt": "2025-12-18T08:39:26.000Z",
-  "createdAt": "2025-12-18T08:39:17.990Z",
-  "id": "zp2f63S20SLgs22o",
   "name": "MCP - Speaker Identifier",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - Speaker Identifier\n\n**Endpoint:** POST /webhook/speaker-identifier\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"data\", \"assemblyai_api_key\"],\n  \"properties\": {\n    \"data\": { \"type\": \"string\", \"description\": \"Audio URL or base64 encoded audio\" },\n    \"assemblyai_api_key\": { \"type\": \"string\", \"description\": \"AssemblyAI API key\" },\n    \"source\": { \"type\": \"string\", \"description\": \"'url' or 'base64' (default: url)\" },\n    \"options.speakers_expected\": { \"type\": \"number\", \"description\": \"Number of expected speakers\" },\n    \"options.language\": { \"type\": \"string\", \"description\": \"Language code or 'auto'\" },\n    \"options.include_transcription\": { \"type\": \"boolean\", \"description\": \"Include full transcript (default: true)\" },\n    \"user_id\": { \"type\": \"string\", \"description\": \"User ID (optional, for tracing)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Guild ID (optional, for tracing)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"User request (optional, for tracing)\" }\n  }\n}\n```\n\n**RFC-014 Context Support:**\n```json\n{\n  \"context\": {\n    \"data\": \"https://...\",\n    \"source\": \"url\"\n  },\n  \"plugin_context\": {\n    \"api_keys\": { \"assemblyai\": \"...\" }\n  }\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"data\": { \"speakers\": [...], \"utterances\": [...] },\n  \"meta\": { \"provider\": \"assemblyai\" },\n  \"_trace\": { ... }\n}\n```\n\n**API:** AssemblyAI Speaker Diarization",
+        "height": 620,
+        "width": 420,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        40,
+        -200
+      ]
+    },
     {
       "parameters": {
         "httpMethod": "POST",
@@ -26,30 +36,11 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "condition-data",
-              "leftValue": "={{ $json.body.data }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "exists"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
+        "jsCode": "// ============================================\n// VALIDATION INPUT - RFC-014 Compatible\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- OPTIONAL context fields (for tracing only, NO validation errors) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Extract audio data ---\nconst data = ctx.data || body.data;\nconst source = ctx.source || body.source || 'url';\nconst options = ctx.options || body.options || {};\n\n// --- Extract API key ---\nconst assemblyaiKey = body.assemblyai_api_key \n  || ctx.assemblyai_api_key \n  || body.plugin_context?.api_keys?.assemblyai \n  || ctx.plugin_context?.api_keys?.assemblyai;\n\n// --- Validation (REQUIRED fields only) ---\nif (!data) errors.push('data (audio URL or base64) is required');\nif (!assemblyaiKey) errors.push('assemblyai_api_key is required');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  data: data,\n  source: source,\n  options: options,\n  assemblyai_api_key: assemblyaiKey,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
       },
       "id": "validate-input",
       "name": "Validate Input",
-      "type": "n8n-nodes-base.if",
+      "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         460,
@@ -58,18 +49,71 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR - with _trace\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        480
+      ]
+    },
+    {
+      "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Missing required field: data (URL or base64 audio)' } }) }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 400
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       },
-      "id": "error-invalid-input",
-      "name": "Error Invalid Input",
+      "id": "respond-error",
+      "name": "Respond Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        680,
+        1120,
         480
       ]
     },
@@ -84,7 +128,7 @@
           "conditions": [
             {
               "id": "condition-source",
-              "leftValue": "={{ $json.body.source }}",
+              "leftValue": "={{ $json.source }}",
               "rightValue": "base64",
               "operator": {
                 "type": "string",
@@ -101,21 +145,21 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        680,
-        300
+        900,
+        200
       ]
     },
     {
       "parameters": {
-        "jsCode": "// For base64 input, we need to upload to a temporary storage\nconst base64Data = $input.first().json.body.data;\nconst options = $input.first().json.body.options || {};\nconst apiKey = $input.first().json.body.assemblyai_api_key;\n\n// Remove data URL prefix if present\nconst cleanBase64 = base64Data.replace(/^data:audio\\/[a-z]+;base64,/, '');\n\nreturn {\n  json: {\n    audioBase64: cleanBase64,\n    options: options,\n    needsUpload: true,\n    assemblyai_api_key: apiKey\n  }\n};"
+        "jsCode": "// For base64 input, we need to upload to a temporary storage\nconst prevData = $('Validate Input').first().json;\nconst base64Data = prevData.data;\nconst options = prevData.options || {};\nconst apiKey = prevData.assemblyai_api_key;\n\n// Remove data URL prefix if present\nconst cleanBase64 = base64Data.replace(/^data:audio\\/[a-z]+;base64,/, '');\n\nreturn {\n  json: {\n    audioBase64: cleanBase64,\n    options: options,\n    needsUpload: true,\n    assemblyai_api_key: apiKey,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request,\n    startTime: prevData.startTime\n  }\n};"
       },
       "id": "prepare-base64",
       "name": "Prepare Base64",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        900,
-        200
+        1120,
+        100
       ]
     },
     {
@@ -148,48 +192,48 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1120,
-        200
+        1340,
+        100
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Prepare URL audio input\nconst audioUrl = $input.first().json.body.data;\nconst options = $input.first().json.body.options || {};\nconst apiKey = $input.first().json.body.assemblyai_api_key;\n\nreturn {\n  json: {\n    audioUrl: audioUrl,\n    options: options,\n    needsUpload: false,\n    assemblyai_api_key: apiKey\n  }\n};"
+        "jsCode": "// Prepare URL audio input\nconst prevData = $('Validate Input').first().json;\nconst audioUrl = prevData.data;\nconst options = prevData.options || {};\nconst apiKey = prevData.assemblyai_api_key;\n\nreturn {\n  json: {\n    audioUrl: audioUrl,\n    options: options,\n    needsUpload: false,\n    assemblyai_api_key: apiKey,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request,\n    startTime: prevData.startTime\n  }\n};"
       },
       "id": "prepare-url",
       "name": "Prepare URL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        900,
-        400
+        1120,
+        300
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Merge uploaded URL with options\nconst uploadResponse = $input.first().json;\nconst previousData = $('Prepare Base64').first().json;\n\nreturn {\n  json: {\n    audioUrl: uploadResponse.upload_url,\n    options: previousData.options,\n    assemblyai_api_key: previousData.assemblyai_api_key\n  }\n};"
+        "jsCode": "// Merge uploaded URL with options\nconst uploadResponse = $input.first().json;\nconst previousData = $('Prepare Base64').first().json;\n\nreturn {\n  json: {\n    audioUrl: uploadResponse.upload_url,\n    options: previousData.options,\n    assemblyai_api_key: previousData.assemblyai_api_key,\n    user_id: previousData.user_id,\n    guild_id: previousData.guild_id,\n    user_request: previousData.user_request,\n    startTime: previousData.startTime\n  }\n};"
       },
       "id": "merge-upload-result",
       "name": "Merge Upload Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1340,
-        200
+        1560,
+        100
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Prepare AssemblyAI transcription request\nconst input = $input.first().json;\nconst options = input.options || {};\n\nconst requestBody = {\n  audio_url: input.audioUrl,\n  speaker_labels: true\n};\n\n// Add optional parameters\nif (options.speakers_expected) {\n  requestBody.speakers_expected = options.speakers_expected;\n}\n\nif (options.language && options.language !== 'auto') {\n  requestBody.language_code = options.language;\n}\n\nif (options.language === 'auto') {\n  requestBody.language_detection = true;\n}\n\nreturn {\n  json: {\n    requestBody: requestBody,\n    options: options,\n    assemblyai_api_key: input.assemblyai_api_key\n  }\n};"
+        "jsCode": "// Prepare AssemblyAI transcription request\nconst input = $input.first().json;\nconst options = input.options || {};\n\nconst requestBody = {\n  audio_url: input.audioUrl,\n  speaker_labels: true\n};\n\n// Add optional parameters\nif (options.speakers_expected) {\n  requestBody.speakers_expected = options.speakers_expected;\n}\n\nif (options.language && options.language !== 'auto') {\n  requestBody.language_code = options.language;\n}\n\nif (options.language === 'auto') {\n  requestBody.language_detection = true;\n}\n\nreturn {\n  json: {\n    requestBody: requestBody,\n    options: options,\n    assemblyai_api_key: input.assemblyai_api_key,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request,\n    startTime: input.startTime\n  }\n};"
       },
       "id": "prepare-transcription-request",
       "name": "Prepare Transcription Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1560,
-        300
+        1780,
+        200
       ]
     },
     {
@@ -222,22 +266,22 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1780,
-        300
+        2000,
+        200
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Store transcript ID and options for polling\nconst response = $input.first().json;\nconst previousData = $('Prepare Transcription Request').first().json;\n\nreturn {\n  json: {\n    transcriptId: response.id,\n    status: response.status,\n    options: previousData.options,\n    pollCount: 0,\n    startTime: Date.now(),\n    assemblyai_api_key: previousData.assemblyai_api_key\n  }\n};"
+        "jsCode": "// Store transcript ID and options for polling\nconst response = $input.first().json;\nconst previousData = $('Prepare Transcription Request').first().json;\n\nreturn {\n  json: {\n    transcriptId: response.id,\n    status: response.status,\n    options: previousData.options,\n    pollCount: 0,\n    startTime: previousData.startTime,\n    assemblyai_api_key: previousData.assemblyai_api_key,\n    user_id: previousData.user_id,\n    guild_id: previousData.guild_id,\n    user_request: previousData.user_request\n  }\n};"
       },
       "id": "store-transcript-id",
       "name": "Store Transcript ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2000,
-        300
+        2220,
+        200
       ]
     },
     {
@@ -263,8 +307,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2220,
-        300
+        2440,
+        200
       ],
       "onError": "continueRegularOutput"
     },
@@ -296,8 +340,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2440,
-        300
+        2660,
+        200
       ]
     },
     {
@@ -328,38 +372,59 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2660,
+        2880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD TRANSCRIPTION ERROR - with _trace\n// ============================================\n\nconst input = $input.first().json;\nconst storedData = $('Store Transcript ID').first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'TRANSCRIPTION_ERROR',\n    message: input.error || 'Transcription failed',\n    http_status: 500\n  },\n  _trace: {\n    service_response: { \n      transcription_error: input.error || 'Transcription failed',\n      transcript_id: storedData.transcriptId\n    },\n    provider: 'assemblyai',\n    mode: 'error',\n    latency_ms: Date.now() - storedData.startTime,\n    user_id: storedData.user_id,\n    guild_id: storedData.guild_id,\n    user_request: storedData.user_request\n  },\n  user_id: storedData.user_id,\n  guild_id: storedData.guild_id,\n  user_request: storedData.user_request\n};"
+      },
+      "id": "build-transcription-error",
+      "name": "Build Transcription Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3100,
         400
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'TRANSCRIPTION_ERROR', message: $json.error || 'Transcription failed' } }) }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 500
+          "responseCode": 500,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       },
-      "id": "error-transcription",
-      "name": "Error Transcription",
+      "id": "respond-transcription-error",
+      "name": "Respond Transcription Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        2880,
-        500
+        3320,
+        400
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Increment poll count and prepare for next poll\nconst response = $input.first().json;\nconst storedData = $('Store Transcript ID').first().json;\n\nconst pollCount = storedData.pollCount + 1;\nconst elapsedMs = Date.now() - storedData.startTime;\n\n// Timeout after 30 minutes\nif (elapsedMs > 30 * 60 * 1000) {\n  throw new Error('Transcription timeout after 30 minutes');\n}\n\nreturn {\n  json: {\n    transcriptId: storedData.transcriptId,\n    status: response.status,\n    options: storedData.options,\n    pollCount: pollCount,\n    startTime: storedData.startTime,\n    assemblyai_api_key: storedData.assemblyai_api_key\n  }\n};"
+        "jsCode": "// Increment poll count and prepare for next poll\nconst response = $input.first().json;\nconst storedData = $('Store Transcript ID').first().json;\n\nconst pollCount = storedData.pollCount + 1;\nconst elapsedMs = Date.now() - storedData.startTime;\n\n// Timeout after 30 minutes\nif (elapsedMs > 30 * 60 * 1000) {\n  throw new Error('Transcription timeout after 30 minutes');\n}\n\nreturn {\n  json: {\n    transcriptId: storedData.transcriptId,\n    status: response.status,\n    options: storedData.options,\n    pollCount: pollCount,\n    startTime: storedData.startTime,\n    assemblyai_api_key: storedData.assemblyai_api_key,\n    user_id: storedData.user_id,\n    guild_id: storedData.guild_id,\n    user_request: storedData.user_request\n  }\n};"
       },
       "id": "prepare-next-poll",
       "name": "Prepare Next Poll",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2880,
-        300
+        3100,
+        200
       ]
     },
     {
@@ -372,21 +437,21 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        3100,
-        300
+        3320,
+        200
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Format the final response with speaker identification\nconst transcript = $input.first().json;\nconst storedData = $('Store Transcript ID').first().json;\nconst options = storedData.options || {};\nconst startTime = storedData.startTime;\n\n// Group utterances by speaker\nconst speakerStats = {};\nconst utterances = transcript.utterances || [];\n\nutterances.forEach(u => {\n  if (!speakerStats[u.speaker]) {\n    speakerStats[u.speaker] = {\n      id: u.speaker,\n      label: `Speaker ${u.speaker.replace('speaker_', '').toUpperCase()}`,\n      total_speaking_time_ms: 0,\n      utterance_count: 0\n    };\n  }\n  speakerStats[u.speaker].total_speaking_time_ms += (u.end - u.start);\n  speakerStats[u.speaker].utterance_count++;\n});\n\n// Calculate percentages\nconst totalSpeakingTime = Object.values(speakerStats).reduce((sum, s) => sum + s.total_speaking_time_ms, 0);\nconst speakers = Object.values(speakerStats).map(s => ({\n  ...s,\n  percentage: totalSpeakingTime > 0 ? Math.round((s.total_speaking_time_ms / totalSpeakingTime) * 100) : 0\n}));\n\n// Format utterances\nconst formattedUtterances = utterances.map(u => ({\n  speaker: u.speaker,\n  text: u.text,\n  start_ms: u.start,\n  end_ms: u.end,\n  confidence: u.confidence\n}));\n\n// Build full transcript with speaker labels\nconst transcriptFull = utterances.map(u => {\n  const label = speakerStats[u.speaker]?.label || u.speaker;\n  return `${label}: ${u.text}`;\n}).join('\\n');\n\nconst response = {\n  success: true,\n  data: {\n    speakers: speakers,\n    utterances: options.include_transcription !== false ? formattedUtterances : undefined,\n    transcript_full: options.include_transcription !== false ? transcriptFull : undefined,\n    audio_duration_ms: transcript.audio_duration * 1000,\n    num_speakers_detected: speakers.length,\n    language_detected: transcript.language_code\n  },\n  meta: {\n    provider: 'assemblyai',\n    execution_mode: 'online',\n    processing_time_ms: Date.now() - startTime,\n    transcript_id: transcript.id\n  }\n};\n\nreturn { json: response };"
+        "jsCode": "// ============================================\n// FORMAT SUCCESS RESPONSE - with _trace\n// ============================================\n\nconst transcript = $input.first().json;\nconst storedData = $('Store Transcript ID').first().json;\nconst options = storedData.options || {};\nconst startTime = storedData.startTime;\n\n// Group utterances by speaker\nconst speakerStats = {};\nconst utterances = transcript.utterances || [];\n\nutterances.forEach(u => {\n  if (!speakerStats[u.speaker]) {\n    speakerStats[u.speaker] = {\n      id: u.speaker,\n      label: `Speaker ${u.speaker.replace('speaker_', '').toUpperCase()}`,\n      total_speaking_time_ms: 0,\n      utterance_count: 0\n    };\n  }\n  speakerStats[u.speaker].total_speaking_time_ms += (u.end - u.start);\n  speakerStats[u.speaker].utterance_count++;\n});\n\n// Calculate percentages\nconst totalSpeakingTime = Object.values(speakerStats).reduce((sum, s) => sum + s.total_speaking_time_ms, 0);\nconst speakers = Object.values(speakerStats).map(s => ({\n  ...s,\n  percentage: totalSpeakingTime > 0 ? Math.round((s.total_speaking_time_ms / totalSpeakingTime) * 100) : 0\n}));\n\n// Format utterances\nconst formattedUtterances = utterances.map(u => ({\n  speaker: u.speaker,\n  text: u.text,\n  start_ms: u.start,\n  end_ms: u.end,\n  confidence: u.confidence\n}));\n\n// Build full transcript with speaker labels\nconst transcriptFull = utterances.map(u => {\n  const label = speakerStats[u.speaker]?.label || u.speaker;\n  return `${label}: ${u.text}`;\n}).join('\\n');\n\nconst latencyMs = Date.now() - startTime;\n\nconst response = {\n  success: true,\n  data: {\n    speakers: speakers,\n    utterances: options.include_transcription !== false ? formattedUtterances : undefined,\n    transcript_full: options.include_transcription !== false ? transcriptFull : undefined,\n    audio_duration_ms: transcript.audio_duration * 1000,\n    num_speakers_detected: speakers.length,\n    language_detected: transcript.language_code\n  },\n  meta: {\n    provider: 'assemblyai',\n    execution_mode: 'online',\n    processing_time_ms: latencyMs,\n    transcript_id: transcript.id\n  },\n  _trace: {\n    service_response: {\n      speakers_detected: speakers.length,\n      audio_duration_ms: transcript.audio_duration * 1000,\n      language_detected: transcript.language_code,\n      transcript_id: transcript.id\n    },\n    provider: 'assemblyai',\n    mode: 'speaker-identification',\n    latency_ms: latencyMs,\n    user_id: storedData.user_id,\n    guild_id: storedData.guild_id,\n    user_request: storedData.user_request\n  },\n  user_id: storedData.user_id,\n  guild_id: storedData.guild_id,\n  user_request: storedData.user_request\n};\n\nreturn { json: response };"
       },
       "id": "format-response",
       "name": "Format Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2660,
-        200
+        2880,
+        100
       ]
     },
     {
@@ -410,25 +475,9 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        2880,
-        200
+        3100,
+        100
       ]
-    },
-    {
-      "id": "sticky-note-doc",
-      "name": "API Documentation",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        240,
-        80
-      ],
-      "parameters": {
-        "color": 4,
-        "width": 550,
-        "height": 220,
-        "content": "## MCP - Speaker Identifier\n\n**Endpoint:** POST /webhook/speaker-identifier\n\n**Parameters:**\n- `data` (required): Audio URL or base64 encoded audio\n- `assemblyai_api_key` (required): AssemblyAI API key\n- `source` (optional): 'url' or 'base64' (default: url)\n- `options.speakers_expected` (optional): Number of expected speakers\n- `options.language` (optional): Language code or 'auto'\n- `options.include_transcription` (optional): Include full transcript (default: true)\n\n**Returns:** Speaker statistics, utterances with timestamps"
-      }
     }
   ],
   "connections": {
@@ -447,6 +496,17 @@
       "main": [
         [
           {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
             "node": "Is Base64?",
             "type": "main",
             "index": 0
@@ -454,7 +514,18 @@
         ],
         [
           {
-            "node": "Error Invalid Input",
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -589,7 +660,7 @@
       "main": [
         [
           {
-            "node": "Error Transcription",
+            "node": "Build Transcription Error",
             "type": "main",
             "index": 0
           }
@@ -597,6 +668,17 @@
         [
           {
             "node": "Prepare Next Poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Transcription Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Transcription Error",
             "type": "main",
             "index": 0
           }
@@ -641,31 +723,5 @@
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "fa173755-445e-4ed4-b402-c6f55b0693a4",
-  "activeVersionId": "fa173755-445e-4ed4-b402-c6f55b0693a4",
-  "versionCounter": 369,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2025-12-18T08:39:17.996Z",
-      "createdAt": "2025-12-18T08:39:17.996Z",
-      "role": "workflow:owner",
-      "workflowId": "zp2f63S20SLgs22o",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+  }
 }

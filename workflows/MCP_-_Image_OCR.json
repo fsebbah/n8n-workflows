@@ -1,17 +1,11 @@
 {
-  "updatedAt": "2026-01-21T11:21:55.262Z",
-  "createdAt": "2026-01-21T11:21:46.942Z",
-  "id": "yJO9eAWF92oaDd6x",
   "name": "MCP - Image OCR",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
-        "content": "## MCP - Image OCR\n\n**Endpoint:** POST /webhook/image-ocr\n\n**Input (RFC-014):**\n```json\n{\n  \"context\": {\n    \"image_url\": \"https://...\",\n    \"file_type\": \"jpg\",\n    \"project_id\": \"...\",\n    \"guild_id\": \"...\",\n    \"user_id\": \"...\"\n  },\n  \"plugin_context\": {\n    \"api_keys\": { \"mistral\": \"...\" }\n  }\n}\n```\n\n**Legacy Input:**\n```json\n{\n  \"image_url\": \"https://...\",\n  \"mistral_api_key\": \"...\"\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"data\": { \"text\": \"...\", \"pages\": [...] },\n  \"meta\": { \"provider\": \"mistral\" }\n}\n```",
-        "height": 420,
-        "width": 340,
+        "content": "## MCP - Image OCR\n\n**Endpoint:** POST /webhook/image-ocr\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"image_url OR image_base64\", \"mistral_api_key\"],\n  \"properties\": {\n    \"image_url\": { \"type\": \"string\", \"description\": \"URL of image to OCR\" },\n    \"image_base64\": { \"type\": \"string\", \"description\": \"Base64-encoded image\" },\n    \"file_type\": { \"type\": \"string\", \"description\": \"Image type (jpg, png, etc.)\" },\n    \"mistral_api_key\": { \"type\": \"string\", \"description\": \"Mistral API key\" },\n    \"include_images\": { \"type\": \"boolean\", \"description\": \"Include images in response\", \"default\": false },\n    \"user_id\": { \"type\": \"string\", \"description\": \"User ID (optional, for tracing)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Guild ID (optional, for tracing)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"User request (optional, for tracing)\" }\n  }\n}\n```\n\n**RFC-014 Context Support:**\n```json\n{\n  \"context\": {\n    \"image_url\": \"https://...\",\n    \"file_type\": \"jpg\"\n  },\n  \"plugin_context\": {\n    \"api_keys\": { \"mistral\": \"...\" }\n  }\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"data\": { \"text\": \"...\", \"pages\": [...] },\n  \"meta\": { \"provider\": \"mistral\" },\n  \"_trace\": { ... }\n}\n```\n\n**API:** Mistral OCR (mistral-ocr-latest)",
+        "height": 600,
+        "width": 400,
         "color": 6
       },
       "id": "doc-sticky",
@@ -20,7 +14,7 @@
       "typeVersion": 1,
       "position": [
         -60,
-        -140
+        -200
       ]
     },
     {
@@ -42,7 +36,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - RFC-014 Compatible\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\n// --- Extract image ---\nconst imageUrl_raw = ctx.image_url || ctx.file_url || body.image_url;\nconst imageBase64_raw = ctx.image_base64 || ctx.file_base64 || body.image_base64;\nconst fileType = ctx.file_type || body.file_type;\n\n// --- Extract API key ---\nconst mistralKey = body.mistral_api_key \n  || ctx.mistral_api_key \n  || body.plugin_context?.api_keys?.mistral \n  || ctx.plugin_context?.api_keys?.mistral;\n\n// --- Extract context fields ---\nconst projectId = ctx.project_id || body.project_id || body.plugin_context?.plugin_id;\nconst guildId = ctx.guild_id || body.guild_id;\nconst userId = ctx.user_id || body.user_id;\nconst channelId = ctx.channel_id || body.channel_id;\n\n// --- Validation ---\nconst hasImage = !!(imageUrl_raw || imageBase64_raw);\nconst hasMistralKey = !!mistralKey;\n\nconst errors = [];\nif (!hasImage) errors.push('image_url ou image_base64 requis');\nif (!hasMistralKey) errors.push('mistral_api_key requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors\n  };\n}\n\n// --- Detect MIME type ---\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  return 'image/png';\n}\n\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// --- Prepare image URL ---\nlet imageUrl = '';\nlet detectedMime = 'image/png';\n\nif (imageUrl_raw) {\n  imageUrl = imageUrl_raw;\n} else if (imageBase64_raw) {\n  detectedMime = fileType ? (getMimeFromExtension(fileType) || 'image/png') : detectMimeFromBase64(imageBase64_raw);\n  imageUrl = 'data:' + detectedMime + ';base64,' + imageBase64_raw;\n}\n\nreturn {\n  valid: true,\n  imageUrl: imageUrl,\n  detectedMime: detectedMime,\n  mistralApiKey: mistralKey,\n  includeImages: body.include_images || ctx.include_images || false,\n  source: imageUrl_raw ? 'url' : 'base64',\n  context: {\n    project_id: projectId,\n    guild_id: guildId,\n    user_id: userId,\n    channel_id: channelId\n  }\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - RFC-014 Compatible\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- OPTIONAL context fields (for tracing only, NO validation errors) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Extract image ---\nconst imageUrl_raw = ctx.image_url || ctx.file_url || body.image_url;\nconst imageBase64_raw = ctx.image_base64 || ctx.file_base64 || body.image_base64;\nconst fileType = ctx.file_type || body.file_type;\n\n// --- Extract API key ---\nconst mistralKey = body.mistral_api_key \n  || ctx.mistral_api_key \n  || body.plugin_context?.api_keys?.mistral \n  || ctx.plugin_context?.api_keys?.mistral;\n\n// --- Extract context fields ---\nconst projectId = ctx.project_id || body.project_id || body.plugin_context?.plugin_id;\nconst channelId = ctx.channel_id || body.channel_id;\n\n// --- Validation ---\nconst hasImage = !!(imageUrl_raw || imageBase64_raw);\nconst hasMistralKey = !!mistralKey;\n\nif (!hasImage) errors.push('image_url ou image_base64 requis');\nif (!hasMistralKey) errors.push('mistral_api_key requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\n// --- Detect MIME type ---\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  return 'image/png';\n}\n\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// --- Prepare image URL ---\nlet imageUrl = '';\nlet detectedMime = 'image/png';\n\nif (imageUrl_raw) {\n  imageUrl = imageUrl_raw;\n} else if (imageBase64_raw) {\n  detectedMime = fileType ? (getMimeFromExtension(fileType) || 'image/png') : detectMimeFromBase64(imageBase64_raw);\n  imageUrl = 'data:' + detectedMime + ';base64,' + imageBase64_raw;\n}\n\nreturn {\n  valid: true,\n  imageUrl: imageUrl,\n  detectedMime: detectedMime,\n  mistralApiKey: mistralKey,\n  includeImages: body.include_images || ctx.include_images || false,\n  source: imageUrl_raw ? 'url' : 'base64',\n  context: {\n    project_id: projectId,\n    guild_id: guildId,\n    user_id: userId,\n    channel_id: channelId\n  },\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -77,7 +71,7 @@
         "options": {}
       },
       "id": "if-valid",
-      "name": "Input Valid?",
+      "name": "Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
@@ -126,7 +120,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT SUCCESS/ERROR RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error) {\n  const errorMessage = data.message || data.error?.message || input.error?.message || 'Mistral API error';\n  return {\n    success: false,\n    error: {\n      code: 'OCR_API_ERROR',\n      message: errorMessage,\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    context: prevData.context\n  };\n}\n\n// --- Extract text from pages ---\nconst text = data.pages?.map(p => p.markdown).join('\\n\\n') || '';\n\nreturn {\n  success: true,\n  data: {\n    text: text,\n    pages: data.pages || [],\n    model: data.model || 'mistral-ocr-latest',\n    source: prevData.source\n  },\n  meta: {\n    provider: 'mistral',\n    usage: {\n      pages_processed: data.usage_info?.pages_processed || 1,\n      doc_size_bytes: data.usage_info?.doc_size_bytes || 0\n    }\n  },\n  context: prevData.context\n};"
+        "jsCode": "// ============================================\n// FORMAT SUCCESS/ERROR RESPONSE - with _trace\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error) {\n  const errorMessage = data.message || data.error?.message || input.error?.message || 'Mistral API error';\n  return {\n    success: false,\n    error: {\n      code: 'OCR_API_ERROR',\n      message: errorMessage,\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    _trace: {\n      service_response: { error: errorMessage, http_status: statusCode },\n      provider: 'mistral',\n      mode: 'error',\n      latency_ms: Date.now() - startTime,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  };\n}\n\n// --- Extract text from pages ---\nconst pages = data.pages || [];\nconst text = pages.map(p => p.markdown).join('\\n\\n') || '';\n\nreturn {\n  success: true,\n  data: {\n    text: text,\n    pages: pages,\n    model: data.model || 'mistral-ocr-latest',\n    source: prevData.source\n  },\n  meta: {\n    provider: 'mistral',\n    usage: {\n      pages_processed: data.usage_info?.pages_processed || 1,\n      doc_size_bytes: data.usage_info?.doc_size_bytes || 0\n    }\n  },\n  _trace: {\n    service_response: {\n      pages_processed: data.usage_info?.pages_processed || pages.length,\n      text_length: text.length\n    },\n    provider: 'mistral',\n    mode: 'ocr',\n    latency_ms: Date.now() - startTime,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  user_request: prevData.user_request\n};"
       },
       "id": "format-response",
       "name": "Format Response",
@@ -139,10 +133,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  }\n};"
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR - with _trace\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
       },
       "id": "build-error",
-      "name": "Build Error Response",
+      "name": "Build Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -217,14 +211,14 @@
       "main": [
         [
           {
-            "node": "Input Valid?",
+            "node": "Valid?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Input Valid?": {
+    "Valid?": {
       "main": [
         [
           {
@@ -235,7 +229,7 @@
         ],
         [
           {
-            "node": "Build Error Response",
+            "node": "Build Error",
             "type": "main",
             "index": 0
           }
@@ -264,7 +258,7 @@
         ]
       ]
     },
-    "Build Error Response": {
+    "Build Error": {
       "main": [
         [
           {
@@ -280,31 +274,5 @@
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "e625233d-a02a-40d7-b1fc-afa17437a70d",
-  "activeVersionId": "e625233d-a02a-40d7-b1fc-afa17437a70d",
-  "versionCounter": 12,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-01-21T11:21:46.944Z",
-      "createdAt": "2026-01-21T11:21:46.944Z",
-      "role": "workflow:owner",
-      "workflowId": "yJO9eAWF92oaDd6x",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+  }
 }

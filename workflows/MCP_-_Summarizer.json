@@ -1,38 +1,44 @@
 {
-  "updatedAt": "2025-12-15T14:55:59.702Z",
-  "createdAt": "2025-12-15T14:55:53.312Z",
-  "id": "XNRFE2ch7KZDoRT1",
   "name": "MCP - Summarizer",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
-      "id": "webhook-summarizer",
-      "name": "Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        240,
-        300
-      ],
-      "webhookId": "summarizer-webhook",
+      "parameters": {
+        "content": "## MCP - Summarizer\n\n**Endpoint:** POST /webhook/summarizer\n\n**Description:** Summarizes text using Anthropic Claude.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"text\"],\n  \"properties\": {\n    \"text\": { \"type\": \"string\", \"description\": \"Text to summarize (required)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"User request context for personalized summary\" },\n    \"style\": { \"type\": \"string\", \"description\": \"Summary style: brief, detailed, bullet-points\" },\n    \"max_length\": { \"type\": \"integer\", \"description\": \"Target word count\" },\n    \"language\": { \"type\": \"string\", \"description\": \"Output language\" },\n    \"max_tokens\": { \"type\": \"integer\", \"description\": \"Max output tokens (default: 1024)\" },\n    \"user_id\": { \"type\": \"string\", \"description\": \"User ID for tracing\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Guild ID for tracing\" }\n  }\n}\n```\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"summary\", \"original_length\", \"summary_length\", \"compression_ratio\"],\n  \"domain\": \"nlp\"\n}\n```",
+        "height": 560,
+        "width": 400,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
       "parameters": {
         "httpMethod": "POST",
         "path": "summarizer",
         "responseMode": "responseNode",
         "options": {}
-      }
+      },
+      "id": "webhook-summarizer",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "summarizer-webhook"
     },
     {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Summarizer\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required field ---\nconst text = body.text || ctx.text;\nif (!text || typeof text !== 'string' || text.trim().length === 0) {\n  errors.push('text requis (chaine non vide)');\n}\n\n// --- Context fields for tracing ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Optional parameters ---\nconst style = body.style || ctx.style || null;\nconst maxLength = body.max_length || ctx.max_length || null;\nconst language = body.language || ctx.language || null;\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 1024);\nconst executionMode = body.execution_mode || ctx.execution_mode || 'online';\n\n// Validate style if provided\nconst validStyles = ['brief', 'detailed', 'bullet-points'];\nif (style && !validStyles.includes(style)) {\n  errors.push(`style invalide: ${style} (doit etre: ${validStyles.join(', ')})`);\n}\n\n// --- API Key from env or request ---\nconst anthropicKey = body.anthropic_api_key || body.plugin_context?.api_keys?.anthropic || $env.ANTHROPIC_API_KEY || '';\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  text: text.trim(),\n  style: style,\n  max_length: maxLength,\n  language: language,\n  max_tokens: maxTokens,\n  execution_mode: executionMode,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  anthropicKey: anthropicKey,\n  startTime: Date.now()\n};"
+      },
       "id": "validate-input",
       "name": "Validate Input",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        460,
-        300
-      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
       "parameters": {
         "conditions": {
           "options": {
@@ -42,155 +48,134 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ $json.body.text }}",
-              "rightValue": "",
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "isNotEmpty"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
     },
     {
-      "id": "error-no-text",
-      "name": "Error: No Text",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        700,
-        460
-      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 480]
+    },
+    {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: text\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"anthropic\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 400
-        }
-      }
-    },
-    {
-      "id": "anthropic-summarize",
-      "name": "Anthropic Summarize",
-      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
-      "typeVersion": 1.2,
-      "position": [
-        700,
-        200
-      ],
-      "parameters": {
-        "model": "claude-3-5-sonnet-20241022",
-        "options": {
-          "maxTokensToSample": 4096,
-          "temperature": 0.3
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       },
-      "credentials": {
-        "anthropicApi": {
-          "id": "anthropic-credentials",
-          "name": "Anthropic account"
-        }
-      }
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 480]
     },
     {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE PROMPT - Summarizer\n// ============================================\n\nconst data = $input.first().json;\n\nlet prompt = 'Summarize the following text';\n\nif (data.style) {\n  prompt += ` in a ${data.style} style`;\n}\nif (data.max_length) {\n  prompt += ` in approximately ${data.max_length} words`;\n}\nif (data.language) {\n  prompt += ` in ${data.language}`;\n}\nif (data.user_request) {\n  prompt += `. User context: ${data.user_request}`;\n}\n\nprompt += `:\\n\\n${data.text}\\n\\nProvide a clear, concise summary that captures the main points.`;\n\nreturn {\n  prompt: prompt,\n  original_length: data.text.length,\n  text: data.text,\n  style: data.style,\n  max_tokens: data.max_tokens,\n  execution_mode: data.execution_mode,\n  user_id: data.user_id,\n  guild_id: data.guild_id,\n  user_request: data.user_request,\n  anthropicKey: data.anthropicKey,\n  startTime: data.startTime\n};"
+      },
       "id": "prepare-prompt",
       "name": "Prepare Prompt",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        700,
-        100
-      ],
-      "parameters": {
-        "mode": "raw",
-        "jsonOutput": "={{ { \"prompt\": (\"Summarize the following text\" + ($json.body.style ? \" in a \" + $json.body.style + \" style\" : \"\") + ($json.body.max_length ? \" in approximately \" + $json.body.max_length + \" words\" : \"\") + ($json.body.language ? \" in \" + $json.body.language : \"\") + \":\\n\\n\" + $json.body.text + \"\\n\\nProvide a clear, concise summary that captures the main points.\"), \"original_length\": $json.body.text.length } }}"
-      }
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 200]
     },
     {
-      "id": "call-anthropic",
-      "name": "Call Anthropic API",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        920,
-        200
-      ],
       "parameters": {
         "method": "POST",
         "url": "https://api.anthropic.com/v1/messages",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "anthropicApi",
+        "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.anthropicKey }}"
+            },
             {
               "name": "anthropic-version",
               "value": "2023-06-01"
             },
             {
-              "name": "content-type",
+              "name": "Content-Type",
               "value": "application/json"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { \"model\": \"claude-3-5-sonnet-20241022\", \"max_tokens\": $json.body.max_tokens || 1024, \"messages\": [ { \"role\": \"user\", \"content\": $('Prepare Prompt').first().json.prompt } ] } }}"
-      },
-      "credentials": {
-        "anthropicApi": {
-          "id": "anthropic-credentials",
-          "name": "Anthropic account"
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: $json.max_tokens || 1024, messages: [{ role: 'user', content: $json.prompt }] }) }}",
+        "options": {
+          "timeout": 60000
         }
-      }
+      },
+      "id": "call-anthropic",
+      "name": "Call Anthropic API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 200],
+      "onError": "continueRegularOutput"
     },
     {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT OUTPUT - Summarizer\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Prepare Prompt').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\n// Handle error response\nif (input.error || input.type === 'error') {\n  return {\n    success: false,\n    error: {\n      code: 'LLM_ERROR',\n      message: input.error?.message || 'Anthropic API error',\n      http_status: 500\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: {\n      llm_response: null,\n      service_response: input,\n      provider: 'anthropic',\n      model: 'claude-sonnet-4-20250514',\n      tokens: { input: 0, output: 0 },\n      latency_ms: Date.now() - startTime,\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest\n    }\n  };\n}\n\nconst summary = input.content?.[0]?.text || '';\nconst originalLength = prevData.original_length;\nconst summaryLength = summary.length;\nconst compressionRatio = originalLength > 0 ? Math.round((originalLength / summaryLength) * 100) / 100 : 0;\n\nconst _trace = {\n  llm_response: summary,\n  service_response: input,\n  provider: 'anthropic',\n  model: input.model || 'claude-sonnet-4-20250514',\n  tokens: {\n    input: input.usage?.input_tokens || 0,\n    output: input.usage?.output_tokens || 0\n  },\n  latency_ms: Date.now() - startTime,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\nreturn {\n  success: true,\n  data: {\n    summary: summary,\n    original_length: originalLength,\n    summary_length: summaryLength,\n    compression_ratio: compressionRatio\n  },\n  meta: {\n    provider: 'anthropic',\n    model: input.model || 'claude-sonnet-4-20250514',\n    execution_mode: prevData.execution_mode || 'online',\n    usage: {\n      input_tokens: input.usage?.input_tokens || 0,\n      output_tokens: input.usage?.output_tokens || 0\n    }\n  },\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  _trace: _trace\n};"
+      },
       "id": "format-output",
       "name": "Format Output",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        1140,
-        200
-      ],
-      "parameters": {
-        "mode": "raw",
-        "jsonOutput": "={{ { \"success\": true, \"data\": { \"summary\": $json.content[0].text, \"original_length\": $('Prepare Prompt').first().json.original_length, \"summary_length\": $json.content[0].text.length, \"compression_ratio\": Math.round(($('Prepare Prompt').first().json.original_length / $json.content[0].text.length) * 100) / 100 }, \"meta\": { \"provider\": \"anthropic\", \"model\": \"claude-3-5-sonnet-20241022\", \"execution_mode\": $('Webhook').first().json.body.execution_mode || \"online\", \"usage\": { \"input_tokens\": $json.usage.input_tokens, \"output_tokens\": $json.usage.output_tokens } } } }}"
-      }
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 200]
     },
     {
-      "id": "respond-success",
-      "name": "Respond Success",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        1360,
-        200
-      ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
-      }
-    },
-    {
-      "id": "sticky-note-doc",
-      "name": "API Documentation",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        240,
-        80
-      ],
-      "parameters": {
-        "color": 6,
-        "width": 550,
-        "height": 200,
-        "content": "## MCP - Summarizer\n\n**Endpoint:** POST /webhook/summarizer\n\n**Parameters:**\n- `text` (required): Text to summarize\n- `style` (optional): Summary style (brief, detailed, bullet-points)\n- `max_length` (optional): Target word count\n- `language` (optional): Output language\n- `execution_mode` (optional): online | offline\n\n**Returns:** Summary with compression ratio and token usage"
-      }
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 200]
     }
   ],
   "connections": {
@@ -209,6 +194,17 @@
       "main": [
         [
           {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
             "node": "Prepare Prompt",
             "type": "main",
             "index": 0
@@ -216,7 +212,18 @@
         ],
         [
           {
-            "node": "Error: No Text",
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -249,7 +256,7 @@
       "main": [
         [
           {
-            "node": "Respond Success",
+            "node": "Respond",
             "type": "main",
             "index": 0
           }
@@ -260,32 +267,6 @@
   "settings": {
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "f163bc06-bba5-4ce3-b975-bef080c92d3e",
-  "activeVersionId": "f163bc06-bba5-4ce3-b975-bef080c92d3e",
-  "versionCounter": 384,
-  "triggerCount": 1,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2025-12-15T14:55:53.316Z",
-      "createdAt": "2025-12-15T14:55:53.316Z",
-      "role": "workflow:owner",
-      "workflowId": "XNRFE2ch7KZDoRT1",
-      "projectId": "rkp1YaKKlE3ExOIx",
-      "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null
-      }
-    }
-  ]
+    "availableInMCP": true
+  }
 }
