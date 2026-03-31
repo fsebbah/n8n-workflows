@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - Entity Rating\n// RFC-049 Entity Storage Architecture\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\nconst startTime = Date.now();\n\n// --- Get tenant_id from header ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || null;\n\n// --- Required fields ---\nconst action = (body.action || ctx.action || '').toLowerCase();\nconst validActions = ['rate', 'get', 'delete'];\nif (!action || !validActions.includes(action)) {\n  errors.push(`action invalide: '${action}' (doit etre: ${validActions.join(', ')})`);\n}\n\nconst entityId = body.entity_id || ctx.entity_id || '';\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nif (!entityId) {\n  errors.push('entity_id requis');\n} else if (!uuidRegex.test(entityId)) {\n  errors.push('entity_id invalide (format UUID requis)');\n}\n\nconst userId = body.user_id || ctx.user_id || '';\nif (!userId || userId.trim().length === 0) {\n  errors.push('user_id requis');\n}\n\n// --- Optional fields ---\nconst entityType = body.entity_type || ctx.entity_type || 'entity';\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst rating = body.rating !== undefined ? body.rating : (ctx.rating !== undefined ? ctx.rating : null);\n\n// --- Conditional validations based on action ---\nif (action === 'rate') {\n  if (rating === null || rating === undefined) {\n    errors.push('rating requis pour action=rate');\n  } else if (!Number.isInteger(rating) || rating < 1 || rating > 5) {\n    errors.push('rating doit etre un entier entre 1 et 5');\n  }\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId || null,\n    guild_id: guildId,\n    startTime: startTime\n  };\n}\n\nreturn {\n  valid: true,\n  action: action,\n  entity_id: entityId,\n  entity_type: entityType,\n  user_id: userId.trim(),\n  guild_id: guildId,\n  rating: rating,\n  tenant_id: tenantId,\n  startTime: startTime\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Entity Rating\n// RFC-049 Entity Storage Architecture\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\nconst startTime = Date.now();\n\n// --- Get tenant_id from header or body ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || body.tenant_id || ctx.tenant_id || null;\n\n// --- Backend API configuration ---\nconst backendApiUrl = body.backend_api_url || ctx.backend_api_url || null;\nconst backendServiceToken = body.backend_service_token || ctx.backend_service_token || null;\n\n// --- Required fields ---\nconst action = (body.action || ctx.action || '').toLowerCase();\nconst validActions = ['rate', 'get', 'delete'];\nif (!action || !validActions.includes(action)) {\n  errors.push(`action invalide: '${action}' (doit etre: ${validActions.join(', ')})`);\n}\n\nconst entityId = body.entity_id || ctx.entity_id || '';\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nif (!entityId) {\n  errors.push('entity_id requis');\n} else if (!uuidRegex.test(entityId)) {\n  errors.push('entity_id invalide (format UUID requis)');\n}\n\nconst userId = body.user_id || ctx.user_id || '';\nif (!userId || userId.trim().length === 0) {\n  errors.push('user_id requis');\n}\n\n// --- Optional fields ---\nconst entityType = body.entity_type || ctx.entity_type || '';\nconst validEntityTypes = ['recipe', 'document', 'course', 'quiz', 'flashcard'];\nif (entityType && !validEntityTypes.includes(entityType)) {\n  errors.push(`entity_type invalide: '${entityType}' (doit etre: ${validEntityTypes.join(', ')})`);\n}\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst rating = body.rating !== undefined ? body.rating : (ctx.rating !== undefined ? ctx.rating : null);\n\n// --- Conditional validations based on action ---\nif (action === 'rate') {\n  if (rating === null || rating === undefined) {\n    errors.push('rating requis pour action=rate');\n  } else if (!Number.isInteger(rating) || rating < 1 || rating > 5) {\n    errors.push('rating doit etre un entier entre 1 et 5');\n  }\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId || null,\n    guild_id: guildId,\n    startTime: startTime\n  };\n}\n\nreturn {\n  valid: true,\n  action: action,\n  entity_id: entityId,\n  entity_type: entityType,\n  user_id: userId.trim(),\n  guild_id: guildId,\n  rating: rating,\n  tenant_id: tenantId,\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken,\n  startTime: startTime\n};"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -184,7 +184,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/rate",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/rate",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -193,8 +193,8 @@
               "value": "application/json"
             },
             {
-              "name": "X-API-Key",
-              "value": "={{ $env.API_KEY }}"
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
             },
             {
               "name": "X-Tenant-ID",
@@ -225,16 +225,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/rate",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "user_id",
-              "value": "={{ $json.user_id }}"
-            }
-          ]
-        },
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/rating",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -243,8 +234,8 @@
               "value": "application/json"
             },
             {
-              "name": "X-API-Key",
-              "value": "={{ $env.API_KEY }}"
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
             },
             {
               "name": "X-Tenant-ID",
@@ -272,7 +263,7 @@
     {
       "parameters": {
         "method": "DELETE",
-        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/rate",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/rate",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -290,8 +281,8 @@
               "value": "application/json"
             },
             {
-              "name": "X-API-Key",
-              "value": "={{ $env.API_KEY }}"
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
             },
             {
               "name": "X-Tenant-ID",
@@ -328,7 +319,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT GET RATING RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latency = Date.now() - startTime;\n\n// Handle API errors\nconst statusCode = input.statusCode || 200;\nconst body = input.body || input;\n\nif (statusCode >= 400 || body.error || body.detail) {\n  return {\n    success: false,\n    error: {\n      code: 'API_ERROR',\n      message: body.error?.message || body.detail || 'Failed to get rating',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    _trace: {\n      service_response: body,\n      provider: 'postgresql',\n      action: 'get',\n      latency_ms: latency,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id\n    }\n  };\n}\n\n// Success response\nreturn {\n  success: true,\n  data: {\n    entity_id: prevData.entity_id,\n    average_rating: body.average || body.average_rating || null,\n    total_ratings: body.total_ratings || body.total || null,\n    user_rating: body.user_rating || body.rating || null\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  _trace: {\n    service_response: body,\n    provider: 'postgresql',\n    action: 'get',\n    entity_type: prevData.entity_type,\n    entity_id: prevData.entity_id,\n    latency_ms: latency,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+        "jsCode": "// ============================================\n// FORMAT GET RATING RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latency = Date.now() - startTime;\n\n// Handle API errors\nconst statusCode = input.statusCode || 200;\nconst body = input.body || input;\nconst data = body.data || body;\n\nif (statusCode >= 400 || body.error || body.detail || body.success === false) {\n  return {\n    success: false,\n    error: {\n      code: 'API_ERROR',\n      message: body.error?.message || body.detail || 'Failed to get rating',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    _trace: {\n      service_response: body,\n      provider: 'postgresql',\n      action: 'get',\n      latency_ms: latency,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id\n    }\n  };\n}\n\n// Success response\nreturn {\n  success: true,\n  data: {\n    entity_id: data.entity_id || prevData.entity_id,\n    average_rating: data.average_rating || data.average || null,\n    total_ratings: data.total_ratings || data.total || null\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  _trace: {\n    service_response: body,\n    provider: 'postgresql',\n    action: 'get',\n    entity_type: prevData.entity_type,\n    entity_id: prevData.entity_id,\n    latency_ms: latency,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
       },
       "id": "format-get-response",
       "name": "Format Get Response",

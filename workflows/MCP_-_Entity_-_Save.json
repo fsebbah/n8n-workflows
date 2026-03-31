@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## MCP - Entity - Save\n\n**Endpoint:** POST /webhook/entity-save\n\n**Description:** RFC-049 Entity Storage Architecture. Saves entities to both MongoDB (via API) AND Qdrant. Uses same UUID for entity_id and qdrant_point_id.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"action\", \"entity_type\", \"data\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"save\", \"update\", \"delete\"] },\n    \"entity_type\": { \"type\": \"string\", \"enum\": [\"recipe\", \"document\", \"course\", \"quiz\", \"flashcard\"] },\n    \"entity_id\": { \"type\": \"string\", \"description\": \"UUID (requis pour update/delete)\" },\n    \"data\": { \"type\": \"object\", \"description\": \"Entity data\" },\n    \"embedding\": { \"type\": \"array\", \"description\": \"Pre-computed embedding (optional)\" },\n    \"user_id\": { \"type\": \"string\" },\n    \"guild_id\": { \"type\": \"string\" },\n    \"qdrant_host\": { \"type\": \"string\" },\n    \"qdrant_port\": { \"type\": \"integer\" },\n    \"qdrant_collection\": { \"type\": \"string\" },\n    \"api_key\": { \"type\": \"string\", \"description\": \"Qdrant API key (fallback)\" },\n    \"openai_api_key\": { \"type\": \"string\" }\n  }\n}\n```\n\n**Headers:**\n- X-Tenant-ID: Required (resolved by MCP - Tenant - Resolve)",
+        "content": "## MCP - Entity - Save\n\n**Endpoint:** POST /webhook/entity-save\n\n**Description:** RFC-049 Entity Storage Architecture + RFC-053 bot_id isolation. Saves entities to both MongoDB (via API) AND Qdrant. Uses same UUID for entity_id and qdrant_point_id.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"action\", \"entity_type\", \"data\", \"backend_api_url\", \"backend_service_token\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"save\", \"update\", \"delete\"] },\n    \"entity_type\": { \"type\": \"string\", \"enum\": [\"recipe\", \"document\", \"course\", \"quiz\", \"flashcard\"] },\n    \"entity_id\": { \"type\": \"string\", \"description\": \"UUID (requis pour update/delete)\" },\n    \"data\": { \"type\": \"object\", \"description\": \"Entity data\" },\n    \"backend_api_url\": { \"type\": \"string\", \"description\": \"Backend API URL\" },\n    \"backend_service_token\": { \"type\": \"string\", \"description\": \"Service token for auth\" },\n    \"tenant_id\": { \"type\": \"string\", \"description\": \"Tenant ID (or via X-Tenant-ID header)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Discord guild ID (RFC-053)\" },\n    \"bot_id\": { \"type\": \"string\", \"description\": \"Discord bot application ID (RFC-053 RAG isolation)\" },\n    \"embedding\": { \"type\": \"array\", \"description\": \"Pre-computed embedding (optional)\" },\n    \"user_id\": { \"type\": \"string\" },\n    \"qdrant_host\": { \"type\": \"string\" },\n    \"qdrant_port\": { \"type\": \"integer\" },\n    \"qdrant_collection\": { \"type\": \"string\" },\n    \"api_key\": { \"type\": \"string\", \"description\": \"Qdrant API key (fallback)\" },\n    \"openai_api_key\": { \"type\": \"string\" }\n  }\n}\n```\n\n**Headers:**\n- X-Tenant-ID: Tenant identifier (or pass tenant_id in body)",
         "height": 620,
         "width": 420,
         "color": 6
@@ -36,7 +36,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Entity Save\n// RFC-049 Entity Storage Architecture\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Get tenant_id from header (RFC-049) ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || null;\n\n// --- OPTIONAL context fields (for tracing) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\n\n// --- REQUIRED fields ---\nconst action = body.action || ctx.action;\nconst entityType = body.entity_type || ctx.entity_type;\nconst data = body.data || ctx.data;\n\n// Validate required fields\nif (!action) {\n  errors.push('action requis');\n} else if (!['save', 'update', 'delete'].includes(action)) {\n  errors.push('action doit etre save, update ou delete');\n}\n\nif (!entityType) {\n  errors.push('entity_type requis');\n} else if (!['recipe', 'document', 'course', 'quiz', 'flashcard'].includes(entityType)) {\n  errors.push('entity_type invalide');\n}\n\nif (!data && action !== 'delete') {\n  errors.push('data requis');\n}\n\n// entity_id required for update/delete\nconst entityId = body.entity_id || ctx.entity_id || null;\nif ((action === 'update' || action === 'delete') && !entityId) {\n  errors.push('entity_id requis pour update/delete');\n}\n\n// Qdrant parameters\nconst qdrantHost = body.qdrant_host || ctx.qdrant_host || null;\nconst qdrantPort = body.qdrant_port || ctx.qdrant_port || null;\nconst qdrantCollection = body.qdrant_collection || ctx.qdrant_collection || null;\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || null;\n\n// API key fallback (RFC-049)\nconst qdrantApiKey = body.qdrant_api_key || body.api_key || ctx.qdrant_api_key || ctx.api_key || null;\n\n// Pre-computed embedding (optional)\nconst embedding = body.embedding || ctx.embedding || null;\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    tenant_id: tenantId\n  };\n}\n\n// Build text for embedding (generic)\nconst embeddingText = data ? [\n  data.title || '',\n  data.description || '',\n  (data.tags || []).join(' '),\n  (data.ingredients || []).map(i => typeof i === 'string' ? i : i.name).join(' '),\n  data.content || ''\n].join(' ').trim() : '';\n\nconst qdrantUrl = qdrantHost && qdrantPort ? `http://${qdrantHost}:${qdrantPort}` : null;\n\nreturn {\n  valid: true,\n  action: action,\n  entity_type: entityType,\n  entity_id: entityId,\n  data: data,\n  embedding: embedding,\n  embedding_text: embeddingText,\n  tenant_id: tenantId,\n  user_id: userId,\n  guild_id: guildId,\n  qdrant_url: qdrantUrl,\n  qdrant_collection: qdrantCollection,\n  qdrant_api_key: qdrantApiKey,\n  openai_api_key: openaiApiKey,\n  has_qdrant_config: !!(qdrantUrl && qdrantCollection),\n  startTime: Date.now()\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Entity Save\n// RFC-049 Entity Storage Architecture\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Get tenant_id from header (RFC-049) ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || body.tenant_id || ctx.tenant_id || null;\n\n// --- OPTIONAL context fields (for tracing) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\n\n// --- RFC-053: bot_id for RAG isolation ---\nconst botId = body.bot_id || ctx.bot_id || null;\n\n// --- Backend API configuration (passed by plugin) ---\nconst backendApiUrl = body.backend_api_url || ctx.backend_api_url || null;\nconst backendServiceToken = body.backend_service_token || ctx.backend_service_token || null;\n\n// --- REQUIRED fields ---\nconst action = body.action || ctx.action;\nconst entityType = body.entity_type || ctx.entity_type;\nconst data = body.data || ctx.data;\n\n// Validate required fields\nif (!action) {\n  errors.push('action requis');\n} else if (!['save', 'update', 'delete'].includes(action)) {\n  errors.push('action doit etre save, update ou delete');\n}\n\nif (!entityType) {\n  errors.push('entity_type requis');\n} else if (!['recipe', 'document', 'course', 'quiz', 'flashcard'].includes(entityType)) {\n  errors.push('entity_type invalide');\n}\n\nif (!data && action !== 'delete') {\n  errors.push('data requis');\n}\n\n// entity_id required for update/delete\nconst entityId = body.entity_id || ctx.entity_id || null;\nif ((action === 'update' || action === 'delete') && !entityId) {\n  errors.push('entity_id requis pour update/delete');\n}\n\n// Qdrant parameters\nconst qdrantHost = body.qdrant_host || ctx.qdrant_host || null;\nconst qdrantPort = body.qdrant_port || ctx.qdrant_port || null;\nconst qdrantCollection = body.qdrant_collection || ctx.qdrant_collection || null;\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || null;\n\n// API key fallback (RFC-049)\nconst qdrantApiKey = body.qdrant_api_key || body.api_key || ctx.qdrant_api_key || ctx.api_key || null;\n\n// Pre-computed embedding (optional)\nconst embedding = body.embedding || ctx.embedding || null;\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    tenant_id: tenantId\n  };\n}\n\n// Build text for embedding (generic)\nconst embeddingText = data ? [\n  data.title || '',\n  data.description || '',\n  (data.tags || []).join(' '),\n  (data.ingredients || []).map(i => typeof i === 'string' ? i : i.name).join(' '),\n  data.content || ''\n].join(' ').trim() : '';\n\nconst qdrantUrl = qdrantHost && qdrantPort ? `http://${qdrantHost}:${qdrantPort}` : null;\n\nreturn {\n  valid: true,\n  action: action,\n  entity_type: entityType,\n  entity_id: entityId,\n  data: data,\n  embedding: embedding,\n  embedding_text: embeddingText,\n  tenant_id: tenantId,\n  user_id: userId,\n  guild_id: guildId,\n  bot_id: botId,\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken,\n  qdrant_url: qdrantUrl,\n  qdrant_collection: qdrantCollection,\n  qdrant_api_key: qdrantApiKey,\n  openai_api_key: openaiApiKey,\n  has_qdrant_config: !!(qdrantUrl && qdrantCollection),\n  has_api_config: !!(backendApiUrl),\n  startTime: Date.now()\n};"
       },
       "id": "0650d19f-fb44-4fbf-9433-11027f962b56",
       "name": "Validate Input",
@@ -216,7 +216,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -225,8 +225,8 @@
               "value": "application/json"
             },
             {
-              "name": "X-API-Key",
-              "value": "={{ $env.N8N_API_KEY }}"
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
             },
             {
               "name": "X-Tenant-ID",
@@ -254,7 +254,7 @@
     {
       "parameters": {
         "method": "PUT",
-        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -263,8 +263,8 @@
               "value": "application/json"
             },
             {
-              "name": "X-API-Key",
-              "value": "={{ $env.N8N_API_KEY }}"
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
             },
             {
               "name": "X-Tenant-ID",
@@ -292,13 +292,13 @@
     {
       "parameters": {
         "method": "DELETE",
-        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "X-API-Key",
-              "value": "={{ $env.N8N_API_KEY }}"
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
             },
             {
               "name": "X-Tenant-ID",
@@ -488,7 +488,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"points\": [\n    {\n      \"id\": \"{{ $json.qdrant_point_id }}\",\n      \"vector\": {{ JSON.stringify($json.embedding) }},\n      \"payload\": {\n        \"tenant_id\": {{ $json.tenant_id ? '\"' + $json.tenant_id + '\"' : 'null' }},\n        \"guild_id\": {{ $json.guild_id ? '\"' + $json.guild_id + '\"' : 'null' }},\n        \"entity_type\": \"{{ $json.entity_type }}\",\n        \"title\": {{ $json.data.title ? '\"' + $json.data.title.replace(/\"/g, '\\\\\"') + '\"' : 'null' }},\n        \"tags\": {{ JSON.stringify($json.data.tags || []) }}\n      }\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"points\": [\n    {\n      \"id\": \"{{ $json.qdrant_point_id }}\",\n      \"vector\": {{ JSON.stringify($json.embedding) }},\n      \"payload\": {\n        \"entity_id\": \"{{ $json.entity_id }}\",\n        \"tenant_id\": {{ $json.tenant_id ? '\"' + $json.tenant_id + '\"' : 'null' }},\n        \"guild_id\": {{ $json.guild_id ? '\"' + $json.guild_id + '\"' : 'null' }},\n        \"bot_id\": {{ $json.bot_id ? '\"' + $json.bot_id + '\"' : 'null' }},\n        \"entity_type\": \"{{ $json.entity_type }}\",\n        \"title\": {{ $json.data.title ? '\"' + $json.data.title.replace(/\"/g, '\\\\\"') + '\"' : 'null' }},\n        \"tags\": {{ JSON.stringify($json.data.tags || []) }}\n      }\n    }\n  ]\n}",
         "options": {
           "timeout": 30000
         }
@@ -614,7 +614,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"points\": [\"{{ $json.qdrant_point_id }}\"],\n  \"payload\": {\n    \"tenant_id\": {{ $json.tenant_id ? '\"' + $json.tenant_id + '\"' : 'null' }},\n    \"guild_id\": {{ $json.guild_id ? '\"' + $json.guild_id + '\"' : 'null' }},\n    \"entity_type\": \"{{ $json.entity_type }}\",\n    \"title\": {{ $json.data.title ? '\"' + $json.data.title.replace(/\"/g, '\\\\\"') + '\"' : 'null' }},\n    \"tags\": {{ JSON.stringify($json.data.tags || []) }}\n  }\n}",
+        "jsonBody": "={\n  \"points\": [\"{{ $json.qdrant_point_id }}\"],\n  \"payload\": {\n    \"entity_id\": \"{{ $json.entity_id }}\",\n    \"tenant_id\": {{ $json.tenant_id ? '\"' + $json.tenant_id + '\"' : 'null' }},\n    \"guild_id\": {{ $json.guild_id ? '\"' + $json.guild_id + '\"' : 'null' }},\n    \"bot_id\": {{ $json.bot_id ? '\"' + $json.bot_id + '\"' : 'null' }},\n    \"entity_type\": \"{{ $json.entity_type }}\",\n    \"title\": {{ $json.data.title ? '\"' + $json.data.title.replace(/\"/g, '\\\\\"') + '\"' : 'null' }},\n    \"tags\": {{ JSON.stringify($json.data.tags || []) }}\n  }\n}",
         "options": {
           "timeout": 30000
         }
