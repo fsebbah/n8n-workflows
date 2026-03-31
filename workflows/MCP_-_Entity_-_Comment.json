@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - Entity Comment\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\nconst startTime = Date.now();\n\n// --- Get tenant_id from header ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || null;\n\n// --- Required fields ---\nconst action = (body.action || ctx.action || '').toLowerCase();\nconst validActions = ['comment', 'list', 'edit', 'delete'];\nif (!action || !validActions.includes(action)) {\n  errors.push(`action invalide: '${action}' (doit etre: ${validActions.join(', ')})`);\n}\n\nconst entityId = body.entity_id || ctx.entity_id || '';\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nif (!entityId) {\n  errors.push('entity_id requis');\n} else if (!uuidRegex.test(entityId)) {\n  errors.push('entity_id invalide (format UUID requis)');\n}\n\nconst userId = body.user_id || ctx.user_id || '';\nif (!userId || userId.trim().length === 0) {\n  errors.push('user_id requis');\n}\n\n// --- Optional fields ---\nconst entityType = body.entity_type || ctx.entity_type || 'entity';\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst content = body.content || ctx.content || '';\nconst commentId = body.comment_id || ctx.comment_id || '';\nconst parentId = body.parent_id || ctx.parent_id || null;\nconst limit = parseInt(body.limit || ctx.limit || 20);\nconst offset = parseInt(body.offset || ctx.offset || 0);\n\n// --- Conditional validations based on action ---\nif ((action === 'comment' || action === 'edit') && (!content || content.trim().length === 0)) {\n  errors.push('content requis pour action=' + action);\n}\n\nif ((action === 'edit' || action === 'delete') && !commentId) {\n  errors.push('comment_id requis pour action=' + action);\n} else if ((action === 'edit' || action === 'delete') && commentId && !uuidRegex.test(commentId)) {\n  errors.push('comment_id invalide (format UUID requis)');\n}\n\nif (parentId && !uuidRegex.test(parentId)) {\n  errors.push('parent_id invalide (format UUID requis)');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId || null,\n    guild_id: guildId,\n    startTime: startTime\n  };\n}\n\nreturn {\n  valid: true,\n  action: action,\n  entity_id: entityId,\n  entity_type: entityType,\n  user_id: userId.trim(),\n  guild_id: guildId,\n  content: content.trim(),\n  comment_id: commentId || null,\n  parent_id: parentId,\n  tenant_id: tenantId,\n  limit: limit,\n  offset: offset,\n  startTime: startTime\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Entity Comment\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\nconst startTime = Date.now();\n\n// --- Get tenant_id from header or body ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || body.tenant_id || ctx.tenant_id || null;\n\n// --- Backend API configuration ---\nconst backendApiUrl = body.backend_api_url || ctx.backend_api_url || null;\nconst backendServiceToken = body.backend_service_token || ctx.backend_service_token || null;\n\n// --- Required fields ---\nconst action = (body.action || ctx.action || '').toLowerCase();\nconst validActions = ['comment', 'list', 'edit', 'delete'];\nif (!action || !validActions.includes(action)) {\n  errors.push(`action invalide: '${action}' (doit etre: ${validActions.join(', ')})`);\n}\n\nconst entityId = body.entity_id || ctx.entity_id || '';\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nif (!entityId) {\n  errors.push('entity_id requis');\n} else if (!uuidRegex.test(entityId)) {\n  errors.push('entity_id invalide (format UUID requis)');\n}\n\nconst userId = body.user_id || ctx.user_id || '';\nif (!userId || userId.trim().length === 0) {\n  errors.push('user_id requis');\n}\n\n// --- Optional fields ---\nconst entityType = body.entity_type || ctx.entity_type || '';\nconst validEntityTypes = ['recipe', 'document', 'course', 'quiz', 'flashcard'];\nif (entityType && !validEntityTypes.includes(entityType)) {\n  errors.push(`entity_type invalide: '${entityType}' (doit etre: ${validEntityTypes.join(', ')})`);\n}\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst content = body.content || ctx.content || '';\nconst commentId = body.comment_id || ctx.comment_id || '';\nconst parentId = body.parent_id || ctx.parent_id || null;\nconst limit = parseInt(body.limit || ctx.limit || 20);\nconst offset = parseInt(body.offset || ctx.offset || 0);\n\n// --- Conditional validations based on action ---\nif ((action === 'comment' || action === 'edit') && (!content || content.trim().length === 0)) {\n  errors.push('content requis pour action=' + action);\n}\n\nif ((action === 'edit' || action === 'delete') && !commentId) {\n  errors.push('comment_id requis pour action=' + action);\n} else if ((action === 'edit' || action === 'delete') && commentId && !uuidRegex.test(commentId)) {\n  errors.push('comment_id invalide (format UUID requis)');\n}\n\nif (parentId && !uuidRegex.test(parentId)) {\n  errors.push('parent_id invalide (format UUID requis)');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId || null,\n    guild_id: guildId,\n    startTime: startTime\n  };\n}\n\nreturn {\n  valid: true,\n  action: action,\n  entity_id: entityId,\n  entity_type: entityType,\n  user_id: userId.trim(),\n  guild_id: guildId,\n  content: content.trim(),\n  comment_id: commentId || null,\n  parent_id: parentId,\n  tenant_id: tenantId,\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken,\n  limit: limit,\n  offset: offset,\n  startTime: startTime\n};"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -206,7 +206,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -215,8 +215,8 @@
               "value": "application/json"
             },
             {
-              "name": "X-API-Key",
-              "value": "={{ $env.API_KEY }}"
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
             },
             {
               "name": "X-Tenant-ID",
@@ -247,7 +247,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comments",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comments",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -269,8 +269,8 @@
               "value": "application/json"
             },
             {
-              "name": "X-API-Key",
-              "value": "={{ $env.API_KEY }}"
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
             },
             {
               "name": "X-Tenant-ID",
@@ -298,7 +298,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -307,8 +307,8 @@
               "value": "application/json"
             },
             {
-              "name": "X-API-Key",
-              "value": "={{ $env.API_KEY }}"
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
             },
             {
               "name": "X-Tenant-ID",
@@ -339,7 +339,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.API_URL }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -348,8 +348,8 @@
               "value": "application/json"
             },
             {
-              "name": "X-API-Key",
-              "value": "={{ $env.API_KEY }}"
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
             },
             {
               "name": "X-Tenant-ID",

@@ -11,7 +11,7 @@
         "color": 6,
         "width": 400,
         "height": 780,
-        "content": "## MCP - Entity - Search\n\n**Endpoint:** POST /webhook/entity-search\n\n**Description:** Recherche semantique multi-tenant dans Qdrant avec enrichissement MongoDB optionnel. Remplace MCP Qdrant - Search (RFC-049).\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"action\", \"query\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"search\", \"similar\"], \"description\": \"search=par query, similar=par entity_id\" },\n    \"query\": { \"type\": \"string\", \"description\": \"Texte de recherche (pour action=search)\" },\n    \"entity_id\": { \"type\": \"string\", \"description\": \"UUID pour recherche similaire (pour action=similar)\" },\n    \"entity_type\": { \"type\": \"string\", \"description\": \"Filtrer par type d'entite\" },\n    \"limit\": { \"type\": \"integer\", \"default\": 10, \"description\": \"Nombre de resultats max\" },\n    \"enrich\": { \"type\": \"boolean\", \"default\": false, \"description\": \"Enrichir depuis MongoDB\" },\n    \"fields\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"Champs a recuperer depuis DB\" },\n    \"filters\": { \"type\": \"object\", \"description\": \"Filtres additionnels Qdrant\" },\n    \"user_id\": { \"type\": \"string\" },\n    \"guild_id\": { \"type\": \"string\" },\n    \"qdrant_host\": { \"type\": \"string\" },\n    \"qdrant_port\": { \"type\": \"integer\" },\n    \"qdrant_collection\": { \"type\": \"string\" },\n    \"api_key\": { \"type\": \"string\", \"description\": \"Qdrant API key (fallback)\" },\n    \"openai_api_key\": { \"type\": \"string\" }\n  }\n}\n```\n\n**Headers:**\n- `X-Tenant-ID`: Tenant identifier (REQUIRED for multi-tenant isolation)\n\n**Multi-tenant:** CRITICAL - Qdrant queries MUST filter by tenant_id.\n\n**Returns:**\n- `results`: Array avec score et payload\n- `entity`: Donnees enrichies MongoDB (si enrich=true)\n- `_trace`: Informations de tracabilite"
+        "content": "## MCP - Entity - Search\n\n**Endpoint:** POST /webhook/entity-search\n\n**Description:** Recherche semantique multi-tenant dans Qdrant avec enrichissement MongoDB optionnel. RFC-049 + RFC-053 (bot_id isolation).\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"action\", \"query\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"search\", \"similar\"], \"description\": \"search=par query, similar=par entity_id\" },\n    \"query\": { \"type\": \"string\", \"description\": \"Texte de recherche (pour action=search)\" },\n    \"entity_id\": { \"type\": \"string\", \"description\": \"UUID pour recherche similaire (pour action=similar)\" },\n    \"entity_type\": { \"type\": \"string\", \"description\": \"Filtrer par type d'entite\" },\n    \"limit\": { \"type\": \"integer\", \"default\": 10, \"description\": \"Nombre de resultats max\" },\n    \"enrich\": { \"type\": \"boolean\", \"default\": false, \"description\": \"Enrichir depuis MongoDB\" },\n    \"backend_api_url\": { \"type\": \"string\", \"description\": \"Backend API URL (requis si enrich=true)\" },\n    \"backend_service_token\": { \"type\": \"string\", \"description\": \"Service token (requis si enrich=true)\" },\n    \"fields\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"Champs a recuperer depuis DB\" },\n    \"filters\": { \"type\": \"object\", \"description\": \"Filtres additionnels Qdrant\" },\n    \"tenant_id\": { \"type\": \"string\", \"description\": \"Tenant ID (or via X-Tenant-ID header)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Discord guild ID (RFC-053)\" },\n    \"bot_id\": { \"type\": \"string\", \"description\": \"Discord bot application ID (RFC-053 RAG isolation)\" },\n    \"user_id\": { \"type\": \"string\" },\n    \"qdrant_host\": { \"type\": \"string\" },\n    \"qdrant_port\": { \"type\": \"integer\" },\n    \"qdrant_collection\": { \"type\": \"string\" },\n    \"api_key\": { \"type\": \"string\", \"description\": \"Qdrant API key (fallback)\" },\n    \"openai_api_key\": { \"type\": \"string\" }\n  }\n}\n```\n\n**Multi-tenant:** CRITICAL - Qdrant queries MUST filter by tenant_id.\n**RFC-053:** Filtre inclusif bot_id (documents legacy sans bot_id restent accessibles).\n\n**Returns:**\n- `results`: Array avec score et payload\n- `entity`: Donnees enrichies MongoDB (si enrich=true)\n- `_trace`: Informations de tracabilite"
       }
     },
     {
@@ -35,7 +35,7 @@
       "typeVersion": 2,
       "position": [460, 300],
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Entity Search\n// RFC-049: Multi-tenant Qdrant with MongoDB enrichment\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- CRITICAL: Multi-tenant isolation via X-Tenant-ID header ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || body.tenant_id || ctx.tenant_id;\n\nif (!tenantId) {\n  errors.push('X-Tenant-ID header requis pour isolation multi-tenant');\n}\n\n// --- OPTIONAL context fields (tracing only) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- REQUIRED parameters ---\nconst action = body.action || ctx.action;\nconst query = body.query || ctx.query;\nconst entityId = body.entity_id || ctx.entity_id;\n\nif (!action) {\n  errors.push('action requis (search ou similar)');\n} else if (!['search', 'similar'].includes(action)) {\n  errors.push('action doit etre search ou similar');\n}\n\nif (action === 'search' && !query) {\n  errors.push('query requis pour action=search');\n}\n\nif (action === 'similar' && !entityId) {\n  errors.push('entity_id requis pour action=similar');\n}\n\n// --- Qdrant configuration ---\nconst qdrantHost = body.qdrant_host || ctx.qdrant_host;\nconst qdrantPort = body.qdrant_port || ctx.qdrant_port;\nconst qdrantCollection = body.qdrant_collection || ctx.qdrant_collection;\n\n// Fallback: qdrant_api_key = body.qdrant_api_key || body.api_key (legacy compatibility)\nconst qdrantApiKey = body.qdrant_api_key || ctx.qdrant_api_key || body.api_key || ctx.api_key || '';\n\nif (!qdrantHost) {\n  errors.push('qdrant_host requis');\n}\nif (!qdrantPort) {\n  errors.push('qdrant_port requis');\n}\nif (!qdrantCollection) {\n  errors.push('qdrant_collection requis');\n}\n\n// --- OpenAI for embeddings (required for action=search) ---\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai;\n\nif (action === 'search' && !openaiApiKey) {\n  errors.push('openai_api_key requis pour action=search');\n}\n\n// --- Optional enrichment parameters ---\nconst enrich = body.enrich || ctx.enrich || false;\nconst fields = body.fields || ctx.fields || [];\nconst entityType = body.entity_type || ctx.entity_type || '';\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nconst qdrantUrl = `http://${qdrantHost}:${qdrantPort}`;\n\nreturn {\n  valid: true,\n  action: action,\n  query: query || '',\n  entity_id: entityId || '',\n  entity_type: entityType,\n  limit: body.limit || ctx.limit || 10,\n  filters: body.filters || ctx.filters || {},\n  enrich: enrich,\n  fields: fields,\n  tenant_id: tenantId,\n  qdrant_url: qdrantUrl,\n  qdrant_collection: qdrantCollection,\n  qdrant_api_key: qdrantApiKey,\n  openai_api_key: openaiApiKey || '',\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Entity Search\n// RFC-049: Multi-tenant Qdrant with MongoDB enrichment\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- CRITICAL: Multi-tenant isolation via X-Tenant-ID header ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || body.tenant_id || ctx.tenant_id;\n\nif (!tenantId) {\n  errors.push('X-Tenant-ID header requis pour isolation multi-tenant');\n}\n\n// --- OPTIONAL context fields (tracing only) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- RFC-053: bot_id for RAG isolation ---\nconst botId = body.bot_id || ctx.bot_id || null;\n\n// --- REQUIRED parameters ---\nconst action = body.action || ctx.action;\nconst query = body.query || ctx.query;\nconst entityId = body.entity_id || ctx.entity_id;\n\nif (!action) {\n  errors.push('action requis (search ou similar)');\n} else if (!['search', 'similar'].includes(action)) {\n  errors.push('action doit etre search ou similar');\n}\n\nif (action === 'search' && !query) {\n  errors.push('query requis pour action=search');\n}\n\nif (action === 'similar' && !entityId) {\n  errors.push('entity_id requis pour action=similar');\n}\n\n// --- Qdrant configuration ---\nconst qdrantHost = body.qdrant_host || ctx.qdrant_host;\nconst qdrantPort = body.qdrant_port || ctx.qdrant_port;\nconst qdrantCollection = body.qdrant_collection || ctx.qdrant_collection;\n\n// Fallback: qdrant_api_key = body.qdrant_api_key || body.api_key (legacy compatibility)\nconst qdrantApiKey = body.qdrant_api_key || ctx.qdrant_api_key || body.api_key || ctx.api_key || '';\n\nif (!qdrantHost) {\n  errors.push('qdrant_host requis');\n}\nif (!qdrantPort) {\n  errors.push('qdrant_port requis');\n}\nif (!qdrantCollection) {\n  errors.push('qdrant_collection requis');\n}\n\n// --- OpenAI for embeddings (required for action=search) ---\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai;\n\nif (action === 'search' && !openaiApiKey) {\n  errors.push('openai_api_key requis pour action=search');\n}\n\n// --- Backend API configuration (for enrichment) ---\nconst backendApiUrl = body.backend_api_url || ctx.backend_api_url || null;\nconst backendServiceToken = body.backend_service_token || ctx.backend_service_token || null;\n\n// --- Optional enrichment parameters ---\nconst enrich = body.enrich || ctx.enrich || false;\nconst fields = body.fields || ctx.fields || [];\nconst entityType = body.entity_type || ctx.entity_type || '';\n\n// --- Validate entity_type if provided ---\nconst validEntityTypes = ['recipe', 'document', 'course', 'quiz', 'flashcard'];\nif (entityType && !validEntityTypes.includes(entityType)) {\n  errors.push(`entity_type invalide: '${entityType}' (doit etre: ${validEntityTypes.join(', ')})`);\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nconst qdrantUrl = `http://${qdrantHost}:${qdrantPort}`;\n\nreturn {\n  valid: true,\n  action: action,\n  query: query || '',\n  entity_id: entityId || '',\n  entity_type: entityType,\n  limit: body.limit || ctx.limit || 10,\n  filters: body.filters || ctx.filters || {},\n  enrich: enrich,\n  fields: fields,\n  tenant_id: tenantId,\n  guild_id: guildId,\n  bot_id: botId,\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken,\n  qdrant_url: qdrantUrl,\n  qdrant_collection: qdrantCollection,\n  qdrant_api_key: qdrantApiKey,\n  openai_api_key: openaiApiKey || '',\n  user_id: userId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
       }
     },
     {
@@ -212,7 +212,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.data[0].embedding) }},\n  \"limit\": {{ $('Validate Input').first().json.limit }},\n  \"with_payload\": true,\n  \"with_vector\": false,\n  \"score_threshold\": 0.5,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"tenant_id\",\n        \"match\": {\n          \"value\": {{ JSON.stringify($('Validate Input').first().json.tenant_id) }}\n        }\n      }\n    ]\n  }\n}",
+        "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.data[0].embedding) }},\n  \"limit\": {{ $('Validate Input').first().json.limit }},\n  \"with_payload\": true,\n  \"with_vector\": false,\n  \"score_threshold\": 0.5,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"tenant_id\",\n        \"match\": {\n          \"value\": {{ JSON.stringify($('Validate Input').first().json.tenant_id) }}\n        }\n      }\n      {{ $('Validate Input').first().json.guild_id ? ', { \"key\": \"guild_id\", \"match\": { \"value\": ' + JSON.stringify($('Validate Input').first().json.guild_id) + ' } }' : '' }}\n    ]\n    {{ $('Validate Input').first().json.bot_id ? ', \"should\": [ { \"key\": \"bot_id\", \"match\": { \"value\": ' + JSON.stringify($('Validate Input').first().json.bot_id) + ' } }, { \"is_empty\": { \"key\": \"bot_id\" } } ], \"min_should\": 1' : '' }}\n  }\n}",
         "options": {
           "timeout": 30000
         }
@@ -274,23 +274,12 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"vector\": {{ $json.result && $json.result[0] && $json.result[0].vector ? JSON.stringify($json.result[0].vector) : '[]' }},\n  \"limit\": {{ $('Validate Input').first().json.limit + 1 }},\n  \"with_payload\": true,\n  \"with_vector\": false,\n  \"score_threshold\": 0.5,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"tenant_id\",\n        \"match\": {\n          \"value\": {{ JSON.stringify($('Validate Input').first().json.tenant_id) }}\n        }\n      }\n    ],\n    \"must_not\": [\n      {\n        \"key\": \"entity_id\",\n        \"match\": {\n          \"value\": {{ JSON.stringify($('Validate Input').first().json.entity_id) }}\n        }\n      }\n    ]\n  }\n}",
+        "jsonBody": "={\n  \"vector\": {{ $json.result && $json.result[0] && $json.result[0].vector ? JSON.stringify($json.result[0].vector) : '[]' }},\n  \"limit\": {{ $('Validate Input').first().json.limit + 1 }},\n  \"with_payload\": true,\n  \"with_vector\": false,\n  \"score_threshold\": 0.5,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"tenant_id\",\n        \"match\": {\n          \"value\": {{ JSON.stringify($('Validate Input').first().json.tenant_id) }}\n        }\n      }\n      {{ $('Validate Input').first().json.guild_id ? ', { \"key\": \"guild_id\", \"match\": { \"value\": ' + JSON.stringify($('Validate Input').first().json.guild_id) + ' } }' : '' }}\n    ],\n    \"must_not\": [\n      {\n        \"key\": \"entity_id\",\n        \"match\": {\n          \"value\": {{ JSON.stringify($('Validate Input').first().json.entity_id) }}\n        }\n      }\n    ]\n    {{ $('Validate Input').first().json.bot_id ? ', \"should\": [ { \"key\": \"bot_id\", \"match\": { \"value\": ' + JSON.stringify($('Validate Input').first().json.bot_id) + ' } }, { \"is_empty\": { \"key\": \"bot_id\" } } ], \"min_should\": 1' : '' }}\n  }\n}",
         "options": {
           "timeout": 30000
         }
       },
       "onError": "continueRegularOutput"
-    },
-    {
-      "id": "merge-results",
-      "name": "Merge Results",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [1620, 200],
-      "parameters": {
-        "mode": "chooseBranch",
-        "output": "empty"
-      }
     },
     {
       "id": "prepare-enrichment",
@@ -357,13 +346,13 @@
       "position": [2280, 100],
       "parameters": {
         "method": "POST",
-        "url": "=http://localhost:3000/api/n8n/entities/{{ $json.entity_type }}/batch",
+        "url": "={{ $json.prevData.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/batch",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "X-API-Key",
-              "value": "={{ $json.prevData.qdrant_api_key }}"
+              "name": "X-Service-Token",
+              "value": "={{ $json.prevData.backend_service_token }}"
             },
             {
               "name": "X-Tenant-ID",
@@ -402,17 +391,6 @@
       "position": [2280, 300],
       "parameters": {
         "jsCode": "// ============================================\n// SKIP ENRICHMENT - Pass through Qdrant results\n// ============================================\n\nconst input = $input.first().json;\n\nconst results = input.results.map(result => ({\n  entity_id: result.entity_id,\n  score: result.score,\n  payload: result.payload,\n  entity: null\n}));\n\nreturn {\n  results: results,\n  enriched: false,\n  prevData: input.prevData\n};"
-      }
-    },
-    {
-      "id": "merge-final",
-      "name": "Merge Final",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [2740, 200],
-      "parameters": {
-        "mode": "chooseBranch",
-        "output": "empty"
       }
     },
     {
@@ -533,7 +511,7 @@
       "main": [
         [
           {
-            "node": "Merge Results",
+            "node": "Prepare Enrichment",
             "type": "main",
             "index": 0
           }
@@ -552,17 +530,6 @@
       ]
     },
     "Search Similar": {
-      "main": [
-        [
-          {
-            "node": "Merge Results",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "Merge Results": {
       "main": [
         [
           {
@@ -617,7 +584,7 @@
       "main": [
         [
           {
-            "node": "Merge Final",
+            "node": "Format Output",
             "type": "main",
             "index": 0
           }
@@ -625,17 +592,6 @@
       ]
     },
     "Skip Enrichment": {
-      "main": [
-        [
-          {
-            "node": "Merge Final",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "Merge Final": {
       "main": [
         [
           {
