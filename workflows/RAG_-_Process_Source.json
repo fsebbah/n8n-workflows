@@ -1,0 +1,931 @@
+{
+  "name": "RAG - Process Source",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## RAG - Process Source\n\n**Endpoint:** POST /webhook/rag-process-source\n\n**Description:** Processes RAG sources (files/links) for indexation.\nReceives webhooks from chatbot-core API after upload/link/retry.\nExtracts text, chunks, vectorizes and stores in Qdrant.\nReports progress and completion back to API.\n\n**Webhook Payload (from API):**\n```json\n{\n  \"action\": \"process\" | \"retry\",\n  \"source_id\": \"src_xxx\",\n  \"tenant_id\": \"Z6F3GSWB\",\n  \"guild_id\": \"1286607696153546774\",\n  \"bot_id\": \"987654321\",\n  \"file_type\": \"pdf\" | \"txt\" | \"md\" | \"docx\" | \"xlsx\" | \"pptx\" | \"mp4\" | \"mp3\" | \"yt\",\n  \"b2_file_key\": \"tenant/rag/guild/bot/src/file.pdf\",\n  \"url\": \"https://youtube.com/...\",\n  \"extraction_mode\": \"subtitles\" | \"whisper\" | \"metadata\",\n  \"backend_api_url\": \"https://apidev.azy.solutions\",\n  \"backend_service_token\": \"xxx\"\n}\n```\n\n**Callbacks to API:**\n- POST /api/discord/n8n/sources/{source_id}/progress\n- POST /api/discord/n8n/sources/{source_id}/complete",
+        "height": 540,
+        "width": 420,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 80]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-process-source",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [500, 400],
+      "webhookId": "rag-process-source"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - RAG Process Source\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\nconst errors = [];\n\n// --- Required fields ---\nconst action = body.action;\nconst sourceId = body.source_id;\nconst tenantId = body.tenant_id || headers['x-tenant-id'] || headers['X-Tenant-ID'];\nconst guildId = body.guild_id;\nconst botId = body.bot_id;\nconst fileType = body.file_type;\n\n// Backend API config\nconst backendApiUrl = body.backend_api_url;\nconst backendServiceToken = body.backend_service_token;\n\n// Validate required\nif (!action) errors.push('action requis');\nelse if (!['process', 'retry'].includes(action)) errors.push('action doit etre process ou retry');\n\nif (!sourceId) errors.push('source_id requis');\nif (!tenantId) errors.push('tenant_id requis');\nif (!guildId) errors.push('guild_id requis');\nif (!botId) errors.push('bot_id requis');\nif (!fileType) errors.push('file_type requis');\nif (!backendApiUrl) errors.push('backend_api_url requis');\nif (!backendServiceToken) errors.push('backend_service_token requis');\n\n// File source (b2_file_key for uploads, url for links)\nconst b2FileKey = body.b2_file_key || null;\nconst url = body.url || null;\nconst extractionMode = body.extraction_mode || null;\n\nif (fileType === 'yt' && !url) {\n  errors.push('url requis pour file_type yt');\n}\nif (['pdf', 'txt', 'md', 'docx', 'xlsx', 'pptx', 'mp4', 'mp3'].includes(fileType) && !b2FileKey && !url) {\n  errors.push('b2_file_key ou url requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    source_id: sourceId\n  };\n}\n\n// Determine extraction method based on file_type\nlet extractionMethod;\nswitch (fileType) {\n  case 'pdf': extractionMethod = 'pdfplumber'; break;\n  case 'txt': case 'md': extractionMethod = 'raw_text'; break;\n  case 'docx': extractionMethod = 'docx_text'; break;\n  case 'xlsx': extractionMethod = 'xlsx_tabular'; break;\n  case 'pptx': extractionMethod = 'pptx_slides'; break;\n  case 'mp4': case 'mp3': extractionMethod = 'whisper'; break;\n  case 'yt': extractionMethod = extractionMode || 'subtitles'; break;\n  default: extractionMethod = 'unknown';\n}\n\nreturn {\n  valid: true,\n  action: action,\n  source_id: sourceId,\n  tenant_id: tenantId,\n  guild_id: guildId,\n  bot_id: botId,\n  file_type: fileType,\n  b2_file_key: b2FileKey,\n  url: url,\n  extraction_mode: extractionMode,\n  extraction_method: extractionMethod,\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken,\n  start_time: Date.now()\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [940, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'VALIDATION_ERROR', message: $json.errors.join(', ') } }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1160, 560]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, source_id: $json.source_id, status: 'processing' }) }}",
+        "options": {
+          "responseCode": 202,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-accepted",
+      "name": "Respond Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1160, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate Input').item.json.backend_api_url }}/api/discord/n8n/sources/{{ $('Validate Input').item.json.source_id }}/progress",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $('Validate Input').item.json.backend_service_token }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $('Validate Input').item.json.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"pending\",\n  \"progress_percent\": 10,\n  \"chunk_count\": 0\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "progress-start",
+      "name": "Progress: Start (10%)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1380, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Validate Input').item.json.file_type }}",
+                    "rightValue": "pdf",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "pdf"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Validate Input').item.json.file_type }}",
+                    "rightValue": "txt",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "leftValue": "={{ $('Validate Input').item.json.file_type }}",
+                    "rightValue": "md",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "text"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Validate Input').item.json.file_type }}",
+                    "rightValue": "docx",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "docx"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Validate Input').item.json.file_type }}",
+                    "rightValue": "xlsx",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "xlsx"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Validate Input').item.json.file_type }}",
+                    "rightValue": "pptx",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "pptx"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Validate Input').item.json.file_type }}",
+                    "rightValue": "mp4",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "leftValue": "={{ $('Validate Input').item.json.file_type }}",
+                    "rightValue": "mp3",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "audio"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Validate Input').item.json.file_type }}",
+                    "rightValue": "yt",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "youtube"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-file-type",
+      "name": "Switch File Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1600, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLACEHOLDER: PDF EXTRACTION\n// TODO: Implement actual PDF extraction\n// ============================================\n\nconst ctx = $('Validate Input').item.json;\n\n// Placeholder - simulates extraction\nconst extractedText = `[PDF EXTRACTION PLACEHOLDER]\\nSource: ${ctx.source_id}\\nFile: ${ctx.b2_file_key}\\n\\nThis is placeholder text. Real implementation will:\\n1. Download PDF from B2\\n2. Extract text with pdfplumber\\n3. Return actual content`;\n\nreturn {\n  ...ctx,\n  extracted_text: extractedText,\n  extraction_success: true\n};"
+      },
+      "id": "extract-pdf",
+      "name": "Extract PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 60]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLACEHOLDER: TEXT/MD EXTRACTION\n// TODO: Implement actual text extraction from B2\n// ============================================\n\nconst ctx = $('Validate Input').item.json;\n\nconst extractedText = `[TEXT EXTRACTION PLACEHOLDER]\\nSource: ${ctx.source_id}\\nFile: ${ctx.b2_file_key}\\n\\nThis is placeholder text. Real implementation will:\\n1. Download file from B2\\n2. Read raw text content\\n3. Return actual content`;\n\nreturn {\n  ...ctx,\n  extracted_text: extractedText,\n  extraction_success: true\n};"
+      },
+      "id": "extract-text",
+      "name": "Extract Text/MD",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLACEHOLDER: DOCX EXTRACTION\n// TODO: Implement actual DOCX extraction\n// ============================================\n\nconst ctx = $('Validate Input').item.json;\n\nconst extractedText = `[DOCX EXTRACTION PLACEHOLDER]\\nSource: ${ctx.source_id}\\nFile: ${ctx.b2_file_key}\\n\\nThis is placeholder text. Real implementation will:\\n1. Download DOCX from B2\\n2. Extract text content\\n3. Return actual content`;\n\nreturn {\n  ...ctx,\n  extracted_text: extractedText,\n  extraction_success: true\n};"
+      },
+      "id": "extract-docx",
+      "name": "Extract DOCX",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLACEHOLDER: XLSX EXTRACTION\n// TODO: Implement actual XLSX extraction\n// ============================================\n\nconst ctx = $('Validate Input').item.json;\n\nconst extractedText = `[XLSX EXTRACTION PLACEHOLDER]\\nSource: ${ctx.source_id}\\nFile: ${ctx.b2_file_key}\\n\\nThis is placeholder text. Real implementation will:\\n1. Download XLSX from B2\\n2. Extract tabular data\\n3. Convert to text format\\n4. Return actual content`;\n\nreturn {\n  ...ctx,\n  extracted_text: extractedText,\n  extraction_success: true\n};"
+      },
+      "id": "extract-xlsx",
+      "name": "Extract XLSX",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLACEHOLDER: PPTX EXTRACTION\n// TODO: Implement actual PPTX extraction\n// ============================================\n\nconst ctx = $('Validate Input').item.json;\n\nconst extractedText = `[PPTX EXTRACTION PLACEHOLDER]\\nSource: ${ctx.source_id}\\nFile: ${ctx.b2_file_key}\\n\\nThis is placeholder text. Real implementation will:\\n1. Download PPTX from B2\\n2. Extract slide content\\n3. Return actual content`;\n\nreturn {\n  ...ctx,\n  extracted_text: extractedText,\n  extraction_success: true\n};"
+      },
+      "id": "extract-pptx",
+      "name": "Extract PPTX",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 540]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLACEHOLDER: AUDIO/VIDEO TRANSCRIPTION\n// TODO: Implement Whisper transcription\n// ============================================\n\nconst ctx = $('Validate Input').item.json;\n\nconst extractedText = `[WHISPER TRANSCRIPTION PLACEHOLDER]\\nSource: ${ctx.source_id}\\nFile: ${ctx.b2_file_key}\\n\\nThis is placeholder text. Real implementation will:\\n1. Download audio/video from B2\\n2. Transcribe with Whisper API\\n3. Return actual transcription`;\n\nreturn {\n  ...ctx,\n  extracted_text: extractedText,\n  extraction_success: true\n};"
+      },
+      "id": "extract-audio",
+      "name": "Transcribe Audio/Video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 660]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLACEHOLDER: YOUTUBE EXTRACTION\n// TODO: Implement YouTube subtitle/transcription\n// ============================================\n\nconst ctx = $('Validate Input').item.json;\n\nconst extractedText = `[YOUTUBE EXTRACTION PLACEHOLDER]\\nSource: ${ctx.source_id}\\nURL: ${ctx.url}\\nMode: ${ctx.extraction_mode}\\n\\nThis is placeholder text. Real implementation will:\\n1. Fetch video metadata with yt-dlp\\n2. Extract subtitles or transcribe with Whisper\\n3. Return actual content`;\n\nreturn {\n  ...ctx,\n  extracted_text: extractedText,\n  extraction_success: true\n};"
+      },
+      "id": "extract-youtube",
+      "name": "Extract YouTube",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 780]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// UNSUPPORTED FILE TYPE\n// ============================================\n\nconst ctx = $('Validate Input').item.json;\n\nreturn {\n  ...ctx,\n  extracted_text: null,\n  extraction_success: false,\n  extraction_error: `Unsupported file type: ${ctx.file_type}`\n};"
+      },
+      "id": "unsupported-type",
+      "name": "Unsupported Type",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 900]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge-extraction",
+      "name": "Merge Extraction",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2080, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.backend_api_url }}/api/discord/n8n/sources/{{ $json.source_id }}/progress",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"transcription\",\n  \"progress_percent\": 50,\n  \"chunk_count\": 0\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "progress-extraction",
+      "name": "Progress: Extraction (50%)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2300, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-extraction",
+              "leftValue": "={{ $('Merge Extraction').item.json.extraction_success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-extraction",
+      "name": "Extraction OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2520, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CHUNKING - Split text into chunks\n// ============================================\n\nconst ctx = $('Merge Extraction').item.json;\nconst text = ctx.extracted_text || '';\n\n// Simple chunking strategy: split by paragraphs, then combine to target size\nconst CHUNK_SIZE = 1000; // characters\nconst CHUNK_OVERLAP = 200; // overlap between chunks\n\nconst chunks = [];\nlet currentChunk = '';\nlet chunkIndex = 0;\n\n// Split by double newlines (paragraphs)\nconst paragraphs = text.split(/\\n\\n+/);\n\nfor (const para of paragraphs) {\n  if (currentChunk.length + para.length > CHUNK_SIZE && currentChunk.length > 0) {\n    // Save current chunk\n    chunks.push({\n      index: chunkIndex,\n      text: currentChunk.trim(),\n      char_count: currentChunk.trim().length\n    });\n    chunkIndex++;\n    \n    // Start new chunk with overlap\n    const words = currentChunk.split(' ');\n    const overlapWords = words.slice(-Math.ceil(CHUNK_OVERLAP / 5)); // Approximate words for overlap\n    currentChunk = overlapWords.join(' ') + '\\n\\n' + para;\n  } else {\n    currentChunk += (currentChunk ? '\\n\\n' : '') + para;\n  }\n}\n\n// Don't forget the last chunk\nif (currentChunk.trim()) {\n  chunks.push({\n    index: chunkIndex,\n    text: currentChunk.trim(),\n    char_count: currentChunk.trim().length\n  });\n}\n\nreturn {\n  ...ctx,\n  chunks: chunks,\n  chunk_count: chunks.length\n};"
+      },
+      "id": "chunk-text",
+      "name": "Chunk Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2740, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.backend_api_url }}/api/discord/n8n/sources/{{ $json.source_id }}/progress",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"transcription\",\n  \"progress_percent\": 70,\n  \"chunk_count\": {{ $json.chunk_count }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "progress-chunking",
+      "name": "Progress: Chunking (70%)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2960, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLACEHOLDER: VECTORIZE AND STORE IN QDRANT\n// TODO: Implement actual embedding + Qdrant upsert\n// ============================================\n\nconst ctx = $('Chunk Text').item.json;\n\n// In real implementation:\n// 1. Generate embeddings for each chunk via OpenAI\n// 2. Upsert to Qdrant with metadata:\n//    - source_id, tenant_id, guild_id, bot_id\n//    - chunk_index, file_type, extraction_method\n// 3. Use collection: rag_sources_{tenant_id} or similar\n\nconst qdrantCollection = `rag_sources`;\n\n// Simulate success\nreturn {\n  ...ctx,\n  qdrant_success: true,\n  qdrant_collection: qdrantCollection,\n  points_upserted: ctx.chunk_count\n};"
+      },
+      "id": "vectorize-store",
+      "name": "Vectorize & Store Qdrant",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3180, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.backend_api_url }}/api/discord/n8n/sources/{{ $json.source_id }}/complete",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"success\": true,\n  \"chunk_count\": {{ $json.chunk_count }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "complete-success",
+      "name": "Complete: Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3400, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Merge Extraction').item.json.backend_api_url }}/api/discord/n8n/sources/{{ $('Merge Extraction').item.json.source_id }}/complete",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $('Merge Extraction').item.json.backend_service_token }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $('Merge Extraction').item.json.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"success\": false,\n  \"error_message\": \"{{ $('Merge Extraction').item.json.extraction_error || 'Extraction failed' }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "complete-error",
+      "name": "Complete: Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2740, 520]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Accepted": {
+      "main": [
+        [
+          {
+            "node": "Progress: Start (10%)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Progress: Start (10%)": {
+      "main": [
+        [
+          {
+            "node": "Switch File Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch File Type": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Text/MD",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract DOCX",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract XLSX",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract PPTX",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transcribe Audio/Video",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unsupported Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF": {
+      "main": [
+        [
+          {
+            "node": "Merge Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text/MD": {
+      "main": [
+        [
+          {
+            "node": "Merge Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract DOCX": {
+      "main": [
+        [
+          {
+            "node": "Merge Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract XLSX": {
+      "main": [
+        [
+          {
+            "node": "Merge Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PPTX": {
+      "main": [
+        [
+          {
+            "node": "Merge Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe Audio/Video": {
+      "main": [
+        [
+          {
+            "node": "Merge Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract YouTube": {
+      "main": [
+        [
+          {
+            "node": "Merge Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unsupported Type": {
+      "main": [
+        [
+          {
+            "node": "Merge Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Extraction": {
+      "main": [
+        [
+          {
+            "node": "Progress: Extraction (50%)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Progress: Extraction (50%)": {
+      "main": [
+        [
+          {
+            "node": "Extraction OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraction OK?": {
+      "main": [
+        [
+          {
+            "node": "Chunk Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Complete: Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunk Text": {
+      "main": [
+        [
+          {
+            "node": "Progress: Chunking (70%)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Progress: Chunking (70%)": {
+      "main": [
+        [
+          {
+            "node": "Vectorize & Store Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vectorize & Store Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Complete: Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "pinData": {}
+}

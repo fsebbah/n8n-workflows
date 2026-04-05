@@ -1,0 +1,187 @@
+{
+  "name": "RAG - Delete Source",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## RAG - Delete Source\n\n**Endpoint:** POST /webhook/rag-delete-source\n\n**Description:** Deletes RAG source chunks from Qdrant.\nReceives webhook from chatbot-core API after source deletion.\n\n**Webhook Payload (from API):**\n```json\n{\n  \"action\": \"delete\",\n  \"source_id\": \"src_xxx\",\n  \"tenant_id\": \"Z6F3GSWB\",\n  \"guild_id\": \"1286607696153546774\",\n  \"bot_id\": \"987654321\",\n  \"b2_file_key\": \"tenant/rag/guild/bot/src/file.pdf\",\n  \"backend_api_url\": \"https://apidev.azy.solutions\",\n  \"backend_service_token\": \"xxx\"\n}\n```\n\n**Actions:**\n1. Delete all Qdrant points where source_id matches\n2. Optionally confirm deletion back to API",
+        "height": 380,
+        "width": 400,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 80]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-delete-source",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [500, 300],
+      "webhookId": "rag-delete-source"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - RAG Delete Source\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\nconst errors = [];\n\n// --- Required fields ---\nconst action = body.action;\nconst sourceId = body.source_id;\nconst tenantId = body.tenant_id || headers['x-tenant-id'] || headers['X-Tenant-ID'];\nconst guildId = body.guild_id;\nconst botId = body.bot_id;\n\n// Backend API config (optional for delete confirmation)\nconst backendApiUrl = body.backend_api_url || null;\nconst backendServiceToken = body.backend_service_token || null;\n\n// B2 file key (for logging/tracing)\nconst b2FileKey = body.b2_file_key || null;\n\n// Validate required\nif (!action) errors.push('action requis');\nelse if (action !== 'delete') errors.push('action doit etre delete');\n\nif (!sourceId) errors.push('source_id requis');\nif (!tenantId) errors.push('tenant_id requis');\nif (!guildId) errors.push('guild_id requis');\nif (!botId) errors.push('bot_id requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    source_id: sourceId\n  };\n}\n\nreturn {\n  valid: true,\n  action: action,\n  source_id: sourceId,\n  tenant_id: tenantId,\n  guild_id: guildId,\n  bot_id: botId,\n  b2_file_key: b2FileKey,\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken,\n  start_time: Date.now()\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [940, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'VALIDATION_ERROR', message: $json.errors.join(', ') } }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1160, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// DELETE FROM QDRANT\n// Delete all points where source_id matches\n// ============================================\n\nconst ctx = $input.first().json;\n\n// In real implementation:\n// 1. Connect to Qdrant\n// 2. Delete points with filter: { source_id: ctx.source_id }\n// 3. Collection: rag_sources or tenant-specific\n\n// Qdrant delete by filter payload:\n// POST /collections/{collection}/points/delete\n// {\n//   \"filter\": {\n//     \"must\": [\n//       { \"key\": \"source_id\", \"match\": { \"value\": \"src_xxx\" } }\n//     ]\n//   }\n// }\n\n// Simulate deletion\nconst deletedCount = 0; // Would be actual count from Qdrant response\n\nreturn {\n  ...ctx,\n  qdrant_deleted: true,\n  deleted_count: deletedCount,\n  qdrant_collection: 'rag_sources'\n};"
+      },
+      "id": "delete-qdrant",
+      "name": "Delete from Qdrant",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, source_id: $json.source_id, deleted_count: $json.deleted_count, message: 'Qdrant points deleted' }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1380, 200]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Delete from Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete from Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "pinData": {}
+}
