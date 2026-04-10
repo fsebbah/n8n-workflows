@@ -1,0 +1,149 @@
+{
+  "name": "GUILD - Credits Exhausted Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "guild/credits/exhausted",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "guild-credits-exhausted"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract data from webhook body\nconst body = $input.first().json.body;\n\nconst { guild_id, discord_user_id, quota } = body;\n\nreturn {\n  guild_id,\n  discord_user_id,\n  quota,\n  alert_type: 'credits_exhausted'\n};"
+      },
+      "id": "parse-message",
+      "name": "Parse Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_API_URL }}/api/discord/users/{{ $json.discord_user_id }}/dm",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"🔴 Crédits épuisés\",\n    \"description\": \"Vous avez utilisé tous vos crédits pour ce mois.\\n\\nVotre quota mensuel de **{{ $json.quota }}** crédits sera renouvelé automatiquement le premier du mois prochain.\",\n    \"color\": 15158332,\n    \"fields\": [\n      {\n        \"name\": \"Que faire ?\",\n        \"value\": \"• Attendez le renouvellement automatique\\n• Contactez l'administrateur de la guild pour une attribution exceptionnelle\",\n        \"inline\": false\n      }\n    ],\n    \"timestamp\": \"{{ $now.toISO() }}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "send-dm",
+      "name": "Send DM to User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "backend-service-token",
+          "name": "Backend Service Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_API_URL }}/api/discord/guilds/{{ $json.guild_id }}/admin-channel",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"🔴 Crédits épuisés\",\n    \"description\": \"<@{{ $json.discord_user_id }}> a épuisé son quota de crédits mensuel.\",\n    \"color\": 15158332,\n    \"fields\": [\n      {\n        \"name\": \"Quota mensuel\",\n        \"value\": \"{{ $json.quota }} crédits\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"Action possible\",\n        \"value\": \"Attribution manuelle via le dashboard\",\n        \"inline\": true\n      }\n    ],\n    \"timestamp\": \"{{ $now.toISO() }}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "notify-admin",
+      "name": "Notify Admin Channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "backend-service-token",
+          "name": "Backend Service Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, dm_sent: true, admin_notified: true, guild_id: $('Parse Message').item.json.guild_id, discord_user_id: $('Parse Message').item.json.discord_user_id }) }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [920, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Message": {
+      "main": [
+        [
+          {
+            "node": "Send DM to User",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Admin Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send DM to User": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Admin Channel": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "guild-credits"
+    },
+    {
+      "name": "notifications"
+    }
+  ]
+}

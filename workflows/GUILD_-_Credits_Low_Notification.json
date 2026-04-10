@@ -1,0 +1,110 @@
+{
+  "name": "GUILD - Credits Low Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "guild/credits/low",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "guild-credits-low"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract data from webhook body\nconst body = $input.first().json.body;\n\nconst { guild_id, discord_user_id, remaining, quota } = body;\nconst percentage = Math.round((remaining / quota) * 100);\n\nreturn {\n  guild_id,\n  discord_user_id,\n  remaining,\n  quota,\n  percentage,\n  alert_type: 'low_credits'\n};"
+      },
+      "id": "parse-message",
+      "name": "Parse Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_API_URL }}/api/discord/guilds/{{ $json.guild_id }}/admin-channel",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"⚠️ Crédits bas\",\n    \"description\": \"<@{{ $json.discord_user_id }}> n'a plus que **{{ $json.remaining }}** crédits ({{ $json.percentage }}% du quota mensuel).\",\n    \"color\": 16776960,\n    \"fields\": [\n      {\n        \"name\": \"Quota mensuel\",\n        \"value\": \"{{ $json.quota }} crédits\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"Restant\",\n        \"value\": \"{{ $json.remaining }} crédits\",\n        \"inline\": true\n      }\n    ],\n    \"timestamp\": \"{{ $now.toISO() }}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "send-discord",
+      "name": "Send to Admin Channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "backend-service-token",
+          "name": "Backend Service Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, notification_sent: true, guild_id: $json.guild_id, discord_user_id: $json.discord_user_id }) }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [920, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Message": {
+      "main": [
+        [
+          {
+            "node": "Send to Admin Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Admin Channel": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "guild-credits"
+    },
+    {
+      "name": "notifications"
+    }
+  ]
+}
