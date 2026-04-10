@@ -1,0 +1,128 @@
+{
+  "name": "GUILD - Category Create",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "discord/category/create",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "discord-category-create"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://discord.com/api/v10/guilds/{{ $json.body.guild_id }}/channels",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": \"{{ $json.body.name }}\",\n  \"type\": 4\n}",
+        "options": {
+          "retry": {
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "retryIntervalExponential": true
+          }
+        }
+      },
+      "id": "discord-api",
+      "name": "Create Category (Discord)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "discord-bot-token",
+          "name": "Discord Bot Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const discordResponse = $input.first().json;\n\nif (discordResponse.id) {\n  return {\n    success: true,\n    category_id: discordResponse.id,\n    name: discordResponse.name\n  };\n} else {\n  return {\n    success: false,\n    error: discordResponse.message || 'Unknown error',\n    code: discordResponse.code\n  };\n}"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [910, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Create Category (Discord)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Category (Discord)": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "guild"
+    },
+    {
+      "name": "discord"
+    },
+    {
+      "name": "rfc-061"
+    }
+  ]
+}
