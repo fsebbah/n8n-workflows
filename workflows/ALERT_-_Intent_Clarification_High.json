@@ -1,0 +1,644 @@
+{
+  "updatedAt": "2026-02-10T14:12:16.561Z",
+  "createdAt": "2026-02-10T14:10:42.226Z",
+  "id": "mrrkVpACdt1YRgVu",
+  "name": "ALERT - Intent Clarification High",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## ALERT - Intent Clarification High\n\n**Issue:** #288\n**RFC:** RFC-031 (Section 13.4)\n\n**Description:**\nSurveille le taux de clarification via API et alerte si >30%.\n\n**Fréquence:** Hourly\n\n**Seuils:**\n- WARNING: >30% clarification rate\n- CRITICAL: >50% clarification rate\n\n**Actions:**\n- Log via API /api/intent/alerts\n- Notification Discord (optionnel)",
+        "height": 300,
+        "width": 360,
+        "color": 3
+      },
+      "id": "doc-note",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "trigger-cron",
+      "name": "Every Hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        60,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.API_URL }}/api/intent/stats/hourly?period=1h",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-api-stats",
+      "name": "API Get Hourly Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CALCULATE CLARIFICATION RATE\n// ============================================\n\nconst data = $input.first().json.data || {};\n\n// Handle empty results\nif (!data.total || data.total === 0) {\n  return [{\n    json: {\n      status: 'no_data',\n      message: 'No intent data in the last hour',\n      checked_at: new Date().toISOString()\n    }\n  }];\n}\n\n// Calculate rate\nconst total = data.total;\nconst clarificationCount = data.clarification_count || 0;\nconst clarificationRate = (clarificationCount / total) * 100;\n\n// Determine severity\nlet severity = 'OK';\nif (clarificationRate > 50) {\n  severity = 'CRITICAL';\n} else if (clarificationRate > 30) {\n  severity = 'WARNING';\n}\n\nreturn [{\n  json: {\n    total_requests: total,\n    clarification_count: clarificationCount,\n    clarification_rate: Math.round(clarificationRate * 100) / 100,\n    severity: severity,\n    threshold_warning: 30,\n    threshold_critical: 50,\n    domain_breakdown: data.domain_breakdown || {},\n    checked_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "code-calc-rate",
+      "name": "Calculate Rate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-needs-alert",
+              "leftValue": "={{ $json.severity }}",
+              "rightValue": "OK",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-needs-alert",
+      "name": "Needs Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare alert data for API (payload wrapper per api-backend spec)\nconst data = $input.first().json;\n\nreturn [{\n  json: {\n    alert_type: 'clarification_high',\n    severity: data.severity,\n    payload: {\n      clarification_rate: data.clarification_rate,\n      total_requests: data.total_requests,\n      clarification_count: data.clarification_count,\n      domain_breakdown: data.domain_breakdown\n    }\n  }\n}];"
+      },
+      "id": "code-prepare-alert",
+      "name": "Prepare Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/intent/alerts",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "http-api-alert",
+      "name": "API Log Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT DISCORD MESSAGE\n// ============================================\n\nconst data = $('Calculate Rate').first().json;\nconst emoji = data.severity === 'CRITICAL' ? '🚨' : '⚠️';\nconst color = data.severity === 'CRITICAL' ? 0xFF0000 : 0xFFA500;\n\n// Build domain breakdown text\nlet domainText = '';\nfor (const [domain, stats] of Object.entries(data.domain_breakdown || {})) {\n  const rate = stats.total > 0 ? ((stats.clarifications / stats.total) * 100).toFixed(1) : 0;\n  domainText += `• **${domain}**: ${rate}% (${stats.clarifications}/${stats.total})\\n`;\n}\n\nreturn [{\n  json: {\n    embeds: [{\n      title: `${emoji} Intent Clarification ${data.severity}`,\n      description: `Le taux de clarification a dépassé le seuil dans la dernière heure.`,\n      color: color,\n      fields: [\n        {\n          name: 'Taux de clarification',\n          value: `${data.clarification_rate}%`,\n          inline: true\n        },\n        {\n          name: 'Seuil',\n          value: `${data.severity === 'CRITICAL' ? '>50%' : '>30%'}`,\n          inline: true\n        },\n        {\n          name: 'Total requêtes',\n          value: `${data.total_requests}`,\n          inline: true\n        },\n        {\n          name: 'Détail par domaine',\n          value: domainText || 'Aucune donnée',\n          inline: false\n        }\n      ],\n      timestamp: new Date().toISOString()\n    }]\n  }\n}];"
+      },
+      "id": "code-format-discord",
+      "name": "Format Discord",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Discord Notification\n\nConfigurer le webhook Discord:\n1. Créer un webhook dans le channel d'alertes\n2. Configurer DISCORD_WEBHOOK_ALERTS\n3. Activer le node Discord ci-dessous",
+        "height": 140,
+        "width": 280,
+        "color": 4
+      },
+      "id": "note-discord",
+      "name": "Discord Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1380,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK_ALERTS }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "http-discord",
+      "name": "Discord Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1380,
+        200
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {},
+      "id": "noop-ok",
+      "name": "All Good",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        940,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Every Hour": {
+      "main": [
+        [
+          {
+            "node": "API Get Hourly Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Get Hourly Stats": {
+      "main": [
+        [
+          {
+            "node": "Calculate Rate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Rate": {
+      "main": [
+        [
+          {
+            "node": "Needs Alert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Alert?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "All Good",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Alert": {
+      "main": [
+        [
+          {
+            "node": "API Log Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Log Alert": {
+      "main": [
+        [
+          {
+            "node": "Format Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Discord": {
+      "main": [
+        [
+          {
+            "node": "Discord Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Every Hour": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "7f72ed81-2cef-4398-ae8c-6be6e61197cb",
+  "activeVersionId": "7f72ed81-2cef-4398-ae8c-6be6e61197cb",
+  "versionCounter": 51,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-02-10T14:10:42.226Z",
+      "createdAt": "2026-02-10T14:10:42.226Z",
+      "role": "workflow:owner",
+      "workflowId": "mrrkVpACdt1YRgVu",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-10T14:10:42.249Z",
+    "createdAt": "2026-02-10T14:10:42.249Z",
+    "versionId": "7f72ed81-2cef-4398-ae8c-6be6e61197cb",
+    "workflowId": "mrrkVpACdt1YRgVu",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## ALERT - Intent Clarification High\n\n**Issue:** #288\n**RFC:** RFC-031 (Section 13.4)\n\n**Description:**\nSurveille le taux de clarification via API et alerte si >30%.\n\n**Fréquence:** Hourly\n\n**Seuils:**\n- WARNING: >30% clarification rate\n- CRITICAL: >50% clarification rate\n\n**Actions:**\n- Log via API /api/intent/alerts\n- Notification Discord (optionnel)",
+          "height": 300,
+          "width": 360,
+          "color": 3
+        },
+        "id": "doc-note",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -200,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 * * * *"
+              }
+            ]
+          }
+        },
+        "id": "trigger-cron",
+        "name": "Every Hour",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          60,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $env.API_URL }}/api/intent/stats/hourly?period=1h",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "http-api-stats",
+        "name": "API Get Hourly Stats",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          280,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// CALCULATE CLARIFICATION RATE\n// ============================================\n\nconst data = $input.first().json.data || {};\n\n// Handle empty results\nif (!data.total || data.total === 0) {\n  return [{\n    json: {\n      status: 'no_data',\n      message: 'No intent data in the last hour',\n      checked_at: new Date().toISOString()\n    }\n  }];\n}\n\n// Calculate rate\nconst total = data.total;\nconst clarificationCount = data.clarification_count || 0;\nconst clarificationRate = (clarificationCount / total) * 100;\n\n// Determine severity\nlet severity = 'OK';\nif (clarificationRate > 50) {\n  severity = 'CRITICAL';\n} else if (clarificationRate > 30) {\n  severity = 'WARNING';\n}\n\nreturn [{\n  json: {\n    total_requests: total,\n    clarification_count: clarificationCount,\n    clarification_rate: Math.round(clarificationRate * 100) / 100,\n    severity: severity,\n    threshold_warning: 30,\n    threshold_critical: 50,\n    domain_breakdown: data.domain_breakdown || {},\n    checked_at: new Date().toISOString()\n  }\n}];"
+        },
+        "id": "code-calc-rate",
+        "name": "Calculate Rate",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          500,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-needs-alert",
+                "leftValue": "={{ $json.severity }}",
+                "rightValue": "OK",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEquals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-needs-alert",
+        "name": "Needs Alert?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          720,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Prepare alert data for API (payload wrapper per api-backend spec)\nconst data = $input.first().json;\n\nreturn [{\n  json: {\n    alert_type: 'clarification_high',\n    severity: data.severity,\n    payload: {\n      clarification_rate: data.clarification_rate,\n      total_requests: data.total_requests,\n      clarification_count: data.clarification_count,\n      domain_breakdown: data.domain_breakdown\n    }\n  }\n}];"
+        },
+        "id": "code-prepare-alert",
+        "name": "Prepare Alert",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          940,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/intent/alerts",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "http-api-alert",
+        "name": "API Log Alert",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          940,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT DISCORD MESSAGE\n// ============================================\n\nconst data = $('Calculate Rate').first().json;\nconst emoji = data.severity === 'CRITICAL' ? '🚨' : '⚠️';\nconst color = data.severity === 'CRITICAL' ? 0xFF0000 : 0xFFA500;\n\n// Build domain breakdown text\nlet domainText = '';\nfor (const [domain, stats] of Object.entries(data.domain_breakdown || {})) {\n  const rate = stats.total > 0 ? ((stats.clarifications / stats.total) * 100).toFixed(1) : 0;\n  domainText += `• **${domain}**: ${rate}% (${stats.clarifications}/${stats.total})\\n`;\n}\n\nreturn [{\n  json: {\n    embeds: [{\n      title: `${emoji} Intent Clarification ${data.severity}`,\n      description: `Le taux de clarification a dépassé le seuil dans la dernière heure.`,\n      color: color,\n      fields: [\n        {\n          name: 'Taux de clarification',\n          value: `${data.clarification_rate}%`,\n          inline: true\n        },\n        {\n          name: 'Seuil',\n          value: `${data.severity === 'CRITICAL' ? '>50%' : '>30%'}`,\n          inline: true\n        },\n        {\n          name: 'Total requêtes',\n          value: `${data.total_requests}`,\n          inline: true\n        },\n        {\n          name: 'Détail par domaine',\n          value: domainText || 'Aucune donnée',\n          inline: false\n        }\n      ],\n      timestamp: new Date().toISOString()\n    }]\n  }\n}];"
+        },
+        "id": "code-format-discord",
+        "name": "Format Discord",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1160,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## Discord Notification\n\nConfigurer le webhook Discord:\n1. Créer un webhook dans le channel d'alertes\n2. Configurer DISCORD_WEBHOOK_ALERTS\n3. Activer le node Discord ci-dessous",
+          "height": 140,
+          "width": 280,
+          "color": 4
+        },
+        "id": "note-discord",
+        "name": "Discord Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          1380,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.DISCORD_WEBHOOK_ALERTS }}",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {}
+        },
+        "id": "http-discord",
+        "name": "Discord Webhook",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1380,
+          200
+        ],
+        "disabled": true
+      },
+      {
+        "parameters": {},
+        "id": "noop-ok",
+        "name": "All Good",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          940,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Every Hour": {
+        "main": [
+          [
+            {
+              "node": "API Get Hourly Stats",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "API Get Hourly Stats": {
+        "main": [
+          [
+            {
+              "node": "Calculate Rate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Calculate Rate": {
+        "main": [
+          [
+            {
+              "node": "Needs Alert?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Needs Alert?": {
+        "main": [
+          [
+            {
+              "node": "Prepare Alert",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "All Good",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Alert": {
+        "main": [
+          [
+            {
+              "node": "API Log Alert",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "API Log Alert": {
+        "main": [
+          [
+            {
+              "node": "Format Discord",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Discord": {
+        "main": [
+          [
+            {
+              "node": "Discord Webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

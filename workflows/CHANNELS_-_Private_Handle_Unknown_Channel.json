@@ -1,0 +1,968 @@
+{
+  "updatedAt": "2026-02-11T19:10:16.682Z",
+  "createdAt": "2026-02-11T19:09:04.908Z",
+  "id": "N9OPbgwDU9XIOYKs",
+  "name": "CHANNELS - Private Handle Unknown Channel",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## CHANNELS - Private Handle Unknown Channel\n\n**RFC:** RFC-004\n\n**Description:** Gère le cas où un channel privé n'existe plus sur Discord. Supprime l'ancien enregistrement et recrée un nouveau channel.\n\n**Endpoint:** POST /webhook/private-channel-unknown\n\n**InputSchema:**\n```json\n{\"type\":\"object\",\"required\":[\"discord_user_id\",\"guild_id\",\"old_channel_id\",\"bot_token\"],\"properties\":{\"discord_user_id\":{\"type\":\"string\",\"description\":\"ID Discord de l'utilisateur\"},\"guild_id\":{\"type\":\"string\",\"description\":\"ID du serveur Discord\"},\"old_channel_id\":{\"type\":\"string\",\"description\":\"ID du channel supprimé\"},\"bot_token\":{\"type\":\"string\",\"description\":\"Token du bot Discord (passé par le plugin)\"},\"channel_type\":{\"type\":\"string\",\"default\":\"support\"},\"category_id\":{\"type\":\"string\"},\"metadata\":{\"type\":\"object\"}}}\n```\n\n**Flow:**\n1. DELETE api-backend (old channel)\n2. POST Discord API (create channel)\n3. POST api-backend (register new)\n4. Return channel info",
+        "height": 480,
+        "width": 360,
+        "color": 6
+      },
+      "id": "channel-unknown-0000",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -260,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "private-channel-unknown",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "channel-unknown-0001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        300
+      ],
+      "webhookId": "private-channel-unknown"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT (RFC-004)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extract Tenant ID ---\nconst tenantId = headers['x-tenant-id'] \n  || headers['X-Tenant-ID'] \n  || headers['X-Tenant-Id']\n  || $env.DEFAULT_TENANT_ID\n  || 'default';\n\n// --- Validation required fields ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis',\n    http_status: 400\n  };\n}\n\nif (!body.guild_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_GUILD_ID',\n    message: 'Le champ \"guild_id\" est requis',\n    http_status: 400\n  };\n}\n\nif (!body.old_channel_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_OLD_CHANNEL_ID',\n    message: 'Le champ \"old_channel_id\" est requis',\n    http_status: 400\n  };\n}\n\nif (!body.bot_token) {\n  return {\n    error: true,\n    error_code: 'MISSING_BOT_TOKEN',\n    message: 'Le champ \"bot_token\" est requis',\n    http_status: 400\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: body.discord_user_id,\n    guild_id: body.guild_id,\n    old_channel_id: body.old_channel_id,\n    bot_token: body.bot_token,\n    channel_type: body.channel_type || 'support',\n    category_id: body.category_id || null,\n    tenant_id: tenantId,\n    metadata: {\n      ...body.metadata,\n      recreated_from: body.old_channel_id,\n      reason: 'unknown_channel_error'\n    }\n  }\n};"
+      },
+      "id": "channel-unknown-0002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "channel-unknown-0003",
+      "name": "Validation Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        620,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.API_URL }}/api/channels/private/{{ $('Validate Input').first().json.data.discord_user_id }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "guild_id",
+              "value": "={{ $('Validate Input').first().json.data.guild_id }}"
+            },
+            {
+              "name": "channel_type",
+              "value": "={{ $('Validate Input').first().json.data.channel_type }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $('Validate Input').first().json.data.tenant_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "channel-unknown-0004",
+      "name": "Delete Old Channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        840,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://discord.com/api/v10/guilds/{{ $('Validate Input').first().json.data.guild_id }}/channels",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bot {{ $('Validate Input').first().json.data.bot_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $('Validate Input').first().json.data.channel_type + '-' + $('Validate Input').first().json.data.discord_user_id.slice(-4), type: 0, parent_id: $('Validate Input').first().json.data.category_id || undefined, permission_overwrites: [ { id: $('Validate Input').first().json.data.guild_id, type: 0, deny: '1024' }, { id: $('Validate Input').first().json.data.discord_user_id, type: 1, allow: '1024' } ] }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "channel-unknown-0005",
+      "name": "Create Discord Channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1060,
+        200
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-discord-success",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "channel-unknown-0006",
+      "name": "Discord Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/channels/private",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "guild_id",
+              "value": "={{ $('Validate Input').first().json.data.guild_id }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $('Validate Input').first().json.data.tenant_id }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ discord_user_id: $('Validate Input').first().json.data.discord_user_id, channel_id: $('Create Discord Channel').first().json.id, channel_type: $('Validate Input').first().json.data.channel_type, channel_name: $('Create Discord Channel').first().json.name, metadata: $('Validate Input').first().json.data.metadata }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "channel-unknown-0007",
+      "name": "Register Channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        100
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT RECREATED CHANNEL RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst channelData = apiResponse.data || apiResponse;\nconst oldChannelId = $('Validate Input').first().json.data.old_channel_id;\n\nreturn {\n  success: true,\n  status: 'recreated',\n  channel: {\n    channel_id: channelData.channel_id,\n    channel_type: channelData.channel_type,\n    channel_name: channelData.channel_name,\n    is_active: channelData.is_active\n  },\n  previous_channel_id: oldChannelId\n};"
+      },
+      "id": "channel-unknown-0008",
+      "name": "Format Recreated Channel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1720,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation'\n  },\n  http_status: input.http_status || 400\n};"
+      },
+      "id": "channel-unknown-0009",
+      "name": "Format Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT DISCORD API ERROR\n// ============================================\n\nconst input = $input.first().json;\n\n// Discord API error codes\nconst discordCode = input.code;\nlet httpStatus = 500;\nlet errorCode = 'DISCORD_ERROR';\nlet message = input.message || 'Erreur Discord API';\n\nswitch(discordCode) {\n  case 50001: // Missing Access\n    httpStatus = 403;\n    errorCode = 'MISSING_ACCESS';\n    message = 'Le bot n\\'a pas accès à ce serveur';\n    break;\n  case 50013: // Missing Permissions\n    httpStatus = 403;\n    errorCode = 'MISSING_PERMISSIONS';\n    message = 'Le bot n\\'a pas les permissions pour créer un channel';\n    break;\n  case 10004: // Unknown Guild\n    httpStatus = 404;\n    errorCode = 'GUILD_NOT_FOUND';\n    message = 'Serveur Discord non trouvé';\n    break;\n  case 10013: // Unknown User\n    httpStatus = 404;\n    errorCode = 'USER_NOT_FOUND';\n    message = 'Utilisateur Discord non trouvé';\n    break;\n  case 30013: // Maximum channels reached\n    httpStatus = 400;\n    errorCode = 'MAX_CHANNELS';\n    message = 'Nombre maximum de channels atteint sur ce serveur';\n    break;\n  default:\n    if (input.error) {\n      message = input.error;\n    }\n}\n\nreturn {\n  success: false,\n  error: {\n    code: errorCode,\n    message: message,\n    discord_code: discordCode\n  },\n  http_status: httpStatus\n};"
+      },
+      "id": "channel-unknown-0010",
+      "name": "Format Discord Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: $json.success, status: $json.status, channel: $json.channel, previous_channel_id: $json.previous_channel_id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "channel-unknown-0011",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1940,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": "={{ $json.http_status || 400 }}"
+        }
+      },
+      "id": "channel-unknown-0012",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1720,
+        350
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Validation Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Error?": {
+      "main": [
+        [
+          {
+            "node": "Format Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete Old Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Old Channel": {
+      "main": [
+        [
+          {
+            "node": "Create Discord Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Discord Channel": {
+      "main": [
+        [
+          {
+            "node": "Discord Created?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Discord Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord Created?": {
+      "main": [
+        [
+          {
+            "node": "Register Channel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Discord Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Channel": {
+      "main": [
+        [
+          {
+            "node": "Format Recreated Channel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Recreated Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Recreated Channel": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Discord Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "c1369cea-b13f-4ee0-97a5-3c24ca5ae9dd",
+  "activeVersionId": "c1369cea-b13f-4ee0-97a5-3c24ca5ae9dd",
+  "versionCounter": 48,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-02-11T19:09:04.908Z",
+      "createdAt": "2026-02-11T19:09:04.908Z",
+      "role": "workflow:owner",
+      "workflowId": "N9OPbgwDU9XIOYKs",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-11T19:09:04.927Z",
+    "createdAt": "2026-02-11T19:09:04.927Z",
+    "versionId": "c1369cea-b13f-4ee0-97a5-3c24ca5ae9dd",
+    "workflowId": "N9OPbgwDU9XIOYKs",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## CHANNELS - Private Handle Unknown Channel\n\n**RFC:** RFC-004\n\n**Description:** Gère le cas où un channel privé n'existe plus sur Discord. Supprime l'ancien enregistrement et recrée un nouveau channel.\n\n**Endpoint:** POST /webhook/private-channel-unknown\n\n**InputSchema:**\n```json\n{\"type\":\"object\",\"required\":[\"discord_user_id\",\"guild_id\",\"old_channel_id\",\"bot_token\"],\"properties\":{\"discord_user_id\":{\"type\":\"string\",\"description\":\"ID Discord de l'utilisateur\"},\"guild_id\":{\"type\":\"string\",\"description\":\"ID du serveur Discord\"},\"old_channel_id\":{\"type\":\"string\",\"description\":\"ID du channel supprimé\"},\"bot_token\":{\"type\":\"string\",\"description\":\"Token du bot Discord (passé par le plugin)\"},\"channel_type\":{\"type\":\"string\",\"default\":\"support\"},\"category_id\":{\"type\":\"string\"},\"metadata\":{\"type\":\"object\"}}}\n```\n\n**Flow:**\n1. DELETE api-backend (old channel)\n2. POST Discord API (create channel)\n3. POST api-backend (register new)\n4. Return channel info",
+          "height": 480,
+          "width": 360,
+          "color": 6
+        },
+        "id": "channel-unknown-0000",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -260,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "private-channel-unknown",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "channel-unknown-0001",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          180,
+          300
+        ],
+        "webhookId": "private-channel-unknown"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT (RFC-004)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extract Tenant ID ---\nconst tenantId = headers['x-tenant-id'] \n  || headers['X-Tenant-ID'] \n  || headers['X-Tenant-Id']\n  || $env.DEFAULT_TENANT_ID\n  || 'default';\n\n// --- Validation required fields ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis',\n    http_status: 400\n  };\n}\n\nif (!body.guild_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_GUILD_ID',\n    message: 'Le champ \"guild_id\" est requis',\n    http_status: 400\n  };\n}\n\nif (!body.old_channel_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_OLD_CHANNEL_ID',\n    message: 'Le champ \"old_channel_id\" est requis',\n    http_status: 400\n  };\n}\n\nif (!body.bot_token) {\n  return {\n    error: true,\n    error_code: 'MISSING_BOT_TOKEN',\n    message: 'Le champ \"bot_token\" est requis',\n    http_status: 400\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: body.discord_user_id,\n    guild_id: body.guild_id,\n    old_channel_id: body.old_channel_id,\n    bot_token: body.bot_token,\n    channel_type: body.channel_type || 'support',\n    category_id: body.category_id || null,\n    tenant_id: tenantId,\n    metadata: {\n      ...body.metadata,\n      recreated_from: body.old_channel_id,\n      reason: 'unknown_channel_error'\n    }\n  }\n};"
+        },
+        "id": "channel-unknown-0002",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          400,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-error",
+                "leftValue": "={{ $json.error }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "channel-unknown-0003",
+        "name": "Validation Error?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          620,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "DELETE",
+          "url": "={{ $env.API_URL }}/api/channels/private/{{ $('Validate Input').first().json.data.discord_user_id }}",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "guild_id",
+                "value": "={{ $('Validate Input').first().json.data.guild_id }}"
+              },
+              {
+                "name": "channel_type",
+                "value": "={{ $('Validate Input').first().json.data.channel_type }}"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Tenant-ID",
+                "value": "={{ $('Validate Input').first().json.data.tenant_id }}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "channel-unknown-0004",
+        "name": "Delete Old Channel",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          840,
+          200
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://discord.com/api/v10/guilds/{{ $('Validate Input').first().json.data.guild_id }}/channels",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bot {{ $('Validate Input').first().json.data.bot_token }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ name: $('Validate Input').first().json.data.channel_type + '-' + $('Validate Input').first().json.data.discord_user_id.slice(-4), type: 0, parent_id: $('Validate Input').first().json.data.category_id || undefined, permission_overwrites: [ { id: $('Validate Input').first().json.data.guild_id, type: 0, deny: '1024' }, { id: $('Validate Input').first().json.data.discord_user_id, type: 1, allow: '1024' } ] }) }}",
+          "options": {
+            "timeout": 15000
+          }
+        },
+        "id": "channel-unknown-0005",
+        "name": "Create Discord Channel",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1060,
+          200
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-discord-success",
+                "leftValue": "={{ $json.id }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "channel-unknown-0006",
+        "name": "Discord Created?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1280,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/channels/private",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "guild_id",
+                "value": "={{ $('Validate Input').first().json.data.guild_id }}"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Tenant-ID",
+                "value": "={{ $('Validate Input').first().json.data.tenant_id }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ discord_user_id: $('Validate Input').first().json.data.discord_user_id, channel_id: $('Create Discord Channel').first().json.id, channel_type: $('Validate Input').first().json.data.channel_type, channel_name: $('Create Discord Channel').first().json.name, metadata: $('Validate Input').first().json.data.metadata }) }}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "channel-unknown-0007",
+        "name": "Register Channel",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1500,
+          100
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT RECREATED CHANNEL RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst channelData = apiResponse.data || apiResponse;\nconst oldChannelId = $('Validate Input').first().json.data.old_channel_id;\n\nreturn {\n  success: true,\n  status: 'recreated',\n  channel: {\n    channel_id: channelData.channel_id,\n    channel_type: channelData.channel_type,\n    channel_name: channelData.channel_name,\n    is_active: channelData.is_active\n  },\n  previous_channel_id: oldChannelId\n};"
+        },
+        "id": "channel-unknown-0008",
+        "name": "Format Recreated Channel",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1720,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: input.error_code || 'VALIDATION_ERROR',\n    message: input.message || 'Erreur de validation'\n  },\n  http_status: input.http_status || 400\n};"
+        },
+        "id": "channel-unknown-0009",
+        "name": "Format Validation Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          840,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT DISCORD API ERROR\n// ============================================\n\nconst input = $input.first().json;\n\n// Discord API error codes\nconst discordCode = input.code;\nlet httpStatus = 500;\nlet errorCode = 'DISCORD_ERROR';\nlet message = input.message || 'Erreur Discord API';\n\nswitch(discordCode) {\n  case 50001: // Missing Access\n    httpStatus = 403;\n    errorCode = 'MISSING_ACCESS';\n    message = 'Le bot n\\'a pas accès à ce serveur';\n    break;\n  case 50013: // Missing Permissions\n    httpStatus = 403;\n    errorCode = 'MISSING_PERMISSIONS';\n    message = 'Le bot n\\'a pas les permissions pour créer un channel';\n    break;\n  case 10004: // Unknown Guild\n    httpStatus = 404;\n    errorCode = 'GUILD_NOT_FOUND';\n    message = 'Serveur Discord non trouvé';\n    break;\n  case 10013: // Unknown User\n    httpStatus = 404;\n    errorCode = 'USER_NOT_FOUND';\n    message = 'Utilisateur Discord non trouvé';\n    break;\n  case 30013: // Maximum channels reached\n    httpStatus = 400;\n    errorCode = 'MAX_CHANNELS';\n    message = 'Nombre maximum de channels atteint sur ce serveur';\n    break;\n  default:\n    if (input.error) {\n      message = input.error;\n    }\n}\n\nreturn {\n  success: false,\n  error: {\n    code: errorCode,\n    message: message,\n    discord_code: discordCode\n  },\n  http_status: httpStatus\n};"
+        },
+        "id": "channel-unknown-0010",
+        "name": "Format Discord Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1500,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: $json.success, status: $json.status, channel: $json.channel, previous_channel_id: $json.previous_channel_id }) }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "channel-unknown-0011",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1940,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+          "options": {
+            "responseCode": "={{ $json.http_status || 400 }}"
+          }
+        },
+        "id": "channel-unknown-0012",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1720,
+          350
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Validation Error?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validation Error?": {
+        "main": [
+          [
+            {
+              "node": "Format Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Delete Old Channel",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Delete Old Channel": {
+        "main": [
+          [
+            {
+              "node": "Create Discord Channel",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Discord Channel": {
+        "main": [
+          [
+            {
+              "node": "Discord Created?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Format Discord Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Discord Created?": {
+        "main": [
+          [
+            {
+              "node": "Register Channel",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Format Discord Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Register Channel": {
+        "main": [
+          [
+            {
+              "node": "Format Recreated Channel",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Format Recreated Channel",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Recreated Channel": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Discord Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

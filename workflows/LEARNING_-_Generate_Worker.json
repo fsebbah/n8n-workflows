@@ -1,0 +1,1476 @@
+{
+  "updatedAt": "2026-03-24T20:25:54.326Z",
+  "createdAt": "2026-02-20T14:38:43.690Z",
+  "id": "SVyKetivRMdwlISh",
+  "name": "LEARNING - Generate Worker",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "id": "interval-trigger",
+      "name": "Every 30 Seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pop",
+        "list": "queue:learning",
+        "options": {}
+      },
+      "id": "pop-from-queue",
+      "name": "Pop Job from Queue",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        464,
+        304
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.propertyName }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-job-exists",
+      "name": "Job in Queue?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        688,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "=job:learning:{{ $json.propertyName }}",
+        "options": {}
+      },
+      "id": "get-job-data",
+      "name": "Get Job Data",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        912,
+        208
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobStr = $input.first().json;\ntry {\n  const job = typeof jobStr === 'string' ? JSON.parse(jobStr) : jobStr;\n  return { json: job };\n} catch (e) {\n  return { json: { error: 'Invalid job data', raw: jobStr } };\n}"
+      },
+      "id": "parse-job",
+      "name": "Parse Job Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "=job:learning:{{ $json.job_id }}",
+        "value": "={{ JSON.stringify({ ...$json, status: 'generating', updated_at: new Date().toISOString() }) }}",
+        "expire": true,
+        "ttl": 3600
+      },
+      "id": "update-status-generating",
+      "name": "Update Status: Generating",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        208
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Parse Job Data').first().json.type }}",
+                    "rightValue": "quiz",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Parse Job Data').first().json.type }}",
+                    "rightValue": "course",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "id": "check-type",
+      "name": "Quiz or Course?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1568,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $('Parse Job Data').first().json.body.anthropic_api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Parse Job Data').first().json.body.model, max_tokens: $('Parse Job Data').first().json.body.max_tokens || 4096, system: 'Tu génères des quiz structurés. Réponds TOUJOURS en JSON valide avec cette structure exacte: {\"title\": \"string\", \"description\": \"string\", \"instructions\": \"string\", \"questions\": [{\"text\": \"string\", \"type\": \"multiple_choice|true_false|short_answer\", \"options\": [\"string\"] ou null, \"correct_answer\": \"string\", \"explanation\": \"string\", \"difficulty\": 1|2|3, \"order_index\": number, \"points\": number}]}. Ne mets PAS de ```json```, retourne directement le JSON.', messages: [{ role: 'user', content: $('Parse Job Data').first().json.body.prompt }] }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "call-claude-quiz",
+      "name": "Call Claude (Quiz)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $('Parse Job Data').first().json.body.anthropic_api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Parse Job Data').first().json.body.model, max_tokens: $('Parse Job Data').first().json.body.max_tokens || 8192, system: 'Tu génères des cours structurés. Réponds TOUJOURS en JSON valide avec cette structure exacte: {\"title\": \"string\", \"description\": \"string\", \"level\": \"string\", \"estimated_duration_minutes\": number, \"modules\": [{\"title\": \"string\", \"description\": \"string\", \"order_index\": number, \"lessons\": [{\"title\": \"string\", \"content\": \"string (markdown)\", \"duration_minutes\": number, \"order_index\": number}]}]}. Ne mets PAS de ```json```, retourne directement le JSON.', messages: [{ role: 'user', content: $('Parse Job Data').first().json.body.prompt }] }) }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "call-claude-course",
+      "name": "Call Claude (Course)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        304
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobData = $('Parse Job Data').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  if (llmResponse.error) {\n    throw new Error(llmResponse.error.message || 'Claude API error');\n  }\n\n  const content = llmResponse.content?.[0]?.text || '';\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const quizData = JSON.parse(jsonStr);\n  \n  // Quiz for MongoDB storage (format API backend)\n  const quiz = {\n    title: quizData.title,\n    topic: jobData.body.topic || '',\n    level: quizData.level || jobData.body.level || 'debutant',\n    guild_id: jobData.body.guild_id,\n    instructor_id: jobData.body.instructor_id || jobData.body.user_id,\n    discord_user_id: jobData.body.user_id,\n    job_id: jobData.job_id,\n    questions: quizData.questions.map((q, i) => {\n      // Convert to API format: choices array + correct_index\n      const choices = q.options || [];\n      const correctIndex = choices.findIndex(c => c === q.correct_answer);\n      return {\n        question: q.text,\n        choices: choices,\n        correct_index: correctIndex >= 0 ? correctIndex : 0,\n        explanation: q.explanation || ''\n      };\n    })\n  };\n  \n  return {\n    json: {\n      success: true,\n      type: 'quiz',\n      result: quiz,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      type: 'quiz',\n      error: e.message,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n}"
+      },
+      "id": "parse-quiz-response",
+      "name": "Parse Quiz Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobData = $('Parse Job Data').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  if (llmResponse.error) {\n    throw new Error(llmResponse.error.message || 'Claude API error');\n  }\n\n  const content = llmResponse.content?.[0]?.text || '';\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const courseData = JSON.parse(jsonStr);\n  \n  // Full course for MongoDB storage\n  const course = {\n    title: courseData.title,\n    topic: jobData.body.topic,\n    level: courseData.level || jobData.body.level || 'debutant',\n    description: courseData.description || '',\n    guild_id: jobData.body.guild_id,\n    instructor_id: jobData.body.instructor_id || jobData.body.user_id,\n    discord_user_id: jobData.body.user_id,\n    job_id: jobData.job_id,\n    modules: courseData.modules || []\n  };\n  \n  return {\n    json: {\n      success: true,\n      type: 'course',\n      result: course,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      type: 'course',\n      error: e.message,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n}"
+      },
+      "id": "parse-course-response",
+      "name": "Parse Course Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "input1"
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2224,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-success",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2448,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.type === 'quiz' ? $env.API_URL + '/api/training/learning/quizzes' : $env.API_URL + '/api/training/learning/courses' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.result) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "save-to-api",
+      "name": "Save to API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2672,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "=job:learning:{{ $('Merge Results').first().json.job_id }}",
+        "value": "={{ JSON.stringify({ job_id: $('Merge Results').first().json.job_id, type: $('Merge Results').first().json.type, status: 'done', updated_at: new Date().toISOString(), result: { mongo_id: $json._id, title: $('Merge Results').first().json.result.title } }) }}",
+        "expire": true,
+        "ttl": 3600
+      },
+      "id": "update-status-done",
+      "name": "Update Status: Done",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2880,
+        112
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://discord.com/api/v10/channels/{{ $('Merge Results').first().json.discord_channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bot {{ $('Merge Results').first().json.bot_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: '<@' + $('Merge Results').first().json.user_id + '>', embeds: [{ title: $('Merge Results').first().json.type === 'quiz' ? '✅ Quiz généré !' : '✅ Cours généré !', description: '**' + ($('Merge Results').first().json.result.title || $('Merge Results').first().json.result.name) + '**', color: 5763719, footer: { text: 'Job: ' + $('Merge Results').first().json.job_id } }] }) }}",
+        "options": {}
+      },
+      "id": "notify-discord-success",
+      "name": "Notify Discord: Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3104,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "=job:learning:{{ $('Merge Results').first().json.job_id }}",
+        "value": "={{ JSON.stringify({ job_id: $('Merge Results').first().json.job_id, type: $('Merge Results').first().json.type, status: 'terminate', updated_at: new Date().toISOString(), result: { mongo_id: $('Save to API').first().json._id, title: $('Merge Results').first().json.result.title } }) }}",
+        "expire": true,
+        "ttl": 300
+      },
+      "id": "update-status-terminate",
+      "name": "Update Status: Terminate",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3328,
+        112
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "=job:learning:{{ $json.job_id }}",
+        "value": "={{ JSON.stringify({ job_id: $json.job_id, type: $json.type, status: 'failed', updated_at: new Date().toISOString(), error: $json.error }) }}",
+        "expire": true,
+        "ttl": 3600
+      },
+      "id": "update-status-failed",
+      "name": "Update Status: Failed",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2672,
+        304
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://discord.com/api/v10/channels/{{ $json.discord_channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bot {{ $json.bot_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: '<@' + $json.user_id + '>', embeds: [{ title: '❌ Erreur de génération', description: $json.error, color: 15548997, footer: { text: 'Job: ' + $json.job_id } }] }) }}",
+        "options": {}
+      },
+      "id": "notify-discord-error",
+      "name": "Notify Discord: Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2880,
+        304
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every 30 Seconds": {
+      "main": [
+        [
+          {
+            "node": "Pop Job from Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pop Job from Queue": {
+      "main": [
+        [
+          {
+            "node": "Job in Queue?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job in Queue?": {
+      "main": [
+        [
+          {
+            "node": "Get Job Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get Job Data": {
+      "main": [
+        [
+          {
+            "node": "Parse Job Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Job Data": {
+      "main": [
+        [
+          {
+            "node": "Update Status: Generating",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status: Generating": {
+      "main": [
+        [
+          {
+            "node": "Quiz or Course?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quiz or Course?": {
+      "main": [
+        [
+          {
+            "node": "Call Claude (Quiz)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Claude (Course)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude (Quiz)": {
+      "main": [
+        [
+          {
+            "node": "Parse Quiz Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude (Course)": {
+      "main": [
+        [
+          {
+            "node": "Parse Course Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Quiz Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Course Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [
+          {
+            "node": "Save to API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Status: Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to API": {
+      "main": [
+        [
+          {
+            "node": "Update Status: Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status: Done": {
+      "main": [
+        [
+          {
+            "node": "Notify Discord: Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Discord: Success": {
+      "main": [
+        [
+          {
+            "node": "Update Status: Terminate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status: Failed": {
+      "main": [
+        [
+          {
+            "node": "Notify Discord: Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Every 30 Seconds": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": {},
+  "versionId": "01509462-5046-4b57-8c33-8cd232563808",
+  "activeVersionId": "01509462-5046-4b57-8c33-8cd232563808",
+  "versionCounter": 27,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-02-20T14:38:43.690Z",
+      "createdAt": "2026-02-20T14:38:43.690Z",
+      "role": "workflow:owner",
+      "workflowId": "SVyKetivRMdwlISh",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-24T07:54:30.504Z",
+    "createdAt": "2026-03-24T07:54:30.504Z",
+    "versionId": "01509462-5046-4b57-8c33-8cd232563808",
+    "workflowId": "SVyKetivRMdwlISh",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "hours"
+              }
+            ]
+          }
+        },
+        "id": "interval-trigger",
+        "name": "Every 30 Seconds",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          240,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "pop",
+          "list": "queue:learning",
+          "options": {}
+        },
+        "id": "pop-from-queue",
+        "name": "Pop Job from Queue",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          464,
+          304
+        ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.propertyName }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-job-exists",
+        "name": "Job in Queue?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          688,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "get",
+          "key": "=job:learning:{{ $json.propertyName }}",
+          "options": {}
+        },
+        "id": "get-job-data",
+        "name": "Get Job Data",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          912,
+          208
+        ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const jobStr = $input.first().json;\ntry {\n  const job = typeof jobStr === 'string' ? JSON.parse(jobStr) : jobStr;\n  return { json: job };\n} catch (e) {\n  return { json: { error: 'Invalid job data', raw: jobStr } };\n}"
+        },
+        "id": "parse-job",
+        "name": "Parse Job Data",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1120,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "set",
+          "key": "=job:learning:{{ $json.job_id }}",
+          "value": "={{ JSON.stringify({ ...$json, status: 'generating', updated_at: new Date().toISOString() }) }}",
+          "expire": true,
+          "ttl": 3600
+        },
+        "id": "update-status-generating",
+        "name": "Update Status: Generating",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1344,
+          208
+        ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $('Parse Job Data').first().json.type }}",
+                      "rightValue": "quiz",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $('Parse Job Data').first().json.type }}",
+                      "rightValue": "course",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "none"
+          }
+        },
+        "id": "check-type",
+        "name": "Quiz or Course?",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.2,
+        "position": [
+          1568,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $('Parse Job Data').first().json.body.anthropic_api_key }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: $('Parse Job Data').first().json.body.model, max_tokens: $('Parse Job Data').first().json.body.max_tokens || 4096, system: 'Tu génères des quiz structurés. Réponds TOUJOURS en JSON valide avec cette structure exacte: {\"title\": \"string\", \"description\": \"string\", \"instructions\": \"string\", \"questions\": [{\"text\": \"string\", \"type\": \"multiple_choice|true_false|short_answer\", \"options\": [\"string\"] ou null, \"correct_answer\": \"string\", \"explanation\": \"string\", \"difficulty\": 1|2|3, \"order_index\": number, \"points\": number}]}. Ne mets PAS de ```json```, retourne directement le JSON.', messages: [{ role: 'user', content: $('Parse Job Data').first().json.body.prompt }] }) }}",
+          "options": {
+            "timeout": 300000
+          }
+        },
+        "id": "call-claude-quiz",
+        "name": "Call Claude (Quiz)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1792,
+          112
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $('Parse Job Data').first().json.body.anthropic_api_key }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: $('Parse Job Data').first().json.body.model, max_tokens: $('Parse Job Data').first().json.body.max_tokens || 8192, system: 'Tu génères des cours structurés. Réponds TOUJOURS en JSON valide avec cette structure exacte: {\"title\": \"string\", \"description\": \"string\", \"level\": \"string\", \"estimated_duration_minutes\": number, \"modules\": [{\"title\": \"string\", \"description\": \"string\", \"order_index\": number, \"lessons\": [{\"title\": \"string\", \"content\": \"string (markdown)\", \"duration_minutes\": number, \"order_index\": number}]}]}. Ne mets PAS de ```json```, retourne directement le JSON.', messages: [{ role: 'user', content: $('Parse Job Data').first().json.body.prompt }] }) }}",
+          "options": {
+            "timeout": 600000
+          }
+        },
+        "id": "call-claude-course",
+        "name": "Call Claude (Course)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1792,
+          304
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const jobData = $('Parse Job Data').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  if (llmResponse.error) {\n    throw new Error(llmResponse.error.message || 'Claude API error');\n  }\n\n  const content = llmResponse.content?.[0]?.text || '';\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const quizData = JSON.parse(jsonStr);\n  \n  // Quiz for MongoDB storage (format API backend)\n  const quiz = {\n    title: quizData.title,\n    topic: jobData.body.topic || '',\n    level: quizData.level || jobData.body.level || 'debutant',\n    guild_id: jobData.body.guild_id,\n    instructor_id: jobData.body.instructor_id || jobData.body.user_id,\n    discord_user_id: jobData.body.user_id,\n    job_id: jobData.job_id,\n    questions: quizData.questions.map((q, i) => {\n      // Convert to API format: choices array + correct_index\n      const choices = q.options || [];\n      const correctIndex = choices.findIndex(c => c === q.correct_answer);\n      return {\n        question: q.text,\n        choices: choices,\n        correct_index: correctIndex >= 0 ? correctIndex : 0,\n        explanation: q.explanation || ''\n      };\n    })\n  };\n  \n  return {\n    json: {\n      success: true,\n      type: 'quiz',\n      result: quiz,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      type: 'quiz',\n      error: e.message,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n}"
+        },
+        "id": "parse-quiz-response",
+        "name": "Parse Quiz Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2000,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const jobData = $('Parse Job Data').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  if (llmResponse.error) {\n    throw new Error(llmResponse.error.message || 'Claude API error');\n  }\n\n  const content = llmResponse.content?.[0]?.text || '';\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const courseData = JSON.parse(jsonStr);\n  \n  // Full course for MongoDB storage\n  const course = {\n    title: courseData.title,\n    topic: jobData.body.topic,\n    level: courseData.level || jobData.body.level || 'debutant',\n    description: courseData.description || '',\n    guild_id: jobData.body.guild_id,\n    instructor_id: jobData.body.instructor_id || jobData.body.user_id,\n    discord_user_id: jobData.body.user_id,\n    job_id: jobData.job_id,\n    modules: courseData.modules || []\n  };\n  \n  return {\n    json: {\n      success: true,\n      type: 'course',\n      result: course,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      type: 'course',\n      error: e.message,\n      job_id: jobData.job_id,\n      discord_channel_id: jobData.body.discord_channel_id,\n      user_id: jobData.body.user_id,\n      bot_token: jobData.body.bot_token\n    }\n  };\n}"
+        },
+        "id": "parse-course-response",
+        "name": "Parse Course Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2000,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "chooseBranch",
+          "output": "input1"
+        },
+        "id": "merge-results",
+        "name": "Merge Results",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3,
+        "position": [
+          2224,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.success }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-success",
+        "name": "Success?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2448,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.type === 'quiz' ? $env.API_URL + '/api/training/learning/quizzes' : $env.API_URL + '/api/training/learning/courses' }}",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.result) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "save-to-api",
+        "name": "Save to API",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2672,
+          112
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "operation": "set",
+          "key": "=job:learning:{{ $('Merge Results').first().json.job_id }}",
+          "value": "={{ JSON.stringify({ job_id: $('Merge Results').first().json.job_id, type: $('Merge Results').first().json.type, status: 'done', updated_at: new Date().toISOString(), result: { mongo_id: $json._id, title: $('Merge Results').first().json.result.title } }) }}",
+          "expire": true,
+          "ttl": 3600
+        },
+        "id": "update-status-done",
+        "name": "Update Status: Done",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          2880,
+          112
+        ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://discord.com/api/v10/channels/{{ $('Merge Results').first().json.discord_channel_id }}/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bot {{ $('Merge Results').first().json.bot_token }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ content: '<@' + $('Merge Results').first().json.user_id + '>', embeds: [{ title: $('Merge Results').first().json.type === 'quiz' ? '✅ Quiz généré !' : '✅ Cours généré !', description: '**' + ($('Merge Results').first().json.result.title || $('Merge Results').first().json.result.name) + '**', color: 5763719, footer: { text: 'Job: ' + $('Merge Results').first().json.job_id } }] }) }}",
+          "options": {}
+        },
+        "id": "notify-discord-success",
+        "name": "Notify Discord: Success",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3104,
+          112
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "operation": "set",
+          "key": "=job:learning:{{ $('Merge Results').first().json.job_id }}",
+          "value": "={{ JSON.stringify({ job_id: $('Merge Results').first().json.job_id, type: $('Merge Results').first().json.type, status: 'terminate', updated_at: new Date().toISOString(), result: { mongo_id: $('Save to API').first().json._id, title: $('Merge Results').first().json.result.title } }) }}",
+          "expire": true,
+          "ttl": 300
+        },
+        "id": "update-status-terminate",
+        "name": "Update Status: Terminate",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          3328,
+          112
+        ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "set",
+          "key": "=job:learning:{{ $json.job_id }}",
+          "value": "={{ JSON.stringify({ job_id: $json.job_id, type: $json.type, status: 'failed', updated_at: new Date().toISOString(), error: $json.error }) }}",
+          "expire": true,
+          "ttl": 3600
+        },
+        "id": "update-status-failed",
+        "name": "Update Status: Failed",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          2672,
+          304
+        ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://discord.com/api/v10/channels/{{ $json.discord_channel_id }}/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bot {{ $json.bot_token }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ content: '<@' + $json.user_id + '>', embeds: [{ title: '❌ Erreur de génération', description: $json.error, color: 15548997, footer: { text: 'Job: ' + $json.job_id } }] }) }}",
+          "options": {}
+        },
+        "id": "notify-discord-error",
+        "name": "Notify Discord: Error",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2880,
+          304
+        ],
+        "onError": "continueRegularOutput"
+      }
+    ],
+    "connections": {
+      "Every 30 Seconds": {
+        "main": [
+          [
+            {
+              "node": "Pop Job from Queue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pop Job from Queue": {
+        "main": [
+          [
+            {
+              "node": "Job in Queue?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Job in Queue?": {
+        "main": [
+          [
+            {
+              "node": "Get Job Data",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Get Job Data": {
+        "main": [
+          [
+            {
+              "node": "Parse Job Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Job Data": {
+        "main": [
+          [
+            {
+              "node": "Update Status: Generating",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Status: Generating": {
+        "main": [
+          [
+            {
+              "node": "Quiz or Course?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Quiz or Course?": {
+        "main": [
+          [
+            {
+              "node": "Call Claude (Quiz)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Call Claude (Course)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Claude (Quiz)": {
+        "main": [
+          [
+            {
+              "node": "Parse Quiz Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Claude (Course)": {
+        "main": [
+          [
+            {
+              "node": "Parse Course Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Quiz Response": {
+        "main": [
+          [
+            {
+              "node": "Merge Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Course Response": {
+        "main": [
+          [
+            {
+              "node": "Merge Results",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Merge Results": {
+        "main": [
+          [
+            {
+              "node": "Success?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Success?": {
+        "main": [
+          [
+            {
+              "node": "Save to API",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Update Status: Failed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Save to API": {
+        "main": [
+          [
+            {
+              "node": "Update Status: Done",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Status: Done": {
+        "main": [
+          [
+            {
+              "node": "Notify Discord: Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notify Discord: Success": {
+        "main": [
+          [
+            {
+              "node": "Update Status: Terminate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Status: Failed": {
+        "main": [
+          [
+            {
+              "node": "Notify Discord: Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

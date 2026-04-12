@@ -1,7 +1,7 @@
 {
-  "updatedAt": "2025-12-03T19:19:45.852Z",
-  "createdAt": "2025-12-03T19:19:45.852Z",
-  "id": "hOQaxhBqFGEFhhS9",
+  "updatedAt": "2025-12-03T19:11:05.623Z",
+  "createdAt": "2025-12-03T19:11:05.623Z",
+  "id": "NSh4Y23WwiKAG2Hh",
   "name": "Embeddingsopenai Workflow",
   "description": "Automated workflow: Embeddingsopenai Workflow. This workflow integrates 19 different services: stickyNote, textSplitterRecursiveCharacterTextSplitter, vectorStoreQdrant, lmChatOpenAi, executeWorkflow. It contains 55 nodes and follows best practices for error handling and security.",
   "active": false,
@@ -77,7 +77,7 @@
               "id": "6b593ffb-ffbd-4cf5-a508-cd4f2a6d1004",
               "name": "data",
               "type": "array",
-              "value": "={{\n Object.keys($json)\n .filter(key => !['row_number', 'Participant'].includes(key))\n .map(key => ({ question: key, answer: $json[key], participant: $json.Participant }))\n}}"
+              "value": "={{\n  Object.keys($json)\n    .filter(key => !['row_number', 'Participant'].includes(key))\n  .map(key => ({ question: key, answer: $json[key], participant: $json.Participant }))\n}}"
             }
           ]
         }
@@ -186,7 +186,7 @@
               "id": "d655b165-dfa2-46cb-bc27-140399bc4227",
               "name": "question",
               "type": "array",
-              "value": "={{\n Object.keys($('Get Survey Headers').item.json)\n .filter(key => key.includes('?'))\n}}"
+              "value": "={{\n  Object.keys($('Get Survey Headers').item.json)\n    .filter(key => key.includes('?'))\n}}"
             }
           ]
         }
@@ -221,7 +221,7 @@
         "url": "{{ $env.BASE_URL }}",
         "method": "POST",
         "options": {},
-        "jsonBody": "={\n \"limit\": 500,\n \"filter\":{\n \"must\": [\n {\n \"key\": \"metadata.question\",\n \"match\": { \"value\": \"{{ $('For Each Question...').item.json.question }}\" }\n },\n {\n \"key\": \"metadata.survey\",\n \"match\": { \"value\": \"{{ $('Set Variables').item.json.surveyName }}\" }\n }\n ]\n },\n \"with_vector\":true\n}",
+        "jsonBody": "={\n  \"limit\": 500,\n  \"filter\":{\n    \"must\": [\n      {\n        \"key\": \"metadata.question\",\n        \"match\": { \"value\": \"{{ $('For Each Question...').item.json.question }}\" }\n      },\n      {\n        \"key\": \"metadata.survey\",\n        \"match\": { \"value\": \"{{ $('Set Variables').item.json.surveyName }}\" }\n      }\n    ]\n  },\n  \"with_vector\":true\n}",
         "sendBody": true,
         "specifyBody": "json",
         "authentication": "{{ $credentials.predefinedCredentialType }}",
@@ -248,7 +248,7 @@
         "url": "{{ $env.BASE_URL }}",
         "method": "POST",
         "options": {},
-        "jsonBody": "={{\n {\n \"ids\": $json.points,\n \"with_payload\": true\n }\n}}",
+        "jsonBody": "={{\n  {\n    \"ids\": $json.points,\n    \"with_payload\": true\n  }\n}}",
         "sendBody": true,
         "specifyBody": "json",
         "authentication": "{{ $credentials.predefinedCredentialType }}",
@@ -346,7 +346,7 @@
       "parameters": {
         "mode": "raw",
         "options": {},
-        "jsonOutput": "={{ {\n ...$json.output,\n \"Number of Response\": $('Get Payload of Points').item.json.result.length,\n \"Participant IDs\": $('Get Payload of Points').item.json.result.map(item =>\n item.payload.metadata.participant\n ).join(','),\n \"Raw Responses\": $('Get Payload of Points').item.json.result.map(item =>\n `Participant ${item.payload.metadata.participant},${item.payload.content.replaceAll('\"', '\\\"')}`\n ).join('\\n')\n} }}\n"
+        "jsonOutput": "={{ {\n  ...$json.output,\n  \"Number of Response\": $('Get Payload of Points').item.json.result.length,\n  \"Participant IDs\": $('Get Payload of Points').item.json.result.map(item =>\n    item.payload.metadata.participant\n  ).join(','),\n  \"Raw Responses\": $('Get Payload of Points').item.json.result.map(item =>\n    `Participant ${item.payload.metadata.participant},${item.payload.content.replaceAll('\"', '\\\"')}`\n   ).join('\\n')\n} }}\n"
       },
       "typeVersion": 3.4,
       "notes": "This set node performs automated tasks as part of the workflow."
@@ -597,7 +597,7 @@
       "parameters": {
         "mode": "raw",
         "options": {},
-        "jsonOutput": "={\n \"Question\": \"{{ $('For Each Question...').item.json.question }}\",\n \"Insight\": \"No Insight Found\"\n}\n"
+        "jsonOutput": "={\n  \"Question\": \"{{ $('For Each Question...').item.json.question }}\",\n  \"Insight\": \"No Insight Found\"\n}\n"
       },
       "typeVersion": 3.4,
       "notes": "This set node performs automated tasks as part of the workflow."
@@ -933,7 +933,7 @@
       ],
       "parameters": {
         "language": "python",
-        "pythonCode": "import numpy as np\nfrom sklearn.cluster import KMeans\n\n# get vectors for all answers\npoint_ids = [item.id for item in _input.first().json.result.points]\nvectors = [item.vector.to_py() for item in _input.first().json.result.points]\nvectors_array = np.array(vectors)\n\n# apply k-means clustering where n_clusters = 10\n# this is a max and we'll discard some of these clusters later\nkmeans = KMeans(n_clusters=min(len(vectors), 10), random_state=42).fit(vectors_array)\nlabels = kmeans.labels_\nunique_labels = set(labels)\n\n# Extract and print points in each cluster\nclusters = {}\nfor label in set(labels):\n clusters[label] = vectors_array[labels == label]\n\n# return Qdrant point ids for each cluster\n# we'll use these ids to fetch the payloads from the vector store.\noutput = []\nfor cluster_id, cluster_points in clusters.items():\n points = [point_ids[i] for i in range(len(labels)) if labels[i] == cluster_id]\n output.append({\n \"id\": f\"Cluster {cluster_id}\",\n \"total\": len(cluster_points),\n \"points\": points\n })\n\nreturn {\"json\": {\"output\": output } }"
+        "pythonCode": "import numpy as np\nfrom sklearn.cluster import KMeans\n\n# get vectors for all answers\npoint_ids = [item.id for item in _input.first().json.result.points]\nvectors = [item.vector.to_py() for item in _input.first().json.result.points]\nvectors_array = np.array(vectors)\n\n# apply k-means clustering where n_clusters = 10\n# this is a max and we'll discard some of these clusters later\nkmeans = KMeans(n_clusters=min(len(vectors), 10), random_state=42).fit(vectors_array)\nlabels = kmeans.labels_\nunique_labels = set(labels)\n\n# Extract and print points in each cluster\nclusters = {}\nfor label in set(labels):\n    clusters[label] = vectors_array[labels == label]\n\n# return Qdrant point ids for each cluster\n# we'll use these ids to fetch the payloads from the vector store.\noutput = []\nfor cluster_id, cluster_points in clusters.items():\n    points = [point_ids[i] for i in range(len(labels)) if labels[i] == cluster_id]\n    output.append({\n        \"id\": f\"Cluster {cluster_id}\",\n        \"total\": len(cluster_points),\n        \"points\": points\n    })\n\nreturn {\"json\": {\"output\": output } }"
       },
       "typeVersion": 2,
       "notes": "This code node performs automated tasks as part of the workflow."
@@ -979,7 +979,7 @@
           "systemPromptTemplate": "=You help summarise a selection of participant responses to a specific question for a survey called \"{{ $json.result[0].payload.metadata.survey }}\".\nThe question asked was \"{{ $json.result[0].payload.metadata.question }}\".\nThe {{ $json.result.length }} participant responses were selected because their answers were similar in context.\n\nYour task is to: \n* summarise the given participant responses into a short paragraph. Provide an insight from this summary and what we could learn from the answers.\n* determine if the overall sentiment of all the listed responses to be either negative, mildy negative, neutral, mildy positive or positive."
         },
         "schemaType": "fromJson",
-        "jsonSchemaExample": "{\n\t\"Question\": \"What do you enjoy most about working remotely, and why?\",\n\t\"Insight\": \"\",\n \"Sentiment\": \"Positive\"\n}"
+        "jsonSchemaExample": "{\n\t\"Question\": \"What do you enjoy most about working remotely, and why?\",\n\t\"Insight\": \"\",\n    \"Sentiment\": \"Positive\"\n}"
       },
       "typeVersion": 1,
       "notes": "This informationExtractor node performs automated tasks as part of the workflow."
@@ -997,56 +997,56 @@
         ],
         [
           {
-            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-41bcee4c",
+            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-547868cf",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-d0c11290",
+            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-2f031fd2",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-dd354e9c",
+            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-ce455da3",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-ac31ce8a",
+            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-57534848",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-7bb82304",
+            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-18bc603e",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-5c7a3313",
+            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-83cbdafa",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-8f7cebc6",
+            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-97a1299f",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-9774f7cb",
+            "node": "error-handler-7f44a770-4c5d-4404-ae95-d9dee8348380-5b26d0a9",
             "type": "main",
             "index": 0
           }
@@ -1064,56 +1064,56 @@
         ],
         [
           {
-            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-be0723c4",
+            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-ba2d1e16",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-bbe814c5",
+            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-f9a0b359",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-50420ae1",
+            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-dc10a6c5",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-8d46b60a",
+            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-64c9252f",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-be1e1809",
+            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-8833602a",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-4cac58f3",
+            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-20a2aa90",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-0487b45b",
+            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-426b1501",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-0d80ffef",
+            "node": "error-handler-2b6dc317-f8f3-4201-a9e1-d35ee578e79e-a6a4959c",
             "type": "main",
             "index": 0
           }
@@ -1131,56 +1131,56 @@
         ],
         [
           {
-            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-d493827c",
+            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-28f4ef0f",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-f13e2598",
+            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-a61f45ff",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-696e053a",
+            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-1082224c",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-76f17e46",
+            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-51e59bb8",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-cb2708a7",
+            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-f2cfe03b",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-e6be6faa",
+            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-e4b590e3",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-ae50879d",
+            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-700df70f",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-a56c21ce",
+            "node": "error-handler-30323019-59ba-4a19-a46e-196d469f097d-d2a56197",
             "type": "main",
             "index": 0
           }
@@ -1191,7 +1191,7 @@
       "main": [
         [
           {
-            "node": "error-handler-0404384b-10b6-4666-84a4-8870db30c607-bca7a6fa",
+            "node": "error-handler-0404384b-10b6-4666-84a4-8870db30c607-d1f8513e",
             "type": "main",
             "index": 0
           }
@@ -1202,7 +1202,7 @@
       "main": [
         [
           {
-            "node": "error-handler-da9a8ee8-5e3f-49db-8d1f-26a61ca82344-8294d8cb",
+            "node": "error-handler-da9a8ee8-5e3f-49db-8d1f-26a61ca82344-70e6ca94",
             "type": "main",
             "index": 0
           }
@@ -1213,7 +1213,7 @@
       "main": [
         [
           {
-            "node": "error-handler-4bad90b2-eefe-49c8-8caa-41cd4cb5e60f-5a75651e",
+            "node": "error-handler-4bad90b2-eefe-49c8-8caa-41cd4cb5e60f-48cf4809",
             "type": "main",
             "index": 0
           }
@@ -1224,7 +1224,7 @@
       "main": [
         [
           {
-            "node": "error-handler-fbb1f3c3-06ad-44b5-b020-6fc3c8eda7c4-739bdd0f",
+            "node": "error-handler-fbb1f3c3-06ad-44b5-b020-6fc3c8eda7c4-85c6e5fd",
             "type": "main",
             "index": 0
           }
@@ -1235,7 +1235,7 @@
       "main": [
         [
           {
-            "node": "error-handler-14784dff-a8ea-4b6b-8379-b0c9051a8f98-761d0210",
+            "node": "error-handler-14784dff-a8ea-4b6b-8379-b0c9051a8f98-5ca31781",
             "type": "main",
             "index": 0
           }
@@ -1246,7 +1246,7 @@
       "main": [
         [
           {
-            "node": "error-handler-779b9411-db3e-44f3-ad2a-c9d40a70580d-1cbf525c",
+            "node": "error-handler-779b9411-db3e-44f3-ad2a-c9d40a70580d-b47c758a",
             "type": "main",
             "index": 0
           }
@@ -1257,7 +1257,7 @@
       "main": [
         [
           {
-            "node": "error-handler-70a0dcec-9f74-4af2-bd64-0ab762a77e51-7e4e8a13",
+            "node": "error-handler-70a0dcec-9f74-4af2-bd64-0ab762a77e51-48580a58",
             "type": "main",
             "index": 0
           }
@@ -1280,27 +1280,63 @@
   "staticData": null,
   "meta": null,
   "pinData": null,
-  "versionId": "caa2569f-4f62-4645-9575-2c6f2e5840d3",
+  "versionId": "20b534dd-2a3f-4cce-ae23-a8dcff8458c4",
   "activeVersionId": null,
   "versionCounter": 1,
   "triggerCount": 0,
-  "tags": [],
   "shared": [
     {
-      "updatedAt": "2025-12-03T19:19:45.858Z",
-      "createdAt": "2025-12-03T19:19:45.858Z",
+      "updatedAt": "2026-02-02T17:55:15.060Z",
+      "createdAt": "2026-02-02T17:55:15.060Z",
       "role": "workflow:owner",
-      "workflowId": "hOQaxhBqFGEFhhS9",
-      "projectId": "rkp1YaKKlE3ExOIx",
+      "workflowId": "NSh4Y23WwiKAG2Hh",
+      "projectId": "U3cZjxLpPGVohw1b",
       "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
         "type": "personal",
         "icon": null,
-        "description": null
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
       }
     }
-  ]
+  ],
+  "tags": [],
+  "activeVersion": null
 }

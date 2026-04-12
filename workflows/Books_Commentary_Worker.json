@@ -1,7 +1,7 @@
 {
-  "updatedAt": "2026-01-20T19:15:14.000Z",
-  "createdAt": "2026-01-04T16:11:15.626Z",
-  "id": "0RdGDIG8uQCpzQDN",
+  "updatedAt": "2026-03-16T13:13:55.780Z",
+  "createdAt": "2026-03-16T13:13:49.050Z",
+  "id": "C4QLzAfVM1f8LpS5",
   "name": "Books Commentary Worker",
   "description": null,
   "active": true,
@@ -9,8 +9,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Books Commentary Worker\n\n**Endpoint:** POST /webhook/books-commentary-worker\n\n**Called by:** books-translate-commentaries workflow\n\n**Process:**\n1. Respond immediately (async)\n2. PATCH /api/jobs → in_progress\n3. Loop through each commentary:\n   - Claude translation\n   - GPT-4o verification\n   - POST /api/translations/save (with llm_usage)\n   - PATCH /api/jobs (progress)\n4. PATCH /api/jobs → completed\n\n**Time:** ~6s per commentary",
-        "height": 380,
+        "content": "## Books Commentary Worker\n\n**Endpoint:** POST /webhook/books-commentary-worker\n\n**Called by:** books-translate-commentaries workflow\n\n**Process:**\n1. Respond immediately (async)\n2. PATCH /api/jobs → in_progress\n3. Loop through each commentary:\n   - Claude translation\n   - GPT-4o verification\n   - POST /api/translations/save (with llm_usage)\n   - PATCH /api/jobs (progress)\n4. PATCH /api/jobs → completed\n\n**RFC-040 Async Callback:**\n- If callback_url provided: 202 Accepted + callback at end\n- HMAC signature: X-N8N-Signature header\n\n**Time:** ~6s per commentary",
+        "height": 440,
         "width": 340,
         "color": 3
       },
@@ -42,7 +42,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extraire les données du job\nconst input = $input.first().json;\n\nlet commentaries = [];\nlet body = input;\n\nif (input.body && Array.isArray(input.body.commentaries)) {\n  commentaries = input.body.commentaries;\n  body = input.body;\n} else if (Array.isArray(input.commentaries)) {\n  commentaries = input.commentaries;\n} else if (input.body && typeof input.body === 'string') {\n  try {\n    const parsed = JSON.parse(input.body);\n    if (Array.isArray(parsed.commentaries)) {\n      commentaries = parsed.commentaries;\n      body = parsed;\n    }\n  } catch(e) {}\n}\n\nreturn [{\n  json: {\n    jobId: body.job_id || input.job_id,\n    textName: body.text_name || input.text_name,\n    chapter: body.chapter || input.chapter,\n    commentator: body.commentator || input.commentator,\n    targetLanguage: body.target_language || input.target_language || 'fr',\n    apiKey: body.api_key || input.api_key,\n    openaiApiKey: body.openai_api_key || input.openai_api_key,\n    commentaries: commentaries,\n    commentariesCount: commentaries.length\n  }\n}];"
+        "jsCode": "// Extraire les données du job\nconst input = $input.first().json;\n\nlet commentaries = [];\nlet body = input;\n\nif (input.body && Array.isArray(input.body.commentaries)) {\n  commentaries = input.body.commentaries;\n  body = input.body;\n} else if (Array.isArray(input.commentaries)) {\n  commentaries = input.commentaries;\n} else if (input.body && typeof input.body === 'string') {\n  try {\n    const parsed = JSON.parse(input.body);\n    if (Array.isArray(parsed.commentaries)) {\n      commentaries = parsed.commentaries;\n      body = parsed;\n    }\n  } catch(e) {}\n}\n\n// RFC-040: Extract callback_url and job_id\nconst callbackUrl = body.callback_url || input.callback_url || null;\nconst jobId = body.job_id || input.job_id || (callbackUrl ? crypto.randomUUID() : null);\n\nreturn [{\n  json: {\n    jobId: jobId,\n    callbackUrl: callbackUrl,\n    textName: body.text_name || input.text_name,\n    chapter: body.chapter || input.chapter,\n    commentator: body.commentator || input.commentator,\n    targetLanguage: body.target_language || input.target_language || 'fr',\n    apiKey: body.api_key || input.api_key,\n    openaiApiKey: body.openai_api_key || input.openai_api_key,\n    commentaries: commentaries,\n    commentariesCount: commentaries.length\n  }\n}];"
       },
       "id": "parse-input",
       "name": "Parse Input",
@@ -51,6 +51,63 @@
       "position": [
         624,
         304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-callback-url",
+              "leftValue": "={{ $json.callbackUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-callback-url",
+      "name": "Has Callback URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'processing' }) }}",
+        "options": {
+          "responseCode": 202,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-async-202",
+      "name": "Respond 202 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1072,
+        208
       ]
     },
     {
@@ -74,7 +131,25 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        848,
+        1072,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "combinationMode": "multiplex",
+        "options": {}
+      },
+      "id": "merge-after-respond",
+      "name": "Merge After Respond",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1280,
         304
       ]
     },
@@ -94,7 +169,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1072,
+        1504,
         304
       ],
       "onError": "continueRegularOutput"
@@ -108,20 +183,20 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1280,
+        1712,
         304
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Convertir les commentaires en items pour la boucle\nconst input = $input.first().json;\n\nconst items = input.commentaries.map((commentary, index) => {\n  return {\n    json: {\n      commentaryIndex: index,\n      commentaryId: commentary.id,\n      commentator: commentary.commentator,\n      reference: commentary.reference,\n      commentaryText: commentary.hebrew_text || commentary.text || '',\n      verseText: commentary.verse_text || '',\n      verse: commentary.verse,\n      totalCommentaries: input.commentaries.length,\n      jobId: input.jobId,\n      textName: input.textName,\n      chapter: input.chapter,\n      targetLanguage: input.targetLanguage,\n      apiKey: input.apiKey,\n      openaiApiKey: input.openaiApiKey\n    }\n  };\n});\n\nreturn items;"
+        "jsCode": "// Convertir les commentaires en items pour la boucle\nconst input = $input.first().json;\n\nconst items = input.commentaries.map((commentary, index) => {\n  return {\n    json: {\n      commentaryIndex: index,\n      commentaryId: commentary.id,\n      commentator: commentary.commentator,\n      reference: commentary.reference,\n      commentaryText: commentary.hebrew_text || commentary.text || '',\n      verseText: commentary.verse_text || '',\n      verse: commentary.verse,\n      totalCommentaries: input.commentaries.length,\n      jobId: input.jobId,\n      callbackUrl: input.callbackUrl,\n      textName: input.textName,\n      chapter: input.chapter,\n      targetLanguage: input.targetLanguage,\n      apiKey: input.apiKey,\n      openaiApiKey: input.openaiApiKey\n    }\n  };\n});\n\nreturn items;"
       },
       "id": "split-commentaries",
       "name": "Split Commentaries",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1504,
+        1936,
         304
       ]
     },
@@ -134,7 +209,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        1728,
+        2160,
         304
       ]
     },
@@ -176,7 +251,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1952,
+        2384,
         208
       ],
       "onError": "continueRegularOutput"
@@ -190,7 +265,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
+        2592,
         208
       ]
     },
@@ -222,7 +297,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2384,
+        2816,
         208
       ]
     },
@@ -260,7 +335,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2608,
+        3040,
         112
       ],
       "onError": "continueRegularOutput"
@@ -274,7 +349,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2832,
+        3264,
         112
       ]
     },
@@ -294,7 +369,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3040,
+        3472,
         112
       ],
       "onError": "continueRegularOutput"
@@ -308,7 +383,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3264,
+        3696,
         112
       ]
     },
@@ -328,21 +403,21 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3488,
+        3920,
         112
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Retourner au loop\nconst prevData = $('Prepare Update').first().json;\n\nreturn [{\n  json: {\n    continue: !prevData.isComplete,\n    commentaryIndex: prevData.commentaryIndex,\n    totalCommentaries: prevData.totalCommentaries\n  }\n}];"
+        "jsCode": "// Retourner au loop\nconst prevData = $('Prepare Update').first().json;\n\nreturn [{\n  json: {\n    continue: !prevData.isComplete,\n    commentaryIndex: prevData.commentaryIndex,\n    totalCommentaries: prevData.totalCommentaries,\n    jobId: prevData.jobId,\n    callbackUrl: prevData.callbackUrl,\n    isComplete: prevData.isComplete,\n    updatePayload: prevData.updatePayload\n  }\n}];"
       },
       "id": "check-continue",
       "name": "Check Continue",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3712,
+        4144,
         112
       ]
     },
@@ -355,7 +430,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2608,
+        3040,
         304
       ]
     },
@@ -375,8 +450,201 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2832,
+        3264,
         304
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if completed and needs callback\nconst prevData = $('Prepare Error Update').first().json;\n\nreturn [{\n  json: {\n    continue: !prevData.isComplete,\n    commentaryIndex: prevData.commentaryIndex,\n    totalCommentaries: prevData.totalCommentaries,\n    jobId: prevData.jobId,\n    callbackUrl: prevData.callbackUrl,\n    isComplete: prevData.isComplete,\n    updatePayload: prevData.updatePayload,\n    hasError: true,\n    errorMessage: prevData.claudeError\n  }\n}];"
+      },
+      "id": "check-error-continue",
+      "name": "Check Error Continue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3488,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect final result from loop completion\nconst parseInput = $('Parse Input').first().json;\n\nreturn [{\n  json: {\n    jobId: parseInput.jobId,\n    callbackUrl: parseInput.callbackUrl,\n    textName: parseInput.textName,\n    chapter: parseInput.chapter,\n    commentariesCount: parseInput.commentariesCount,\n    status: 'completed'\n  }\n}];"
+      },
+      "id": "collect-final-result",
+      "name": "Collect Final Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4352,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-callback-for-success",
+              "leftValue": "={{ $json.callbackUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-callback-success",
+      "name": "Has Callback? (Success)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4576,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// RFC-040: Prepare success callback with HMAC signature\nconst crypto = require('crypto');\nconst input = $input.first().json;\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\n\nconst body = {\n  success: true,\n  job_id: input.jobId,\n  status: 'completed',\n  data: {\n    text_name: input.textName,\n    chapter: input.chapter,\n    translations_completed: input.commentariesCount\n  }\n};\n\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callbackUrl: input.callbackUrl,\n    body: body,\n    payload: payload,\n    signature: signature\n  }\n}];"
+      },
+      "id": "prepare-success-callback",
+      "name": "Prepare Success Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4800,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send-success-callback",
+      "name": "Send Success Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5024,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-callback-for-error",
+              "leftValue": "={{ $json.callbackUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            },
+            {
+              "id": "check-is-complete-error",
+              "leftValue": "={{ $json.isComplete }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-callback-error",
+      "name": "Has Callback? (Error)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3712,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// RFC-040: Prepare error callback with HMAC signature\nconst crypto = require('crypto');\nconst input = $input.first().json;\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\n\nconst body = {\n  success: false,\n  job_id: input.jobId,\n  status: 'completed_with_errors',\n  error: {\n    message: input.errorMessage || 'Unknown error during processing',\n    commentary_index: input.commentaryIndex,\n    total_commentaries: input.totalCommentaries\n  }\n};\n\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callbackUrl: input.callbackUrl,\n    body: body,\n    payload: payload,\n    signature: signature\n  }\n}];"
+      },
+      "id": "prepare-error-callback",
+      "name": "Prepare Error Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3936,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send-error-callback",
+      "name": "Send Error Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4160,
+        208
       ],
       "onError": "continueRegularOutput"
     },
@@ -387,8 +655,19 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        3920,
-        208
+        5248,
+        304
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "noop-no-callback",
+      "name": "No Callback",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        4800,
+        400
       ]
     }
   ],
@@ -408,6 +687,24 @@
       "main": [
         [
           {
+            "node": "Has Callback URL?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Callback URL?": {
+      "main": [
+        [
+          {
+            "node": "Respond 202 Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Respond Immediately",
             "type": "main",
             "index": 0
@@ -415,7 +712,29 @@
         ]
       ]
     },
+    "Respond 202 Accepted": {
+      "main": [
+        [
+          {
+            "node": "Merge After Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Respond Immediately": {
+      "main": [
+        [
+          {
+            "node": "Merge After Respond",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge After Respond": {
       "main": [
         [
           {
@@ -463,7 +782,7 @@
       "main": [
         [
           {
-            "node": "Done",
+            "node": "Collect Final Result",
             "type": "main",
             "index": 0
           }
@@ -598,7 +917,120 @@
       "main": [
         [
           {
+            "node": "Check Error Continue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Error Continue": {
+      "main": [
+        [
+          {
+            "node": "Has Callback? (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Callback? (Error)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Error Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Loop Commentaries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Error Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Error Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Error Callback": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Final Result": {
+      "main": [
+        [
+          {
+            "node": "Has Callback? (Success)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Callback? (Success)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Success Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Success Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Success Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Success Callback": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Callback": {
+      "main": [
+        [
+          {
+            "node": "Done",
             "type": "main",
             "index": 0
           }
@@ -613,28 +1045,1104 @@
   },
   "staticData": null,
   "meta": null,
-  "pinData": {},
-  "versionId": "72bbd3da-51cf-4665-9989-2eb7ac2c4ca4",
-  "activeVersionId": "72bbd3da-51cf-4665-9989-2eb7ac2c4ca4",
-  "versionCounter": 49,
+  "pinData": null,
+  "versionId": "1bb60c34-015e-400f-90c2-2fcdb436c68e",
+  "activeVersionId": "1bb60c34-015e-400f-90c2-2fcdb436c68e",
+  "versionCounter": 11,
   "triggerCount": 1,
-  "tags": [],
   "shared": [
     {
-      "updatedAt": "2026-01-04T16:11:15.631Z",
-      "createdAt": "2026-01-04T16:11:15.631Z",
+      "updatedAt": "2026-03-16T13:13:49.050Z",
+      "createdAt": "2026-03-16T13:13:49.050Z",
       "role": "workflow:owner",
-      "workflowId": "0RdGDIG8uQCpzQDN",
-      "projectId": "rkp1YaKKlE3ExOIx",
+      "workflowId": "C4QLzAfVM1f8LpS5",
+      "projectId": "U3cZjxLpPGVohw1b",
       "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
         "type": "personal",
         "icon": null,
-        "description": null
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
       }
     }
-  ]
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-16T13:13:49.075Z",
+    "createdAt": "2026-03-16T13:13:49.075Z",
+    "versionId": "1bb60c34-015e-400f-90c2-2fcdb436c68e",
+    "workflowId": "C4QLzAfVM1f8LpS5",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Books Commentary Worker\n\n**Endpoint:** POST /webhook/books-commentary-worker\n\n**Called by:** books-translate-commentaries workflow\n\n**Process:**\n1. Respond immediately (async)\n2. PATCH /api/jobs → in_progress\n3. Loop through each commentary:\n   - Claude translation\n   - GPT-4o verification\n   - POST /api/translations/save (with llm_usage)\n   - PATCH /api/jobs (progress)\n4. PATCH /api/jobs → completed\n\n**RFC-040 Async Callback:**\n- If callback_url provided: 202 Accepted + callback at end\n- HMAC signature: X-N8N-Signature header\n\n**Time:** ~6s per commentary",
+          "height": 440,
+          "width": 340,
+          "color": 3
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          64,
+          64
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "books-commentary-worker",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          400,
+          304
+        ],
+        "webhookId": "books-commentary-worker"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Extraire les données du job\nconst input = $input.first().json;\n\nlet commentaries = [];\nlet body = input;\n\nif (input.body && Array.isArray(input.body.commentaries)) {\n  commentaries = input.body.commentaries;\n  body = input.body;\n} else if (Array.isArray(input.commentaries)) {\n  commentaries = input.commentaries;\n} else if (input.body && typeof input.body === 'string') {\n  try {\n    const parsed = JSON.parse(input.body);\n    if (Array.isArray(parsed.commentaries)) {\n      commentaries = parsed.commentaries;\n      body = parsed;\n    }\n  } catch(e) {}\n}\n\n// RFC-040: Extract callback_url and job_id\nconst callbackUrl = body.callback_url || input.callback_url || null;\nconst jobId = body.job_id || input.job_id || (callbackUrl ? crypto.randomUUID() : null);\n\nreturn [{\n  json: {\n    jobId: jobId,\n    callbackUrl: callbackUrl,\n    textName: body.text_name || input.text_name,\n    chapter: body.chapter || input.chapter,\n    commentator: body.commentator || input.commentator,\n    targetLanguage: body.target_language || input.target_language || 'fr',\n    apiKey: body.api_key || input.api_key,\n    openaiApiKey: body.openai_api_key || input.openai_api_key,\n    commentaries: commentaries,\n    commentariesCount: commentaries.length\n  }\n}];"
+        },
+        "id": "parse-input",
+        "name": "Parse Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          624,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-callback-url",
+                "leftValue": "={{ $json.callbackUrl }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "has-callback-url",
+        "name": "Has Callback URL?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          848,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'processing' }) }}",
+          "options": {
+            "responseCode": 202,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-async-202",
+        "name": "Respond 202 Accepted",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1072,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ received: true, job_id: $json.jobId, commentaries_count: $json.commentariesCount }) }}",
+          "options": {
+            "responseCode": 200,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-immediately",
+        "name": "Respond Immediately",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1072,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "combine",
+          "mergeByFields": {
+            "values": []
+          },
+          "combinationMode": "multiplex",
+          "options": {}
+        },
+        "id": "merge-after-respond",
+        "name": "Merge After Respond",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3,
+        "position": [
+          1280,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ status: 'in_progress' }) }}",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "update-status-in-progress",
+        "name": "Set In Progress",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1504,
+          304
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Passer les données originales\nconst prevData = $('Parse Input').first().json;\nreturn [{ json: prevData }];"
+        },
+        "id": "pass-data",
+        "name": "Pass Data",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1712,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Convertir les commentaires en items pour la boucle\nconst input = $input.first().json;\n\nconst items = input.commentaries.map((commentary, index) => {\n  return {\n    json: {\n      commentaryIndex: index,\n      commentaryId: commentary.id,\n      commentator: commentary.commentator,\n      reference: commentary.reference,\n      commentaryText: commentary.hebrew_text || commentary.text || '',\n      verseText: commentary.verse_text || '',\n      verse: commentary.verse,\n      totalCommentaries: input.commentaries.length,\n      jobId: input.jobId,\n      callbackUrl: input.callbackUrl,\n      textName: input.textName,\n      chapter: input.chapter,\n      targetLanguage: input.targetLanguage,\n      apiKey: input.apiKey,\n      openaiApiKey: input.openaiApiKey\n    }\n  };\n});\n\nreturn items;"
+        },
+        "id": "split-commentaries",
+        "name": "Split Commentaries",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1936,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "options": {}
+        },
+        "id": "loop-commentaries",
+        "name": "Loop Commentaries",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          2160,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $json.apiKey }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Tu es un expert en commentaires bibliques rabbiniques. Traduis ce commentaire de {{ $json.commentator }} sur {{ $json.reference }} en {{ $json.targetLanguage === 'fr' ? 'français' : $json.targetLanguage }}.\\n\\nContexte du verset commenté:\\n{{ $json.verseText }}\\n\\nCommentaire à traduire ({{ $json.commentator }}):\\n{{ $json.commentaryText }}\\n\\nRéponds UNIQUEMENT avec la traduction du commentaire, sans commentaires ni explications supplémentaires.\"\n    }\n  ]\n}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 90000
+          }
+        },
+        "id": "call-claude",
+        "name": "Claude Translation",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2384,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Extraire la traduction Claude\nconst input = $input.first().json;\nconst prevData = $('Loop Commentaries').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nlet claudeTranslation = '';\nlet claudeError = null;\nlet claudeUsage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n\nif (statusCode >= 400 || data.type === 'error' || data.error) {\n  claudeError = data.error?.message || data.message || `Erreur Claude HTTP ${statusCode}`;\n} else if (data.content?.[0]?.text) {\n  claudeTranslation = data.content[0].text.trim();\n  claudeUsage = {\n    input_tokens: data.usage?.input_tokens || 0,\n    output_tokens: data.usage?.output_tokens || 0,\n    total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)\n  };\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    claudeTranslation: claudeTranslation,\n    claudeError: claudeError,\n    claudeUsage: claudeUsage\n  }\n}];"
+        },
+        "id": "extract-claude",
+        "name": "Extract Claude",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2592,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-claude-ok",
+                "leftValue": "={{ $json.claudeTranslation }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-claude-ok",
+        "name": "Claude OK?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2816,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/chat/completions",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.openaiApiKey }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', temperature: 0.1, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: 'Tu es un expert en commentaires bibliques rabbiniques. Vérifie et améliore cette traduction. Réponds en JSON.' }, { role: 'user', content: 'Vérifie cette traduction du commentaire de ' + $json.commentator + ' sur ' + $json.reference + ':\\n\\nCommentaire original (hébreu):\\n' + $json.commentaryText + '\\n\\nTraduction proposée:\\n' + $json.claudeTranslation + '\\n\\nRéponds en JSON:\\n{\\n  \"my_translation\": \"ta traduction corrigée ou identique\",\\n  \"approved\": true/false,\\n  \"confidence\": 0.0-1.0,\\n  \"issues\": []\\n}' }] }) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 90000
+          }
+        },
+        "id": "call-gpt4o",
+        "name": "GPT-4o Verify",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3040,
+          112
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Extraire et combiner les résultats\nconst input = $input.first().json;\nconst prevData = $('Claude OK?').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\nlet gptVerification = {\n  my_translation: prevData.claudeTranslation,\n  approved: true,\n  confidence: 0.8,\n  issues: []\n};\nlet gptUsage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n\nif (statusCode < 400 && data.choices?.[0]?.message?.content) {\n  try {\n    gptVerification = JSON.parse(data.choices[0].message.content);\n    gptUsage = {\n      input_tokens: data.usage?.prompt_tokens || 0,\n      output_tokens: data.usage?.completion_tokens || 0,\n      total_tokens: (data.usage?.prompt_tokens || 0) + (data.usage?.completion_tokens || 0)\n    };\n  } catch (e) {}\n}\n\nconst finalTranslation = gptVerification.approved ? prevData.claudeTranslation : (gptVerification.my_translation || prevData.claudeTranslation);\n\nreturn [{\n  json: {\n    ...prevData,\n    gptVerification: gptVerification,\n    gptUsage: gptUsage,\n    finalTranslation: finalTranslation,\n    confidence: gptVerification.confidence || 0.8,\n    approved: gptVerification.approved\n  }\n}];"
+        },
+        "id": "extract-gpt",
+        "name": "Extract GPT",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3264,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/translations/save",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ source_text_id: $json.commentaryId, translated_text: $json.finalTranslation, target_language: $json.targetLanguage, quality_score: $json.confidence, provider: 'anthropic+openai', model: 'claude-sonnet-4+gpt-4o', llm_usage: [{ model: 'claude-sonnet-4-20250514', provider: 'anthropic', input_tokens: $json.claudeUsage.input_tokens, output_tokens: $json.claudeUsage.output_tokens, total_tokens: $json.claudeUsage.total_tokens }, { model: 'gpt-4o', provider: 'openai', input_tokens: $json.gptUsage.input_tokens, output_tokens: $json.gptUsage.output_tokens, total_tokens: $json.gptUsage.total_tokens }] }) }}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "save-translation",
+        "name": "Save Translation",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3472,
+          112
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Préparer les données pour la mise à jour du job\nconst input = $input.first().json;\nconst prevData = $('Extract GPT').first().json;\n\nconst commentaryIndex = prevData.commentaryIndex;\nconst totalCommentaries = prevData.totalCommentaries;\nconst isComplete = commentaryIndex + 1 >= totalCommentaries;\n\nconst claudeUsage = prevData.claudeUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\nconst gptUsage = prevData.gptUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\n\nconst tokens = {\n  claude: claudeUsage,\n  gpt: gptUsage,\n  total: {\n    input_tokens: (claudeUsage.input_tokens || 0) + (gptUsage.input_tokens || 0),\n    output_tokens: (claudeUsage.output_tokens || 0) + (gptUsage.output_tokens || 0),\n    total_tokens: (claudeUsage.total_tokens || 0) + (gptUsage.total_tokens || 0)\n  }\n};\n\nreturn [{\n  json: {\n    ...prevData,\n    isComplete: isComplete,\n    updatePayload: isComplete ? {\n      status: 'completed',\n      translations_saved: commentaryIndex + 1,\n      tokens: tokens\n    } : {\n      status: 'in_progress',\n      current_commentary: commentaryIndex + 1,\n      translations_saved: commentaryIndex + 1,\n      tokens: tokens\n    }\n  }\n}];"
+        },
+        "id": "prepare-update",
+        "name": "Prepare Update",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3696,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.updatePayload) }}",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "update-progress-api",
+        "name": "Update Progress",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3920,
+          112
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Retourner au loop\nconst prevData = $('Prepare Update').first().json;\n\nreturn [{\n  json: {\n    continue: !prevData.isComplete,\n    commentaryIndex: prevData.commentaryIndex,\n    totalCommentaries: prevData.totalCommentaries,\n    jobId: prevData.jobId,\n    callbackUrl: prevData.callbackUrl,\n    isComplete: prevData.isComplete,\n    updatePayload: prevData.updatePayload\n  }\n}];"
+        },
+        "id": "check-continue",
+        "name": "Check Continue",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4144,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Préparer la mise à jour pour erreur\nconst input = $input.first().json;\n\nconst commentaryIndex = input.commentaryIndex;\nconst totalCommentaries = input.totalCommentaries;\nconst isComplete = commentaryIndex + 1 >= totalCommentaries;\n\nreturn [{\n  json: {\n    ...input,\n    isComplete: isComplete,\n    updatePayload: isComplete ? {\n      status: 'completed',\n      translations_saved: commentaryIndex,\n      error: input.claudeError\n    } : {\n      status: 'in_progress',\n      current_commentary: commentaryIndex + 1,\n      translations_saved: commentaryIndex,\n      last_error: input.claudeError\n    }\n  }\n}];"
+        },
+        "id": "prepare-error-update",
+        "name": "Prepare Error Update",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3040,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.updatePayload) }}",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "update-error-api",
+        "name": "Update Error",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3264,
+          304
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Check if completed and needs callback\nconst prevData = $('Prepare Error Update').first().json;\n\nreturn [{\n  json: {\n    continue: !prevData.isComplete,\n    commentaryIndex: prevData.commentaryIndex,\n    totalCommentaries: prevData.totalCommentaries,\n    jobId: prevData.jobId,\n    callbackUrl: prevData.callbackUrl,\n    isComplete: prevData.isComplete,\n    updatePayload: prevData.updatePayload,\n    hasError: true,\n    errorMessage: prevData.claudeError\n  }\n}];"
+        },
+        "id": "check-error-continue",
+        "name": "Check Error Continue",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3488,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Collect final result from loop completion\nconst parseInput = $('Parse Input').first().json;\n\nreturn [{\n  json: {\n    jobId: parseInput.jobId,\n    callbackUrl: parseInput.callbackUrl,\n    textName: parseInput.textName,\n    chapter: parseInput.chapter,\n    commentariesCount: parseInput.commentariesCount,\n    status: 'completed'\n  }\n}];"
+        },
+        "id": "collect-final-result",
+        "name": "Collect Final Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4352,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-callback-for-success",
+                "leftValue": "={{ $json.callbackUrl }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "has-callback-success",
+        "name": "Has Callback? (Success)",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          4576,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// RFC-040: Prepare success callback with HMAC signature\nconst crypto = require('crypto');\nconst input = $input.first().json;\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\n\nconst body = {\n  success: true,\n  job_id: input.jobId,\n  status: 'completed',\n  data: {\n    text_name: input.textName,\n    chapter: input.chapter,\n    translations_completed: input.commentariesCount\n  }\n};\n\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callbackUrl: input.callbackUrl,\n    body: body,\n    payload: payload,\n    signature: signature\n  }\n}];"
+        },
+        "id": "prepare-success-callback",
+        "name": "Prepare Success Callback",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4800,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.callbackUrl }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-N8N-Signature",
+                "value": "={{ $json.signature }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json.payload }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "send-success-callback",
+        "name": "Send Success Callback",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          5024,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-callback-for-error",
+                "leftValue": "={{ $json.callbackUrl }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists"
+                }
+              },
+              {
+                "id": "check-is-complete-error",
+                "leftValue": "={{ $json.isComplete }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "has-callback-error",
+        "name": "Has Callback? (Error)",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          3712,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// RFC-040: Prepare error callback with HMAC signature\nconst crypto = require('crypto');\nconst input = $input.first().json;\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\n\nconst body = {\n  success: false,\n  job_id: input.jobId,\n  status: 'completed_with_errors',\n  error: {\n    message: input.errorMessage || 'Unknown error during processing',\n    commentary_index: input.commentaryIndex,\n    total_commentaries: input.totalCommentaries\n  }\n};\n\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callbackUrl: input.callbackUrl,\n    body: body,\n    payload: payload,\n    signature: signature\n  }\n}];"
+        },
+        "id": "prepare-error-callback",
+        "name": "Prepare Error Callback",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3936,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.callbackUrl }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-N8N-Signature",
+                "value": "={{ $json.signature }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json.payload }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "send-error-callback",
+        "name": "Send Error Callback",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          4160,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {},
+        "id": "noop-end",
+        "name": "Done",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          5248,
+          304
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "noop-no-callback",
+        "name": "No Callback",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          4800,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Parse Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Input": {
+        "main": [
+          [
+            {
+              "node": "Has Callback URL?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Callback URL?": {
+        "main": [
+          [
+            {
+              "node": "Respond 202 Accepted",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Immediately",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Respond 202 Accepted": {
+        "main": [
+          [
+            {
+              "node": "Merge After Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Respond Immediately": {
+        "main": [
+          [
+            {
+              "node": "Merge After Respond",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Merge After Respond": {
+        "main": [
+          [
+            {
+              "node": "Set In Progress",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Set In Progress": {
+        "main": [
+          [
+            {
+              "node": "Pass Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pass Data": {
+        "main": [
+          [
+            {
+              "node": "Split Commentaries",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Split Commentaries": {
+        "main": [
+          [
+            {
+              "node": "Loop Commentaries",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Commentaries": {
+        "main": [
+          [
+            {
+              "node": "Collect Final Result",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Claude Translation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Translation": {
+        "main": [
+          [
+            {
+              "node": "Extract Claude",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Claude": {
+        "main": [
+          [
+            {
+              "node": "Claude OK?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude OK?": {
+        "main": [
+          [
+            {
+              "node": "GPT-4o Verify",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Prepare Error Update",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "GPT-4o Verify": {
+        "main": [
+          [
+            {
+              "node": "Extract GPT",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract GPT": {
+        "main": [
+          [
+            {
+              "node": "Save Translation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Save Translation": {
+        "main": [
+          [
+            {
+              "node": "Prepare Update",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Update": {
+        "main": [
+          [
+            {
+              "node": "Update Progress",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Progress": {
+        "main": [
+          [
+            {
+              "node": "Check Continue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Continue": {
+        "main": [
+          [
+            {
+              "node": "Loop Commentaries",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Error Update": {
+        "main": [
+          [
+            {
+              "node": "Update Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Error": {
+        "main": [
+          [
+            {
+              "node": "Check Error Continue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Error Continue": {
+        "main": [
+          [
+            {
+              "node": "Has Callback? (Error)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Callback? (Error)": {
+        "main": [
+          [
+            {
+              "node": "Prepare Error Callback",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Loop Commentaries",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Error Callback": {
+        "main": [
+          [
+            {
+              "node": "Send Error Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Error Callback": {
+        "main": [
+          [
+            {
+              "node": "Done",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Collect Final Result": {
+        "main": [
+          [
+            {
+              "node": "Has Callback? (Success)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Callback? (Success)": {
+        "main": [
+          [
+            {
+              "node": "Prepare Success Callback",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "No Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Success Callback": {
+        "main": [
+          [
+            {
+              "node": "Send Success Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Success Callback": {
+        "main": [
+          [
+            {
+              "node": "Done",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "No Callback": {
+        "main": [
+          [
+            {
+              "node": "Done",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
 }

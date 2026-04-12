@@ -1,53 +1,38 @@
 {
+  "updatedAt": "2026-03-24T13:21:06.406Z",
+  "createdAt": "2026-03-24T09:31:12.401Z",
+  "id": "bOIWHh5jRZPvGWp3",
   "name": "MCP - Table Extractor",
+  "description": null,
+  "active": true,
+  "isArchived": false,
   "nodes": [
     {
-      "parameters": {
-        "content": "## MCP - Table Extractor\n\n**Endpoint:** POST /webhook/table-extractor\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"data\", \"mistral_api_key\"],\n  \"properties\": {\n    \"data\": { \"type\": \"string\", \"description\": \"Image URL or base64 data\" },\n    \"source\": { \"type\": \"string\", \"enum\": [\"url\", \"base64\"], \"default\": \"url\" },\n    \"mistral_api_key\": { \"type\": \"string\", \"description\": \"Mistral API key\" },\n    \"execution_mode\": { \"type\": \"string\", \"enum\": [\"online\", \"offline\"], \"default\": \"online\" },\n    \"user_id\": { \"type\": \"string\", \"description\": \"User ID (optional, for tracing)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Guild ID (optional, for tracing)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"User request (optional, for tracing)\" }\n  }\n}\n```\n\n**RFC-014 Context Support:**\n```json\n{\n  \"context\": {\n    \"data\": \"https://... or base64\",\n    \"source\": \"url\"\n  },\n  \"plugin_context\": {\n    \"api_keys\": { \"mistral\": \"...\" }\n  }\n}\n```\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"data\": { \"tables\": [...], \"raw_markdown\": \"...\", \"table_count\": 1 },\n  \"meta\": { \"provider\": \"mistral-ocr\" },\n  \"_trace\": { ... }\n}\n```\n\n**API:** Mistral Pixtral-12B (Vision OCR)",
-        "height": 620,
-        "width": 400,
-        "color": 6
-      },
-      "id": "doc-sticky",
-      "name": "Documentation",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -60,
-        -220
-      ]
-    },
-    {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "table-extractor",
-        "responseMode": "responseNode",
-        "options": {}
-      },
       "id": "webhook-table",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        0,
+        240,
         300
       ],
-      "webhookId": "table-extractor-webhook"
+      "webhookId": "table-extractor-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "table-extractor",
+        "responseMode": "responseNode",
+        "options": {}
+      }
     },
     {
-      "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - RFC-014 Compatible\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- OPTIONAL context fields (for tracing only, NO validation errors) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Extract data (image URL or base64) ---\nconst dataRaw = ctx.data || body.data;\nconst source = ctx.source || body.source || 'url';\n\n// --- Extract API key ---\nconst mistralKey = body.mistral_api_key \n  || ctx.mistral_api_key \n  || body.plugin_context?.api_keys?.mistral \n  || ctx.plugin_context?.api_keys?.mistral;\n\n// --- Extract execution mode ---\nconst executionMode = ctx.execution_mode || body.execution_mode || 'online';\n\n// --- Validation ---\nconst hasData = !!dataRaw;\nconst hasMistralKey = !!mistralKey;\n\nif (!hasData) errors.push('data (URL ou base64) requis');\nif (!hasMistralKey) errors.push('mistral_api_key requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\n// --- Prepare image URL for Mistral ---\nlet imageUrl = '';\nif (source === 'base64') {\n  imageUrl = 'data:image/png;base64,' + dataRaw;\n} else {\n  imageUrl = dataRaw;\n}\n\nreturn {\n  valid: true,\n  imageUrl: imageUrl,\n  data: dataRaw,\n  source: source,\n  mistralApiKey: mistralKey,\n  executionMode: executionMode,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
-      },
       "id": "validate-input",
       "name": "Validate Input",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
       "position": [
-        220,
+        460,
         300
-      ]
-    },
-    {
+      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -57,29 +42,106 @@
           },
           "conditions": [
             {
-              "id": "check-valid",
-              "leftValue": "={{ $json.valid }}",
-              "rightValue": true,
+              "leftValue": "={{ $json.body.data }}",
+              "rightValue": "",
               "operator": {
-                "type": "boolean",
-                "operation": "equals"
+                "type": "string",
+                "operation": "isNotEmpty"
               }
             }
           ],
           "combinator": "and"
         },
         "options": {}
-      },
-      "id": "if-valid",
-      "name": "Valid?",
+      }
+    },
+    {
+      "id": "error-no-data",
+      "name": "Error: No Data",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        600
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: data (URL or base64)\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"mistral-ocr\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "check-callback-url",
+      "name": "Has Callback URL?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        440,
+        680,
         300
-      ]
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
     },
     {
+      "id": "store-job-context",
+      "name": "Store Job Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const webhookData = $('Webhook').first().json;\nconst crypto = require('crypto');\n\n// Generate or use provided job_id\nconst job_id = webhookData.body.job_id || crypto.randomUUID();\nconst callback_url = webhookData.body.callback_url;\n\nreturn [{\n  json: {\n    ...webhookData,\n    _async: {\n      job_id,\n      callback_url,\n      started_at: new Date().toISOString()\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "respond-202-accepted",
+      "name": "Respond 202 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"job_id\": $json._async.job_id, \"status\": \"processing\" } }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "mistral-ocr-async",
+      "name": "Mistral OCR (Async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        200
+      ],
       "parameters": {
         "method": "POST",
         "url": "https://api.mistral.ai/v1/chat/completions",
@@ -89,7 +151,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $json.mistralApiKey }}"
+              "value": "=Bearer {{ $json.body.mistral_api_key }}"
             },
             {
               "name": "Content-Type",
@@ -99,101 +161,168 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"pixtral-12b-2409\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Extrais TOUS les tableaux de cette image/document. Pour chaque tableau, fournis un JSON structuré avec:\\n- id: numéro du tableau\\n- headers: liste des en-têtes de colonnes\\n- rows: liste des lignes (chaque ligne est une liste de valeurs)\\n- confidence: score de confiance (0-1)\\n\\nRéponds UNIQUEMENT en JSON valide avec cette structure:\\n{\\n  \\\"tables\\\": [\\n    {\\n      \\\"id\\\": 1,\\n      \\\"headers\\\": [...],\\n      \\\"rows\\\": [[...], [...], ...],\\n      \\\"confidence\\\": 0.95\\n    }\\n  ],\\n  \\\"table_count\\\": 1\\n}\\n\\nSi aucun tableau n'est trouvé, retourne: {\\\"tables\\\": [], \\\"table_count\\\": 0}\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"{{ $json.imageUrl }}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"max_tokens\": 4096,\n  \"temperature\": 0.1\n}",
+        "jsonBody": "={\n  \"model\": \"pixtral-12b-2409\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Extrais TOUS les tableaux de cette image/document. Pour chaque tableau, fournis un JSON structuré avec:\\n- id: numéro du tableau\\n- headers: liste des en-têtes de colonnes\\n- rows: liste des lignes (chaque ligne est une liste de valeurs)\\n- confidence: score de confiance (0-1)\\n\\nRéponds UNIQUEMENT en JSON valide avec cette structure:\\n{\\n  \\\"tables\\\": [\\n    {\\n      \\\"id\\\": 1,\\n      \\\"headers\\\": [...],\\n      \\\"rows\\\": [[...], [...], ...],\\n      \\\"confidence\\\": 0.95\\n    }\\n  ],\\n  \\\"table_count\\\": 1\\n}\\n\\nSi aucun tableau n'est trouvé, retourne: {\\\"tables\\\": [], \\\"table_count\\\": 0}\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"{{ $json.body.source === 'base64' ? 'data:image/png;base64,' + $json.body.data : $json.body.data }}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"max_tokens\": 4096,\n  \"temperature\": 0.1\n}",
         "options": {
-          "response": {
-            "response": {
-              "fullResponse": true
-            }
-          },
           "timeout": 120000
         }
       },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-response-async",
+      "name": "Parse OCR Response (Async)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst jobContext = $('Store Job Context').first().json;\nconst startTime = Date.now();\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        job_id: jobContext._async.job_id,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Mistral API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          execution_mode: jobContext.body.execution_mode || 'online'\n        },\n        _async: jobContext._async\n      }\n    };\n  }\n\n  try {\n    const content = item.json.choices?.[0]?.message?.content || '{}';\n    // Try to extract JSON from the response\n    let parsed;\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      parsed = JSON.parse(jsonMatch[0]);\n    } else {\n      parsed = { tables: [], table_count: 0 };\n    }\n\n    // Generate markdown representation\n    let rawMarkdown = '';\n    if (parsed.tables && parsed.tables.length > 0) {\n      parsed.tables.forEach((table, idx) => {\n        if (idx > 0) rawMarkdown += '\\n\\n';\n        // Header\n        if (table.headers && table.headers.length > 0) {\n          rawMarkdown += '| ' + table.headers.join(' | ') + ' |\\n';\n          rawMarkdown += '|' + table.headers.map(() => '---').join('|') + '|\\n';\n        }\n        // Rows\n        if (table.rows) {\n          table.rows.forEach(row => {\n            rawMarkdown += '| ' + row.join(' | ') + ' |\\n';\n          });\n        }\n      });\n    }\n\n    return {\n      json: {\n        success: true,\n        _trace: {\n          service_response: item.json,\n          model: 'pixtral-12b-2409',\n          tokens: { input: null, output: null },\n          latency_ms: Date.now() - startTime\n        },\n        job_id: jobContext._async.job_id,\n        data: {\n          tables: parsed.tables || [],\n          raw_markdown: rawMarkdown || null,\n          table_count: parsed.table_count || parsed.tables?.length || 0\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          model: 'pixtral-12b-2409',\n          execution_mode: jobContext.body.execution_mode || 'online',\n          timings: {\n            ocr_ms: Date.now() - startTime,\n            parse_ms: 10\n          }\n        },\n        _async: jobContext._async\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        job_id: jobContext._async.job_id,\n        error: {\n          code: 500,\n          message: 'Failed to parse OCR response: ' + e.message,\n          status: 'PARSE_ERROR'\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          execution_mode: jobContext.body.execution_mode || 'online'\n        },\n        _async: jobContext._async\n      }\n    };\n  }\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "prepare-callback",
+      "name": "Prepare Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first();\nconst asyncContext = item.json._async;\n\n// Prepare callback body (without _async internal data)\nconst callbackBody = { ...item.json };\ndelete callbackBody._async;\n\n// Generate HMAC signature\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callbackBody);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: asyncContext.callback_url,\n    callback_body: callbackBody,\n    signature: signature\n  }\n}];"
+      }
+    },
+    {
+      "id": "send-callback",
+      "name": "Send Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.callback_body }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
       "id": "mistral-ocr",
       "name": "Mistral OCR",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        660,
-        200
+        900,
+        400
       ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.mistral_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"pixtral-12b-2409\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Extrais TOUS les tableaux de cette image/document. Pour chaque tableau, fournis un JSON structuré avec:\\n- id: numéro du tableau\\n- headers: liste des en-têtes de colonnes\\n- rows: liste des lignes (chaque ligne est une liste de valeurs)\\n- confidence: score de confiance (0-1)\\n\\nRéponds UNIQUEMENT en JSON valide avec cette structure:\\n{\\n  \\\"tables\\\": [\\n    {\\n      \\\"id\\\": 1,\\n      \\\"headers\\\": [...],\\n      \\\"rows\\\": [[...], [...], ...],\\n      \\\"confidence\\\": 0.95\\n    }\\n  ],\\n  \\\"table_count\\\": 1\\n}\\n\\nSi aucun tableau n'est trouvé, retourne: {\\\"tables\\\": [], \\\"table_count\\\": 0}\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"{{ $json.body.source === 'base64' ? 'data:image/png;base64,' + $json.body.data : $json.body.data }}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"max_tokens\": 4096,\n  \"temperature\": 0.1\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
       "onError": "continueRegularOutput"
     },
     {
-      "parameters": {
-        "jsCode": "// ============================================\n// FORMAT SUCCESS/ERROR RESPONSE - with _trace\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// --- Check for API error ---\nif (statusCode >= 400 || input.error) {\n  const errorMessage = data.message || data.error?.message || input.error?.message || 'Mistral API error';\n  return {\n    success: false,\n    error: {\n      code: 'OCR_API_ERROR',\n      message: errorMessage,\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    _trace: {\n      service_response: { error: errorMessage, http_status: statusCode },\n      provider: 'mistral-ocr',\n      model: 'pixtral-12b-2409',\n      mode: 'error',\n      latency_ms: Date.now() - startTime,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  };\n}\n\ntry {\n  const content = data.choices?.[0]?.message?.content || '{}';\n  \n  // Try to extract JSON from the response\n  let parsed;\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    parsed = { tables: [], table_count: 0 };\n  }\n\n  // Generate markdown representation\n  let rawMarkdown = '';\n  if (parsed.tables && parsed.tables.length > 0) {\n    parsed.tables.forEach((table, idx) => {\n      if (idx > 0) rawMarkdown += '\\n\\n';\n      // Header\n      if (table.headers && table.headers.length > 0) {\n        rawMarkdown += '| ' + table.headers.join(' | ') + ' |\\n';\n        rawMarkdown += '|' + table.headers.map(() => '---').join('|') + '|\\n';\n      }\n      // Rows\n      if (table.rows) {\n        table.rows.forEach(row => {\n          rawMarkdown += '| ' + row.join(' | ') + ' |\\n';\n        });\n      }\n    });\n  }\n\n  return {\n    success: true,\n    data: {\n      tables: parsed.tables || [],\n      raw_markdown: rawMarkdown || null,\n      table_count: parsed.table_count || parsed.tables?.length || 0\n    },\n    meta: {\n      provider: 'mistral-ocr',\n      model: 'pixtral-12b-2409',\n      execution_mode: prevData.executionMode,\n      usage: data.usage || {}\n    },\n    _trace: {\n      service_response: {\n        table_count: parsed.table_count || parsed.tables?.length || 0,\n        has_markdown: !!rawMarkdown\n      },\n      provider: 'mistral-ocr',\n      model: 'pixtral-12b-2409',\n      mode: 'table-extraction',\n      latency_ms: Date.now() - startTime,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  };\n} catch (e) {\n  return {\n    success: false,\n    error: {\n      code: 'PARSE_ERROR',\n      message: 'Failed to parse OCR response: ' + e.message,\n      http_status: 500\n    },\n    _trace: {\n      service_response: { error: e.message },\n      provider: 'mistral-ocr',\n      model: 'pixtral-12b-2409',\n      mode: 'error',\n      latency_ms: Date.now() - startTime,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    user_request: prevData.user_request\n  };\n}"
-      },
-      "id": "format-response",
-      "name": "Format Response",
+      "id": "parse-response",
+      "name": "Parse OCR Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
-        200
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR - with _trace\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
-      },
-      "id": "build-error",
-      "name": "Build Error",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        660,
+        1120,
         400
-      ]
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst startTime = Date.now();\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Mistral API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n\n  try {\n    const content = item.json.choices?.[0]?.message?.content || '{}';\n    // Try to extract JSON from the response\n    let parsed;\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      parsed = JSON.parse(jsonMatch[0]);\n    } else {\n      parsed = { tables: [], table_count: 0 };\n    }\n\n    // Generate markdown representation\n    let rawMarkdown = '';\n    if (parsed.tables && parsed.tables.length > 0) {\n      parsed.tables.forEach((table, idx) => {\n        if (idx > 0) rawMarkdown += '\\n\\n';\n        // Header\n        if (table.headers && table.headers.length > 0) {\n          rawMarkdown += '| ' + table.headers.join(' | ') + ' |\\n';\n          rawMarkdown += '|' + table.headers.map(() => '---').join('|') + '|\\n';\n        }\n        // Rows\n        if (table.rows) {\n          table.rows.forEach(row => {\n            rawMarkdown += '| ' + row.join(' | ') + ' |\\n';\n          });\n        }\n      });\n    }\n\n    return {\n      json: {\n        success: true,\n        _trace: {\n          service_response: item.json,\n          model: 'pixtral-12b-2409',\n          tokens: { input: null, output: null },\n          latency_ms: Date.now() - startTime\n        },\n        data: {\n          tables: parsed.tables || [],\n          raw_markdown: rawMarkdown || null,\n          table_count: parsed.table_count || parsed.tables?.length || 0\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          model: 'pixtral-12b-2409',\n          execution_mode: webhookData.body.execution_mode || 'online',\n          timings: {\n            ocr_ms: Date.now() - startTime,\n            parse_ms: 10\n          }\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to parse OCR response: ' + e.message,\n          status: 'PARSE_ERROR'\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+      }
     },
     {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify($json) }}",
-        "options": {
-          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
-          "responseHeaders": {
-            "entries": [
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          }
-        }
-      },
       "id": "respond-success",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
+      "typeVersion": 1,
       "position": [
-        1100,
-        200
-      ]
-    },
-    {
+        1340,
+        400
+      ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify($json) }}",
-        "options": {
-          "responseCode": 400,
-          "responseHeaders": {
-            "entries": [
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          }
-        }
-      },
-      "id": "respond-error",
-      "name": "Respond Error",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
       "position": [
-        880,
-        400
-      ]
+        240,
+        -40
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 700,
+        "height": 380,
+        "content": "## MCP - Table Extractor (Mistral OCR)\n\n**Endpoint:** POST /webhook/table-extractor\n\n**Parameters:**\n- `data` (required): Image URL or base64 data\n- `source` (optional): url | base64 (default: url)\n- `mistral_api_key` (required): Mistral API key\n- `options.output_format` (optional): json | markdown | csv (default: json)\n- `options.detect_headers` (optional): boolean (default: true)\n- `options.merge_cells` (optional): boolean (default: true)\n- `options.confidence_threshold` (optional): 0-1 (default: 0.8)\n- `execution_mode` (optional): online | offline\n\n**Async Mode (RFC-040):**\n- `callback_url` (optional): URL to POST results when processing completes\n- `job_id` (optional): Custom job ID (auto-generated if not provided)\n\nWhen `callback_url` is provided:\n- Returns immediately with 202 Accepted: `{success: true, job_id, status: \"processing\"}`\n- POSTs result to callback_url with HMAC signature header `X-N8N-Signature`\n\n**Returns:** Extracted tables with headers, rows, confidence scores\n\n**Model:** pixtral-12b-2409 (Mistral Vision)\n\n**Analyzable:**\n```json\n{\"accepts_image\": true, \"accepts_media\": false, \"output_fields\": [\"tables\", \"rows\", \"columns\", \"confidence\"], \"domain\": \"documents\"}\n```"
+      }
+    },
+    {
+      "id": "sticky-note-async",
+      "name": "Async Flow Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        900,
+        -40
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 400,
+        "height": 160,
+        "content": "## Async Callback Flow (RFC-040)\n\n1. Store job_id & callback_url\n2. Respond 202 Accepted immediately\n3. Process OCR in background\n4. POST result to callback_url with HMAC signature"
+      }
     }
   ],
   "connections": {
@@ -212,25 +341,87 @@
       "main": [
         [
           {
-            "node": "Valid?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Valid?": {
-      "main": [
-        [
-          {
-            "node": "Mistral OCR",
+            "node": "Has Callback URL?",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Build Error",
+            "node": "Error: No Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Callback URL?": {
+      "main": [
+        [
+          {
+            "node": "Store Job Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mistral OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Job Context": {
+      "main": [
+        [
+          {
+            "node": "Respond 202 Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202 Accepted": {
+      "main": [
+        [
+          {
+            "node": "Mistral OCR (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral OCR (Async)": {
+      "main": [
+        [
+          {
+            "node": "Parse OCR Response (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse OCR Response (Async)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
             "type": "main",
             "index": 0
           }
@@ -241,29 +432,18 @@
       "main": [
         [
           {
-            "node": "Format Response",
+            "node": "Parse OCR Response",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Response": {
+    "Parse OCR Response": {
       "main": [
         [
           {
             "node": "Respond",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Error": {
-      "main": [
-        [
-          {
-            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -275,5 +455,520 @@
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "1e619868-024c-4def-b6e7-925ac5c73458",
+  "activeVersionId": "1e619868-024c-4def-b6e7-925ac5c73458",
+  "versionCounter": 10,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-24T09:31:12.401Z",
+      "createdAt": "2026-03-24T09:31:12.401Z",
+      "role": "workflow:owner",
+      "workflowId": "bOIWHh5jRZPvGWp3",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-24T13:21:06.369Z",
+    "createdAt": "2026-03-24T13:21:06.369Z",
+    "versionId": "1e619868-024c-4def-b6e7-925ac5c73458",
+    "workflowId": "bOIWHh5jRZPvGWp3",
+    "nodes": [
+      {
+        "id": "webhook-table",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "table-extractor-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "table-extractor",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.body.data }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-no-data",
+        "name": "Error: No Data",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          700,
+          600
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: data (URL or base64)\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"mistral-ocr\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "check-callback-url",
+        "name": "Has Callback URL?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          680,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.body.callback_url }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "store-job-context",
+        "name": "Store Job Context",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          900,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const webhookData = $('Webhook').first().json;\nconst crypto = require('crypto');\n\n// Generate or use provided job_id\nconst job_id = webhookData.body.job_id || crypto.randomUUID();\nconst callback_url = webhookData.body.callback_url;\n\nreturn [{\n  json: {\n    ...webhookData,\n    _async: {\n      job_id,\n      callback_url,\n      started_at: new Date().toISOString()\n    }\n  }\n}];"
+        }
+      },
+      {
+        "id": "respond-202-accepted",
+        "name": "Respond 202 Accepted",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1120,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": true, \"job_id\": $json._async.job_id, \"status\": \"processing\" } }}",
+          "options": {
+            "responseCode": 202
+          }
+        }
+      },
+      {
+        "id": "mistral-ocr-async",
+        "name": "Mistral OCR (Async)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1340,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.mistral.ai/v1/chat/completions",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.body.mistral_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"pixtral-12b-2409\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Extrais TOUS les tableaux de cette image/document. Pour chaque tableau, fournis un JSON structuré avec:\\n- id: numéro du tableau\\n- headers: liste des en-têtes de colonnes\\n- rows: liste des lignes (chaque ligne est une liste de valeurs)\\n- confidence: score de confiance (0-1)\\n\\nRéponds UNIQUEMENT en JSON valide avec cette structure:\\n{\\n  \\\"tables\\\": [\\n    {\\n      \\\"id\\\": 1,\\n      \\\"headers\\\": [...],\\n      \\\"rows\\\": [[...], [...], ...],\\n      \\\"confidence\\\": 0.95\\n    }\\n  ],\\n  \\\"table_count\\\": 1\\n}\\n\\nSi aucun tableau n'est trouvé, retourne: {\\\"tables\\\": [], \\\"table_count\\\": 0}\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"{{ $json.body.source === 'base64' ? 'data:image/png;base64,' + $json.body.data : $json.body.data }}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"max_tokens\": 4096,\n  \"temperature\": 0.1\n}",
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "parse-response-async",
+        "name": "Parse OCR Response (Async)",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1560,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst jobContext = $('Store Job Context').first().json;\nconst startTime = Date.now();\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        job_id: jobContext._async.job_id,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Mistral API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          execution_mode: jobContext.body.execution_mode || 'online'\n        },\n        _async: jobContext._async\n      }\n    };\n  }\n\n  try {\n    const content = item.json.choices?.[0]?.message?.content || '{}';\n    // Try to extract JSON from the response\n    let parsed;\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      parsed = JSON.parse(jsonMatch[0]);\n    } else {\n      parsed = { tables: [], table_count: 0 };\n    }\n\n    // Generate markdown representation\n    let rawMarkdown = '';\n    if (parsed.tables && parsed.tables.length > 0) {\n      parsed.tables.forEach((table, idx) => {\n        if (idx > 0) rawMarkdown += '\\n\\n';\n        // Header\n        if (table.headers && table.headers.length > 0) {\n          rawMarkdown += '| ' + table.headers.join(' | ') + ' |\\n';\n          rawMarkdown += '|' + table.headers.map(() => '---').join('|') + '|\\n';\n        }\n        // Rows\n        if (table.rows) {\n          table.rows.forEach(row => {\n            rawMarkdown += '| ' + row.join(' | ') + ' |\\n';\n          });\n        }\n      });\n    }\n\n    return {\n      json: {\n        success: true,\n        _trace: {\n          service_response: item.json,\n          model: 'pixtral-12b-2409',\n          tokens: { input: null, output: null },\n          latency_ms: Date.now() - startTime\n        },\n        job_id: jobContext._async.job_id,\n        data: {\n          tables: parsed.tables || [],\n          raw_markdown: rawMarkdown || null,\n          table_count: parsed.table_count || parsed.tables?.length || 0\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          model: 'pixtral-12b-2409',\n          execution_mode: jobContext.body.execution_mode || 'online',\n          timings: {\n            ocr_ms: Date.now() - startTime,\n            parse_ms: 10\n          }\n        },\n        _async: jobContext._async\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        job_id: jobContext._async.job_id,\n        error: {\n          code: 500,\n          message: 'Failed to parse OCR response: ' + e.message,\n          status: 'PARSE_ERROR'\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          execution_mode: jobContext.body.execution_mode || 'online'\n        },\n        _async: jobContext._async\n      }\n    };\n  }\n});\n\nreturn results;"
+        }
+      },
+      {
+        "id": "prepare-callback",
+        "name": "Prepare Callback",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1780,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const crypto = require('crypto');\nconst item = $input.first();\nconst asyncContext = item.json._async;\n\n// Prepare callback body (without _async internal data)\nconst callbackBody = { ...item.json };\ndelete callbackBody._async;\n\n// Generate HMAC signature\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callbackBody);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: asyncContext.callback_url,\n    callback_body: callbackBody,\n    signature: signature\n  }\n}];"
+        }
+      },
+      {
+        "id": "send-callback",
+        "name": "Send Callback",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2000,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.callback_url }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-N8N-Signature",
+                "value": "={{ $json.signature }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json.callback_body }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "mistral-ocr",
+        "name": "Mistral OCR",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          900,
+          400
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.mistral.ai/v1/chat/completions",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.body.mistral_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"pixtral-12b-2409\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Extrais TOUS les tableaux de cette image/document. Pour chaque tableau, fournis un JSON structuré avec:\\n- id: numéro du tableau\\n- headers: liste des en-têtes de colonnes\\n- rows: liste des lignes (chaque ligne est une liste de valeurs)\\n- confidence: score de confiance (0-1)\\n\\nRéponds UNIQUEMENT en JSON valide avec cette structure:\\n{\\n  \\\"tables\\\": [\\n    {\\n      \\\"id\\\": 1,\\n      \\\"headers\\\": [...],\\n      \\\"rows\\\": [[...], [...], ...],\\n      \\\"confidence\\\": 0.95\\n    }\\n  ],\\n  \\\"table_count\\\": 1\\n}\\n\\nSi aucun tableau n'est trouvé, retourne: {\\\"tables\\\": [], \\\"table_count\\\": 0}\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"{{ $json.body.source === 'base64' ? 'data:image/png;base64,' + $json.body.data : $json.body.data }}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"max_tokens\": 4096,\n  \"temperature\": 0.1\n}",
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "parse-response",
+        "name": "Parse OCR Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1120,
+          400
+        ],
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\nconst startTime = Date.now();\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Mistral API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n\n  try {\n    const content = item.json.choices?.[0]?.message?.content || '{}';\n    // Try to extract JSON from the response\n    let parsed;\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      parsed = JSON.parse(jsonMatch[0]);\n    } else {\n      parsed = { tables: [], table_count: 0 };\n    }\n\n    // Generate markdown representation\n    let rawMarkdown = '';\n    if (parsed.tables && parsed.tables.length > 0) {\n      parsed.tables.forEach((table, idx) => {\n        if (idx > 0) rawMarkdown += '\\n\\n';\n        // Header\n        if (table.headers && table.headers.length > 0) {\n          rawMarkdown += '| ' + table.headers.join(' | ') + ' |\\n';\n          rawMarkdown += '|' + table.headers.map(() => '---').join('|') + '|\\n';\n        }\n        // Rows\n        if (table.rows) {\n          table.rows.forEach(row => {\n            rawMarkdown += '| ' + row.join(' | ') + ' |\\n';\n          });\n        }\n      });\n    }\n\n    return {\n      json: {\n        success: true,\n        _trace: {\n          service_response: item.json,\n          model: 'pixtral-12b-2409',\n          tokens: { input: null, output: null },\n          latency_ms: Date.now() - startTime\n        },\n        data: {\n          tables: parsed.tables || [],\n          raw_markdown: rawMarkdown || null,\n          table_count: parsed.table_count || parsed.tables?.length || 0\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          model: 'pixtral-12b-2409',\n          execution_mode: webhookData.body.execution_mode || 'online',\n          timings: {\n            ocr_ms: Date.now() - startTime,\n            parse_ms: 10\n          }\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to parse OCR response: ' + e.message,\n          status: 'PARSE_ERROR'\n        },\n        meta: {\n          provider: 'mistral-ocr',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1340,
+          400
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          -40
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 700,
+          "height": 380,
+          "content": "## MCP - Table Extractor (Mistral OCR)\n\n**Endpoint:** POST /webhook/table-extractor\n\n**Parameters:**\n- `data` (required): Image URL or base64 data\n- `source` (optional): url | base64 (default: url)\n- `mistral_api_key` (required): Mistral API key\n- `options.output_format` (optional): json | markdown | csv (default: json)\n- `options.detect_headers` (optional): boolean (default: true)\n- `options.merge_cells` (optional): boolean (default: true)\n- `options.confidence_threshold` (optional): 0-1 (default: 0.8)\n- `execution_mode` (optional): online | offline\n\n**Async Mode (RFC-040):**\n- `callback_url` (optional): URL to POST results when processing completes\n- `job_id` (optional): Custom job ID (auto-generated if not provided)\n\nWhen `callback_url` is provided:\n- Returns immediately with 202 Accepted: `{success: true, job_id, status: \"processing\"}`\n- POSTs result to callback_url with HMAC signature header `X-N8N-Signature`\n\n**Returns:** Extracted tables with headers, rows, confidence scores\n\n**Model:** pixtral-12b-2409 (Mistral Vision)\n\n**Analyzable:**\n```json\n{\"accepts_image\": true, \"accepts_media\": false, \"output_fields\": [\"tables\", \"rows\", \"columns\", \"confidence\"], \"domain\": \"documents\"}\n```"
+        }
+      },
+      {
+        "id": "sticky-note-async",
+        "name": "Async Flow Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          900,
+          -40
+        ],
+        "parameters": {
+          "color": 4,
+          "width": 400,
+          "height": 160,
+          "content": "## Async Callback Flow (RFC-040)\n\n1. Store job_id & callback_url\n2. Respond 202 Accepted immediately\n3. Process OCR in background\n4. POST result to callback_url with HMAC signature"
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Has Callback URL?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: No Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Callback URL?": {
+        "main": [
+          [
+            {
+              "node": "Store Job Context",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Mistral OCR",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Store Job Context": {
+        "main": [
+          [
+            {
+              "node": "Respond 202 Accepted",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Respond 202 Accepted": {
+        "main": [
+          [
+            {
+              "node": "Mistral OCR (Async)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mistral OCR (Async)": {
+        "main": [
+          [
+            {
+              "node": "Parse OCR Response (Async)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse OCR Response (Async)": {
+        "main": [
+          [
+            {
+              "node": "Prepare Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Callback": {
+        "main": [
+          [
+            {
+              "node": "Send Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mistral OCR": {
+        "main": [
+          [
+            {
+              "node": "Parse OCR Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse OCR Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
   }
 }

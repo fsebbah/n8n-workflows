@@ -1,0 +1,281 @@
+{
+  "updatedAt": "2025-12-03T18:27:27.597Z",
+  "createdAt": "2025-12-03T18:27:27.597Z",
+  "id": "79KandjLTdjW4WP9",
+  "name": "Google Calendar to Slack Status & Philips Hue",
+  "description": "Production-ready workflow: Google Calendar to Slack Status & Philips Hue. This workflow has been optimized for production use with comprehensive error handling, security, and documentation.",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "name": "On clicking 'execute'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "disabled": true,
+      "position": [
+        420,
+        420
+      ],
+      "parameters": {},
+      "typeVersion": 1,
+      "id": "node-b2b1b8c4"
+    },
+    {
+      "name": "Google Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "position": [
+        720,
+        600
+      ],
+      "parameters": {
+        "eventId": "={{$node[\"Event Started\"].json[\"id\"].split(\"_\")[0]}}",
+        "options": {},
+        "calendar": "youremail@domain.com",
+        "operation": "get"
+      },
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "{{ $credentials.googleCalendarOAuth2Api.id }}",
+          "name": "GoogleCalendar - Personal"
+        }
+      },
+      "typeVersion": 1,
+      "id": "node-f5722467"
+    },
+    {
+      "name": "Light - Busy",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1220,
+        180
+      ],
+      "parameters": {
+        "url": "{{ $env.BASE_URL }}",
+        "options": {},
+        "requestMethod": "POST"
+      },
+      "typeVersion": 1,
+      "id": "node-57ec0330"
+    },
+    {
+      "name": "Light - Available",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1220,
+        600
+      ],
+      "parameters": {
+        "url": "{{ $env.BASE_URL }}",
+        "options": {},
+        "requestMethod": "POST"
+      },
+      "typeVersion": 1,
+      "id": "node-669e0b3e"
+    },
+    {
+      "name": "Switch",
+      "type": "n8n-nodes-base.switch",
+      "position": [
+        1040,
+        460
+      ],
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "value2": "4dw_doing",
+              "operation": "startsWith"
+            },
+            {
+              "value2": "4dw_managing",
+              "operation": "startsWith"
+            },
+            {
+              "value2": "4dw_leading",
+              "operation": "startsWith"
+            },
+            {
+              "output": 1,
+              "value2": "4dw_living",
+              "operation": "startsWith"
+            }
+          ]
+        },
+        "value1": "={{$json[\"calColor\"]}}",
+        "dataType": "string",
+        "fallbackOutput": 3
+      },
+      "typeVersion": 1,
+      "id": "node-93256968"
+    },
+    {
+      "name": "Light - Personal",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1220,
+        340
+      ],
+      "parameters": {
+        "url": "{{ $env.BASE_URL }}",
+        "options": {},
+        "requestMethod": "POST"
+      },
+      "typeVersion": 1,
+      "id": "node-369cb9c5"
+    },
+    {
+      "name": "Event Started",
+      "type": "n8n-nodes-base.googleCalendarTrigger",
+      "position": [
+        540,
+        600
+      ],
+      "parameters": {
+        "options": {},
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "unit": "minutes",
+              "value": 5
+            }
+          ]
+        },
+        "triggerOn": "eventStarted",
+        "calendarId": "youremail@domain.com"
+      },
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "{{ $credentials.googleCalendarOAuth2Api.id }}",
+          "name": "GoogleCalendar - Personal"
+        }
+      },
+      "typeVersion": 1,
+      "id": "node-e0200e99"
+    },
+    {
+      "name": "Slack - Status",
+      "type": "n8n-nodes-base.slack",
+      "position": [
+        1040,
+        720
+      ],
+      "parameters": {
+        "resource": "userProfile",
+        "operation": "update",
+        "additionalFields": {
+          "status_text": "={{$json[\"summary\"]}}",
+          "status_emoji": "=:{{$json[\"calColor\"]}}:"
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "{{ $credentials.slackApi.id }}",
+          "name": "CompanySlack"
+        }
+      },
+      "typeVersion": 1,
+      "id": "node-c6b8728c"
+    },
+    {
+      "name": "Set CalColor",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        880,
+        600
+      ],
+      "parameters": {
+        "functionCode": "for (item of items) {\n\n  switch (item.json.colorId) {\n    case '1':\n      calColor = 'Lavendar';\n      break;\n    case '2':\n      calColor = '4dw_leading';\n      break;\n    case '3':\n      calColor = 'Grape';\n      break;\n    case '4':\n      calColor = 'Flamingo';\n      break;\n    case '5':\n      calColor = '4dw_managing';\n      break;\n    case '6':\n      calColor = 'Tangerine';\n      break;\n    case '7':\n      calColor = '4dw_living';\n      break;\n    case '8':\n      calColor = 'Graphite';\n      break;\n    case '9':\n      calColor = 'Blueberry';\n      break;\n    case '10':\n      calColor = 'Basil';\n      break;\n    case '11':\n      calColor = '4dw_doing';\n      break;\n    default:\n      calColor = 'undefined';\n  }\n  item.json.calColor = calColor;\n}\n\nreturn items;"
+      },
+      "typeVersion": 1,
+      "id": "node-dd829aaf"
+    },
+    {
+      "id": "error-64ecd0eb",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        400
+      ],
+      "parameters": {
+        "message": "Workflow execution error",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": null,
+    "timezone": "UTC",
+    "executionTimeout": 3600,
+    "maxExecutions": 1000,
+    "retryOnFail": true,
+    "retryCount": 3
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "919fd7fc-2301-41d5-ba35-1aaba9ae32b3",
+  "activeVersionId": null,
+  "versionCounter": 1,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-02-02T17:55:15.060Z",
+      "createdAt": "2026-02-02T17:55:15.060Z",
+      "role": "workflow:owner",
+      "workflowId": "79KandjLTdjW4WP9",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}

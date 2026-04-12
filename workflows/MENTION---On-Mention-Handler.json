@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-01-20T19:56:51.000Z",
+  "updatedAt": "2026-02-02T19:47:53.318Z",
   "createdAt": "2026-01-16T09:34:14.526Z",
   "id": "1WxkLm9muiKKJ1zc",
   "name": "MENTION---On-Mention-Handler",
@@ -374,27 +374,431 @@
   "staticData": null,
   "meta": null,
   "pinData": {},
-  "versionId": "cc7665ff-1fc7-47bc-b20a-59f850f63a74",
-  "activeVersionId": "cc7665ff-1fc7-47bc-b20a-59f850f63a74",
-  "versionCounter": 26,
+  "versionId": "6641e1ad-33f1-402f-a981-4bdfe79e7412",
+  "activeVersionId": "6641e1ad-33f1-402f-a981-4bdfe79e7412",
+  "versionCounter": 86,
   "triggerCount": 1,
-  "tags": [],
   "shared": [
     {
-      "updatedAt": "2026-01-16T09:34:14.529Z",
-      "createdAt": "2026-01-16T09:34:14.529Z",
+      "updatedAt": "2026-02-02T17:55:15.060Z",
+      "createdAt": "2026-02-02T17:55:15.060Z",
       "role": "workflow:owner",
       "workflowId": "1WxkLm9muiKKJ1zc",
-      "projectId": "rkp1YaKKlE3ExOIx",
+      "projectId": "U3cZjxLpPGVohw1b",
       "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
         "type": "personal",
         "icon": null,
-        "description": null
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
       }
     }
-  ]
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "6641e1ad-33f1-402f-a981-4bdfe79e7412",
+    "workflowId": "1WxkLm9muiKKJ1zc",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## RFC-007: Mention Service Handler\n\n**Webhook:** POST /mention\n\n**Input:**\n- guild_id (requis)\n- user_id (requis)\n- content\n- username\n- llm_config (optionnel)\n\n**Flow:**\n1. Validate input\n2. Map guild_id → project_id + branding\n3. Call Process-Question\n4. Call Format-Response\n5. Return MentionResult",
+          "height": 300,
+          "width": 280,
+          "color": 6
+        },
+        "id": "mention-handler-note",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -288,
+          192
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "mention",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "mention-handler-0001",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          304
+        ],
+        "webhookId": "mention-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATE INPUT (RFC-007 + RFC-009)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// --- Validate required fields ---\nconst errors = [];\n\nif (!body.guild_id) errors.push('guild_id requis');\nif (!body.user_id) errors.push('user_id requis');\nif (body.content === undefined) errors.push('content requis');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: errors.join(', '),\n      http_status: 400\n    }\n  };\n}\n\n// --- Extract LLM config (RFC-009) ---\nconst llmConfig = body.llm_config || {};\n\n// --- Return validated data ---\nreturn {\n  valid: true,\n  data: {\n    message_id: body.message_id || null,\n    channel_id: body.channel_id || null,\n    guild_id: body.guild_id,\n    user_id: body.user_id,\n    content: body.content || '',\n    username: body.username || 'unknown',\n    display_name: body.display_name || body.username || 'unknown',\n    is_reply: body.is_reply || false,\n    replied_to_bot: body.replied_to_bot || false,\n    conversation_id: body.conversation_id || null\n  },\n  llm_config: {\n    provider: llmConfig.provider || null,\n    openai_api_key: llmConfig.openai_api_key || null,\n    anthropic_api_key: llmConfig.anthropic_api_key || null,\n    google_api_key: llmConfig.google_api_key || null,\n    mistral_api_key: llmConfig.mistral_api_key || null\n  }\n};"
+        },
+        "id": "mention-handler-0002",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          224,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "mention-handler-0003",
+        "name": "Is Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          448,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/branding/guild/{{ $json.data.guild_id }}",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "mention-handler-0004",
+        "name": "Get Project Mapping",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          672,
+          208
+        ],
+        "onError": "continueErrorOutput"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-project",
+                "leftValue": "={{ $json.project_id }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "mention-handler-0005",
+        "name": "Has Project?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          880,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// MERGE PROJECT + DATA + BRANDING (RFC-009 v2)\n// ============================================\n\nconst response = $input.first().json;\nconst validatedInput = $('Validate Input').first().json;\n\n// API returns: { success, project_id, branding: { name, scope_prompt, ... } }\nconst brandingData = response.branding || {};\n\nreturn {\n  project_id: response.project_id,\n  data: validatedInput.data,\n  llm_config: validatedInput.llm_config,\n  branding: {\n    name: brandingData.name || null,\n    scope_prompt: brandingData.scope_prompt || null,\n    out_of_scope_message: brandingData.out_of_scope_message || null\n  }\n};"
+        },
+        "id": "mention-handler-0006",
+        "name": "Merge Project + Data",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1104,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "MzQRAcHncjleB2kk",
+            "mode": "list",
+            "cachedResultUrl": "/workflow/MzQRAcHncjleB2kk",
+            "cachedResultName": "MENTION---Process-Question"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {},
+            "matchingColumns": [],
+            "schema": [],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          },
+          "options": {}
+        },
+        "id": "mention-handler-0007",
+        "name": "Call Process Question",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          1328,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "UA6ZDXVwVsYmpNXX",
+            "mode": "list",
+            "cachedResultUrl": "/workflow/UA6ZDXVwVsYmpNXX",
+            "cachedResultName": "MENTION---Format-Response"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {},
+            "matchingColumns": [],
+            "schema": [],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          },
+          "options": {}
+        },
+        "id": "mention-handler-0008",
+        "name": "Call Format Response",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          1552,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: true, response: $json.response || null, intent: $json.intent || 'unknown', confidence: $json.confidence || 0.5, credits_used: $json.credits_consumed || 0 }) }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "mention-handler-0009",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1760,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.http_status || 400 }}"
+          }
+        },
+        "id": "mention-handler-0010",
+        "name": "Respond Validation Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          672,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'UNKNOWN_GUILD', message: 'Guild non configuré', http_status: 400 } }) }}",
+          "options": {
+            "responseCode": 400
+          }
+        },
+        "id": "mention-handler-0011",
+        "name": "Respond Unknown Guild",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1104,
+          304
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Is Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Valid?": {
+        "main": [
+          [
+            {
+              "node": "Get Project Mapping",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Project Mapping": {
+        "main": [
+          [
+            {
+              "node": "Has Project?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Unknown Guild",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Project?": {
+        "main": [
+          [
+            {
+              "node": "Merge Project + Data",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Unknown Guild",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge Project + Data": {
+        "main": [
+          [
+            {
+              "node": "Call Process Question",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Process Question": {
+        "main": [
+          [
+            {
+              "node": "Call Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Format Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
 }

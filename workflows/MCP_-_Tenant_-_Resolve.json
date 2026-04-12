@@ -1,12 +1,21 @@
 {
+  "updatedAt": "2026-03-30T09:36:43.987Z",
+  "createdAt": "2026-03-30T09:36:33.078Z",
+  "id": "ue3ssCn2i3g5xFpf",
   "name": "MCP - Tenant - Resolve",
+  "description": null,
+  "active": false,
+  "isArchived": false,
   "nodes": [
     {
       "id": "sticky-note-doc",
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-100, -80],
+      "position": [
+        -100,
+        -80
+      ],
       "parameters": {
         "color": 6,
         "width": 340,
@@ -19,7 +28,10 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 300],
+      "position": [
+        240,
+        300
+      ],
       "webhookId": "tenant-resolve-webhook",
       "parameters": {
         "httpMethod": "POST",
@@ -33,7 +45,10 @@
       "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 300],
+      "position": [
+        460,
+        300
+      ],
       "parameters": {
         "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Tenant Resolve\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\nconst action = body.action || ctx.action;\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst backendApiUrl = body.backend_api_url || ctx.backend_api_url;\nconst backendServiceToken = body.backend_service_token || ctx.backend_service_token;\n\nif (!action || action !== 'resolve') errors.push('action must be \"resolve\"');\nif (!userId) errors.push('user_id requis');\nif (!guildId) errors.push('guild_id requis');\nif (!backendApiUrl) errors.push('backend_api_url requis');\nif (!backendServiceToken) errors.push('backend_service_token requis');\n\nif (errors.length > 0) {\n  return { valid: false, errors, user_id: userId, guild_id: guildId };\n}\n\nreturn {\n  valid: true,\n  user_id: userId,\n  guild_id: guildId,\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken,\n  startTime: Date.now()\n};"
       }
@@ -43,16 +58,26 @@
       "name": "Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [680, 300],
+      "position": [
+        680,
+        300
+      ],
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
           "conditions": [
             {
               "id": "check-valid",
               "leftValue": "={{ $json.valid }}",
               "rightValue": true,
-              "operator": { "type": "boolean", "operation": "equals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -65,7 +90,10 @@
       "name": "Build Validation Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [900, 460],
+      "position": [
+        900,
+        460
+      ],
       "parameters": {
         "jsCode": "const input = $input.first().json;\nreturn {\n  success: false,\n  error: { code: 'VALIDATION_ERROR', message: input.errors.join(', ') },\n  user_id: input.user_id,\n  guild_id: input.guild_id\n};"
       }
@@ -75,13 +103,23 @@
       "name": "Respond Validation Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1120, 460],
+      "position": [
+        1120,
+        460
+      ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
           "responseCode": 400,
-          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       }
     },
@@ -90,18 +128,29 @@
       "name": "Call API Backend",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 200],
+      "position": [
+        900,
+        200
+      ],
       "parameters": {
         "method": "GET",
         "url": "={{ $json.backend_api_url }}/api/discord/guild/{{ $json.guild_id }}/tenant",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "X-Service-Token", "value": "={{ $json.backend_service_token }}" },
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
-        "options": { "timeout": 30000 }
+        "options": {
+          "timeout": 30000
+        }
       },
       "onError": "continueRegularOutput"
     },
@@ -110,7 +159,10 @@
       "name": "Format Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1120, 200],
+      "position": [
+        1120,
+        200
+      ],
       "parameters": {
         "jsCode": "// Return raw API response - plugin handles verification\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst latencyMs = Date.now() - (prevData.startTime || Date.now());\n\n// Handle array response from API\nconst apiData = Array.isArray(input) ? input[0] : input;\n\n// Check for HTTP error\nif (input.error || input.statusCode >= 400) {\n  return {\n    success: false,\n    error: { code: 'API_ERROR', message: input.error?.message || 'API call failed' },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    latency_ms: latencyMs\n  };\n}\n\n// Return data directly - plugin will check tenant_id\nreturn {\n  success: true,\n  data: apiData,\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  latency_ms: latencyMs\n};"
       }
@@ -120,42 +172,167 @@
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1340, 200],
+      "position": [
+        1340,
+        200
+      ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
           "responseCode": "={{ $json.success ? 200 : 500 }}",
-          "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       }
     }
   ],
   "connections": {
     "Webhook": {
-      "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Validate Input": {
-      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Valid?": {
       "main": [
-        [{ "node": "Call API Backend", "type": "main", "index": 0 }],
-        [{ "node": "Build Validation Error", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Call API Backend",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Build Validation Error": {
-      "main": [[{ "node": "Respond Validation Error", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Call API Backend": {
-      "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Format Response": {
-      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner"
-  }
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "8c067a78-a2dc-405c-8345-afe27fcee291",
+  "activeVersionId": null,
+  "versionCounter": 7,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-30T09:36:33.078Z",
+      "createdAt": "2026-03-30T09:36:33.078Z",
+      "role": "workflow:owner",
+      "workflowId": "ue3ssCn2i3g5xFpf",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
 }

@@ -1,0 +1,370 @@
+{
+  "updatedAt": "2026-02-06T14:31:32.222Z",
+  "createdAt": "2026-02-06T14:31:23.679Z",
+  "id": "OSrxWa6DdzXVvFJt",
+  "name": "MCP - Tools Notify",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - Tools Notify\n\n**Endpoint:** POST /webhook/mcp/tools/notify\n\n**Source:** RFC-030\n\n**Description:**\nNotifie les plugins via Redis Stream\nquand un workflow MCP-* est modifie.\n\n**Input:** {action, workflow_name}\n**Output:** XADD tools:events:stream",
+        "height": 300,
+        "width": 320,
+        "color": 4
+      },
+      "id": "mcp-notify-0000",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mcp/tools/notify",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "mcp-notify-0001",
+      "name": "Webhook POST",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "mcp-tools-notify"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE NOTIFICATION PAYLOAD\n// ============================================\n\nconst input = $input.first().json;\n\n// Validate input\nconst action = input.body?.action || input.action || 'workflow_updated';\nconst workflowName = input.body?.workflow_name || input.workflow_name || input.body?.name || input.name || 'unknown';\n\n// Valid actions\nconst validActions = ['workflow_added', 'workflow_modified', 'workflow_deleted', 'workflow_updated'];\nif (!validActions.includes(action)) {\n  throw new Error(`Invalid action: ${action}. Valid: ${validActions.join(', ')}`);\n}\n\nreturn {\n  event: 'tools_updated',\n  action: action,\n  workflow_name: workflowName,\n  source: 'n8n:MCP-Tools-Notify',\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "mcp-notify-0002",
+      "name": "Prepare Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xAdd",
+        "key": "tools:events:stream",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldName": "event",
+              "fieldValue": "={{ $json.event }}"
+            },
+            {
+              "fieldName": "action",
+              "fieldValue": "={{ $json.action }}"
+            },
+            {
+              "fieldName": "workflow_name",
+              "fieldValue": "={{ $json.workflow_name }}"
+            },
+            {
+              "fieldName": "source",
+              "fieldValue": "={{ $json.source }}"
+            },
+            {
+              "fieldName": "timestamp",
+              "fieldValue": "={{ $json.timestamp }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "mcp-notify-0003",
+      "name": "XADD tools:events:stream",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        640,
+        300
+      ],
+      "credentials": {
+        "redis": {
+          "id": "notifications-redis",
+          "name": "Redis Notifications (DB 5)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, event: $('Prepare Payload').first().json.event, action: $('Prepare Payload').first().json.action, workflow_name: $('Prepare Payload').first().json.workflow_name, stream: 'tools:events:stream' }) }}",
+        "options": {}
+      },
+      "id": "mcp-notify-0004",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook POST": {
+      "main": [
+        [
+          {
+            "node": "Prepare Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Payload": {
+      "main": [
+        [
+          {
+            "node": "XADD tools:events:stream",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "XADD tools:events:stream": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "aee37cec-25c3-4720-b916-abe81e47e476",
+  "activeVersionId": "aee37cec-25c3-4720-b916-abe81e47e476",
+  "versionCounter": 52,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-02-06T14:31:23.679Z",
+      "createdAt": "2026-02-06T14:31:23.679Z",
+      "role": "workflow:owner",
+      "workflowId": "OSrxWa6DdzXVvFJt",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-06T14:31:23.696Z",
+    "createdAt": "2026-02-06T14:31:23.696Z",
+    "versionId": "aee37cec-25c3-4720-b916-abe81e47e476",
+    "workflowId": "OSrxWa6DdzXVvFJt",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## MCP - Tools Notify\n\n**Endpoint:** POST /webhook/mcp/tools/notify\n\n**Source:** RFC-030\n\n**Description:**\nNotifie les plugins via Redis Stream\nquand un workflow MCP-* est modifie.\n\n**Input:** {action, workflow_name}\n**Output:** XADD tools:events:stream",
+          "height": 300,
+          "width": 320,
+          "color": 4
+        },
+        "id": "mcp-notify-0000",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -200,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "mcp/tools/notify",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "mcp-notify-0001",
+        "name": "Webhook POST",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          200,
+          300
+        ],
+        "webhookId": "mcp-tools-notify"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PREPARE NOTIFICATION PAYLOAD\n// ============================================\n\nconst input = $input.first().json;\n\n// Validate input\nconst action = input.body?.action || input.action || 'workflow_updated';\nconst workflowName = input.body?.workflow_name || input.workflow_name || input.body?.name || input.name || 'unknown';\n\n// Valid actions\nconst validActions = ['workflow_added', 'workflow_modified', 'workflow_deleted', 'workflow_updated'];\nif (!validActions.includes(action)) {\n  throw new Error(`Invalid action: ${action}. Valid: ${validActions.join(', ')}`);\n}\n\nreturn {\n  event: 'tools_updated',\n  action: action,\n  workflow_name: workflowName,\n  source: 'n8n:MCP-Tools-Notify',\n  timestamp: new Date().toISOString()\n};"
+        },
+        "id": "mcp-notify-0002",
+        "name": "Prepare Payload",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          420,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "xAdd",
+          "key": "tools:events:stream",
+          "fieldsUi": {
+            "fieldValues": [
+              {
+                "fieldName": "event",
+                "fieldValue": "={{ $json.event }}"
+              },
+              {
+                "fieldName": "action",
+                "fieldValue": "={{ $json.action }}"
+              },
+              {
+                "fieldName": "workflow_name",
+                "fieldValue": "={{ $json.workflow_name }}"
+              },
+              {
+                "fieldName": "source",
+                "fieldValue": "={{ $json.source }}"
+              },
+              {
+                "fieldName": "timestamp",
+                "fieldValue": "={{ $json.timestamp }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "mcp-notify-0003",
+        "name": "XADD tools:events:stream",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          640,
+          300
+        ],
+        "credentials": {
+          "redis": {
+            "id": "notifications-redis",
+            "name": "Redis Notifications (DB 5)"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: true, event: $('Prepare Payload').first().json.event, action: $('Prepare Payload').first().json.action, workflow_name: $('Prepare Payload').first().json.workflow_name, stream: 'tools:events:stream' }) }}",
+          "options": {}
+        },
+        "id": "mcp-notify-0004",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          860,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook POST": {
+        "main": [
+          [
+            {
+              "node": "Prepare Payload",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Payload": {
+        "main": [
+          [
+            {
+              "node": "XADD tools:events:stream",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "XADD tools:events:stream": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

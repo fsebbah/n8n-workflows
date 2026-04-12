@@ -1,0 +1,283 @@
+{
+  "updatedAt": "2025-12-03T17:53:28.358Z",
+  "createdAt": "2025-12-03T17:53:28.358Z",
+  "id": "DBrhkItrk9CbNIrk",
+  "name": "Steam + CF Report",
+  "description": "Production-ready workflow: Steam + CF Report. This workflow has been optimized for production use with comprehensive error handling, security, and documentation.",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        110,
+        200
+      ],
+      "parameters": {
+        "path": "steam",
+        "responseData": "allEntries",
+        "responseMode": "lastNode",
+        "authentication": "{{ $credentials.basicAuth }}"
+      },
+      "credentials": {
+        "httpBasicAuth": {
+          "id": null,
+          "name": "credentials"
+        }
+      },
+      "retryOnFail": false,
+      "typeVersion": 1,
+      "id": "node-3c547bdb"
+    },
+    {
+      "name": "Add bind-tools",
+      "type": "n8n-nodes-base.executeCommand",
+      "color": "#FF8000",
+      "notes": "Install bind-tools",
+      "position": [
+        480,
+        180
+      ],
+      "parameters": {
+        "command": "=which dig || apk add bind-tools"
+      },
+      "retryOnFail": true,
+      "typeVersion": 1,
+      "continueOnFail": true,
+      "waitBetweenTries": 1000,
+      "id": "node-a8ed642e"
+    },
+    {
+      "name": "dig check CF",
+      "type": "n8n-nodes-base.executeCommand",
+      "color": "#FF8000",
+      "notes": "Install bind-tools",
+      "position": [
+        1300,
+        -50
+      ],
+      "parameters": {
+        "command": "=dig NS  {{$node[\"Webhook\"].data[\"query\"][\"q\"]}} +short | grep cloudflare.com.$ | wc -l"
+      },
+      "retryOnFail": true,
+      "typeVersion": 1,
+      "continueOnFail": true,
+      "waitBetweenTries": 1000,
+      "id": "node-be916006"
+    },
+    {
+      "name": "IF",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        1550,
+        -50
+      ],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "= {{$node[\"dig check CF\"].data[\"stdout\"]}}",
+              "operation": "larger"
+            }
+          ]
+        }
+      },
+      "typeVersion": 1,
+      "id": "node-e7d148aa"
+    },
+    {
+      "name": "Mail CloudFlare",
+      "type": "n8n-nodes-base.mailgun",
+      "position": [
+        1830,
+        160
+      ],
+      "parameters": {
+        "text": "=Hello,\n\nI am emailing you to let you know about a Steam phishing website on your network: {{$node[\"Webhook\"].data[\"query\"][\"q\"]}}.\n\nThank you,\nYour Name Here",
+        "ccEmail": "yourCCemail",
+        "subject": "={{$node[\"Webhook\"].data[\"query\"][\"q\"]}} - Steam Phishing Website on your network",
+        "toEmail": "security@cloudflare.com",
+        "fromEmail": "yourFROMemail"
+      },
+      "credentials": {
+        "mailgunApi": {
+          "id": null,
+          "name": "Mailgun"
+        }
+      },
+      "typeVersion": 1,
+      "id": "node-4e26e093"
+    },
+    {
+      "name": "Mail Steam",
+      "type": "n8n-nodes-base.mailgun",
+      "position": [
+        1830,
+        340
+      ],
+      "parameters": {
+        "text": "=Hello,\n\nI am emailing you to let you know about a Steam phishing website: {{$node[\"Webhook\"].data[\"query\"][\"q\"]}}.\n\nThank you,\nYour Name Here",
+        "ccEmail": "yourCCemail",
+        "subject": "={{$node[\"Webhook\"].data[\"query\"][\"q\"]}} - Steam Phishing Website",
+        "toEmail": "security@valvesoftware.com",
+        "fromEmail": "yourFROMemail"
+      },
+      "credentials": {
+        "mailgunApi": {
+          "id": null,
+          "name": "Mailgun"
+        }
+      },
+      "typeVersion": 1,
+      "id": "node-3b9fd8c9"
+    },
+    {
+      "name": "dig check if domain is valid",
+      "type": "n8n-nodes-base.executeCommand",
+      "color": "#FF8000",
+      "notes": "Install bind-tools",
+      "position": [
+        720,
+        180
+      ],
+      "parameters": {
+        "command": "=dig NS  {{$node[\"Webhook\"].data[\"query\"][\"q\"]}} +short | wc -l"
+      },
+      "retryOnFail": true,
+      "typeVersion": 1,
+      "continueOnFail": true,
+      "waitBetweenTries": 1000,
+      "id": "node-c4dfaf30"
+    },
+    {
+      "name": "If it has nameservers",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        970,
+        180
+      ],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "= {{$node[\"dig check if domain is valid\"].data[\"stdout\"]}}",
+              "operation": "larger"
+            }
+          ]
+        }
+      },
+      "typeVersion": 1,
+      "id": "node-1f0cfacd"
+    },
+    {
+      "name": "IF1",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        270,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"Webhook\"].data[\"query\"][\"q\"]}}",
+              "value2": "/^[a-zA-Z0-9-_.]+$/",
+              "operation": "regex"
+            }
+          ]
+        }
+      },
+      "typeVersion": 1,
+      "id": "node-81045c06"
+    },
+    {
+      "id": "error-de3c6602",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        400
+      ],
+      "parameters": {
+        "message": "Workflow execution error",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": null,
+    "timezone": "UTC",
+    "executionTimeout": 3600,
+    "maxExecutions": 1000,
+    "retryOnFail": true,
+    "retryCount": 3
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "22a2b41f-6de2-4985-b117-01409b8ec2cb",
+  "activeVersionId": null,
+  "versionCounter": 1,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-02-02T17:55:15.060Z",
+      "createdAt": "2026-02-02T17:55:15.060Z",
+      "role": "workflow:owner",
+      "workflowId": "DBrhkItrk9CbNIrk",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}

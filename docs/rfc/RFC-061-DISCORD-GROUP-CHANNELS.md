@@ -1660,6 +1660,134 @@ ALTER TABLE groups ADD COLUMN promotion_id UUID REFERENCES promotions(id) ON DEL
 
 **Estimation totale revisee** : 18j → **19.25j** (avec toutes les decisions consolidees).
 
+### 14.21 Option A (credit override par groupe) : impact detaille
+
+Cette section detaille l'impact de l'Option A (simple colonne `monthly_quota_per_user`
+nullable avec fallback guild) pour valider avec le PO.
+
+#### Comportement
+
+```
+guild_credit_allocations.monthly_quota_per_user = 100  (quota par defaut guild)
+
+groups:
+├── "Promotion Premium"    monthly_quota_per_user = 500  → override
+├── "Promotion Standard"   monthly_quota_per_user = NULL → fallback 100
+└── "Promotion Gratuite"   monthly_quota_per_user = 20   → override
+```
+
+Logique effective appliquee au renouvellement mensuel et a `init_member` :
+
+```python
+effective_quota = group.monthly_quota_per_user or guild_allocation.monthly_quota_per_user
+```
+
+**Cas d'usage** :
+- Un user dans "Premium" recoit 500 credits/mois
+- Un user dans "Standard" recoit 100 credits/mois (fallback)
+- Un user dans "Gratuite" recoit 20 credits/mois
+- Un user sans groupe recoit 100 credits/mois (fallback)
+
+#### Proposition d'ecran frontend
+
+Ajout d'un champ dans le formulaire de creation/edition de groupe :
+
+```
+┌─ Creer un groupe Discord ────────────────────────────────┐
+│                                                            │
+│  Nom du groupe :    [Promotion Premium               ]    │
+│  Description :      [                                 ]    │
+│  Categorie :        [Promotions ▼]                         │
+│                                                            │
+│  ─── Credits mensuels ───────────────────────────────     │
+│                                                            │
+│  ( ● ) Utiliser le quota par defaut de la guild           │
+│         (actuellement : 100 credits/mois/user)             │
+│                                                            │
+│  ( ○ ) Personnaliser pour ce groupe                        │
+│         Quota : [     ] credits/mois/user                  │
+│                                                            │
+│  ─── Discord ─────────────────────────────────────────    │
+│                                                            │
+│  ☑ Creer un channel personnel pour chaque eleve            │
+│  ☑ Generer un lien d'invitation                            │
+│                                                            │
+│                             [Annuler]  [Creer le groupe]   │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Comportement frontend** :
+- Par defaut : radio "Utiliser le quota par defaut" selectionne → `monthly_quota_per_user = null`
+- Si "Personnaliser" : champ nombre requis, min 1, max 10000
+- La valeur guild actuelle est affichee en info (lecture de `guild_credit_allocations.monthly_quota_per_user`)
+- Meme section dans l'ecran d'edition de groupe, avec la valeur actuelle pre-selectionnee
+
+#### Impact par equipe
+
+| Equipe | Impact | Effort |
+|--------|--------|--------|
+| **Backend** | Colonne `groups.monthly_quota_per_user INTEGER NULL` + logique fallback dans `GuildAllocationService.renew_guild()` et `init_member()` | **+0.5j** (deja compte) |
+| **Frontend** | 1 champ supplementaire dans le formulaire groupe (radio + input nombre). Lecture de la valeur guild pour affichage par defaut. | **+0.25j** |
+| **n8n** | **Aucun** — n8n ne touche pas aux credits |
+| **chatbot-core** | **Aucun** — ne gere pas les credits |
+| **Plugins Discord** | **Aucun** — appellent credits-balance/debit qui gerent le fallback en interne |
+
+**Impact total additionnel** : **+0.25j frontend** (backend deja compte dans 14.20)
+
+#### Retrocompatibilite
+
+- Si un groupe existant a `monthly_quota_per_user = NULL` → comportement actuel inchange (fallback guild)
+- Si un admin cree un groupe sans override → `NULL` → comportement actuel
+- Aucune migration de donnees requise (colonne ajoutee nullable)
+- Zero impact sur les users existants dans `user_credit_batches`
+
+#### Renouvellement mensuel : exemple concret
+
+**Avant override** (RFC-059 v2) :
+```python
+async def renew_guild(guild_id):
+    alloc = await get_quota(guild_id)  # guild_credit_allocations
+    members = await get_guild_members(guild_id)
+    for member in members:
+        await grant_credits(
+            guild_id, member.discord_user_id,
+            amount=alloc.monthly_quota_per_user,  # toujours le quota guild
+            ...
+        )
+```
+
+**Apres override** (RFC-061) :
+```python
+async def renew_guild(guild_id):
+    alloc = await get_quota(guild_id)
+    members_with_groups = await get_students_with_groups(guild_id)
+    for member in members_with_groups:
+        # Resolution du quota avec fallback
+        quota = member.group.monthly_quota_per_user or alloc.monthly_quota_per_user
+        await grant_credits(
+            guild_id, member.discord_user_id,
+            amount=quota,
+            ...
+        )
+    # Users sans groupe : fallback guild
+    orphan_users = await get_users_without_group(guild_id)
+    for user_id in orphan_users:
+        await grant_credits(
+            guild_id, user_id,
+            amount=alloc.monthly_quota_per_user,
+            ...
+        )
+```
+
+#### Validation PO
+
+Le PO doit confirmer :
+1. **Fallback automatique vers quota guild si NULL** → oui/non ?
+2. **Pas de differenciation par role** (prof vs eleve) dans la v1 → confirme dans section 15.1 ?
+3. **Modification du quota d'un groupe existant** applique au **prochain renouvellement** (pas de reset immediat des lots existants) → oui/non ?
+
+**Recommandation backend** : reponses attendues → oui / oui / oui (comportement le plus simple et previsible).
+
 ---
 
 ## 15. Analyse frontend (2026-04-10)

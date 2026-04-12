@@ -1,7 +1,7 @@
 {
-  "updatedAt": "2026-01-07T11:26:50.245Z",
-  "createdAt": "2026-01-07T11:15:37.814Z",
-  "id": "gavgTlj4wpbYh5KD",
+  "updatedAt": "2026-03-16T10:47:50.444Z",
+  "createdAt": "2026-03-16T10:47:42.710Z",
+  "id": "MtvnVNO3xE0yDgm8",
   "name": "Recipes - YouTube",
   "description": null,
   "active": true,
@@ -34,7 +34,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\nif (!body.query) {\n  errors.push('Missing required parameter: query');\n}\n\nif (!body.google_api_key) {\n  errors.push('Missing required parameter: google_api_key');\n}\n\nif (!body.anthropic_api_key && !body.openai_api_key) {\n  errors.push('Missing API key: anthropic_api_key or openai_api_key required for recipe extraction');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nconst prefs = body.preferences || {};\n\nreturn [{\n  json: {\n    valid: true,\n    query: body.query,\n    google_api_key: body.google_api_key,\n    anthropic_api_key: body.anthropic_api_key,\n    openai_api_key: body.openai_api_key,\n    user_id: body.user_id,\n    language: prefs.language || 'fr',\n    max_videos: prefs.max_videos || 1,\n    prefer_short: prefs.prefer_short || false,\n    n8n_webhook_url: process.env.N8N_WEBHOOK_URL || 'http://localhost:5678'\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\nif (!body.query) {\n  errors.push('Missing required parameter: query');\n}\n\nif (!body.google_api_key) {\n  errors.push('Missing required parameter: google_api_key');\n}\n\nif (!body.anthropic_api_key && !body.openai_api_key) {\n  errors.push('Missing API key: anthropic_api_key or openai_api_key required for recipe extraction');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nconst prefs = body.preferences || {};\n\n// Generate job_id if callback_url provided but no job_id\nconst crypto = require('crypto');\nconst job_id = body.job_id || (body.callback_url ? crypto.randomUUID() : null);\n\nreturn [{\n  json: {\n    valid: true,\n    query: body.query,\n    google_api_key: body.google_api_key,\n    anthropic_api_key: body.anthropic_api_key,\n    openai_api_key: body.openai_api_key,\n    user_id: body.user_id,\n    language: prefs.language || 'fr',\n    max_videos: prefs.max_videos || 1,\n    prefer_short: prefs.prefer_short || false,\n    n8n_webhook_url: process.env.N8N_WEBHOOK_URL || 'http://localhost:5678',\n    callback_url: body.callback_url || null,\n    job_id: job_id\n  }\n}];"
       }
     },
     {
@@ -86,12 +86,73 @@
       }
     },
     {
+      "id": "check-callback",
+      "name": "Has Callback URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "store-job-context",
+      "name": "Store Job Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// Store all context needed for async processing\nreturn [{\n  json: {\n    ...input,\n    async_mode: true,\n    job_started_at: new Date().toISOString()\n  }\n}];"
+      }
+    },
+    {
+      "id": "respond-accepted",
+      "name": "Respond 202 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1340,
+        100
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, job_id: $json.job_id, status: 'processing', meta: { provider: 'youtube', async: true } } }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
       "id": "search-youtube",
       "name": "Search YouTube",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        900,
+        1560,
         200
       ],
       "parameters": {
@@ -103,7 +164,7 @@
           "parameters": [
             {
               "name": "key",
-              "value": "={{ $json.google_api_key }}"
+              "value": "={{ $('Validate Input').first().json.google_api_key }}"
             },
             {
               "name": "part",
@@ -111,7 +172,7 @@
             },
             {
               "name": "q",
-              "value": "={{ $json.query }} recette"
+              "value": "={{ $('Validate Input').first().json.query }} recette"
             },
             {
               "name": "type",
@@ -119,7 +180,7 @@
             },
             {
               "name": "maxResults",
-              "value": "={{ $json.max_videos }}"
+              "value": "={{ $('Validate Input').first().json.max_videos }}"
             },
             {
               "name": "order",
@@ -127,7 +188,7 @@
             },
             {
               "name": "videoDuration",
-              "value": "={{ $json.prefer_short ? 'short' : 'any' }}"
+              "value": "={{ $('Validate Input').first().json.prefer_short ? 'short' : 'any' }}"
             }
           ]
         },
@@ -143,7 +204,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1140,
+        1800,
         200
       ],
       "parameters": {
@@ -169,13 +230,44 @@
       }
     },
     {
+      "id": "check-callback-no-results",
+      "name": "Is Async? (No Results)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2040,
+        360
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Validate Input').first().json.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "error-no-results",
       "name": "Error: No Results",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1380,
-        360
+        2280,
+        460
       ],
       "parameters": {
         "respondWith": "json",
@@ -186,12 +278,60 @@
       }
     },
     {
+      "id": "callback-error-no-results",
+      "name": "Callback Error: No Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2280,
+        280
+      ],
+      "parameters": {
+        "jsCode": "const validationData = $('Validate Input').first().json;\nconst crypto = require('crypto');\n\nconst body = {\n  success: false,\n  job_id: validationData.job_id,\n  status: 'failed',\n  error: {\n    code: 404,\n    message: 'No YouTube videos found for query',\n    status: 'NOT_FOUND'\n  },\n  meta: {\n    provider: 'youtube',\n    query: validationData.query\n  }\n};\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: validationData.callback_url,\n    body: body,\n    signature: signature\n  }\n}];"
+      }
+    },
+    {
+      "id": "send-callback-error-no-results",
+      "name": "Send Error Callback (No Results)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2520,
+        280
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
       "id": "extract-video-info",
       "name": "Extract Video Info",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1380,
+        2040,
         100
       ],
       "parameters": {
@@ -204,7 +344,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1620,
+        2280,
         100
       ],
       "parameters": {
@@ -235,7 +375,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1860,
+        2520,
         100
       ],
       "parameters": {
@@ -274,27 +414,106 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2100,
+        2760,
         100
       ],
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst prevData = $('Extract Video Info').first().json;\nconst transcriptData = $('Transcribe Video').first().json;\n\ntry {\n  if (input.error) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: input.error.message || 'LLM extraction failed',\n          status: 'EXTRACTION_ERROR'\n        },\n        meta: { provider: 'youtube+anthropic' }\n      }\n    }];\n  }\n\n  const content = input.content?.[0]?.text || '{}';\n  let recipe;\n  \n  try {\n    recipe = JSON.parse(content);\n  } catch (e) {\n    // Try to extract JSON from response\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    recipe = jsonMatch ? JSON.parse(jsonMatch[0]) : { title: 'Parse error', raw: content };\n  }\n\n  return [{\n    json: {\n      success: true,\n      data: {\n        source: 'youtube',\n        video: prevData.video,\n        recipe,\n        transcript_excerpt: (transcriptData.data?.transcript || '').substring(0, 500) + '...'\n      },\n      meta: {\n        provider: 'youtube+anthropic',\n        models_used: ['gemini-2.5-flash', 'claude-sonnet-4-20250514'],\n        tokens_used: {\n          transcription: 0,\n          extraction: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0)\n        }\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to process recipe: ' + e.message,\n        status: 'PROCESS_ERROR'\n      },\n      meta: { provider: 'youtube' }\n    }\n  }];\n}"
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Extract Video Info').first().json;\nconst transcriptData = $('Transcribe Video').first().json;\nconst validationData = $('Validate Input').first().json;\n\ntry {\n  if (input.error) {\n    return [{\n      json: {\n        success: false,\n        job_id: validationData.job_id,\n        status: validationData.callback_url ? 'failed' : undefined,\n        error: {\n          code: 500,\n          message: input.error.message || 'LLM extraction failed',\n          status: 'EXTRACTION_ERROR'\n        },\n        meta: { provider: 'youtube+anthropic' },\n        callback_url: validationData.callback_url\n      }\n    }];\n  }\n\n  const content = input.content?.[0]?.text || '{}';\n  let recipe;\n  \n  try {\n    recipe = JSON.parse(content);\n  } catch (e) {\n    // Try to extract JSON from response\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    recipe = jsonMatch ? JSON.parse(jsonMatch[0]) : { title: 'Parse error', raw: content };\n  }\n\n  return [{\n    json: {\n      success: true,\n      job_id: validationData.job_id,\n      status: validationData.callback_url ? 'completed' : undefined,\n      data: {\n        source: 'youtube',\n        video: prevData.video,\n        recipe,\n        transcript_excerpt: (transcriptData.data?.transcript || '').substring(0, 500) + '...'\n      },\n      meta: {\n        provider: 'youtube+anthropic',\n        models_used: ['gemini-2.5-flash', 'claude-sonnet-4-20250514'],\n        tokens_used: {\n          transcription: 0,\n          extraction: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0)\n        }\n      },\n      callback_url: validationData.callback_url\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      job_id: validationData.job_id,\n      status: validationData.callback_url ? 'failed' : undefined,\n      error: {\n        code: 500,\n        message: 'Failed to process recipe: ' + e.message,\n        status: 'PROCESS_ERROR'\n      },\n      meta: { provider: 'youtube' },\n      callback_url: validationData.callback_url\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "check-callback-result",
+      "name": "Is Async? (Result)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3000,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       }
     },
     {
       "id": "respond-success",
-      "name": "Respond",
+      "name": "Respond (Sync)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        2340,
-        100
+        3240,
+        200
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
+        "responseBody": "={{ { success: $json.success, data: $json.data, error: $json.error, meta: $json.meta } }}",
         "options": {}
       }
+    },
+    {
+      "id": "prepare-callback",
+      "name": "Prepare Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst crypto = require('crypto');\n\n// Build callback body (exclude callback_url from response)\nconst body = {\n  success: input.success,\n  job_id: input.job_id,\n  status: input.status\n};\n\nif (input.success) {\n  body.data = input.data;\n} else {\n  body.error = input.error;\n}\n\nbody.meta = input.meta;\n\n// Generate HMAC signature (RFC-040 format)\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: input.callback_url,\n    body: body,\n    signature: signature\n  }\n}];"
+      }
+    },
+    {
+      "id": "send-callback",
+      "name": "Send Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3480,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "sticky-note-doc",
@@ -308,8 +527,24 @@
       "parameters": {
         "color": 4,
         "width": 600,
-        "height": 180,
-        "content": "## Recipes - YouTube\n\n**Endpoint:** POST /webhook/recipes-youtube\n\n**Parameters:**\n- `query` (required): Search query (e.g., \"recette tiramisu\")\n- `google_api_key` (required): YouTube Data API key\n- `anthropic_api_key` or `openai_api_key` (required): For recipe extraction\n- `preferences`: { language, max_videos, prefer_short }\n\n**Flow:** YouTube Search → Transcribe (Gemini) → Extract Recipe (Claude)"
+        "height": 240,
+        "content": "## Recipes - YouTube\n\n**Endpoint:** POST /webhook/recipes-youtube\n\n**Parameters:**\n- `query` (required): Search query (e.g., \"recette tiramisu\")\n- `google_api_key` (required): YouTube Data API key\n- `anthropic_api_key` or `openai_api_key` (required): For recipe extraction\n- `preferences`: { language, max_videos, prefer_short }\n- `callback_url` (optional): URL for async callback (RFC-040)\n- `job_id` (optional): Custom job ID, auto-generated if callback_url provided\n\n**Flow:** YouTube Search → Transcribe (Gemini) → Extract Recipe (Claude)\n\n**Async Mode (RFC-040):** If callback_url provided, returns 202 immediately and POSTs result to callback with X-N8N-Signature header"
+      }
+    },
+    {
+      "id": "sticky-note-async",
+      "name": "Async Callback Pattern (RFC-040)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        -80
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 400,
+        "height": 160,
+        "content": "## RFC-040 Async Pattern\n\n1. Check for `callback_url` in request\n2. If present: respond 202 immediately\n3. Continue processing in background\n4. POST result to callback_url with HMAC signature\n\n**Headers:** Content-Type, X-N8N-Signature"
       }
     }
   ],
@@ -340,7 +575,7 @@
       "main": [
         [
           {
-            "node": "Search YouTube",
+            "node": "Has Callback URL?",
             "type": "main",
             "index": 0
           }
@@ -348,6 +583,46 @@
         [
           {
             "node": "Error: Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Callback URL?": {
+      "main": [
+        [
+          {
+            "node": "Store Job Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Job Context": {
+      "main": [
+        [
+          {
+            "node": "Respond 202 Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202 Accepted": {
+      "main": [
+        [
+          {
+            "node": "Search YouTube",
             "type": "main",
             "index": 0
           }
@@ -376,7 +651,36 @@
         ],
         [
           {
+            "node": "Is Async? (No Results)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Async? (No Results)": {
+      "main": [
+        [
+          {
+            "node": "Callback Error: No Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Error: No Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Callback Error: No Results": {
+      "main": [
+        [
+          {
+            "node": "Send Error Callback (No Results)",
             "type": "main",
             "index": 0
           }
@@ -420,7 +724,36 @@
       "main": [
         [
           {
-            "node": "Respond",
+            "node": "Is Async? (Result)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Async? (Result)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
             "type": "main",
             "index": 0
           }
@@ -436,27 +769,826 @@
   "staticData": null,
   "meta": null,
   "pinData": null,
-  "versionId": "2223289e-f28c-417b-97c1-a1df8738c056",
-  "activeVersionId": "2223289e-f28c-417b-97c1-a1df8738c056",
-  "versionCounter": 44,
+  "versionId": "ba09b922-61f2-4df0-af8b-7d1655fc2110",
+  "activeVersionId": "ba09b922-61f2-4df0-af8b-7d1655fc2110",
+  "versionCounter": 11,
   "triggerCount": 1,
-  "tags": [],
   "shared": [
     {
-      "updatedAt": "2026-01-07T11:15:37.817Z",
-      "createdAt": "2026-01-07T11:15:37.817Z",
+      "updatedAt": "2026-03-16T10:47:42.710Z",
+      "createdAt": "2026-03-16T10:47:42.710Z",
       "role": "workflow:owner",
-      "workflowId": "gavgTlj4wpbYh5KD",
-      "projectId": "rkp1YaKKlE3ExOIx",
+      "workflowId": "MtvnVNO3xE0yDgm8",
+      "projectId": "U3cZjxLpPGVohw1b",
       "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
         "type": "personal",
         "icon": null,
-        "description": null
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
       }
     }
-  ]
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-16T10:47:42.734Z",
+    "createdAt": "2026-03-16T10:47:42.734Z",
+    "versionId": "ba09b922-61f2-4df0-af8b-7d1655fc2110",
+    "workflowId": "MtvnVNO3xE0yDgm8",
+    "nodes": [
+      {
+        "id": "webhook",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "recipes-youtube-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "recipes-youtube",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\nif (!body.query) {\n  errors.push('Missing required parameter: query');\n}\n\nif (!body.google_api_key) {\n  errors.push('Missing required parameter: google_api_key');\n}\n\nif (!body.anthropic_api_key && !body.openai_api_key) {\n  errors.push('Missing API key: anthropic_api_key or openai_api_key required for recipe extraction');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nconst prefs = body.preferences || {};\n\n// Generate job_id if callback_url provided but no job_id\nconst crypto = require('crypto');\nconst job_id = body.job_id || (body.callback_url ? crypto.randomUUID() : null);\n\nreturn [{\n  json: {\n    valid: true,\n    query: body.query,\n    google_api_key: body.google_api_key,\n    anthropic_api_key: body.anthropic_api_key,\n    openai_api_key: body.openai_api_key,\n    user_id: body.user_id,\n    language: prefs.language || 'fr',\n    max_videos: prefs.max_videos || 1,\n    prefer_short: prefs.prefer_short || false,\n    n8n_webhook_url: process.env.N8N_WEBHOOK_URL || 'http://localhost:5678',\n    callback_url: body.callback_url || null,\n    job_id: job_id\n  }\n}];"
+        }
+      },
+      {
+        "id": "check-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          680,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-validation",
+        "name": "Error: Validation",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          900,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'youtube' } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "check-callback",
+        "name": "Has Callback URL?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          900,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.callback_url }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "store-job-context",
+        "name": "Store Job Context",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1120,
+          100
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\n\n// Store all context needed for async processing\nreturn [{\n  json: {\n    ...input,\n    async_mode: true,\n    job_started_at: new Date().toISOString()\n  }\n}];"
+        }
+      },
+      {
+        "id": "respond-accepted",
+        "name": "Respond 202 Accepted",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1340,
+          100
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: true, job_id: $json.job_id, status: 'processing', meta: { provider: 'youtube', async: true } } }}",
+          "options": {
+            "responseCode": 202
+          }
+        }
+      },
+      {
+        "id": "search-youtube",
+        "name": "Search YouTube",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1560,
+          200
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://www.googleapis.com/youtube/v3/search",
+          "authentication": "none",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "key",
+                "value": "={{ $('Validate Input').first().json.google_api_key }}"
+              },
+              {
+                "name": "part",
+                "value": "snippet"
+              },
+              {
+                "name": "q",
+                "value": "={{ $('Validate Input').first().json.query }} recette"
+              },
+              {
+                "name": "type",
+                "value": "video"
+              },
+              {
+                "name": "maxResults",
+                "value": "={{ $('Validate Input').first().json.max_videos }}"
+              },
+              {
+                "name": "order",
+                "value": "relevance"
+              },
+              {
+                "name": "videoDuration",
+                "value": "={{ $('Validate Input').first().json.prefer_short ? 'short' : 'any' }}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "check-results",
+        "name": "Has Results?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1800,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.items?.length > 0 }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "check-callback-no-results",
+        "name": "Is Async? (No Results)",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2040,
+          360
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $('Validate Input').first().json.callback_url }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-no-results",
+        "name": "Error: No Results",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2280,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: { code: 404, message: 'No YouTube videos found for query', status: 'NOT_FOUND' }, meta: { provider: 'youtube', query: $('Validate Input').first().json.query } } }}",
+          "options": {
+            "responseCode": 404
+          }
+        }
+      },
+      {
+        "id": "callback-error-no-results",
+        "name": "Callback Error: No Results",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2280,
+          280
+        ],
+        "parameters": {
+          "jsCode": "const validationData = $('Validate Input').first().json;\nconst crypto = require('crypto');\n\nconst body = {\n  success: false,\n  job_id: validationData.job_id,\n  status: 'failed',\n  error: {\n    code: 404,\n    message: 'No YouTube videos found for query',\n    status: 'NOT_FOUND'\n  },\n  meta: {\n    provider: 'youtube',\n    query: validationData.query\n  }\n};\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: validationData.callback_url,\n    body: body,\n    signature: signature\n  }\n}];"
+        }
+      },
+      {
+        "id": "send-callback-error-no-results",
+        "name": "Send Error Callback (No Results)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2520,
+          280
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.callback_url }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-N8N-Signature",
+                "value": "={{ $json.signature }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json.body }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "extract-video-info",
+        "name": "Extract Video Info",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2040,
+          100
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst video = input.items[0];\nconst videoId = video.id?.videoId;\n\nreturn [{\n  json: {\n    ...prevData,\n    video: {\n      id: videoId,\n      title: video.snippet?.title,\n      description: video.snippet?.description,\n      channel: video.snippet?.channelTitle,\n      thumbnail: video.snippet?.thumbnails?.high?.url || video.snippet?.thumbnails?.default?.url,\n      url: `https://www.youtube.com/watch?v=${videoId}`,\n      published_at: video.snippet?.publishedAt\n    },\n    video_url: `https://www.youtube.com/watch?v=${videoId}`\n  }\n}];"
+        }
+      },
+      {
+        "id": "transcribe-video",
+        "name": "Transcribe Video",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2280,
+          100
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.n8n_webhook_url }}/webhook/video-transcription",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"videoUrl\": \"{{ $json.video_url }}\",\n  \"language\": \"{{ $json.language }}\",\n  \"operation\": \"transcribe\"\n}",
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "extract-recipe",
+        "name": "Extract Recipe (LLM)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2520,
+          100
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $('Validate Input').first().json.anthropic_api_key }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Extract a structured recipe from this video transcript. Include timestamps for each step when mentioned.\\n\\nVideo title: {{ $('Extract Video Info').first().json.video.title }}\\n\\nTranscript:\\n{{ $json.data?.transcript || $json.transcript || 'No transcript available' }}\\n\\nRespond with a JSON object:\\n{\\n  \\\"title\\\": \\\"Recipe title\\\",\\n  \\\"description\\\": \\\"Brief description\\\",\\n  \\\"servings\\\": number,\\n  \\\"prep_time_minutes\\\": number,\\n  \\\"cook_time_minutes\\\": number,\\n  \\\"difficulty\\\": \\\"facile|moyen|difficile\\\",\\n  \\\"ingredients\\\": [{\\\"name\\\": \\\"\\\", \\\"quantity\\\": number, \\\"unit\\\": \\\"\\\"}],\\n  \\\"steps\\\": [{\\\"order\\\": number, \\\"instruction\\\": \\\"\\\", \\\"timestamp\\\": \\\"MM:SS\\\"}],\\n  \\\"tips\\\": [\\\"tip1\\\"],\\n  \\\"tags\\\": [\\\"tag1\\\"]\\n}\\n\\nRespond ONLY with valid JSON.\"\n    }\n  ]\n}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "format-output",
+        "name": "Format Output",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2760,
+          100
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst prevData = $('Extract Video Info').first().json;\nconst transcriptData = $('Transcribe Video').first().json;\nconst validationData = $('Validate Input').first().json;\n\ntry {\n  if (input.error) {\n    return [{\n      json: {\n        success: false,\n        job_id: validationData.job_id,\n        status: validationData.callback_url ? 'failed' : undefined,\n        error: {\n          code: 500,\n          message: input.error.message || 'LLM extraction failed',\n          status: 'EXTRACTION_ERROR'\n        },\n        meta: { provider: 'youtube+anthropic' },\n        callback_url: validationData.callback_url\n      }\n    }];\n  }\n\n  const content = input.content?.[0]?.text || '{}';\n  let recipe;\n  \n  try {\n    recipe = JSON.parse(content);\n  } catch (e) {\n    // Try to extract JSON from response\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    recipe = jsonMatch ? JSON.parse(jsonMatch[0]) : { title: 'Parse error', raw: content };\n  }\n\n  return [{\n    json: {\n      success: true,\n      job_id: validationData.job_id,\n      status: validationData.callback_url ? 'completed' : undefined,\n      data: {\n        source: 'youtube',\n        video: prevData.video,\n        recipe,\n        transcript_excerpt: (transcriptData.data?.transcript || '').substring(0, 500) + '...'\n      },\n      meta: {\n        provider: 'youtube+anthropic',\n        models_used: ['gemini-2.5-flash', 'claude-sonnet-4-20250514'],\n        tokens_used: {\n          transcription: 0,\n          extraction: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0)\n        }\n      },\n      callback_url: validationData.callback_url\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      job_id: validationData.job_id,\n      status: validationData.callback_url ? 'failed' : undefined,\n      error: {\n        code: 500,\n        message: 'Failed to process recipe: ' + e.message,\n        status: 'PROCESS_ERROR'\n      },\n      meta: { provider: 'youtube' },\n      callback_url: validationData.callback_url\n    }\n  }];\n}"
+        }
+      },
+      {
+        "id": "check-callback-result",
+        "name": "Is Async? (Result)",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          3000,
+          100
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.callback_url }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond (Sync)",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          3240,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: $json.success, data: $json.data, error: $json.error, meta: $json.meta } }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "prepare-callback",
+        "name": "Prepare Callback",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3240,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst crypto = require('crypto');\n\n// Build callback body (exclude callback_url from response)\nconst body = {\n  success: input.success,\n  job_id: input.job_id,\n  status: input.status\n};\n\nif (input.success) {\n  body.data = input.data;\n} else {\n  body.error = input.error;\n}\n\nbody.meta = input.meta;\n\n// Generate HMAC signature (RFC-040 format)\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: input.callback_url,\n    body: body,\n    signature: signature\n  }\n}];"
+        }
+      },
+      {
+        "id": "send-callback",
+        "name": "Send Callback",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3480,
+          0
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.callback_url }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-N8N-Signature",
+                "value": "={{ $json.signature }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json.body }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          80
+        ],
+        "parameters": {
+          "color": 4,
+          "width": 600,
+          "height": 240,
+          "content": "## Recipes - YouTube\n\n**Endpoint:** POST /webhook/recipes-youtube\n\n**Parameters:**\n- `query` (required): Search query (e.g., \"recette tiramisu\")\n- `google_api_key` (required): YouTube Data API key\n- `anthropic_api_key` or `openai_api_key` (required): For recipe extraction\n- `preferences`: { language, max_videos, prefer_short }\n- `callback_url` (optional): URL for async callback (RFC-040)\n- `job_id` (optional): Custom job ID, auto-generated if callback_url provided\n\n**Flow:** YouTube Search → Transcribe (Gemini) → Extract Recipe (Claude)\n\n**Async Mode (RFC-040):** If callback_url provided, returns 202 immediately and POSTs result to callback with X-N8N-Signature header"
+        }
+      },
+      {
+        "id": "sticky-note-async",
+        "name": "Async Callback Pattern (RFC-040)",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          1120,
+          -80
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 400,
+          "height": 160,
+          "content": "## RFC-040 Async Pattern\n\n1. Check for `callback_url` in request\n2. If present: respond 202 immediately\n3. Continue processing in background\n4. POST result to callback_url with HMAC signature\n\n**Headers:** Content-Type, X-N8N-Signature"
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Has Callback URL?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: Validation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Callback URL?": {
+        "main": [
+          [
+            {
+              "node": "Store Job Context",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Search YouTube",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Store Job Context": {
+        "main": [
+          [
+            {
+              "node": "Respond 202 Accepted",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Respond 202 Accepted": {
+        "main": [
+          [
+            {
+              "node": "Search YouTube",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Search YouTube": {
+        "main": [
+          [
+            {
+              "node": "Has Results?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Results?": {
+        "main": [
+          [
+            {
+              "node": "Extract Video Info",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Is Async? (No Results)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Async? (No Results)": {
+        "main": [
+          [
+            {
+              "node": "Callback Error: No Results",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: No Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Callback Error: No Results": {
+        "main": [
+          [
+            {
+              "node": "Send Error Callback (No Results)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Video Info": {
+        "main": [
+          [
+            {
+              "node": "Transcribe Video",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Transcribe Video": {
+        "main": [
+          [
+            {
+              "node": "Extract Recipe (LLM)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Recipe (LLM)": {
+        "main": [
+          [
+            {
+              "node": "Format Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output": {
+        "main": [
+          [
+            {
+              "node": "Is Async? (Result)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Async? (Result)": {
+        "main": [
+          [
+            {
+              "node": "Prepare Callback",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond (Sync)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Callback": {
+        "main": [
+          [
+            {
+              "node": "Send Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
 }

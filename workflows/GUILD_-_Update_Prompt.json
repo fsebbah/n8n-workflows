@@ -1,0 +1,586 @@
+{
+  "updatedAt": "2026-02-16T14:49:01.655Z",
+  "createdAt": "2026-02-16T14:41:38.630Z",
+  "id": "4xSZeiTp3ODJexKo",
+  "name": "GUILD - Update Prompt",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## GUILD - Update Prompt\n\n**Endpoint:** `POST /webhook/guild-update-prompt`\n\n**Payload:**\n```json\n{\"guild_id\": \"123456789\", \"category\": \"identity\", \"key\": \"role\", \"value\": \"tuteur en maths\", \"language\": \"fr\"}\n```\n\n**API Backend:** `PUT /api/guilds/{guild_id}/prompts`\n\n**Scope:** `branding:write`\n\n**Note:** `value` accepte `string` ou `string[]`",
+        "height": 260,
+        "width": 400,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        48,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "guild-update-prompt",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ],
+      "webhookId": "guild-update-prompt"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nconst required = ['guild_id', 'category', 'key', 'value'];\nconst missing = required.filter(field => body[field] === undefined || body[field] === null);\n\nif (missing.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required parameters: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nif (typeof body.category !== 'string' || body.category.trim().length === 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'category must be a non-empty string',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nif (typeof body.key !== 'string' || body.key.trim().length === 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'key must be a non-empty string',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// value can be string or array of strings\nconst valueType = typeof body.value;\nif (valueType !== 'string' && !Array.isArray(body.value)) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'value must be a string or array of strings',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    guild_id: String(body.guild_id),\n    category: body.category.trim(),\n    key: body.key.trim(),\n    value: body.value,\n    language: body.language || 'fr'\n  }\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        688,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.API_URL }}/api/guilds/{{ $json.guild_id }}/prompts",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ category: $json.category, key: $json.key, value: $json.value, language: $json.language }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "update-prompt",
+      "name": "Update Prompt via API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        912,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-api-success",
+      "name": "API Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: { code: 500, message: $json.error || 'Failed to update prompt', status: 'INTERNAL_ERROR' } } }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "respond-api-error",
+      "name": "Respond API Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $('Validate Input').first().json.error } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        912,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Update Prompt via API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Prompt via API": {
+      "main": [
+        [
+          {
+            "node": "API Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Success?": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond API Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "a930c5f4-8bb4-48ff-8ee8-178d972b7490",
+  "activeVersionId": "a930c5f4-8bb4-48ff-8ee8-178d972b7490",
+  "versionCounter": 50,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-02-16T14:41:38.630Z",
+      "createdAt": "2026-02-16T14:41:38.630Z",
+      "role": "workflow:owner",
+      "workflowId": "4xSZeiTp3ODJexKo",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-16T14:49:01.626Z",
+    "createdAt": "2026-02-16T14:49:01.626Z",
+    "versionId": "a930c5f4-8bb4-48ff-8ee8-178d972b7490",
+    "workflowId": "4xSZeiTp3ODJexKo",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## GUILD - Update Prompt\n\n**Endpoint:** `POST /webhook/guild-update-prompt`\n\n**Payload:**\n```json\n{\"guild_id\": \"123456789\", \"category\": \"identity\", \"key\": \"role\", \"value\": \"tuteur en maths\", \"language\": \"fr\"}\n```\n\n**API Backend:** `PUT /api/guilds/{guild_id}/prompts`\n\n**Scope:** `branding:write`\n\n**Note:** `value` accepte `string` ou `string[]`",
+          "height": 260,
+          "width": 400,
+          "color": 6
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          48,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "guild-update-prompt",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          304
+        ],
+        "webhookId": "guild-update-prompt"
+      },
+      {
+        "parameters": {
+          "jsCode": "const rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nconst required = ['guild_id', 'category', 'key', 'value'];\nconst missing = required.filter(field => body[field] === undefined || body[field] === null);\n\nif (missing.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required parameters: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nif (typeof body.category !== 'string' || body.category.trim().length === 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'category must be a non-empty string',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nif (typeof body.key !== 'string' || body.key.trim().length === 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'key must be a non-empty string',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\n// value can be string or array of strings\nconst valueType = typeof body.value;\nif (valueType !== 'string' && !Array.isArray(body.value)) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'value must be a string or array of strings',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    guild_id: String(body.guild_id),\n    category: body.category.trim(),\n    key: body.key.trim(),\n    value: body.value,\n    language: body.language || 'fr'\n  }\n};"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          464,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          688,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "={{ $env.API_URL }}/api/guilds/{{ $json.guild_id }}/prompts",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ category: $json.category, key: $json.key, value: $json.value, language: $json.language }) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "update-prompt",
+        "name": "Update Prompt via API",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          912,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.success }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-api-success",
+        "name": "API Success?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1120,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        },
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1344,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: { code: 500, message: $json.error || 'Failed to update prompt', status: 'INTERNAL_ERROR' } } }}",
+          "options": {
+            "responseCode": 500
+          }
+        },
+        "id": "respond-api-error",
+        "name": "Respond API Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1344,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: $('Validate Input').first().json.error } }}",
+          "options": {
+            "responseCode": 400
+          }
+        },
+        "id": "respond-validation-error",
+        "name": "Respond Validation Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          912,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Update Prompt via API",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Prompt via API": {
+        "main": [
+          [
+            {
+              "node": "API Success?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "API Success?": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond API Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

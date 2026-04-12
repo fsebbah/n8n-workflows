@@ -1,0 +1,584 @@
+{
+  "updatedAt": "2026-03-12T16:08:44.182Z",
+  "createdAt": "2026-03-12T16:08:43.879Z",
+  "id": "AC6TOb6oXmdwEaFS",
+  "name": "MCP - Games List",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "games-list",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "games-list-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\nconst tenant_id = body.tenant_id;\nconst user_id = body.user_id;\nconst limit = body.limit || 20;\nconst offset = body.offset || 0;\nconst filters = body.filters || {};\n\n// Validation\nconst errors = [];\nif (!tenant_id) errors.push('tenant_id requis');\nif (!user_id) errors.push('user_id requis');\n\n// Validate limit\nif (limit < 1 || limit > 100) {\n  errors.push('limit doit etre entre 1 et 100');\n}\n\n// Validate filters\nconst validResults = ['win', 'loss', 'draw'];\nif (filters.result && !validResults.includes(filters.result)) {\n  errors.push(`filters.result invalide: ${filters.result}. Valeurs: ${validResults.join(', ')}`);\n}\n\nconst validSources = ['manual', 'lichess', 'pgn_import'];\nif (filters.source && !validSources.includes(filters.source)) {\n  errors.push(`filters.source invalide: ${filters.source}. Valeurs: ${validSources.join(', ')}`);\n}\n\nif (filters.has_analysis !== undefined && typeof filters.has_analysis !== 'boolean') {\n  errors.push('filters.has_analysis doit etre un booleen');\n}\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    tenant_id,\n    user_id,\n    limit,\n    offset,\n    filters\n  }\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_API_URL || 'https://api.azy.solutions' }}/api/n8n/games",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.N8N_API_KEY }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ user_id: $json.user_id, limit: $json.limit, offset: $json.offset, filters: Object.keys($json.filters).length > 0 ? $json.filters : undefined }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "api-games",
+      "name": "API List Games",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Validate Input').first().json;\nconst response = $input.first().json;\n\nconst statusCode = response.statusCode || 200;\nconst body = response.body || response;\n\nif (statusCode >= 400 || body.success === false) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: body.error?.message || 'Erreur API',\n        details: body\n      }\n    }\n  };\n}\n\nconst data = body.data || body;\n\nreturn {\n  json: {\n    success: true,\n    games: data.games || [],\n    total: data.total || 0,\n    limit: data.limit || input.limit,\n    offset: data.offset || input.offset\n  }\n};"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : 500 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## MCP - Games List\n\n**Endpoint:** POST /webhook/games-list\n\n### Input\n```json\n{\n  \"tenant_id\": \"chess_plugin\",\n  \"user_id\": \"discord_123456\",\n  \"limit\": 20,\n  \"offset\": 0,\n  \"filters\": {\n    \"result\": \"win\",\n    \"source\": \"lichess\",\n    \"has_analysis\": true\n  }\n}\n```\n\n### Output\n```json\n{\n  \"success\": true,\n  \"games\": [\n    {\n      \"game_id\": \"...\",\n      \"white\": \"user\",\n      \"black\": \"opponent\",\n      \"result\": \"win\",\n      \"pgn\": \"1. e4 e5...\"\n    }\n  ],\n  \"total\": 42,\n  \"limit\": 20,\n  \"offset\": 0\n}\n```\n\n### Filtres\n- `result`: win, loss, draw\n- `source`: manual, lichess, pgn_import\n- `has_analysis`: true/false\n\n### Pagination\n- `limit`: 1-100 (defaut 20)\n- `offset`: defaut 0\n\n### RFC-039 compliant",
+        "height": 520,
+        "width": 400,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        60,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "API List Games",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API List Games": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "9a250255-0d42-4741-ab67-4c0f3c199e9c",
+  "activeVersionId": "9a250255-0d42-4741-ab67-4c0f3c199e9c",
+  "versionCounter": 12,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-12T16:08:43.879Z",
+      "createdAt": "2026-03-12T16:08:43.879Z",
+      "role": "workflow:owner",
+      "workflowId": "AC6TOb6oXmdwEaFS",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-12T16:08:43.897Z",
+    "createdAt": "2026-03-12T16:08:43.897Z",
+    "versionId": "9a250255-0d42-4741-ab67-4c0f3c199e9c",
+    "workflowId": "AC6TOb6oXmdwEaFS",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "games-list",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "games-list-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "const body = $input.first().json.body || {};\n\nconst tenant_id = body.tenant_id;\nconst user_id = body.user_id;\nconst limit = body.limit || 20;\nconst offset = body.offset || 0;\nconst filters = body.filters || {};\n\n// Validation\nconst errors = [];\nif (!tenant_id) errors.push('tenant_id requis');\nif (!user_id) errors.push('user_id requis');\n\n// Validate limit\nif (limit < 1 || limit > 100) {\n  errors.push('limit doit etre entre 1 et 100');\n}\n\n// Validate filters\nconst validResults = ['win', 'loss', 'draw'];\nif (filters.result && !validResults.includes(filters.result)) {\n  errors.push(`filters.result invalide: ${filters.result}. Valeurs: ${validResults.join(', ')}`);\n}\n\nconst validSources = ['manual', 'lichess', 'pgn_import'];\nif (filters.source && !validSources.includes(filters.source)) {\n  errors.push(`filters.source invalide: ${filters.source}. Valeurs: ${validSources.join(', ')}`);\n}\n\nif (filters.has_analysis !== undefined && typeof filters.has_analysis !== 'boolean') {\n  errors.push('filters.has_analysis doit etre un booleen');\n}\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    tenant_id,\n    user_id,\n    limit,\n    offset,\n    filters\n  }\n};"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          680,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          900,
+          460
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.BACKEND_API_URL || 'https://api.azy.solutions' }}/api/n8n/games",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-API-Key",
+                "value": "={{ $env.N8N_API_KEY }}"
+              },
+              {
+                "name": "X-Tenant-ID",
+                "value": "={{ $json.tenant_id }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ user_id: $json.user_id, limit: $json.limit, offset: $json.offset, filters: Object.keys($json.filters).length > 0 ? $json.filters : undefined }) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 15000
+          }
+        },
+        "id": "api-games",
+        "name": "API List Games",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          900,
+          300
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const input = $('Validate Input').first().json;\nconst response = $input.first().json;\n\nconst statusCode = response.statusCode || 200;\nconst body = response.body || response;\n\nif (statusCode >= 400 || body.success === false) {\n  return {\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: body.error?.message || 'Erreur API',\n        details: body\n      }\n    }\n  };\n}\n\nconst data = body.data || body;\n\nreturn {\n  json: {\n    success: true,\n    games: data.games || [],\n    total: data.total || 0,\n    limit: data.limit || input.limit,\n    offset: data.offset || input.offset\n  }\n};"
+        },
+        "id": "format-response",
+        "name": "Format Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1120,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.success ? 200 : 500 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1340,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## MCP - Games List\n\n**Endpoint:** POST /webhook/games-list\n\n### Input\n```json\n{\n  \"tenant_id\": \"chess_plugin\",\n  \"user_id\": \"discord_123456\",\n  \"limit\": 20,\n  \"offset\": 0,\n  \"filters\": {\n    \"result\": \"win\",\n    \"source\": \"lichess\",\n    \"has_analysis\": true\n  }\n}\n```\n\n### Output\n```json\n{\n  \"success\": true,\n  \"games\": [\n    {\n      \"game_id\": \"...\",\n      \"white\": \"user\",\n      \"black\": \"opponent\",\n      \"result\": \"win\",\n      \"pgn\": \"1. e4 e5...\"\n    }\n  ],\n  \"total\": 42,\n  \"limit\": 20,\n  \"offset\": 0\n}\n```\n\n### Filtres\n- `result`: win, loss, draw\n- `source`: manual, lichess, pgn_import\n- `has_analysis`: true/false\n\n### Pagination\n- `limit`: 1-100 (defaut 20)\n- `offset`: defaut 0\n\n### RFC-039 compliant",
+          "height": 520,
+          "width": 400,
+          "color": 6
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          60,
+          40
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "API List Games",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "API List Games": {
+        "main": [
+          [
+            {
+              "node": "Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

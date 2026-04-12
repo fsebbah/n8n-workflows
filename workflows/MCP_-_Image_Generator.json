@@ -1,7 +1,7 @@
 {
-  "updatedAt": "2025-12-18T10:02:50.000Z",
-  "createdAt": "2025-12-18T10:02:36.150Z",
-  "id": "jXnW0TwAF98ZJ7vq",
+  "updatedAt": "2026-03-16T13:15:13.887Z",
+  "createdAt": "2026-03-16T13:15:07.498Z",
+  "id": "b8UDsmsVt9QkAywZ",
   "name": "MCP - Image Generator",
   "description": null,
   "active": true,
@@ -62,7 +62,7 @@
       "typeVersion": 1,
       "position": [
         700,
-        460
+        520
       ],
       "parameters": {
         "respondWith": "json",
@@ -73,12 +73,73 @@
       }
     },
     {
-      "id": "dalle-generate",
-      "name": "DALL-E Generate Image",
+      "id": "check-callback-url",
+      "name": "Has Callback URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        700,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "store-job-context",
+      "name": "Store Job Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst webhookData = $input.first().json;\n\n// Generate or use provided job_id\nconst job_id = webhookData.body.job_id || crypto.randomUUID();\nconst callback_url = webhookData.body.callback_url;\n\nreturn [{\n  json: {\n    ...webhookData,\n    job_context: {\n      job_id: job_id,\n      callback_url: callback_url,\n      started_at: new Date().toISOString()\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "respond-202-accepted",
+      "name": "Respond 202 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1160,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"job_id\": $json.job_context.job_id, \"status\": \"processing\" } }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "dalle-generate-async",
+      "name": "DALL-E Generate (Async)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        700,
+        1380,
         200
       ],
       "parameters": {
@@ -108,26 +169,122 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "format-output",
-      "name": "Format Output",
+      "id": "format-output-async",
+      "name": "Format Output (Async)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        920,
+        1600,
         200
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst jobContextData = $('Store Job Context').first().json;\nconst webhookData = jobContextData;\n\nconst PRICING = {\n  'dall-e-3': {\n    'standard': { '1024x1024': 0.04, '1792x1024': 0.08, '1024x1792': 0.08 },\n    'hd': { '1024x1024': 0.08, '1792x1024': 0.12, '1024x1792': 0.12 }\n  },\n  'dall-e-2': {\n    'standard': { '256x256': 0.016, '512x512': 0.018, '1024x1024': 0.02 }\n  }\n};\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        job_id: jobContextData.job_context.job_id,\n        status: 'failed',\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Unknown error',\n          status: item.json.error.type || 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        },\n        job_context: jobContextData.job_context\n      }\n    };\n  }\n\n  const model = webhookData.body.options?.model || 'dall-e-3';\n  const quality = webhookData.body.options?.quality || 'standard';\n  const size = webhookData.body.options?.size || '1024x1024';\n  const n = webhookData.body.options?.n || 1;\n  \n  const unitPrice = PRICING[model]?.[quality]?.[size] || 0.04;\n  const costEstimate = unitPrice * n;\n\n  const images = (item.json.data || []).map(img => ({\n    url: img.url || null,\n    b64_json: img.b64_json || null,\n    revised_prompt: img.revised_prompt || null,\n    size: size\n  }));\n\n  return {\n    json: {\n      success: true,\n      job_id: jobContextData.job_context.job_id,\n      status: 'completed',\n      data: {\n        images: images,\n        prompt_original: webhookData.body.prompt,\n        prompt_revised: images[0]?.revised_prompt || null\n      },\n      meta: {\n        provider: 'openai',\n        model: model,\n        execution_mode: webhookData.body.execution_mode || 'online',\n        cost_estimate_usd: costEstimate\n      },\n      job_context: jobContextData.job_context\n    }\n  };\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "prepare-callback",
+      "name": "Prepare Callback with HMAC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\n\n// Extract callback URL from job context\nconst callback_url = item.job_context.callback_url;\n\n// Prepare the callback body (without job_context internal data)\nconst callbackBody = {\n  success: item.success,\n  job_id: item.job_id,\n  status: item.status,\n  data: item.data,\n  meta: item.meta\n};\n\nif (item.error) {\n  callbackBody.error = item.error;\n}\n\n// Generate HMAC signature (RFC-040 format)\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callbackBody);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: callback_url,\n    callback_body: callbackBody,\n    signature: signature\n  }\n}];"
+      }
+    },
+    {
+      "id": "send-callback",
+      "name": "Send Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2040,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callback_body) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "dalle-generate-sync",
+      "name": "DALL-E Generate (Sync)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/generations",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.body.options?.model || 'dall-e-3' }}\",\n  \"prompt\": \"{{ $json.body.prompt }}\",\n  \"n\": {{ $json.body.options?.n || 1 }},\n  \"size\": \"{{ $json.body.options?.size || '1024x1024' }}\",\n  \"quality\": \"{{ $json.body.options?.quality || 'standard' }}\",\n  \"style\": \"{{ $json.body.options?.style || 'vivid' }}\",\n  \"response_format\": \"{{ $json.body.options?.response_format || 'url' }}\"\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-output-sync",
+      "name": "Format Output (Sync)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        400
       ],
       "parameters": {
         "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst PRICING = {\n  'dall-e-3': {\n    'standard': { '1024x1024': 0.04, '1792x1024': 0.08, '1024x1792': 0.08 },\n    'hd': { '1024x1024': 0.08, '1792x1024': 0.12, '1024x1792': 0.12 }\n  },\n  'dall-e-2': {\n    'standard': { '256x256': 0.016, '512x512': 0.018, '1024x1024': 0.02 }\n  }\n};\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Unknown error',\n          status: item.json.error.type || 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n\n  const model = webhookData.body.options?.model || 'dall-e-3';\n  const quality = webhookData.body.options?.quality || 'standard';\n  const size = webhookData.body.options?.size || '1024x1024';\n  const n = webhookData.body.options?.n || 1;\n  \n  const unitPrice = PRICING[model]?.[quality]?.[size] || 0.04;\n  const costEstimate = unitPrice * n;\n\n  const images = (item.json.data || []).map(img => ({\n    url: img.url || null,\n    b64_json: img.b64_json || null,\n    revised_prompt: img.revised_prompt || null,\n    size: size\n  }));\n\n  return {\n    json: {\n      success: true,\n      data: {\n        images: images,\n        prompt_original: webhookData.body.prompt,\n        prompt_revised: images[0]?.revised_prompt || null\n      },\n      meta: {\n        provider: 'openai',\n        model: model,\n        execution_mode: webhookData.body.execution_mode || 'online',\n        cost_estimate_usd: costEstimate\n      }\n    }\n  };\n});\n\nreturn results;"
       }
     },
     {
-      "id": "respond-success",
-      "name": "Respond",
+      "id": "respond-sync",
+      "name": "Respond (Sync)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        1140,
-        200
+        1380,
+        400
       ],
       "parameters": {
         "respondWith": "json",
@@ -146,9 +303,41 @@
       ],
       "parameters": {
         "color": 6,
-        "width": 600,
-        "height": 280,
-        "content": "## MCP - Image Generator (DALL-E)\n\n**Endpoint:** POST /webhook/image-generator\n\n**Parameters:**\n- `prompt` (required): Image generation prompt\n- `openai_api_key` (required): OpenAI API key\n- `options.model` (optional): dall-e-3 | dall-e-2 (default: dall-e-3)\n- `options.size` (optional): 1024x1024 | 1792x1024 | 1024x1792 (default: 1024x1024)\n- `options.quality` (optional): standard | hd (default: standard)\n- `options.style` (optional): vivid | natural (default: vivid)\n- `options.n` (optional): Number of images (default: 1)\n- `options.response_format` (optional): url | b64_json (default: url)\n- `execution_mode` (optional): online | offline\n\n**Returns:** Generated image URL(s) or base64, revised prompt, cost estimate\n\n**Pricing (DALL-E 3):** Standard $0.04-0.08, HD $0.08-0.12 per image"
+        "width": 900,
+        "height": 340,
+        "content": "## MCP - Image Generator (DALL-E) - RFC-040 Async Callback Pattern\n\n**Endpoint:** POST /webhook/image-generator\n\n**Parameters:**\n- `prompt` (required): Image generation prompt\n- `openai_api_key` (required): OpenAI API key\n- `callback_url` (optional): URL for async callback (enables async mode)\n- `job_id` (optional): Custom job ID (auto-generated if not provided)\n- `options.model` (optional): dall-e-3 | dall-e-2 (default: dall-e-3)\n- `options.size` (optional): 1024x1024 | 1792x1024 | 1024x1792 (default: 1024x1024)\n- `options.quality` (optional): standard | hd (default: standard)\n- `options.style` (optional): vivid | natural (default: vivid)\n- `options.n` (optional): Number of images (default: 1)\n- `options.response_format` (optional): url | b64_json (default: url)\n- `execution_mode` (optional): online | offline\n\n**Sync Mode (no callback_url):** Returns generated image directly\n**Async Mode (with callback_url):** Returns 202 Accepted immediately, POSTs result to callback_url when done\n\n**Callback Headers:** Content-Type: application/json, X-N8N-Signature: HMAC-SHA256(payload, N8N_WEBHOOK_SECRET)\n\n**Pricing (DALL-E 3):** Standard $0.04-0.08, HD $0.08-0.12 per image"
+      }
+    },
+    {
+      "id": "sticky-note-async",
+      "name": "Async Flow Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        940,
+        60
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 400,
+        "height": 100,
+        "content": "## Async Flow (RFC-040)\nWith callback_url: Responds 202 immediately, processes in background, sends signed callback when complete."
+      }
+    },
+    {
+      "id": "sticky-note-sync",
+      "name": "Sync Flow Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        940,
+        480
+      ],
+      "parameters": {
+        "color": 5,
+        "width": 400,
+        "height": 80,
+        "content": "## Sync Flow (Retrocompatibility)\nWithout callback_url: Processes and responds synchronously as before."
       }
     }
   ],
@@ -168,7 +357,7 @@
       "main": [
         [
           {
-            "node": "DALL-E Generate Image",
+            "node": "Has Callback URL?",
             "type": "main",
             "index": 0
           }
@@ -182,22 +371,95 @@
         ]
       ]
     },
-    "DALL-E Generate Image": {
+    "Has Callback URL?": {
       "main": [
         [
           {
-            "node": "Format Output",
+            "node": "Store Job Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DALL-E Generate (Sync)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Output": {
+    "Store Job Context": {
       "main": [
         [
           {
-            "node": "Respond",
+            "node": "Respond 202 Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202 Accepted": {
+      "main": [
+        [
+          {
+            "node": "DALL-E Generate (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DALL-E Generate (Async)": {
+      "main": [
+        [
+          {
+            "node": "Format Output (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output (Async)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback with HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback with HMAC": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DALL-E Generate (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Format Output (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output (Sync)": {
+      "main": [
+        [
+          {
+            "node": "Respond (Sync)",
             "type": "main",
             "index": 0
           }
@@ -213,27 +475,532 @@
   "staticData": null,
   "meta": null,
   "pinData": null,
-  "versionId": "cf97b7c7-2e0c-4e04-9518-bf8701fa2964",
-  "activeVersionId": "cf97b7c7-2e0c-4e04-9518-bf8701fa2964",
-  "versionCounter": 369,
+  "versionId": "f919cd3b-17fa-4905-b4bb-e1f4efa051d7",
+  "activeVersionId": "f919cd3b-17fa-4905-b4bb-e1f4efa051d7",
+  "versionCounter": 11,
   "triggerCount": 1,
-  "tags": [],
   "shared": [
     {
-      "updatedAt": "2025-12-18T10:02:36.157Z",
-      "createdAt": "2025-12-18T10:02:36.157Z",
+      "updatedAt": "2026-03-16T13:15:07.498Z",
+      "createdAt": "2026-03-16T13:15:07.498Z",
       "role": "workflow:owner",
-      "workflowId": "jXnW0TwAF98ZJ7vq",
-      "projectId": "rkp1YaKKlE3ExOIx",
+      "workflowId": "b8UDsmsVt9QkAywZ",
+      "projectId": "U3cZjxLpPGVohw1b",
       "project": {
-        "updatedAt": "2025-12-03T16:40:05.384Z",
-        "createdAt": "2025-12-03T14:59:10.085Z",
-        "id": "rkp1YaKKlE3ExOIx",
-        "name": "Franck Sebbah <franck.sebbah@gmail.com>",
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
         "type": "personal",
         "icon": null,
-        "description": null
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
       }
     }
-  ]
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-16T13:15:07.515Z",
+    "createdAt": "2026-03-16T13:15:07.515Z",
+    "versionId": "f919cd3b-17fa-4905-b4bb-e1f4efa051d7",
+    "workflowId": "b8UDsmsVt9QkAywZ",
+    "nodes": [
+      {
+        "id": "webhook-imagegen",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "image-generator-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "image-generator",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.body.prompt }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-no-prompt",
+        "name": "Error: No Prompt",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          700,
+          520
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: prompt\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "check-callback-url",
+        "name": "Has Callback URL?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          700,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.body.callback_url }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "store-job-context",
+        "name": "Store Job Context",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          940,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const crypto = require('crypto');\nconst webhookData = $input.first().json;\n\n// Generate or use provided job_id\nconst job_id = webhookData.body.job_id || crypto.randomUUID();\nconst callback_url = webhookData.body.callback_url;\n\nreturn [{\n  json: {\n    ...webhookData,\n    job_context: {\n      job_id: job_id,\n      callback_url: callback_url,\n      started_at: new Date().toISOString()\n    }\n  }\n}];"
+        }
+      },
+      {
+        "id": "respond-202-accepted",
+        "name": "Respond 202 Accepted",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1160,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": true, \"job_id\": $json.job_context.job_id, \"status\": \"processing\" } }}",
+          "options": {
+            "responseCode": 202
+          }
+        }
+      },
+      {
+        "id": "dalle-generate-async",
+        "name": "DALL-E Generate (Async)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1380,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/images/generations",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.body.openai_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"{{ $json.body.options?.model || 'dall-e-3' }}\",\n  \"prompt\": \"{{ $json.body.prompt }}\",\n  \"n\": {{ $json.body.options?.n || 1 }},\n  \"size\": \"{{ $json.body.options?.size || '1024x1024' }}\",\n  \"quality\": \"{{ $json.body.options?.quality || 'standard' }}\",\n  \"style\": \"{{ $json.body.options?.style || 'vivid' }}\",\n  \"response_format\": \"{{ $json.body.options?.response_format || 'url' }}\"\n}",
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "format-output-async",
+        "name": "Format Output (Async)",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1600,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst jobContextData = $('Store Job Context').first().json;\nconst webhookData = jobContextData;\n\nconst PRICING = {\n  'dall-e-3': {\n    'standard': { '1024x1024': 0.04, '1792x1024': 0.08, '1024x1792': 0.08 },\n    'hd': { '1024x1024': 0.08, '1792x1024': 0.12, '1024x1792': 0.12 }\n  },\n  'dall-e-2': {\n    'standard': { '256x256': 0.016, '512x512': 0.018, '1024x1024': 0.02 }\n  }\n};\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        job_id: jobContextData.job_context.job_id,\n        status: 'failed',\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Unknown error',\n          status: item.json.error.type || 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        },\n        job_context: jobContextData.job_context\n      }\n    };\n  }\n\n  const model = webhookData.body.options?.model || 'dall-e-3';\n  const quality = webhookData.body.options?.quality || 'standard';\n  const size = webhookData.body.options?.size || '1024x1024';\n  const n = webhookData.body.options?.n || 1;\n  \n  const unitPrice = PRICING[model]?.[quality]?.[size] || 0.04;\n  const costEstimate = unitPrice * n;\n\n  const images = (item.json.data || []).map(img => ({\n    url: img.url || null,\n    b64_json: img.b64_json || null,\n    revised_prompt: img.revised_prompt || null,\n    size: size\n  }));\n\n  return {\n    json: {\n      success: true,\n      job_id: jobContextData.job_context.job_id,\n      status: 'completed',\n      data: {\n        images: images,\n        prompt_original: webhookData.body.prompt,\n        prompt_revised: images[0]?.revised_prompt || null\n      },\n      meta: {\n        provider: 'openai',\n        model: model,\n        execution_mode: webhookData.body.execution_mode || 'online',\n        cost_estimate_usd: costEstimate\n      },\n      job_context: jobContextData.job_context\n    }\n  };\n});\n\nreturn results;"
+        }
+      },
+      {
+        "id": "prepare-callback",
+        "name": "Prepare Callback with HMAC",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1820,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\n\n// Extract callback URL from job context\nconst callback_url = item.job_context.callback_url;\n\n// Prepare the callback body (without job_context internal data)\nconst callbackBody = {\n  success: item.success,\n  job_id: item.job_id,\n  status: item.status,\n  data: item.data,\n  meta: item.meta\n};\n\nif (item.error) {\n  callbackBody.error = item.error;\n}\n\n// Generate HMAC signature (RFC-040 format)\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callbackBody);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: callback_url,\n    callback_body: callbackBody,\n    signature: signature\n  }\n}];"
+        }
+      },
+      {
+        "id": "send-callback",
+        "name": "Send Callback",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2040,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.callback_url }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-N8N-Signature",
+                "value": "={{ $json.signature }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.callback_body) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "dalle-generate-sync",
+        "name": "DALL-E Generate (Sync)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          940,
+          400
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/images/generations",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.body.openai_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"{{ $json.body.options?.model || 'dall-e-3' }}\",\n  \"prompt\": \"{{ $json.body.prompt }}\",\n  \"n\": {{ $json.body.options?.n || 1 }},\n  \"size\": \"{{ $json.body.options?.size || '1024x1024' }}\",\n  \"quality\": \"{{ $json.body.options?.quality || 'standard' }}\",\n  \"style\": \"{{ $json.body.options?.style || 'vivid' }}\",\n  \"response_format\": \"{{ $json.body.options?.response_format || 'url' }}\"\n}",
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "format-output-sync",
+        "name": "Format Output (Sync)",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1160,
+          400
+        ],
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst PRICING = {\n  'dall-e-3': {\n    'standard': { '1024x1024': 0.04, '1792x1024': 0.08, '1024x1792': 0.08 },\n    'hd': { '1024x1024': 0.08, '1792x1024': 0.12, '1024x1792': 0.12 }\n  },\n  'dall-e-2': {\n    'standard': { '256x256': 0.016, '512x512': 0.018, '1024x1024': 0.02 }\n  }\n};\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Unknown error',\n          status: item.json.error.type || 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n\n  const model = webhookData.body.options?.model || 'dall-e-3';\n  const quality = webhookData.body.options?.quality || 'standard';\n  const size = webhookData.body.options?.size || '1024x1024';\n  const n = webhookData.body.options?.n || 1;\n  \n  const unitPrice = PRICING[model]?.[quality]?.[size] || 0.04;\n  const costEstimate = unitPrice * n;\n\n  const images = (item.json.data || []).map(img => ({\n    url: img.url || null,\n    b64_json: img.b64_json || null,\n    revised_prompt: img.revised_prompt || null,\n    size: size\n  }));\n\n  return {\n    json: {\n      success: true,\n      data: {\n        images: images,\n        prompt_original: webhookData.body.prompt,\n        prompt_revised: images[0]?.revised_prompt || null\n      },\n      meta: {\n        provider: 'openai',\n        model: model,\n        execution_mode: webhookData.body.execution_mode || 'online',\n        cost_estimate_usd: costEstimate\n      }\n    }\n  };\n});\n\nreturn results;"
+        }
+      },
+      {
+        "id": "respond-sync",
+        "name": "Respond (Sync)",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1380,
+          400
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          60
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 900,
+          "height": 340,
+          "content": "## MCP - Image Generator (DALL-E) - RFC-040 Async Callback Pattern\n\n**Endpoint:** POST /webhook/image-generator\n\n**Parameters:**\n- `prompt` (required): Image generation prompt\n- `openai_api_key` (required): OpenAI API key\n- `callback_url` (optional): URL for async callback (enables async mode)\n- `job_id` (optional): Custom job ID (auto-generated if not provided)\n- `options.model` (optional): dall-e-3 | dall-e-2 (default: dall-e-3)\n- `options.size` (optional): 1024x1024 | 1792x1024 | 1024x1792 (default: 1024x1024)\n- `options.quality` (optional): standard | hd (default: standard)\n- `options.style` (optional): vivid | natural (default: vivid)\n- `options.n` (optional): Number of images (default: 1)\n- `options.response_format` (optional): url | b64_json (default: url)\n- `execution_mode` (optional): online | offline\n\n**Sync Mode (no callback_url):** Returns generated image directly\n**Async Mode (with callback_url):** Returns 202 Accepted immediately, POSTs result to callback_url when done\n\n**Callback Headers:** Content-Type: application/json, X-N8N-Signature: HMAC-SHA256(payload, N8N_WEBHOOK_SECRET)\n\n**Pricing (DALL-E 3):** Standard $0.04-0.08, HD $0.08-0.12 per image"
+        }
+      },
+      {
+        "id": "sticky-note-async",
+        "name": "Async Flow Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          940,
+          60
+        ],
+        "parameters": {
+          "color": 4,
+          "width": 400,
+          "height": 100,
+          "content": "## Async Flow (RFC-040)\nWith callback_url: Responds 202 immediately, processes in background, sends signed callback when complete."
+        }
+      },
+      {
+        "id": "sticky-note-sync",
+        "name": "Sync Flow Note",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          940,
+          480
+        ],
+        "parameters": {
+          "color": 5,
+          "width": 400,
+          "height": 80,
+          "content": "## Sync Flow (Retrocompatibility)\nWithout callback_url: Processes and responds synchronously as before."
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Has Callback URL?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: No Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Callback URL?": {
+        "main": [
+          [
+            {
+              "node": "Store Job Context",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "DALL-E Generate (Sync)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Store Job Context": {
+        "main": [
+          [
+            {
+              "node": "Respond 202 Accepted",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Respond 202 Accepted": {
+        "main": [
+          [
+            {
+              "node": "DALL-E Generate (Async)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "DALL-E Generate (Async)": {
+        "main": [
+          [
+            {
+              "node": "Format Output (Async)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output (Async)": {
+        "main": [
+          [
+            {
+              "node": "Prepare Callback with HMAC",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Callback with HMAC": {
+        "main": [
+          [
+            {
+              "node": "Send Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "DALL-E Generate (Sync)": {
+        "main": [
+          [
+            {
+              "node": "Format Output (Sync)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output (Sync)": {
+        "main": [
+          [
+            {
+              "node": "Respond (Sync)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
 }

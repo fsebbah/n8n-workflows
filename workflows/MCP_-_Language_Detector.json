@@ -1,12 +1,21 @@
 {
+  "updatedAt": "2026-03-24T20:08:29.936Z",
+  "createdAt": "2026-03-24T09:31:07.642Z",
+  "id": "THC7Qt41GurxBuzJ",
   "name": "MCP - Language Detector",
+  "description": null,
+  "active": true,
+  "isArchived": false,
   "nodes": [
     {
       "id": "sticky-note-doc",
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-100, -80],
+      "position": [
+        -100,
+        -80
+      ],
       "parameters": {
         "color": 6,
         "width": 340,
@@ -19,7 +28,10 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 300],
+      "position": [
+        240,
+        300
+      ],
       "webhookId": "language-detector-webhook",
       "parameters": {
         "httpMethod": "POST",
@@ -33,7 +45,10 @@
       "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 300],
+      "position": [
+        460,
+        300
+      ],
       "parameters": {
         "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Language Detector\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required context fields ---\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst userRequest = body.user_request || ctx.user_request;\n\nif (!userId) {\n  errors.push('user_id requis');\n}\nif (!guildId) {\n  errors.push('guild_id requis');\n}\nif (!userRequest) {\n  errors.push('user_request requis');\n}\n\n// --- Specific webhook parameters ---\nconst text = body.text || ctx.text;\n\nif (!text) {\n  errors.push('text requis');\n}\n\n// --- API Keys passed from MCP Server ---\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai || '';\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  text: text,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  openaiApiKey: openaiApiKey,\n  startTime: Date.now()\n};"
       }
@@ -43,7 +58,10 @@
       "name": "Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [680, 300],
+      "position": [
+        680,
+        300
+      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -72,7 +90,10 @@
       "name": "Build Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [900, 460],
+      "position": [
+        900,
+        460
+      ],
       "parameters": {
         "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'openai',\n    model: 'gpt-4o-mini',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
       }
@@ -82,7 +103,10 @@
       "name": "Respond Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1120, 460],
+      "position": [
+        1120,
+        460
+      ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
@@ -104,7 +128,10 @@
       "name": "OpenAI Detect Language",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 200],
+      "position": [
+        900,
+        200
+      ],
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/chat/completions",
@@ -136,7 +163,10 @@
       "name": "Parse Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1120, 200],
+      "position": [
+        1120,
+        200
+      ],
       "parameters": {
         "jsCode": "// ============================================\n// PARSE LLM RESPONSE - Language Detector\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\n// --- Context fields for traceability ---\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\nconst statusCode = input.statusCode || 200;\n\n// Initialize trace with llm_response format\nconst _trace = {\n  llm_response: null,\n  service_response: null,\n  provider: 'openai',\n  model: 'gpt-4o-mini',\n  tokens: { input: 0, output: 0 },\n  latency_ms: 0,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\n// Handle API error\nif (statusCode >= 400 || input.error) {\n  const errorMsg = input.body?.error?.message || input.error?.message || 'OpenAI API error';\n  _trace.llm_response = `Error: ${errorMsg}`;\n  _trace.service_response = input.body || input;\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'LLM_ERROR',\n        message: errorMsg,\n        http_status: statusCode\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n// Extract response\nconst body = input.body || input;\nconst content = body.choices?.[0]?.message?.content || '{}';\nconst usage = body.usage || {};\n\n// Populate trace with LLM response\n_trace.llm_response = content;\n_trace.service_response = body;\n_trace.tokens = {\n  input: usage.prompt_tokens || 0,\n  output: usage.completion_tokens || 0\n};\n\n// Parse JSON from response\nlet detection;\ntry {\n  detection = JSON.parse(content);\n} catch (e) {\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'PARSE_ERROR',\n        message: 'Failed to parse detection response: ' + e.message,\n        http_status: 500\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n_trace.latency_ms = Date.now() - startTime;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      code: detection.code || 'unknown',\n      name: detection.name || 'Unknown',\n      confidence: detection.confidence || 0,\n      script: detection.script || 'unknown',\n      is_mixed: detection.is_mixed || false,\n      languages: detection.languages || null,\n      text_sample: prevData.text.substring(0, 100) + (prevData.text.length > 100 ? '...' : '')\n    },\n    meta: {\n      provider: 'openai',\n      model: 'gpt-4o-mini'\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: _trace\n  }\n};"
       }
@@ -146,7 +176,10 @@
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1360, 200],
+      "position": [
+        1360,
+        200
+      ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
@@ -241,6 +274,343 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "21602ea9-0cab-437d-83db-e0e3a6987f66",
+  "activeVersionId": "21602ea9-0cab-437d-83db-e0e3a6987f66",
+  "versionCounter": 14,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-24T09:31:07.642Z",
+      "createdAt": "2026-03-24T09:31:07.642Z",
+      "role": "workflow:owner",
+      "workflowId": "THC7Qt41GurxBuzJ",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-24T20:08:25.210Z",
+    "createdAt": "2026-03-24T20:08:25.210Z",
+    "versionId": "21602ea9-0cab-437d-83db-e0e3a6987f66",
+    "workflowId": "THC7Qt41GurxBuzJ",
+    "nodes": [
+      {
+        "id": "sticky-note-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -100,
+          -80
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 340,
+          "height": 580,
+          "content": "## MCP - Language Detector\n\n**Endpoint:** POST /webhook/language-detector\n\n**Description:** Detecte la langue d'un texte et retourne des informations detaillees.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"user_id\", \"guild_id\", \"user_request\", \"text\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (credits, quotas)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale\" },\n    \"text\": { \"type\": \"string\", \"description\": \"Texte a analyser pour detection de langue\" }\n  }\n}\n```\n\n**Note:** API keys fournies par le systeme.\n\n**Returns:**\n- `code`: ISO 639-1 language code (en, fr, es, de, zh, ja, ar, etc.)\n- `name`: Full language name in English\n- `confidence`: Detection confidence (0.0 to 1.0)\n- `script`: Writing script (latin, cyrillic, arabic, han, etc.)\n- `is_mixed`: Boolean if multiple languages detected\n- `languages`: Array of detected languages if mixed\n\n**Model:** gpt-4o-mini (fast, cost-effective)\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"code\", \"name\", \"confidence\", \"script\"],\n  \"domain\": \"language\"\n}\n```"
+        }
+      },
+      {
+        "id": "webhook-lang",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "language-detector-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "language-detector",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Language Detector\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required context fields ---\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst userRequest = body.user_request || ctx.user_request;\n\nif (!userId) {\n  errors.push('user_id requis');\n}\nif (!guildId) {\n  errors.push('guild_id requis');\n}\nif (!userRequest) {\n  errors.push('user_request requis');\n}\n\n// --- Specific webhook parameters ---\nconst text = body.text || ctx.text;\n\nif (!text) {\n  errors.push('text requis');\n}\n\n// --- API Keys passed from MCP Server ---\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai || '';\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  text: text,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  openaiApiKey: openaiApiKey,\n  startTime: Date.now()\n};"
+        }
+      },
+      {
+        "id": "if-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          680,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "build-error",
+        "name": "Build Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          900,
+          460
+        ],
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'openai',\n    model: 'gpt-4o-mini',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+        }
+      },
+      {
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1120,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": "openai-detect",
+        "name": "OpenAI Detect Language",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          900,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/chat/completions",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.openaiApiKey }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ (() => {\n  const data = $json;\n  const userRequest = data.user_request;\n  const textSample = data.text.substring(0, 1000);\n  \n  const systemPrompt = `You are a language detection expert. Detect the language of the given text and return a JSON object with:\n- code: ISO 639-1 code (e.g., 'en', 'fr', 'es', 'de', 'zh', 'ja', 'ar')\n- name: Full language name in English\n- confidence: Confidence score 0.0 to 1.0\n- script: Writing script (latin, cyrillic, arabic, han, etc.)\n- is_mixed: Boolean if multiple languages detected\n- languages: Array of detected languages if mixed\n\nUser context: \"${userRequest}\"\n\nReturn ONLY valid JSON.`;\n\n  return JSON.stringify({\n    model: 'gpt-4o-mini',\n    response_format: { type: 'json_object' },\n    messages: [\n      { role: 'system', content: systemPrompt },\n      { role: 'user', content: `Detect the language of this text:\\n\\n${textSample}` }\n    ],\n    temperature: 0.1,\n    max_tokens: 256\n  });\n})() }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "parse-response",
+        "name": "Parse Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1120,
+          200
+        ],
+        "parameters": {
+          "jsCode": "// ============================================\n// PARSE LLM RESPONSE - Language Detector\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\n// --- Context fields for traceability ---\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\nconst statusCode = input.statusCode || 200;\n\n// Initialize trace with llm_response format\nconst _trace = {\n  llm_response: null,\n  service_response: null,\n  provider: 'openai',\n  model: 'gpt-4o-mini',\n  tokens: { input: 0, output: 0 },\n  latency_ms: 0,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\n// Handle API error\nif (statusCode >= 400 || input.error) {\n  const errorMsg = input.body?.error?.message || input.error?.message || 'OpenAI API error';\n  _trace.llm_response = `Error: ${errorMsg}`;\n  _trace.service_response = input.body || input;\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'LLM_ERROR',\n        message: errorMsg,\n        http_status: statusCode\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n// Extract response\nconst body = input.body || input;\nconst content = body.choices?.[0]?.message?.content || '{}';\nconst usage = body.usage || {};\n\n// Populate trace with LLM response\n_trace.llm_response = content;\n_trace.service_response = body;\n_trace.tokens = {\n  input: usage.prompt_tokens || 0,\n  output: usage.completion_tokens || 0\n};\n\n// Parse JSON from response\nlet detection;\ntry {\n  detection = JSON.parse(content);\n} catch (e) {\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'PARSE_ERROR',\n        message: 'Failed to parse detection response: ' + e.message,\n        http_status: 500\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n_trace.latency_ms = Date.now() - startTime;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      code: detection.code || 'unknown',\n      name: detection.name || 'Unknown',\n      confidence: detection.confidence || 0,\n      script: detection.script || 'unknown',\n      is_mixed: detection.is_mixed || false,\n      languages: detection.languages || null,\n      text_sample: prevData.text.substring(0, 100) + (prevData.text.length > 100 ? '...' : '')\n    },\n    meta: {\n      provider: 'openai',\n      model: 'gpt-4o-mini'\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: _trace\n  }\n};"
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1360,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "OpenAI Detect Language",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Detect Language": {
+        "main": [
+          [
+            {
+              "node": "Parse Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
   }
 }
