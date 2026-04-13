@@ -89,8 +89,8 @@
     },
     {
       "parameters": {
-        "method": "PUT",
-        "url": "=https://discord.com/api/v10/channels/{{ $json.group.discord_channel_id }}/permissions/{{ $('Webhook').item.json.body.discord_user_id }}",
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/discord/commands/set-permissions",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -104,24 +104,20 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"allow\": \"68608\",\n  \"type\": 1\n}",
+        "jsonBody": "={\n  \"guild_id\": \"{{ $('Webhook').item.json.body.guild_id }}\",\n  \"channel_id\": \"{{ $json.group.discord_channel_id }}\",\n  \"target_id\": \"{{ $('Webhook').item.json.body.discord_user_id }}\",\n  \"target_type\": \"member\",\n  \"allow\": [\"view_channel\", \"send_messages\", \"read_message_history\"]\n}",
         "options": {
-          "retry": {
-            "maxTries": 3,
-            "retryInterval": 1000,
-            "retryIntervalExponential": true
-          }
+          "timeout": 30000
         }
       },
       "id": "add-to-group-channel",
-      "name": "Add to Group Channel",
+      "name": "Add to Group Channel (via Backend)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [910, 150],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "discord-bot-token",
-          "name": "Discord Bot Token"
+          "id": "backend-api",
+          "name": "Backend API"
         }
       }
     },
@@ -156,7 +152,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const studentData = $('Lookup Student (Backend)').item.json;\nconst discordUserId = $('Webhook').item.json.body.discord_user_id;\nconst guildId = $('Webhook').item.json.body.guild_id;\n\nconst permissionOverwrites = [\n  {\n    id: guildId,\n    type: 0,\n    deny: \"1024\"  // VIEW_CHANNEL denied for @everyone\n  },\n  {\n    id: discordUserId,\n    type: 1,\n    allow: \"68608\"  // VIEW + SEND + HISTORY for student\n  }\n];\n\n// Add profs role if configured\nif (studentData.group.profs_role_discord_id) {\n  permissionOverwrites.push({\n    id: studentData.group.profs_role_discord_id,\n    type: 0,\n    allow: \"68608\"  // VIEW + SEND + HISTORY for profs\n  });\n}\n\nreturn {\n  guild_id: guildId,\n  channel_name: studentData.group.channel_name,\n  parent_id: studentData.group.personal_channel_category_discord_id,\n  permission_overwrites: permissionOverwrites\n};"
+        "jsCode": "// Prepare data for POST /api/discord/commands/create-channel\nconst studentData = $('Lookup Student (Backend)').item.json;\nconst discordUserId = $('Webhook').item.json.body.discord_user_id;\nconst guildId = $('Webhook').item.json.body.guild_id;\n\n// Build permission_overwrites in API format\nconst permissionOverwrites = [\n  {\n    id: guildId,\n    type: 0,  // role\n    deny: \"1024\"  // VIEW_CHANNEL denied for @everyone\n  },\n  {\n    id: discordUserId,\n    type: 1,  // member\n    allow: \"68608\"  // VIEW + SEND + HISTORY for student\n  }\n];\n\n// Add profs role if configured\nif (studentData.group.profs_role_discord_id) {\n  permissionOverwrites.push({\n    id: studentData.group.profs_role_discord_id,\n    type: 0,  // role\n    allow: \"68608\"  // VIEW + SEND + HISTORY for profs\n  });\n}\n\nreturn {\n  guild_id: guildId,\n  name: studentData.group.channel_name,\n  parent_id: studentData.group.personal_channel_category_discord_id || null,\n  topic: `Channel personnel ${studentData.student.firstname} ${studentData.student.lastname}`,\n  private: true,\n  permission_overwrites: permissionOverwrites\n};"
       },
       "id": "prepare-personal-channel",
       "name": "Prepare Personal Channel",
@@ -167,7 +163,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://discord.com/api/v10/guilds/{{ $json.guild_id }}/channels",
+        "url": "={{ $env.BACKEND_URL }}/api/discord/commands/create-channel",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -181,24 +177,20 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"name\": \"{{ $json.channel_name }}\",\n  \"type\": 0,\n  \"parent_id\": {{ $json.parent_id ? '\"' + $json.parent_id + '\"' : 'null' }},\n  \"permission_overwrites\": {{ JSON.stringify($json.permission_overwrites) }}\n}",
+        "jsonBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "retry": {
-            "maxTries": 3,
-            "retryInterval": 1000,
-            "retryIntervalExponential": true
-          }
+          "timeout": 30000
         }
       },
       "id": "create-personal-channel",
-      "name": "Create Personal Channel",
+      "name": "Create Personal Channel (via Backend)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1570, 50],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "discord-bot-token",
-          "name": "Discord Bot Token"
+          "id": "backend-api",
+          "name": "Backend API"
         }
       }
     },
@@ -219,7 +211,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"student_id\": \"{{ $('Lookup Student (Backend)').item.json.student.id }}\",\n  \"discord_user_id\": \"{{ $('Webhook').item.json.body.discord_user_id }}\",\n  \"discord_channel_id\": \"{{ $json.id || null }}\"\n}",
+        "jsonBody": "={\n  \"student_id\": \"{{ $('Lookup Student (Backend)').item.json.student.id }}\",\n  \"discord_user_id\": \"{{ $('Webhook').item.json.body.discord_user_id }}\",\n  \"discord_channel_id\": \"{{ $json.data?.channel_id || null }}\"\n}",
         "options": {}
       },
       "id": "callback-backend-with-channel",
@@ -268,7 +260,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const studentData = $('Lookup Student (Backend)').item.json;\nconst personalChannelId = $('Create Personal Channel')?.item?.json?.id || null;\n\nreturn {\n  success: true,\n  student: {\n    id: studentData.student.id,\n    firstname: studentData.student.firstname,\n    lastname: studentData.student.lastname,\n    group_name: studentData.group.name\n  },\n  actions_performed: {\n    added_to_group_channel: true,\n    personal_channel_created: personalChannelId !== null,\n    personal_channel_id: personalChannelId\n  }\n};"
+        "jsCode": "const studentData = $('Lookup Student (Backend)').item.json;\n// REST endpoint returns { success: true, data: { channel_id: '...' } }\nconst createChannelResponse = $('Create Personal Channel (via Backend)')?.item?.json;\nconst personalChannelId = createChannelResponse?.data?.channel_id || null;\n\nreturn {\n  success: true,\n  student: {\n    id: studentData.student.id,\n    firstname: studentData.student.firstname,\n    lastname: studentData.student.lastname,\n    group_name: studentData.group.name\n  },\n  actions_performed: {\n    added_to_group_channel: true,\n    personal_channel_created: personalChannelId !== null,\n    personal_channel_id: personalChannelId\n  }\n};"
       },
       "id": "format-success-with-channel",
       "name": "Format Success (with channel)",
@@ -326,7 +318,7 @@
       "main": [
         [
           {
-            "node": "Add to Group Channel",
+            "node": "Add to Group Channel (via Backend)",
             "type": "main",
             "index": 0
           }
@@ -340,7 +332,7 @@
         ]
       ]
     },
-    "Add to Group Channel": {
+    "Add to Group Channel (via Backend)": {
       "main": [
         [
           {
@@ -373,14 +365,14 @@
       "main": [
         [
           {
-            "node": "Create Personal Channel",
+            "node": "Create Personal Channel (via Backend)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Create Personal Channel": {
+    "Create Personal Channel (via Backend)": {
       "main": [
         [
           {
@@ -449,6 +441,9 @@
     },
     {
       "name": "rfc-061"
+    },
+    {
+      "name": "rfc-062"
     }
   ]
 }

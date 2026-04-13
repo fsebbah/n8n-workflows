@@ -101,7 +101,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://discord.com/api/v10/channels/{{ $json.discord_channel_id }}/invites",
+        "url": "={{ $env.BACKEND_URL }}/api/discord/commands/create-invite",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -115,30 +115,26 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"max_age\": {{ $json.invite_max_age || 604800 }},\n  \"max_uses\": 0,\n  \"temporary\": false\n}",
+        "jsonBody": "={\n  \"guild_id\": \"{{ $json.guild_id }}\",\n  \"channel_id\": \"{{ $json.discord_channel_id }}\",\n  \"max_age\": {{ $json.invite_max_age || 604800 }},\n  \"max_uses\": 0\n}",
         "options": {
-          "retry": {
-            "maxTries": 3,
-            "retryInterval": 1000,
-            "retryIntervalExponential": true
-          }
+          "timeout": 30000
         }
       },
       "id": "create-invite",
-      "name": "Create New Invite (Discord)",
+      "name": "Create New Invite (via Backend)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1350, 150],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "discord-bot-token",
-          "name": "Discord Bot Token"
+          "id": "backend-api",
+          "name": "Backend API"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "const group = $('Split Groups').item.json;\nconst inviteData = $input.first().json;\nconst maxAge = group.invite_max_age || 604800;\n\nif (inviteData.code) {\n  return {\n    group_id: group.id,\n    guild_id: group.guild_id,\n    invite_url: `https://discord.gg/${inviteData.code}`,\n    invite_expires_at: new Date(Date.now() + maxAge * 1000).toISOString(),\n    success: true\n  };\n} else {\n  return {\n    group_id: group.id,\n    guild_id: group.guild_id,\n    error: inviteData.message || 'Unknown error',\n    success: false\n  };\n}"
+        "jsCode": "// REST endpoint returns { success: true, data: { invite_url, invite_code, expires_at } }\nconst group = $('Split Groups').item.json;\nconst response = $input.first().json;\n\nif (response.success && response.data) {\n  return {\n    group_id: group.id,\n    guild_id: group.guild_id,\n    invite_url: response.data.invite_url,\n    invite_expires_at: response.data.expires_at,\n    success: true\n  };\n} else {\n  return {\n    group_id: group.id,\n    guild_id: group.guild_id,\n    error: response.error || response.message || 'Unknown error',\n    success: false\n  };\n}"
       },
       "id": "format-invite-result",
       "name": "Format Invite Result",
@@ -285,14 +281,14 @@
       "main": [
         [
           {
-            "node": "Create New Invite (Discord)",
+            "node": "Create New Invite (via Backend)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Create New Invite (Discord)": {
+    "Create New Invite (via Backend)": {
       "main": [
         [
           {
@@ -368,6 +364,9 @@
     },
     {
       "name": "rfc-061"
+    },
+    {
+      "name": "rfc-062"
     },
     {
       "name": "cron"
