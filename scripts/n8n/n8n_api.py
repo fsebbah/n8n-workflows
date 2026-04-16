@@ -10,6 +10,13 @@ import json
 import requests
 from pathlib import Path
 
+# PostgreSQL support (optional, for webhook path search)
+try:
+    import psycopg2
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    PSYCOPG2_AVAILABLE = False
+
 # Load configuration from .env.local
 def load_env():
     env_file = Path(__file__).parent.parent.parent / ".env.local"
@@ -28,6 +35,15 @@ config = load_env()
 N8N_API_URL = config.get('N8N_API_URL', 'http://pi6.local:5678/api/v1')
 N8N_WEBHOOK_BASE_URL = config.get('N8N_WEBHOOK_BASE_URL', 'http://pi6.local:5678/webhook')
 N8N_API_KEY = config.get('N8N_API_KEY', '')
+
+# PostgreSQL configuration for n8n database
+DB_CONFIG = {
+    'host': config.get('DB_POSTGRESDB_HOST', 'databases.local'),
+    'port': int(config.get('DB_POSTGRESDB_PORT', '5435')),
+    'database': config.get('DB_POSTGRESDB_DATABASE', 'n8n'),
+    'user': config.get('DB_POSTGRESDB_USER', 'n8n'),
+    'password': config.get('DB_POSTGRESDB_PASSWORD', 'n8npass')
+}
 
 if not N8N_API_KEY or N8N_API_KEY == 'your-n8n-api-key-here':
     print("Error: N8N_API_KEY not configured in .env.local")
@@ -154,27 +170,28 @@ def test_webhook(path, data=None):
     except Exception as e:
         print(f"Error: {e}")
 
-def import_workflow(json_file):
+def import_workflow(json_file, debug=False):
     """Import workflow from JSON file"""
     if not os.path.exists(json_file):
         print(f"Error: File not found: {json_file}")
-        return
+        return None
 
     with open(json_file) as f:
         workflow_data = json.load(f)
 
     # Remove properties not accepted by n8n API
+    # See docs/n8n/WORKFLOW_BEST_PRACTICES.md for details
     properties_to_remove = [
         'id', 'active', 'versionId', 'createdAt', 'updatedAt',
         'meta', 'tags', 'triggerCount', 'staticData', 'isArchived',
         'activeVersionId', 'versionCounter', 'description', 'pinData',
-        'activeVersion'
+        'activeVersion', 'shared'  # shared contains read-only project.id
     ]
     for prop in properties_to_remove:
         workflow_data.pop(prop, None)
 
     print(f"Importing workflow: {workflow_data.get('name', 'Unknown')}")
-    response = api_request('POST', '/workflows', workflow_data, debug=True)
+    response = api_request('POST', '/workflows', workflow_data, debug=debug)
     if response and response.status_code in [200, 201]:
         d = response.json()
         print(f"✅ Imported workflow: {d.get('name')} (ID: {d.get('id')})")
@@ -254,6 +271,464 @@ def update_workflow(workflow_id, json_file):
     else:
         print(f"❌ Update failed: {response.text if response else 'No response'}")
 
+def find_workflow_by_name(name):
+    """Find workflow ID by exact name"""
+    response = api_request('GET', '/workflows')
+    if response and response.status_code == 200:
+        data = response.json()
+        for w in data.get('data', []):
+            if w['name'] == name:
+                return w
+    return None
+
+
+def get_db_connection():
+    """Get PostgreSQL connection to n8n database"""
+    if not PSYCOPG2_AVAILABLE:
+        print("❌ psycopg2 not installed. Run: pip install psycopg2-binary")
+        return None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        return conn
+    except Exception as e:
+        print(f"❌ Database connection error: {e}")
+        return None
+
+
+def find_workflows_by_webhook_path(webhook_path):
+    """
+    Find workflows by webhook path using PostgreSQL database.
+
+    Searches the n8n database for workflows containing webhook nodes
+    with the specified path.
+
+    Args:
+        webhook_path: The webhook path to search for (e.g., "server-sync")
+
+    Returns:
+        List of workflow dicts with id, name, active status, and webhook info
+    """
+    conn = get_db_connection()
+    if not conn:
+        return []
+
+    try:
+        cursor = conn.cursor()
+
+        # Query to find workflows with matching webhook path in nodes JSON
+        # Searches for webhook nodes where parameters.path matches
+        # Note: n8n uses json type (not jsonb), so we use json_array_elements
+        query = """
+            SELECT
+                id,
+                name,
+                active,
+                nodes
+            FROM workflow_entity
+            WHERE EXISTS (
+                SELECT 1 FROM json_array_elements(nodes) AS node
+                WHERE node->>'type' LIKE '%%webhook%%'
+                AND (
+                    node->'parameters'->>'path' = %s
+                    OR node->>'webhookId' = %s
+                )
+            )
+            ORDER BY "updatedAt" DESC
+        """
+
+        cursor.execute(query, (webhook_path, webhook_path))
+        rows = cursor.fetchall()
+
+        results = []
+        for row in rows:
+            workflow_id, name, active, nodes = row
+
+            # Extract webhook info from nodes
+            webhook_info = []
+            if nodes:
+                for node in nodes:
+                    if 'webhook' in node.get('type', '').lower():
+                        params = node.get('parameters', {})
+                        webhook_info.append({
+                            'node_name': node.get('name'),
+                            'path': params.get('path'),
+                            'webhookId': node.get('webhookId'),
+                            'httpMethod': params.get('httpMethod', 'GET')
+                        })
+
+            results.append({
+                'id': workflow_id,
+                'name': name,
+                'active': active,
+                'webhooks': webhook_info
+            })
+
+        cursor.close()
+        conn.close()
+
+        return results
+
+    except Exception as e:
+        print(f"❌ Database query error: {e}")
+        if conn:
+            conn.close()
+        return []
+
+
+def list_workflows_by_webhook_path(webhook_path):
+    """List workflows matching a webhook path"""
+    workflows = find_workflows_by_webhook_path(webhook_path)
+
+    if not workflows:
+        print(f"No workflows found with webhook path: {webhook_path}")
+        return
+
+    print(f"\nFound {len(workflows)} workflow(s) with webhook path '{webhook_path}':\n")
+    for w in workflows:
+        status = '✅' if w['active'] else '❌'
+        print(f"{status} {w['id']}: {w['name']}")
+        for wh in w.get('webhooks', []):
+            print(f"   └─ {wh.get('httpMethod', 'GET')} /{wh.get('path')} (webhookId: {wh.get('webhookId')})")
+
+def batch_reimport(list_file, workflows_dir=None, dry_run=False, delete_old=True, log_file=None):
+    """
+    Batch reimport workflows from a list file.
+
+    List file format (one per line):
+      GUILD_-_Server_Sync
+      GUILD_-_Student_Verify
+      # Comments are ignored
+
+    For each workflow:
+      1. Find existing workflow by name
+      2. Deactivate it
+      3. Delete it (if --delete flag)
+      4. Import new version from JSON file
+      5. Activate it
+
+    Args:
+        list_file: Path to file containing workflow names (one per line)
+        workflows_dir: Directory containing workflow JSON files
+        dry_run: If True, don't actually make changes
+        delete_old: If True, delete existing workflows before import
+        log_file: Path to log file (auto-generated if None)
+    """
+    from datetime import datetime
+
+    if workflows_dir is None:
+        workflows_dir = Path(__file__).parent.parent.parent / "workflows"
+    else:
+        workflows_dir = Path(workflows_dir)
+
+    if not os.path.exists(list_file):
+        print(f"Error: List file not found: {list_file}")
+        return
+
+    # Setup logging
+    if log_file is None:
+        log_dir = Path(__file__).parent / "logs"
+        log_dir.mkdir(exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = log_dir / f"batch_reimport_{timestamp}.log"
+
+    log_messages = []
+    def log(msg):
+        print(msg)
+        log_messages.append(f"{datetime.now().isoformat()} | {msg}")
+
+    # Read workflow names from list file
+    workflow_names = []
+    with open(list_file) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                workflow_names.append(line)
+
+    log(f"=" * 60)
+    log(f"BATCH REIMPORT STARTED")
+    log(f"=" * 60)
+    log(f"List file: {list_file}")
+    log(f"Workflows directory: {workflows_dir}")
+    log(f"Found {len(workflow_names)} workflows to reimport")
+    log(f"Dry run: {dry_run}")
+    log(f"Delete old: {delete_old}")
+    log(f"Log file: {log_file}")
+    log("")
+
+    results = {
+        'success': [],
+        'failed': [],
+        'skipped': []
+    }
+
+    for name in workflow_names:
+        log(f"\n{'='*60}")
+        log(f"Processing: {name}")
+        log(f"{'='*60}")
+
+        # Find JSON file
+        json_file = workflows_dir / f"{name}.json"
+        if not json_file.exists():
+            log(f"  ⚠️  JSON file not found: {json_file}")
+            results['skipped'].append((name, "JSON file not found"))
+            continue
+
+        # Find existing workflow by reading name from JSON
+        with open(json_file) as f:
+            json_data = json.load(f)
+            workflow_name = json_data.get('name', name)
+
+        existing = find_workflow_by_name(workflow_name)
+
+        if dry_run:
+            if existing:
+                log(f"  [DRY RUN] Would deactivate: {existing['name']} (ID: {existing['id']})")
+                if delete_old:
+                    log(f"  [DRY RUN] Would delete: {existing['id']}")
+            log(f"  [DRY RUN] Would import: {json_file}")
+            log(f"  [DRY RUN] Would activate new workflow")
+            results['success'].append((name, "DRY RUN"))
+            continue
+
+        try:
+            # Step 1: Deactivate existing workflow
+            if existing:
+                log(f"  1. Found existing: {existing['name']} (ID: {existing['id']}, active: {existing.get('active')})")
+                if existing.get('active'):
+                    log(f"     Deactivating...")
+                    api_request('POST', f"/workflows/{existing['id']}/deactivate")
+
+                # Step 2: Delete existing workflow (if --delete flag)
+                if delete_old:
+                    log(f"  2. Deleting: {existing['id']}")
+                    resp = api_request('DELETE', f"/workflows/{existing['id']}")
+                    if resp and resp.status_code in [200, 204]:
+                        log(f"     Deleted successfully")
+                    else:
+                        log(f"     Delete failed: {resp.text if resp else 'No response'}")
+                else:
+                    log(f"  2. Skipping delete (--no-delete flag)")
+            else:
+                log(f"  1-2. No existing workflow found with name: {workflow_name}")
+
+            # Step 3: Import new workflow
+            log(f"  3. Importing: {json_file.name}")
+            new_id = import_workflow(str(json_file), debug=False)
+
+            if not new_id:
+                log(f"  ❌ Import failed")
+                results['failed'].append((name, "Import failed"))
+                continue
+
+            # Step 4: Activate new workflow
+            log(f"  4. Activating: {new_id}")
+            response = api_request('POST', f'/workflows/{new_id}/activate', data={})
+
+            if response and response.status_code == 200:
+                log(f"  ✅ Successfully reimported and activated: {name} -> {new_id}")
+                results['success'].append((name, new_id))
+            else:
+                error_msg = response.text if response else 'No response'
+                log(f"  ⚠️  Imported but activation failed: {error_msg}")
+                results['success'].append((name, f"{new_id} (inactive)"))
+
+        except Exception as e:
+            log(f"  ❌ Error: {e}")
+            results['failed'].append((name, str(e)))
+
+    # Print summary
+    log(f"\n{'='*60}")
+    log("SUMMARY")
+    log(f"{'='*60}")
+    log(f"✅ Success: {len(results['success'])}")
+    for name, info in results['success']:
+        log(f"   - {name}: {info}")
+
+    if results['failed']:
+        log(f"\n❌ Failed: {len(results['failed'])}")
+        for name, error in results['failed']:
+            log(f"   - {name}: {error}")
+
+    if results['skipped']:
+        log(f"\n⚠️  Skipped: {len(results['skipped'])}")
+        for name, reason in results['skipped']:
+            log(f"   - {name}: {reason}")
+
+    # Write log file
+    with open(log_file, 'w') as f:
+        f.write('\n'.join(log_messages))
+    print(f"\n📝 Log saved to: {log_file}")
+
+def batch_reimport_single(workflow_name, workflows_dir=None, dry_run=False, delete_old=True, use_webhook_path=False):
+    """
+    Reimport a single workflow by name or webhook path.
+
+    Args:
+        workflow_name: Name of the workflow file (e.g., GUILD_-_Server_Sync) or webhook path if use_webhook_path=True
+        workflows_dir: Directory containing workflow JSON files
+        dry_run: If True, don't actually make changes
+        delete_old: If True, delete existing workflow(s) after import
+        use_webhook_path: If True, search by webhook path instead of workflow name
+    """
+    from datetime import datetime
+
+    if workflows_dir is None:
+        workflows_dir = Path(__file__).parent.parent.parent / "workflows"
+    else:
+        workflows_dir = Path(workflows_dir)
+
+    # Find JSON file
+    json_file = workflows_dir / f"{workflow_name}.json"
+    if not json_file.exists():
+        print(f"❌ JSON file not found: {json_file}")
+        return False
+
+    # Read workflow data from JSON
+    with open(json_file) as f:
+        json_data = json.load(f)
+        display_name = json_data.get('name', workflow_name)
+
+    # Extract webhook path from the workflow JSON
+    webhook_path = None
+    for node in json_data.get('nodes', []):
+        if 'webhook' in node.get('type', '').lower():
+            webhook_path = node.get('parameters', {}).get('path')
+            if not webhook_path:
+                webhook_path = node.get('webhookId')
+            if webhook_path:
+                break
+
+    print(f"{'='*60}")
+    print(f"Reimporting: {display_name}")
+    print(f"{'='*60}")
+    print(f"File: {json_file}")
+    print(f"Webhook path: {webhook_path or 'N/A'}")
+    print(f"Dry run: {dry_run}")
+    print(f"Delete old: {delete_old}")
+    print("")
+
+    # Find existing workflows - prefer webhook path search if available
+    existing_workflows = []
+
+    if webhook_path and PSYCOPG2_AVAILABLE:
+        print(f"🔍 Searching for existing workflows by webhook path: {webhook_path}")
+        existing_workflows = find_workflows_by_webhook_path(webhook_path)
+        if existing_workflows:
+            print(f"   Found {len(existing_workflows)} workflow(s) via webhook path search")
+            for w in existing_workflows:
+                status = '✅' if w['active'] else '❌'
+                print(f"   {status} {w['id']}: {w['name']}")
+        else:
+            print(f"   No workflows found with webhook path: {webhook_path}")
+    else:
+        # Fallback to name search
+        print(f"🔍 Searching for existing workflow by name: {display_name}")
+        existing = find_workflow_by_name(display_name)
+        if existing:
+            existing_workflows = [{
+                'id': existing['id'],
+                'name': existing['name'],
+                'active': existing.get('active', False)
+            }]
+            print(f"   Found: {existing['id']}: {existing['name']}")
+        else:
+            print(f"   No existing workflow found")
+
+    if dry_run:
+        for w in existing_workflows:
+            print(f"[DRY RUN] Would deactivate: {w['name']} (ID: {w['id']})")
+        print(f"[DRY RUN] Would import: {json_file.name}")
+        print(f"[DRY RUN] Would activate new workflow")
+        if delete_old and existing_workflows:
+            print(f"[DRY RUN] Would prompt to delete {len(existing_workflows)} old workflow(s)")
+        return True
+
+    try:
+        # Step 1: Deactivate ALL existing workflows
+        print(f"\n1. Deactivating existing workflows...")
+        for w in existing_workflows:
+            if w.get('active'):
+                print(f"   Deactivating: {w['id']} ({w['name']})")
+                api_request('POST', f"/workflows/{w['id']}/deactivate")
+            else:
+                print(f"   Already inactive: {w['id']} ({w['name']})")
+
+        # Step 2: Import new workflow
+        print(f"\n2. Importing: {json_file.name}")
+        new_id = import_workflow(str(json_file), debug=False)
+
+        if not new_id:
+            print(f"❌ Import failed")
+            return False
+
+        # Step 3: Activate new workflow
+        print(f"\n3. Activating: {new_id}")
+        response = api_request('POST', f'/workflows/{new_id}/activate', data={})
+
+        if response and response.status_code == 200:
+            print(f"   ✅ Workflow {new_id} is now ACTIVE")
+        else:
+            error_msg = response.text if response else 'No response'
+            print(f"   ⚠️  Activation failed: {error_msg}")
+
+        # Step 4: Delete old workflows (with confirmation)
+        if delete_old and existing_workflows:
+            print(f"\n4. Delete old workflows")
+            print(f"   {'='*50}")
+            print(f"   The following old workflow(s) can be deleted:")
+            for i, w in enumerate(existing_workflows, 1):
+                print(f"   {i}. {w['id']}: {w['name']}")
+            print(f"   {'='*50}")
+            print(f"   Options:")
+            print(f"     a = Delete ALL old workflows")
+            print(f"     y = Confirm each one by one")
+            print(f"     n = Skip deletion (keep old workflows)")
+            print("")
+
+            choice = input("   Your choice [a/y/n]: ").strip().lower()
+
+            if choice == 'a':
+                # Delete all
+                print(f"\n   Deleting all {len(existing_workflows)} old workflow(s)...")
+                for w in existing_workflows:
+                    resp = api_request('DELETE', f"/workflows/{w['id']}")
+                    if resp and resp.status_code in [200, 204]:
+                        print(f"   ✅ Deleted: {w['id']} ({w['name']})")
+                    else:
+                        print(f"   ❌ Delete failed: {w['id']} - {resp.text if resp else 'No response'}")
+
+            elif choice == 'y':
+                # Confirm each one
+                for w in existing_workflows:
+                    confirm = input(f"   Delete {w['id']} ({w['name']})? [y/n]: ").strip().lower()
+                    if confirm == 'y':
+                        resp = api_request('DELETE', f"/workflows/{w['id']}")
+                        if resp and resp.status_code in [200, 204]:
+                            print(f"   ✅ Deleted: {w['id']}")
+                        else:
+                            print(f"   ❌ Delete failed: {resp.text if resp else 'No response'}")
+                    else:
+                        print(f"   ⏭️  Skipped: {w['id']}")
+
+            else:
+                print(f"   ⏭️  Skipping deletion. Old workflows kept.")
+
+        elif not existing_workflows:
+            print(f"\n4. No old workflows to delete.")
+
+        print(f"\n{'='*60}")
+        print(f"✅ Successfully reimported: {display_name}")
+        print(f"   New workflow ID: {new_id}")
+        print(f"{'='*60}")
+        return True
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def show_help():
     """Show help message"""
     print("n8n API Helper Script")
@@ -272,10 +747,30 @@ def show_help():
     print("  search <pattern>        Search workflows by name")
     print("  test-webhook <path>     Test a webhook endpoint")
     print("")
+    print("  find-by-webhook <path>  Find workflows by webhook path (PostgreSQL)")
+    print("                          Searches n8n database for workflows with matching webhook")
+    print("")
+    print("  batch-reimport <list_file_or_workflow> [--dry-run] [--no-delete]")
+    print("                          Reimport workflow(s) from list file or single workflow")
+    print("                          - List file: one workflow name per line")
+    print("                          - Single workflow: e.g., GUILD_-_Server_Sync")
+    print("                          --dry-run: preview without changes")
+    print("                          --no-delete: keep old workflows (default: delete)")
+    print("                          ")
+    print("                          Uses PostgreSQL to find existing workflows by webhook path")
+    print("                          (handles duplicates). Interactive deletion confirmation:")
+    print("                            a = delete all old workflows")
+    print("                            y = confirm each one by one")
+    print("                            n = skip deletion")
+    print("                          Logs saved to scripts/n8n/logs/")
+    print("")
     print("Configuration:")
     print(f"  N8N_API_URL: {N8N_API_URL}")
     print(f"  N8N_WEBHOOK_BASE_URL: {N8N_WEBHOOK_BASE_URL}")
     print(f"  N8N_API_KEY: {N8N_API_KEY[:20]}...")
+    print(f"  DB_HOST: {DB_CONFIG['host']}:{DB_CONFIG['port']}")
+    print(f"  DB_NAME: {DB_CONFIG['database']}")
+    print(f"  psycopg2: {'✅ Available' if PSYCOPG2_AVAILABLE else '❌ Not installed (pip install psycopg2-binary)'}")
 
 def main():
     if len(sys.argv) < 2:
@@ -332,6 +827,39 @@ def main():
             print("Usage: python3 n8n_api.py update <workflow_id> <json_file>")
             return
         update_workflow(sys.argv[2], sys.argv[3])
+    elif action == 'find-by-webhook':
+        if len(sys.argv) < 3:
+            print("Usage: python3 n8n_api.py find-by-webhook <webhook_path>")
+            print("")
+            print("Search n8n PostgreSQL database for workflows with matching webhook path.")
+            print("Example: python3 n8n_api.py find-by-webhook server-sync")
+            return
+        list_workflows_by_webhook_path(sys.argv[2])
+    elif action == 'batch-reimport':
+        if len(sys.argv) < 3:
+            print("Usage: python3 n8n_api.py batch-reimport <list_file_or_workflow> [--dry-run] [--no-delete]")
+            print("")
+            print("Arguments:")
+            print("  <list_file>   File containing workflow names (one per line)")
+            print("  <workflow>    Single workflow name (e.g., GUILD_-_Server_Sync)")
+            print("")
+            print("Options:")
+            print("  --dry-run    Show what would be done without making changes")
+            print("  --no-delete  Don't delete existing workflows (update in place)")
+            print("")
+            print("Note: Uses PostgreSQL to find workflows by webhook path (handles duplicates)")
+            return
+        dry_run = '--dry-run' in sys.argv
+        delete_old = '--no-delete' not in sys.argv
+        target = sys.argv[2]
+
+        # Check if it's a file or a workflow name
+        if os.path.exists(target):
+            # It's a list file
+            batch_reimport(target, dry_run=dry_run, delete_old=delete_old)
+        else:
+            # It's a single workflow name - create temp list
+            batch_reimport_single(target, dry_run=dry_run, delete_old=delete_old)
     else:
         show_help()
 
