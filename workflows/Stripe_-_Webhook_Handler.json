@@ -89,13 +89,17 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.API_URL }}/api/stripe/verify/{{ $json.project_id }}",
+        "url": "={{ $json.backend_api_url }}/api/stripe/verify/{{ $json.project_id }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
+            },
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
             }
           ]
         },
@@ -209,7 +213,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.API_URL }}/api/webhook/account/{{ $('Process Event').item.json.action }}",
+        "url": "={{ $('Code in JavaScript').item.json.backend_api_url }}/api/webhook/account/{{ $('Process Event').item.json.action }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -220,6 +224,10 @@
             {
               "name": "X-Project-ID",
               "value": "={{ $('Process Event').item.json.project_id }}"
+            },
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $('Code in JavaScript').item.json.backend_service_token }}"
             }
           ]
         },
@@ -365,7 +373,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const config = JSON.parse($input.first().json.config || '{}');\n  return [{\n    json: {\n      ...$('Process Event').first().json,\n      stripe_key: config.stripe_key\n    }\n  }];"
+        "jsCode": "const config = JSON.parse($input.first().json.config || '{}');\n  return [{\n    json: {\n      ...$('Process Event').first().json,\n      stripe_key: config.stripe_key,\n      backend_api_url: config.backend_api_url,\n      backend_service_token: config.backend_service_token\n    }\n  }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -375,6 +383,41 @@
       ],
       "id": "008a4e2b-081d-41b0-a08b-b67dd1ad79f8",
       "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "propertyName": "config_early",
+        "key": "=project:{{ $json.project_id }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        850,
+        100
+      ],
+      "id": "redis-get-early",
+      "name": "Redis GET Early",
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract backend credentials from Redis config\nconst config = JSON.parse($input.first().json.config_early || '{}');\nconst extractData = $('Extract & Validate').first().json;\n\nreturn [{\n  json: {\n    ...extractData,\n    backend_api_url: config.backend_api_url,\n    backend_service_token: config.backend_service_token\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        208
+      ],
+      "id": "extract-backend-config",
+      "name": "Extract Backend Config"
     }
   ],
   "connections": {
@@ -404,7 +447,7 @@
       "main": [
         [
           {
-            "node": "Verify Signature",
+            "node": "Redis GET Early",
             "type": "main",
             "index": 0
           }
@@ -412,6 +455,28 @@
         [
           {
             "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis GET Early": {
+      "main": [
+        [
+          {
+            "node": "Extract Backend Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Backend Config": {
+      "main": [
+        [
+          {
+            "node": "Verify Signature",
             "type": "main",
             "index": 0
           }
@@ -675,7 +740,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "={{ $env.API_URL }}/api/stripe/verify/{{ $json.project_id }}",
+          "url": "={{ $json.backend_api_url }}/api/stripe/verify/{{ $json.project_id }}",
           "sendHeaders": true,
           "headerParameters": {
             "parameters": [
@@ -795,7 +860,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "={{ $env.API_URL }}/api/webhook/account/{{ $('Process Event').item.json.action }}",
+          "url": "={{ $('Code in JavaScript').item.json.backend_api_url }}/api/webhook/account/{{ $('Process Event').item.json.action }}",
           "sendHeaders": true,
           "headerParameters": {
             "parameters": [
@@ -951,7 +1016,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const config = JSON.parse($input.first().json.config || '{}');\n  return [{\n    json: {\n      ...$('Process Event').first().json,\n      stripe_key: config.stripe_key\n    }\n  }];"
+          "jsCode": "const config = JSON.parse($input.first().json.config || '{}');\n  return [{\n    json: {\n      ...$('Process Event').first().json,\n      stripe_key: config.stripe_key,\n      backend_api_url: config.backend_api_url,\n      backend_service_token: config.backend_service_token\n    }\n  }];"
         },
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,

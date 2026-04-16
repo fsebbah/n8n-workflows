@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract and validate data from webhook body\nconst body = $input.first().json.body;\n\n// Required fields\nif (!body.guild_id) {\n  throw new Error('guild_id is required');\n}\nif (!body.bot_id) {\n  throw new Error('bot_id is required');\n}\n\nreturn {\n  guild_id: body.guild_id,\n  bot_id: body.bot_id,\n  guild_name: body.guild_name || null,\n  guild_icon: body.guild_icon || null,\n  guild_description: body.guild_description || null,\n  member_count: body.member_count || null,\n  channel_count: body.channel_count || null,\n  bot_count: body.bot_count || null,\n  sync_source: body.sync_source || 'plugin',\n  synced_by: body.synced_by || 'unknown'\n};"
+        "jsCode": "// Extract and validate data from webhook body\nconst body = $input.first().json.body;\n\n// Required fields\nif (!body.guild_id) {\n  throw new Error('guild_id is required');\n}\nif (!body.bot_id) {\n  throw new Error('bot_id is required');\n}\n\n// Backend connection (passed by plugin)\nconst backendApiUrl = body.backend_api_url;\nconst backendServiceToken = body.backend_service_token;\n\nif (!backendApiUrl) {\n  throw new Error('backend_api_url is required');\n}\nif (!backendServiceToken) {\n  throw new Error('backend_service_token is required');\n}\n\n// Parse integer fields (default to 0 if null/undefined)\nconst memberCount = parseInt(body.member_count, 10) || 0;\nconst channelCount = parseInt(body.channel_count, 10) || 0;\nconst botCount = parseInt(body.bot_count, 10) || 0;\n\nreturn {\n  guild_id: body.guild_id,\n  bot_id: body.bot_id,\n  guild_name: body.guild_name || null,\n  guild_icon: body.guild_icon || null,\n  guild_description: body.guild_description || null,\n  member_count: memberCount,\n  channel_count: channelCount,\n  bot_count: botCount,\n  sync_source: body.sync_source || 'plugin',\n  synced_by: body.synced_by || 'unknown',\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken\n};"
       },
       "id": "validate-data",
       "name": "Validate Data",
@@ -28,12 +28,23 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.BACKEND_API_URL }}/api/discord/webhook/server-sync",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "={{ $json.backend_api_url }}/api/discord/webhook/server-sync",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"guild_id\": \"{{ $json.guild_id }}\",\n  \"bot_id\": \"{{ $json.bot_id }}\",\n  \"guild_name\": {{ $json.guild_name ? '\"' + $json.guild_name + '\"' : 'null' }},\n  \"guild_icon\": {{ $json.guild_icon ? '\"' + $json.guild_icon + '\"' : 'null' }},\n  \"guild_description\": {{ $json.guild_description ? '\"' + $json.guild_description + '\"' : 'null' }},\n  \"member_count\": {{ $json.member_count || 'null' }},\n  \"channel_count\": {{ $json.channel_count || 'null' }},\n  \"bot_count\": {{ $json.bot_count || 'null' }},\n  \"sync_source\": \"{{ $json.sync_source }}\",\n  \"synced_by\": \"{{ $json.synced_by }}\"\n}",
+        "jsonBody": "={\n  \"guild_id\": \"{{ $json.guild_id }}\",\n  \"bot_id\": \"{{ $json.bot_id }}\",\n  \"guild_name\": {{ $json.guild_name ? '\"' + $json.guild_name + '\"' : 'null' }},\n  \"guild_icon\": {{ $json.guild_icon ? '\"' + $json.guild_icon + '\"' : 'null' }},\n  \"guild_description\": {{ $json.guild_description ? '\"' + $json.guild_description + '\"' : 'null' }},\n  \"member_count\": {{ $json.member_count }},\n  \"channel_count\": {{ $json.channel_count }},\n  \"bot_count\": {{ $json.bot_count }},\n  \"sync_source\": \"{{ $json.sync_source }}\",\n  \"synced_by\": \"{{ $json.synced_by }}\"\n}",
         "options": {
           "timeout": 10000
         }
@@ -42,13 +53,7 @@
       "name": "Sync to Backend",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [700, 300],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "backend-service-token",
-          "name": "Backend Service Token"
-        }
-      }
+      "position": [700, 300]
     },
     {
       "parameters": {
