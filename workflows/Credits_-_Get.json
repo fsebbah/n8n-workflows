@@ -9,7 +9,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Credits - Get\n\n**Endpoint:** GET /webhook/credits-get\n\n**Query Parameters:**\n- `project_id` (required): ID du projet\n- `discord_user_id` (required): ID Discord de l'utilisateur\n\n**Backend APIs:**\n- GET /api/webhook/account (credits)\n- GET /api/webhook/account/logs (transactions)\n\n**Commande bot:** `/credits`",
+        "content": "## Credits - Get\n\n**Endpoint:** GET /webhook/credits-get\n\n**Query Parameters:**\n- `project_id` (required): ID du projet\n- `discord_user_id` (required): ID Discord de l'utilisateur\n\n**Backend APIs:**\n- GET /api/ecommerce/webhook/account (credits)\n- GET /api/ecommerce/webhook/account/logs (transactions)\n\n**Commande bot:** `/credits`",
         "height": 320,
         "width": 300,
         "color": 5
@@ -25,6 +25,7 @@
     },
     {
       "parameters": {
+        "httpMethod": "POST",
         "path": "credits-get",
         "responseMode": "responseNode",
         "options": {}
@@ -41,7 +42,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst query = input.query || {};\nconst body = input.body || {};\nconst ctx = body.context || {};\nconst projectId = query.project_id || null;\nconst discordUserId = query.discord_user_id || null;\nconst backendApiUrl = body.backend_api_url || ctx.backend_api_url;\nconst backendServiceToken = body.backend_service_token || ctx.backend_service_token;\n\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!discordUserId) errors.push('discord_user_id');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    discord_user_id: discordUserId,\n    backend_api_url: backendApiUrl,\n    backend_service_token: backendServiceToken,    \n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst query = input.query || {};\nconst body = input.body || {};\nconst ctx = body.context || {};\n\n// Support both query params (GET) and body (POST)\nconst projectId = body.project_id || query.project_id || null;\nconst discordUserId = body.discord_user_id || query.discord_user_id || null;\n\n// Backend credentials (empty string = not provided)\nconst backendApiUrl = (body.backend_api_url && body.backend_api_url.trim()) || (ctx.backend_api_url && ctx.backend_api_url.trim()) || null;\nconst backendServiceToken = (body.backend_service_token && body.backend_service_token.trim()) || (ctx.backend_service_token && ctx.backend_service_token.trim()) || null;\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!discordUserId) errors.push('discord_user_id');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    discord_user_id: discordUserId,\n    backend_api_url: backendApiUrl,\n    backend_service_token: backendServiceToken,\n    needs_redis_lookup: !backendApiUrl || !backendServiceToken\n  }\n}];"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -86,7 +87,36 @@
     },
     {
       "parameters": {
-        "url": "={{$json.BACKEND_API_URL}}/api/webhook/account?project_id={{ $json.project_id }}&discord_user_id={{ $json.discord_user_id }}",
+        "operation": "get",
+        "propertyName": "redis_config",
+        "key": "=project:{{ $json.project_id }}",
+        "options": {}
+      },
+      "id": "redis-get-config",
+      "name": "Redis GET Config",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [968, 304],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract backend credentials from Redis config if not provided in request\nconst inputData = $('Validate Input').first().json;\nconst redisConfig = JSON.parse($input.first().json.redis_config || '{}');\n\n// Use request values if provided, otherwise fallback to Redis\nconst backendApiUrl = inputData.backend_api_url || redisConfig.backend_api_url || null;\nconst backendServiceToken = inputData.backend_service_token || redisConfig.backend_service_token || null;\n\nreturn [{\n  json: {\n    project_id: inputData.project_id,\n    discord_user_id: inputData.discord_user_id,\n    backend_api_url: backendApiUrl,\n    backend_service_token: backendServiceToken\n  }\n}];"
+      },
+      "id": "extract-backend-config",
+      "name": "Extract Backend Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1168, 304]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.backend_api_url }}/api/ecommerce/webhook/account?project_id={{ $json.project_id }}&discord_user_id={{ $json.discord_user_id }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -116,7 +146,7 @@
     },
     {
       "parameters": {
-        "url": "={{$json.BACKEND_API_URL}}/api/webhook/account/logs?project_id={{ $json.project_id }}&discord_user_id={{ $json.discord_user_id }}&limit=5",
+        "url": "={{ $json.backend_api_url }}/api/ecommerce/webhook/account/logs?project_id={{ $json.project_id }}&discord_user_id={{ $json.discord_user_id }}&limit=5",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -307,12 +337,7 @@
       "main": [
         [
           {
-            "node": "Get Credits (API)",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Get Logs (API)",
+            "node": "Redis GET Config",
             "type": "main",
             "index": 0
           }
@@ -320,6 +345,33 @@
         [
           {
             "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis GET Config": {
+      "main": [
+        [
+          {
+            "node": "Extract Backend Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Backend Config": {
+      "main": [
+        [
+          {
+            "node": "Get Credits (API)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Logs (API)",
             "type": "main",
             "index": 0
           }
@@ -463,7 +515,7 @@
     "nodes": [
       {
         "parameters": {
-          "content": "## Credits - Get\n\n**Endpoint:** GET /webhook/credits-get\n\n**Query Parameters:**\n- `project_id` (required): ID du projet\n- `discord_user_id` (required): ID Discord de l'utilisateur\n\n**Backend APIs:**\n- GET /api/webhook/account (credits)\n- GET /api/webhook/account/logs (transactions)\n\n**Commande bot:** `/credits`",
+          "content": "## Credits - Get\n\n**Endpoint:** GET /webhook/credits-get\n\n**Query Parameters:**\n- `project_id` (required): ID du projet\n- `discord_user_id` (required): ID Discord de l'utilisateur\n\n**Backend APIs:**\n- GET /api/ecommerce/webhook/account (credits)\n- GET /api/ecommerce/webhook/account/logs (transactions)\n\n**Commande bot:** `/credits`",
           "height": 320,
           "width": 300,
           "color": 5
@@ -479,7 +531,8 @@
       },
       {
         "parameters": {
-          "path": "credits-get",
+          "httpMethod": "POST",
+        "path": "credits-get",
           "responseMode": "responseNode",
           "options": {}
         },
@@ -495,7 +548,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const input = $input.first().json;\nconst query = input.query || {};\nconst body = input.body || {};\nconst ctx = body.context || {};\nconst projectId = query.project_id || null;\nconst discordUserId = query.discord_user_id || null;\nconst backendApiUrl = body.backend_api_url || ctx.backend_api_url;\nconst backendServiceToken = body.backend_service_token || ctx.backend_service_token;\n\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!discordUserId) errors.push('discord_user_id');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    discord_user_id: discordUserId,\n    backend_api_url: backendApiUrl,\n    backend_service_token: backendServiceToken,    \n  }\n}];"
+          "jsCode": "const input = $input.first().json;\nconst query = input.query || {};\nconst body = input.body || {};\nconst ctx = body.context || {};\n\n// Support both query params (GET) and body (POST)\nconst projectId = body.project_id || query.project_id || null;\nconst discordUserId = body.discord_user_id || query.discord_user_id || null;\n\n// Backend credentials (empty string = not provided)\nconst backendApiUrl = (body.backend_api_url && body.backend_api_url.trim()) || (ctx.backend_api_url && ctx.backend_api_url.trim()) || null;\nconst backendServiceToken = (body.backend_service_token && body.backend_service_token.trim()) || (ctx.backend_service_token && ctx.backend_service_token.trim()) || null;\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!discordUserId) errors.push('discord_user_id');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    discord_user_id: discordUserId,\n    backend_api_url: backendApiUrl,\n    backend_service_token: backendServiceToken,\n    needs_redis_lookup: !backendApiUrl || !backendServiceToken\n  }\n}];"
         },
         "id": "validate-input",
         "name": "Validate Input",
@@ -540,7 +593,7 @@
       },
       {
         "parameters": {
-          "url": "={{$json.BACKEND_API_URL}}/api/webhook/account?project_id={{ $json.project_id }}&discord_user_id={{ $json.discord_user_id }}",
+          "url": "={{ $json.backend_api_url }}/api/ecommerce/webhook/account?project_id={{ $json.project_id }}&discord_user_id={{ $json.discord_user_id }}",
           "sendHeaders": true,
           "headerParameters": {
             "parameters": [
@@ -570,7 +623,7 @@
       },
       {
         "parameters": {
-          "url": "={{$json.BACKEND_API_URL}}/api/webhook/account/logs?project_id={{ $json.project_id }}&discord_user_id={{ $json.discord_user_id }}&limit=5",
+          "url": "={{ $json.backend_api_url }}/api/ecommerce/webhook/account/logs?project_id={{ $json.project_id }}&discord_user_id={{ $json.discord_user_id }}&limit=5",
           "sendHeaders": true,
           "headerParameters": {
             "parameters": [
