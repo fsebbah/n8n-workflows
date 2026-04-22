@@ -41,7 +41,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extraire et valider les paramètres\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst traite = query.traite || null;\nconst page = query.page || null;\nconst includeTranslations = query.include_translations === \"true\" || query.include_translations === true;\nconst targetLanguage = query.target_language || \"fr\";\n\n// Validation\nconst errors = [];\nif (!traite) errors.push('Le paramètre \"traite\" est requis');\nif (!page) errors.push('Le paramètre \"page\" est requis');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    traite: traite,\n    page: page,\n    includeTranslations: includeTranslations,\n    targetLanguage: targetLanguage\n  }\n}];"
+        "jsCode": "// Extraire et valider les paramètres (API v2)\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst traite = query.traite || null;\nconst page = query.page || null;\nconst includeTranslations = query.include_translations === \"true\" || query.include_translations === true;\nconst targetLanguage = query.target_language || \"fr\";\nconst corpus = query.corpus || null;  // API v2: corpus parameter for disambiguation\n\n// Validation\nconst errors = [];\nif (!traite) errors.push('Le paramètre \"traite\" est requis');\nif (!page) errors.push('Le paramètre \"page\" est requis');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    traite: traite,\n    page: page,\n    includeTranslations: includeTranslations,\n    targetLanguage: targetLanguage,\n    corpus: corpus  // API v2: pass corpus for disambiguation\n  }\n}];"
       },
       "id": "parse-params",
       "name": "Parse Parameters",
@@ -86,7 +86,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.API_URL }}/api/talmud/page/{{ encodeURIComponent($json.traite) }}/{{ encodeURIComponent($json.page) }}/segments{{ $json.includeTranslations ? '?include_translations=true&target_language=' + $json.targetLanguage : '' }}",
+        "url": "={{ $env.API_URL }}/api/talmud/page/{{ encodeURIComponent($json.traite) }}/{{ encodeURIComponent($json.page) }}/segments{{ (() => { let params = []; if ($json.includeTranslations) { params.push('include_translations=true'); params.push('target_language=' + $json.targetLanguage); } if ($json.corpus) { params.push('corpus=' + encodeURIComponent($json.corpus)); } return params.length > 0 ? '?' + params.join('&') : ''; })() }}",
         "options": {
           "response": {
             "response": {
@@ -108,7 +108,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Formater la réponse de l'API\nconst input = $input.first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Erreur API\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Retourner la réponse avec success flag\nreturn [{\n  json: {\n    success: true,\n    ...data\n  }\n}];"
+        "jsCode": "// Formater la réponse de l'API (API v2)\nconst input = $input.first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// API v2: Handle AmbiguousReferenceError (400 with error_type)\nif (statusCode === 400 && data.error_type === 'AmbiguousReferenceError') {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: data.message || 'Référence ambiguë - veuillez spécifier le corpus',\n        status: 'AMBIGUOUS_REFERENCE',\n        error_type: 'AmbiguousReferenceError',\n        options: data.options || []  // Available corpus options\n      }\n    }\n  }];\n}\n\n// Erreur API\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Retourner la réponse avec success flag\nreturn [{\n  json: {\n    success: true,\n    ...data\n  }\n}];"
       },
       "id": "format-response",
       "name": "Format Response",
@@ -340,7 +340,7 @@
       },
       {
         "parameters": {
-          "jsCode": "// Extraire et valider les paramètres\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst traite = query.traite || null;\nconst page = query.page || null;\nconst includeTranslations = query.include_translations === \"true\" || query.include_translations === true;\nconst targetLanguage = query.target_language || \"fr\";\n\n// Validation\nconst errors = [];\nif (!traite) errors.push('Le paramètre \"traite\" est requis');\nif (!page) errors.push('Le paramètre \"page\" est requis');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    traite: traite,\n    page: page,\n    includeTranslations: includeTranslations,\n    targetLanguage: targetLanguage\n  }\n}];"
+          "jsCode": "// Extraire et valider les paramètres (API v2)\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst traite = query.traite || null;\nconst page = query.page || null;\nconst includeTranslations = query.include_translations === \"true\" || query.include_translations === true;\nconst targetLanguage = query.target_language || \"fr\";\nconst corpus = query.corpus || null;  // API v2: corpus parameter for disambiguation\n\n// Validation\nconst errors = [];\nif (!traite) errors.push('Le paramètre \"traite\" est requis');\nif (!page) errors.push('Le paramètre \"page\" est requis');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    traite: traite,\n    page: page,\n    includeTranslations: includeTranslations,\n    targetLanguage: targetLanguage,\n    corpus: corpus  // API v2: pass corpus for disambiguation\n  }\n}];"
         },
         "id": "parse-params",
         "name": "Parse Parameters",
@@ -385,7 +385,7 @@
       },
       {
         "parameters": {
-          "url": "={{ $env.API_URL }}/api/talmud/page/{{ encodeURIComponent($json.traite) }}/{{ encodeURIComponent($json.page) }}/segments{{ $json.includeTranslations ? '?include_translations=true&target_language=' + $json.targetLanguage : '' }}",
+          "url": "={{ $env.API_URL }}/api/talmud/page/{{ encodeURIComponent($json.traite) }}/{{ encodeURIComponent($json.page) }}/segments{{ (() => { let params = []; if ($json.includeTranslations) { params.push('include_translations=true'); params.push('target_language=' + $json.targetLanguage); } if ($json.corpus) { params.push('corpus=' + encodeURIComponent($json.corpus)); } return params.length > 0 ? '?' + params.join('&') : ''; })() }}",
           "options": {
             "response": {
               "response": {
@@ -407,7 +407,7 @@
       },
       {
         "parameters": {
-          "jsCode": "// Formater la réponse de l'API\nconst input = $input.first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Erreur API\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Retourner la réponse avec success flag\nreturn [{\n  json: {\n    success: true,\n    ...data\n  }\n}];"
+          "jsCode": "// Formater la réponse de l'API (API v2)\nconst input = $input.first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// API v2: Handle AmbiguousReferenceError (400 with error_type)\nif (statusCode === 400 && data.error_type === 'AmbiguousReferenceError') {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: data.message || 'Référence ambiguë - veuillez spécifier le corpus',\n        status: 'AMBIGUOUS_REFERENCE',\n        error_type: 'AmbiguousReferenceError',\n        options: data.options || []  // Available corpus options\n      }\n    }\n  }];\n}\n\n// Erreur API\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Retourner la réponse avec success flag\nreturn [{\n  json: {\n    success: true,\n    ...data\n  }\n}];"
         },
         "id": "format-response",
         "name": "Format Response",
