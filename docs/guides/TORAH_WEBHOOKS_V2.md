@@ -379,6 +379,157 @@ GET /webhook/torah-sources
 
 ---
 
+## 8. GET /webhook/torah-corpus (NOUVEAU v2)
+
+Liste des corpus du catalogue (9 corpus seedes).
+
+### Request
+
+```
+GET /webhook/torah-corpus
+```
+
+Pas de parametres.
+
+### Response
+
+```json
+{
+  "success": true,
+  "corpus": [
+    {
+      "id": "uuid",
+      "name": "Bavli",
+      "hebrew_name": "בבלי",
+      "aliases": {
+        "sefaria": ["Talmud/Bavli", "Babylonian Talmud"],
+        "french": ["Talmud de Babylone", "Talmud Bavli"],
+        "variants": ["Talmud Babli", "Gemara"]
+      }
+    },
+    {
+      "id": "uuid",
+      "name": "Yerushalmi",
+      "hebrew_name": "ירושלמי",
+      "aliases": {
+        "sefaria": ["Talmud/Yerushalmi", "Jerusalem Talmud"],
+        "french": ["Talmud de Jerusalem"],
+        "variants": []
+      }
+    }
+  ],
+  "count": 9
+}
+```
+
+**Usage:** Alimenter un menu deroulant pour selection du corpus.
+
+---
+
+## 9. GET /webhook/torah-corpus-sedarim (NOUVEAU v2)
+
+Liste des sedarim d'un corpus.
+
+### Request
+
+```
+GET /webhook/torah-corpus-sedarim?corpus=Bavli
+```
+
+| Param | Type | Requis | Description |
+|-------|------|--------|-------------|
+| `corpus` | string | Oui | Nom canonique ou alias du corpus |
+
+### Response (succes)
+
+```json
+{
+  "success": true,
+  "corpus": "Bavli",
+  "sedarim": [
+    {
+      "id": "uuid",
+      "name": "Zeraim",
+      "hebrew_name": "זרעים",
+      "aliases": {}
+    },
+    {
+      "id": "uuid",
+      "name": "Moed",
+      "hebrew_name": "מועד",
+      "aliases": {}
+    }
+  ],
+  "count": 6
+}
+```
+
+### Response (erreur 404)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": 404,
+    "message": "Corpus not found: 'XYZ'",
+    "status": "NOT_FOUND"
+  }
+}
+```
+
+---
+
+## 10. GET /webhook/torah-corpus-traites (NOUVEAU v2)
+
+Liste des traites et pages d'un seder.
+
+### Request
+
+```
+GET /webhook/torah-corpus-traites?corpus=Bavli&seder=Zeraim
+```
+
+| Param | Type | Requis | Description |
+|-------|------|--------|-------------|
+| `corpus` | string | Oui | Nom canonique ou alias du corpus |
+| `seder` | string | Oui | Nom canonique ou alias du seder |
+
+### Response (succes)
+
+```json
+{
+  "success": true,
+  "corpus": "Bavli",
+  "seder": "Zeraim",
+  "traites": [
+    {
+      "id": "uuid-project",
+      "name": "Berakhot",
+      "pages": ["2a", "2b", "3a", "3b", "..."],
+      "pages_count": 127
+    }
+  ],
+  "count": 1
+}
+```
+
+### Response (erreur 404)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": 404,
+    "message": "Seder not found: 'XYZ' in corpus 'Bavli'",
+    "status": "NOT_FOUND"
+  }
+}
+```
+
+**Usage:** Construire un picker hierarchique `Corpus → Seder → Traite → Page`
+
+---
+
 ## Gestion des erreurs
 
 ### AmbiguousReferenceError (HTTP 400)
@@ -455,6 +606,9 @@ Les workflows acceptent temporairement les deux formats:
 | torah-router | qPhg64qfExkYEMsI | Active |
 | torah-vocalization | 8SzNofDdhn4J16Zq | Active |
 | torah-sources | (a verifier) | Active |
+| torah-corpus | AfTOoUOzRD2fF5cG | Active |
+| torah-corpus-sedarim | p3I65tQo5eoYndum | Active |
+| torah-corpus-traites | ILoUSDjcNOZBxmYs | Active |
 
 ---
 
