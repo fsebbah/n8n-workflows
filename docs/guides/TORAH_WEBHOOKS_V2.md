@@ -595,24 +595,64 @@ Les workflows acceptent temporairement les deux formats:
 
 ---
 
-## Endpoints n8n actifs
+## Webhooks OBSOLETES (ne pas creer)
 
-| Webhook | Workflow ID | Status |
-|---------|-------------|--------|
-| torah-list | KMdbJCxi4iONooEm | Active |
-| torah-get-page-translations | kzNgywLbS3VqwHpq | Active |
-| torah-translate-page | NfTKTDMDSb543Qik | Active |
-| torah-job-status | 0wrnsac6uL4uWZwD | Active |
-| torah-router | qPhg64qfExkYEMsI | Active |
-| torah-vocalization | 8SzNofDdhn4J16Zq | Active |
-| torah-sources | (a verifier) | Active |
-| torah-corpus | AfTOoUOzRD2fF5cG | Active |
-| torah-corpus-sedarim | p3I65tQo5eoYndum | Active |
-| torah-corpus-traites | ILoUSDjcNOZBxmYs | Active |
+Ces webhooks etaient prevus mais sont remplaces par les nouveaux endpoints v2:
+
+| Ancien webhook | Remplace par | Raison |
+|----------------|--------------|--------|
+| ~~`torah-list-sections`~~ | `torah-corpus-traites` | Navigation hierarchique corpus/seder/traite |
+| ~~`torah-get-section`~~ | `torah-get-page-translations` + `?corpus=` | Disambiguation via parametre corpus |
+| ~~`torah-validate-text`~~ | `torah-sources` | Filtrage cote client |
+| ~~`torah-traite-pages`~~ | `torah-corpus-traites` | Deja inclus dans la reponse |
+
+---
+
+## Endpoints API-only (pas de webhook)
+
+Ces endpoints sont appeles directement par l'API ou en interne par les workflows:
+
+| Endpoint API | Description | Usage |
+|--------------|-------------|-------|
+| `GET /api/talmud/text/{traite}/{page}` | Texte brut segmente | Appel interne workflow |
+| `GET /api/talmud/traite/{traite}/pages` | Pages d'un traite | Appel direct API |
+| `POST /api/commentaries/nekudot` | Batch check nekudot | Appel direct API |
+| `POST /api/translations/save` | Sauvegarde traduction | Appel interne workflow |
+| `GET /api/torah/sections/{source}` | Sections d'une source | Appel direct API |
+| `GET /api/torah/sections/{source}/{section}` | Contenu section | Appel direct API |
+| `GET /api/sefaria/texts/search` | Normalisation texte | Appel direct API |
+
+---
+
+## Endpoints n8n actifs (10 webhooks)
+
+| Webhook | Workflow ID | Endpoint API | Status |
+|---------|-------------|--------------|--------|
+| torah-list | KMdbJCxi4iONooEm | `GET /api/talmud/traites` | Active |
+| torah-get-page-translations | kzNgywLbS3VqwHpq | `GET /api/talmud/page/.../segments` | Active |
+| torah-translate-page | NfTKTDMDSb543Qik | Orchestrateur (jobs + LLM) | Active |
+| torah-job-status | 0wrnsac6uL4uWZwD | `GET /api/v2/jobs/{id}` | Active |
+| torah-router | qPhg64qfExkYEMsI | Orchestrateur interne | Active |
+| torah-vocalization | 8SzNofDdhn4J16Zq | `GET/POST /api/vocalization/*` | Active |
+| torah-sources | (a verifier) | `GET /api/torah/sources` | Active |
+| torah-corpus | AfTOoUOzRD2fF5cG | `GET /api/corpus` | Active |
+| torah-corpus-sedarim | p3I65tQo5eoYndum | `GET /api/corpus/{c}/sedarim` | Active |
+| torah-corpus-traites | ILoUSDjcNOZBxmYs | `GET /api/corpus/{c}/sedarim/{s}` | Active |
+
+---
+
+## Recap
+
+| Categorie | Nombre |
+|-----------|--------|
+| Webhooks actifs | **10** |
+| Webhooks obsoletes | 4 (ne pas creer) |
+| API-only (appel direct) | 7 |
+
+**Total: 10 webhooks actifs + 7 endpoints API-only**
 
 ---
 
 ## Contact
 
 Questions sur cette API: equipe n8n
-PR: https://github.com/fsebbah/n8n-workflows/pull/337
