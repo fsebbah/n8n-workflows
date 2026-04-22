@@ -35,7 +35,7 @@
           "conditions": [
             {
               "id": "condition-source-texts",
-              "leftValue": "={{ $json.source_text_ids }}",
+              "leftValue": "={{ $json.segment_ids || $json.source_text_ids }}",
               "rightValue": "",
               "operator": {
                 "type": "array",
@@ -112,7 +112,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\n\nconst config = input.config || {\n  target_language: 'fr',\n  translator: { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022' },\n  reviewer: { provider: 'openai', model: 'gpt-4o' }\n};\n\nconst items = input.source_text_ids.map((id, index) => ({\n  json: {\n    source_text_id: id,\n    index: index + 1,\n    total: input.source_text_ids.length,\n    config: config,\n    book: input.book || 'Unknown'\n  }\n}));\n\nreturn items;"
+        "jsCode": "const input = $input.first().json;\n\nconst config = input.config || {\n  target_language: 'fr',\n  translator: { provider: 'anthropic', model: 'claude-sonnet-4-20250514' },\n  reviewer: { provider: 'openai', model: 'gpt-4o' }\n};\n\n// API v2: support both source_text_ids and segment_ids\nconst ids = input.segment_ids || input.source_text_ids || [];\nconst idType = input.segment_ids ? 'segment' : 'source_text';\n\nconst items = ids.map((id, index) => ({\n  json: {\n    id: id,\n    id_type: idType,\n    segment_id: idType === 'segment' ? id : null,\n    source_text_id: idType === 'source_text' ? id : null,\n    index: index + 1,\n    total: ids.length,\n    config: config,\n    book: input.book || 'Unknown'\n  }\n}));\n\nreturn items;"
       },
       "id": "prepare-batch",
       "name": "Prepare Batch Items",
@@ -142,7 +142,7 @@
         "url": "{{ $env.API_URL }}/api/translate-with-comments",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"reference\": {\n    \"table\": \"source_texts\",\n    \"uuid\": \"{{ $json.source_text_id }}\"\n  },\n  \"target_language\": \"{{ $json.config.target_language }}\",\n  \"translator\": {{ JSON.stringify($json.config.translator) }},\n  \"reviewer\": {{ JSON.stringify($json.config.reviewer) }},\n  \"apply_grammalecte\": true\n}",
+        "jsonBody": "={{ JSON.stringify({ reference: { table: $json.id_type === 'segment' ? 'source_text_segments' : 'source_texts', uuid: $json.id }, segment_id: $json.segment_id, source_text_id: $json.source_text_id, target_language: $json.config.target_language, translator: $json.config.translator, reviewer: $json.config.reviewer, apply_grammalecte: true }) }}",
         "options": {
           "timeout": 300000
         }
@@ -507,7 +507,7 @@
             "conditions": [
               {
                 "id": "condition-source-texts",
-                "leftValue": "={{ $json.source_text_ids }}",
+                "leftValue": "={{ $json.segment_ids || $json.source_text_ids }}",
                 "rightValue": "",
                 "operator": {
                   "type": "array",
@@ -584,7 +584,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const input = $input.first().json;\n\nconst config = input.config || {\n  target_language: 'fr',\n  translator: { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022' },\n  reviewer: { provider: 'openai', model: 'gpt-4o' }\n};\n\nconst items = input.source_text_ids.map((id, index) => ({\n  json: {\n    source_text_id: id,\n    index: index + 1,\n    total: input.source_text_ids.length,\n    config: config,\n    book: input.book || 'Unknown'\n  }\n}));\n\nreturn items;"
+          "jsCode": "const input = $input.first().json;\n\nconst config = input.config || {\n  target_language: 'fr',\n  translator: { provider: 'anthropic', model: 'claude-sonnet-4-20250514' },\n  reviewer: { provider: 'openai', model: 'gpt-4o' }\n};\n\n// API v2: support both source_text_ids and segment_ids\nconst ids = input.segment_ids || input.source_text_ids || [];\nconst idType = input.segment_ids ? 'segment' : 'source_text';\n\nconst items = ids.map((id, index) => ({\n  json: {\n    id: id,\n    id_type: idType,\n    segment_id: idType === 'segment' ? id : null,\n    source_text_id: idType === 'source_text' ? id : null,\n    index: index + 1,\n    total: ids.length,\n    config: config,\n    book: input.book || 'Unknown'\n  }\n}));\n\nreturn items;"
         },
         "id": "prepare-batch",
         "name": "Prepare Batch Items",
@@ -614,7 +614,7 @@
           "url": "{{ $env.API_URL }}/api/translate-with-comments",
           "sendBody": true,
           "specifyBody": "json",
-          "jsonBody": "={\n  \"reference\": {\n    \"table\": \"source_texts\",\n    \"uuid\": \"{{ $json.source_text_id }}\"\n  },\n  \"target_language\": \"{{ $json.config.target_language }}\",\n  \"translator\": {{ JSON.stringify($json.config.translator) }},\n  \"reviewer\": {{ JSON.stringify($json.config.reviewer) }},\n  \"apply_grammalecte\": true\n}",
+          "jsonBody": "={{ JSON.stringify({ reference: { table: $json.id_type === 'segment' ? 'source_text_segments' : 'source_texts', uuid: $json.id }, segment_id: $json.segment_id, source_text_id: $json.source_text_id, target_language: $json.config.target_language, translator: $json.config.translator, reviewer: $json.config.reviewer, apply_grammalecte: true }) }}",
           "options": {
             "timeout": 300000
           }
