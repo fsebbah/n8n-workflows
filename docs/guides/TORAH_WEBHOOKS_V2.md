@@ -595,135 +595,36 @@ Les workflows acceptent temporairement les deux formats:
 
 ---
 
-## 11. POST /webhook/torah-list-sections
+## Webhooks OBSOLETES (ne pas creer)
 
-Liste les sections d'une source complexe (Sha'ar HaHakdamot, etc.).
+Ces webhooks etaient prevus mais sont remplaces par les nouveaux endpoints v2:
 
-### Request
-
-```json
-POST /webhook/torah-list-sections
-Content-Type: application/json
-
-{
-  "source": "Sha'ar HaHakdamot",
-  "corpus": "Kabbalah"
-}
-```
-
-| Param | Type | Requis | Description |
-|-------|------|--------|-------------|
-| `source` | string | Oui | Nom de la source |
-| `corpus` | string | Non | Corpus pour disambiguation |
-
-### Response
-
-```json
-{
-  "success": true,
-  "source": "Sha'ar HaHakdamot",
-  "corpus": "Kabbalah",
-  "seder": null,
-  "sections": [
-    {"name": "Introduction", "count": 5},
-    {"name": "Chapter 1", "count": 12}
-  ]
-}
-```
-
----
-
-## 12. POST /webhook/torah-get-section
-
-Recupere le contenu d'une section specifique.
-
-### Request
-
-```json
-POST /webhook/torah-get-section
-Content-Type: application/json
-
-{
-  "source": "Sha'ar HaHakdamot",
-  "section": "Introduction",
-  "number": 3,
-  "corpus": "Kabbalah"
-}
-```
-
-| Param | Type | Requis | Description |
-|-------|------|--------|-------------|
-| `source` | string | Oui | Nom de la source |
-| `section` | string | Oui | Nom de la section |
-| `number` | int | Non | Numero dans la section |
-| `corpus` | string | Non | Corpus pour disambiguation |
-
-### Response
-
-```json
-{
-  "success": true,
-  "source": "Sha'ar HaHakdamot",
-  "corpus": "Kabbalah",
-  "section": {
-    "title": "Introduction 3",
-    "content": "..."
-  }
-}
-```
-
----
-
-## 13. POST /webhook/torah-validate-text
-
-Valide et normalise les noms de textes (autocomplete/fuzzy search).
-
-### Request
-
-```json
-POST /webhook/torah-validate-text
-Content-Type: application/json
-
-{
-  "query": "soukkah",
-  "category": "bavli"
-}
-```
-
-| Param | Type | Requis | Description |
-|-------|------|--------|-------------|
-| `query` | string | Oui | Terme de recherche |
-| `category` | string | Non | Filtre categorie |
-
-### Response
-
-```json
-{
-  "success": true,
-  "found": true,
-  "query": "soukkah",
-  "canonical": "Sukkah",
-  "heTitle": "סוכה",
-  "corpus": "Bavli",
-  "confidence": 0.91
-}
-```
+| Ancien webhook | Remplace par | Raison |
+|----------------|--------------|--------|
+| ~~`torah-list-sections`~~ | `torah-corpus-traites` | Navigation hierarchique corpus/seder/traite |
+| ~~`torah-get-section`~~ | `torah-get-page-translations` + `?corpus=` | Disambiguation via parametre corpus |
+| ~~`torah-validate-text`~~ | `torah-sources` | Filtrage cote client |
+| ~~`torah-traite-pages`~~ | `torah-corpus-traites` | Deja inclus dans la reponse |
 
 ---
 
 ## Endpoints API-only (pas de webhook)
 
-Ces endpoints sont appeles directement par l'API backend, pas via webhook n8n:
+Ces endpoints sont appeles directement par l'API ou en interne par les workflows:
 
 | Endpoint API | Description | Usage |
 |--------------|-------------|-------|
 | `GET /api/talmud/text/{traite}/{page}` | Texte brut segmente | Appel interne workflow |
+| `GET /api/talmud/traite/{traite}/pages` | Pages d'un traite | Appel direct API |
 | `POST /api/commentaries/nekudot` | Batch check nekudot | Appel direct API |
 | `POST /api/translations/save` | Sauvegarde traduction | Appel interne workflow |
+| `GET /api/torah/sections/{source}` | Sections d'une source | Appel direct API |
+| `GET /api/torah/sections/{source}/{section}` | Contenu section | Appel direct API |
+| `GET /api/sefaria/texts/search` | Normalisation texte | Appel direct API |
 
 ---
 
-## Endpoints n8n actifs
+## Endpoints n8n actifs (10 webhooks)
 
 | Webhook | Workflow ID | Endpoint API | Status |
 |---------|-------------|--------------|--------|
@@ -737,21 +638,18 @@ Ces endpoints sont appeles directement par l'API backend, pas via webhook n8n:
 | torah-corpus | AfTOoUOzRD2fF5cG | `GET /api/corpus` | Active |
 | torah-corpus-sedarim | p3I65tQo5eoYndum | `GET /api/corpus/{c}/sedarim` | Active |
 | torah-corpus-traites | ILoUSDjcNOZBxmYs | `GET /api/corpus/{c}/sedarim/{s}` | Active |
-| torah-list-sections | (a creer) | `GET /api/torah/sections/{source}` | **TODO** |
-| torah-get-section | (a creer) | `GET /api/torah/sections/{s}/{s}` | **TODO** |
-| torah-validate-text | (a creer) | `GET /api/sefaria/texts/search` | **TODO** |
 
 ---
 
 ## Recap
 
-| Categorie | Nombre | Status |
-|-----------|--------|--------|
-| Webhooks actifs | 10 | OK |
-| Webhooks a creer | 3 | TODO |
-| API-only (pas de webhook) | 3 | Appel direct |
+| Categorie | Nombre |
+|-----------|--------|
+| Webhooks actifs | **10** |
+| Webhooks obsoletes | 4 (ne pas creer) |
+| API-only (appel direct) | 7 |
 
-**Total: 13 webhooks (10 actifs + 3 TODO) + 3 endpoints API-only**
+**Total: 10 webhooks actifs + 7 endpoints API-only**
 
 ---
 
