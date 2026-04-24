@@ -38,6 +38,117 @@ Il n'y a **aucune valeur réservée** (pas de `?corpus=auto`).
 
 ## 3. Endpoints catalogue
 
+### 3.0 GET `/api/corpus`
+
+Liste des corpus du catalogue (9 rows seedées). Utilisable pour alimenter un menu déroulant côté client.
+
+**Query :** aucun.
+
+**Réponse :**
+```json
+{
+  "corpus": [
+    {
+      "id": "uuid",
+      "name": "Bavli",
+      "hebrew_name": "בבלי",
+      "aliases": {
+        "sefaria":  ["Talmud/Bavli", "Babylonian Talmud"],
+        "french":   ["Talmud de Babylone", "Talmud Bavli"],
+        "variants": ["Talmud Babli", "Gemara"]
+      }
+    }
+  ],
+  "count": 9
+}
+```
+
+---
+
+### 3.0.1 GET `/api/corpus/{corpus}/sedarim`
+
+Liste des sedarim d'un corpus.
+
+**Path :**
+| Param | Type | Description |
+|---|---|---|
+| `corpus` | string | Nom canonique (`Bavli`) ou alias (sefaria/french/variants) |
+
+**Réponse :**
+```json
+{
+  "corpus": "Bavli",
+  "sedarim": [
+    {
+      "id": "uuid",
+      "name": "Zeraim",
+      "hebrew_name": "זרעים",
+      "aliases": {}
+    }
+  ],
+  "count": 4
+}
+```
+
+**Erreur :**
+- **404** : corpus inconnu (`Corpus not found: 'XYZ'`).
+
+---
+
+### 3.0.1.1 GET `/api/sedarim`
+
+Liste **dédupliquée** des sedarim canoniques, tous corpus confondus (pour un picker « seder » indépendant du corpus).
+
+**Réponse :**
+```json
+{
+  "sedarim": [
+    {"name": "Zeraim",   "hebrew_name": "זרעים",  "corpus": ["Bavli", "Mishnah"]},
+    {"name": "Moed",     "hebrew_name": "מועד",   "corpus": ["Bavli", "Mishnah", "Yerushalmi"]},
+    {"name": "Kodashim", "hebrew_name": "קדשים",  "corpus": ["Mishnah"]}
+  ],
+  "count": 6
+}
+```
+
+Pour chaque nom distinct, `corpus[]` liste les corpus où il est seedé.
+
+---
+
+### 3.0.2 GET `/api/corpus/{corpus}/sedarim/{seder}`
+
+Liste des **traités** d'un seder, avec leurs **pages** dérivées de `source_texts.reference`. Usage : permettre au client de construire un picker complet `corpus → seder → traité → page` côté Discord.
+
+**Path :**
+| Param | Type | Description |
+|---|---|---|
+| `corpus` | string | Nom canonique ou alias du corpus |
+| `seder` | string | Nom canonique ou alias du seder (dans ce corpus) |
+
+**Réponse :**
+```json
+{
+  "corpus": "Bavli",
+  "seder": "Zeraim",
+  "traites": [
+    {
+      "id": "uuid-project",
+      "name": "Berakhot",
+      "pages": ["2a", "2b", "3a", "..."],
+      "pages_count": 127
+    }
+  ],
+  "count": 1
+}
+```
+
+**Erreurs :**
+- **404** : corpus ou seder inconnu.
+
+Les `pages` sont triées par `source_texts.position` (ordre canonique). Une page = suffixe extrait de `source_texts.reference` après le nom du traité (ex : `Berakhot 2a` → `2a`).
+
+---
+
 ### 3.1 GET `/api/torah/sources`
 
 Liste des sources Torah avec leur `corpus` / `seder`.
@@ -191,23 +302,61 @@ Page segmentée **avec traductions courantes** jointes depuis `translations_v2`.
       "hebrew_text": "...",
       "has_translation": true,
       "translation": {
-        "id": "uuid-translation",
-        "text": "...",
+        "id": "uuid-translation-current",
+        "translated_text": "...",
         "target_language": "fr",
         "version": 3,
+        "is_current": true,
         "provider": "anthropic",
         "model": "claude-sonnet-4",
         "quality_score": 0.92,
-        "job_id": "job_abc"
+        "job_id": "job_abc",
+        "created_at": "2026-04-23T..."
       },
-      "commentaries": [...],
+      "translations": [
+        { "id": "...", "version": 3, "is_current": true,  "translated_text": "...", "provider": "...", "created_at": "..." },
+        { "id": "...", "version": 2, "is_current": false, "translated_text": "...", "provider": "...", "created_at": "..." },
+        { "id": "...", "version": 1, "is_current": false, "translated_text": "...", "provider": "...", "created_at": "..." }
+      ],
+      "commentaries": [
+        {
+          "commentary_id": "uuid-commentary",
+          "commentator": "Rashi",
+          "traite": "Berakhot",
+          "page": "2a",
+          "segment_num": 1,
+          "text": "...",
+          "hebrew_text": "...",
+          "has_translation": true,
+          "has_nekudot": false
+        }
+      ],
       "commentaries_count": 3
     }
   ]
 }
 ```
 
-`segment_id` est l'UUID à utiliser pour `POST /api/translations/save` (mode 1).
+- `segment_id` est l'UUID à utiliser pour `POST /api/translations/save` (mode 1).
+- `translation` reste la **version courante** (`is_current = true`).
+- `translations[]` expose **l'historique complet** (toutes versions triées `version DESC`), chacune avec son propre `is_current`. Utile pour les workflows de review / rollback.
+- Chaque entrée de `commentaries[]` expose désormais les colonnes structurées v2 : `commentary_id` (UUID stable), `traite`, `page`, `segment_num`.
+
+> **Breaking change 2026-04-23** : le champ `text` dans `translation` et `translations[]` **a été supprimé**. Seul `translated_text` reste. Cohérence avec la colonne DB `translations_v2.translated_text`. Validé avec la data team (phase 3 du plan de dépréciation, cf. `response-to-api-residuals.md` §C.3). Les clients qui lisaient `.translation.text` doivent basculer sur `.translation.translated_text`.
+
+> **🔔 Fix 2026-04-23 (soir) — Volume de `commentaries[]` augmente.**
+>
+> **Contexte :** jusqu'à ce fix, le endpoint filtrait les commentaires sur `(commentary_details.traite, page)` == (Daf demandé). Ce filtre excluait silencieusement toutes les **anthologies** (Rif, Rosh, Ein Yaakov, Meiri on X, etc.) dont le `commentary_details.traite` porte leur **propre pagination** (ex : `"Rif Pesachim"`, folio `"2b"`) tout en référençant le Daf Talmud cible via `source_text_id`.
+>
+> **Changement :** le filtre est désormais `WHERE source_text_id = <source_text.id du Daf>` (FK canonique). Les anthologies remontent enfin correctement sur le bon Daf. Diagnostic et validation par l'équipe data.
+>
+> **Impact côté n8n (Discord et plugin-torah) :**
+> - Sur un Daf populaire (Pesachim 6a, Ketubot 61b, etc.), le `commentaries_total` peut **augmenter jusqu'à +30-50%** selon les anthologies indexées.
+> - Exemples top-15 des commentateurs qui réapparaissent désormais : Rif (+2 772), Rosh (+1 460), Yein Levanon (+1 324), Tosafot (+1 052), Rashi (+443), Magen Avot (+371), Meiri (+271), Rashba (+145). **Tosafot et Rashi eux-mêmes** avaient partiellement été filtrés sur certains Dafim à cause de cas particuliers — ils reviennent complets.
+> - Si votre UI Discord **pagine** les commentaires ou applique des **limits côté client**, le comportement reste stable (juste plus de pages). Si elle affiche tout sans limite, les messages Discord risquent de déborder — à vérifier.
+> - Aucun champ de réponse ne change ; seul le **nombre de rows** dans `commentaries[]` évolue.
+>
+> Au global : ~7% de commentaires supplémentaires sur l'ensemble des Dafim (9 205 sur 136 398 rows totales).
 
 ---
 
@@ -251,7 +400,9 @@ Cible : `translations_v2`. Pattern d'écriture : `pg_advisory_xact_lock` + `UPDA
 ```json
 {
   "success": true,
-  "message": "Translation saved into translations_v2.",
+  "saved": true,
+  "is_current": true,
+  "message": "translations_v2 saved (version 4)",
   "mode": "segment",
   "translation_id": "uuid-new",
   "segment_id": "uuid-segment",
@@ -261,6 +412,8 @@ Cible : `translations_v2`. Pattern d'écriture : `pg_advisory_xact_lock` + `UPDA
   "created_at": "2026-04-22T..."
 }
 ```
+
+`saved` et `is_current` sont des alias top-level : `saved` miroite `success` (`true` si l'insert a réussi), `is_current` confirme que la nouvelle ligne est bien `is_current=true` en base (les versions précédentes ont été basculées à `is_current=false` par le même transaction via le pattern advisory_lock §4.1).
 
 ### 5.3 Mode 2 — traduction de commentaire
 
@@ -463,6 +616,10 @@ Renvoyée en HTTP 400 par tous les endpoints qui prennent `?corpus=` quand la r�
 
 | Endpoint backend | État après refacto |
 |---|---|
+| `GET /api/corpus` | **nouveau** — liste des 9 corpus seedés |
+| `GET /api/sedarim` | **nouveau** — liste plate dédupliquée des sedarim tous corpus |
+| `GET /api/corpus/{corpus}/sedarim` | **nouveau** — liste des sedarim d'un corpus |
+| `GET /api/corpus/{corpus}/sedarim/{seder}` | **nouveau** — liste des traités + pages |
 | `GET /api/torah/sources` | corpus-aware, filtre `?corpus=` |
 | `GET /api/torah/sections/{source}` | corpus-aware, 400 si ambigu |
 | `GET /api/torah/sections/{source}/{section}` | corpus-aware, 400 si ambigu |
