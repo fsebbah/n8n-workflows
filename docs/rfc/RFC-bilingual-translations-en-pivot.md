@@ -1403,13 +1403,13 @@ Avec §14.3.4 confirmant DATA ready J+0 :
 
 ### 15.6 Checklist implémentation n8n (Phase 1)
 
-Pour référence lors de l'implémentation :
+**✅ Phase 1 implémentée dans PR #341 (mergée le 2026-04-27)**
 
-- [ ] `Torah_Get_Page_Translations.json` : toujours envoyer `target_language` (même si `include_translations=false`)
-- [ ] `Torah_Translate_Page.json` : extraire `reference_translation` dans Extract Segments
-- [ ] `Torah_Router.json` : propager `reference_translation.translated_text` au workflow de traduction
-- [ ] `Torah_Translate_Simple.json` : implémenter le prompt §15.4 avec fallback si `reference_translation=null`
-- [ ] Tests E2E : Pesachim 6a (12 segments EN), Berakhot 2a (couverture FR existante)
+- [x] `Torah_Get_Page_Translations.json` : toujours envoyer `target_language` (même si `include_translations=false`)
+- [x] `Torah_Translate_Page.json` : extraire `reference_translation` dans Extract Segments
+- [x] `Torah_Router.json` : propager `reference_translation.translated_text` au workflow de traduction
+- [x] `Torah_Translate_Simple.json` : implémenter le prompt §15.4 avec fallback si `reference_translation=null`
+- [ ] Tests E2E : Pesachim 6a (12 segments EN), Berakhot 2a (couverture FR existante) — en attente merge API PR-1 et PR-2
 
 ### 15.7 Décisions n8n verrouillées (round 2)
 
@@ -1434,3 +1434,41 @@ Pour référence lors de l'implémentation :
 **RFC prête pour GO lead API.** Aucun blocage côté n8n. Implémentation Phase 1 démarrable dès PR-2 mergée.
 
 — n8n, 2026-04-26
+
+---
+
+## 16. Mise à jour statut — 2026-04-27
+
+### 16.1 Phase 1 n8n : TERMINÉE
+
+**PR #341** mergée le 2026-04-27. Tous les items de la checklist §15.6 sont implémentés :
+
+| Workflow | Modification | Statut |
+|---|---|---|
+| `Torah_Get_Page_Translations.json` | `target_language` toujours envoyé | ✅ |
+| `Torah_Translate_Page.json` | Extraction `reference_translation` | ✅ |
+| `Torah_Router.json` | Propagation `reference_translation` | ✅ |
+| `Torah_Translate_Simple.json` | Prompt EN-pivot §15.4 | ✅ |
+
+**Documentation** : Guide plugin teams créé dans `docs/guides/torah-en-pivot-translation.md`.
+
+### 16.2 Blocages restants
+
+| Item | Owner | Bloqué sur |
+|---|---|---|
+| Tests E2E (Pesachim 6a, Berakhot 2a) | n8n | API PR-1 + PR-2 non mergées |
+| Activation production | ops | API PR-1 + PR-2 non mergées |
+
+### 16.3 Nouvelles demandes équipe API (hors scope Phase 1)
+
+L'équipe API a soumis des demandes additionnelles distinctes de Phase 1 :
+
+| # | Demande | Analyse n8n |
+|---|---|---|
+| 1 | "Adapter Torah_Translate_Page pour produire EN puis FR" | **Scope différent.** Phase 1 utilise l'EN existant comme pivot. Cette demande concerne la **génération** d'EN quand `reference_translation=null`. Nécessite une nouvelle RFC ou extension. |
+| 2 | "Output structuré LLM (EN+FR en un seul appel)" | **Q-N8N-2 arbitrage.** Possible via `json_mode` LLM. Impact tokens + parsing. À évaluer en Phase 2. |
+| 3 | "API patch v1 — correction cohérence save" | Côté API, hors scope n8n. |
+
+**Recommandation** : Déployer Phase 1 actuelle (EN existant comme pivot), puis ouvrir RFC séparée pour "génération EN systématique" (item 1).
+
+— n8n, 2026-04-27
