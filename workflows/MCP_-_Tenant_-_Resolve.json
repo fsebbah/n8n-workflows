@@ -20,7 +20,7 @@
         "color": 6,
         "width": 340,
         "height": 480,
-        "content": "## MCP - Tenant - Resolve\n\n**Endpoint:** POST /webhook/tenant-resolve\n\n**Description:** Resolves Discord guild_id to tenant_id via API backend.\n\n**InputSchema:**\n```json\n{\n  \"type\": \"object\",\n  \"required\": [\"action\", \"user_id\", \"guild_id\", \"backend_api_url\", \"backend_service_token\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"resolve\"] },\n    \"user_id\": { \"type\": \"string\" },\n    \"guild_id\": { \"type\": \"string\" },\n    \"backend_api_url\": { \"type\": \"string\" },\n    \"backend_service_token\": { \"type\": \"string\" }\n  }\n}\n```\n\n**Returns:** Raw API response - plugin handles verification\n\n**RFC:** RFC-049 Entity Storage Architecture"
+        "content": "## MCP - Tenant - Resolve v2.0\n\n**Endpoint:** POST /webhook/tenant-resolve\n\n**Description:** Resolves Discord guild_id to tenant_id + package + models (RFC-079).\n\n**InputSchema:**\n```json\n{\n  \"action\": \"resolve\",\n  \"user_id\": \"string (optionnel)\",\n  \"guild_id\": \"string (requis)\",\n  \"backend_api_url\": \"string\",\n  \"backend_service_token\": \"string\"\n}\n```\n\n**Returns (RFC-079):**\n```json\n{\n  \"data\": {\n    \"tenant_id\": \"Z6F3GSWB\",\n    \"package\": {\n      \"code\": \"mid-complet\",\n      \"source\": \"discord_guild_default\",\n      \"models\": {\n        \"chat\": \"claude-sonnet-4-5\",\n        \"chat_mini\": \"claude-haiku-4-5\",\n        \"embedding\": \"text-embedding-3-large\",\n        \"vision\": null,\n        \"voice\": null,\n        \"reasoning\": null\n      }\n    }\n  }\n}\n```\n\n**RFC:** RFC-079 Tenant Package Configuration"
       }
     },
     {
@@ -50,7 +50,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Tenant Resolve\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\nconst action = body.action || ctx.action;\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst backendApiUrl = body.backend_api_url || ctx.backend_api_url;\nconst backendServiceToken = body.backend_service_token || ctx.backend_service_token;\n\nif (!action || action !== 'resolve') errors.push('action must be \"resolve\"');\nif (!userId) errors.push('user_id requis');\nif (!guildId) errors.push('guild_id requis');\nif (!backendApiUrl) errors.push('backend_api_url requis');\nif (!backendServiceToken) errors.push('backend_service_token requis');\n\nif (errors.length > 0) {\n  return { valid: false, errors, user_id: userId, guild_id: guildId };\n}\n\nreturn {\n  valid: true,\n  user_id: userId,\n  guild_id: guildId,\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken,\n  startTime: Date.now()\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Tenant Resolve v2.0\n// RFC-079: tenant + package + models\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\nconst action = body.action || ctx.action;\nconst userId = body.user_id || ctx.user_id || '';  // optionnel (RFC-079)\nconst guildId = body.guild_id || ctx.guild_id;\nconst backendApiUrl = body.backend_api_url || ctx.backend_api_url;\nconst backendServiceToken = body.backend_service_token || ctx.backend_service_token;\n\nif (!action || action !== 'resolve') errors.push('action must be \"resolve\"');\n// user_id est optionnel - pas de validation\nif (!guildId) errors.push('guild_id requis');\nif (!backendApiUrl) errors.push('backend_api_url requis');\nif (!backendServiceToken) errors.push('backend_service_token requis');\n\nif (errors.length > 0) {\n  return { valid: false, errors, user_id: userId, guild_id: guildId };\n}\n\nreturn {\n  valid: true,\n  user_id: userId,\n  guild_id: guildId,\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken,\n  startTime: Date.now()\n};"
       }
     },
     {
@@ -134,7 +134,7 @@
       ],
       "parameters": {
         "method": "GET",
-        "url": "={{ $json.backend_api_url }}/api/discord/guild/{{ $json.guild_id }}/tenant",
+        "url": "={{ $json.backend_api_url }}/api/n8n/tenants/resolve?guild_id={{ $json.guild_id }}&user_id={{ $json.user_id || '' }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -164,7 +164,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "// Return raw API response - plugin handles verification\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst latencyMs = Date.now() - (prevData.startTime || Date.now());\n\n// Handle array response from API\nconst apiData = Array.isArray(input) ? input[0] : input;\n\n// Check for HTTP error\nif (input.error || input.statusCode >= 400) {\n  return {\n    success: false,\n    error: { code: 'API_ERROR', message: input.error?.message || 'API call failed' },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    latency_ms: latencyMs\n  };\n}\n\n// Return data directly - plugin will check tenant_id\nreturn {\n  success: true,\n  data: apiData,\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  latency_ms: latencyMs\n};"
+        "jsCode": "// Format response for RFC-079 (tenant + package + models)\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst latencyMs = Date.now() - (prevData.startTime || Date.now());\n\n// Handle array response from API\nconst apiData = Array.isArray(input) ? input[0] : input;\n\n// Check for HTTP error\nif (input.error || input.statusCode >= 400) {\n  const errorCode = input.error?.code || 'API_ERROR';\n  return {\n    success: false,\n    error: { \n      code: errorCode, \n      message: input.error?.message || input.message || 'API call failed' \n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    latency_ms: latencyMs\n  };\n}\n\n// Validate RFC-079 required fields\nif (!apiData.tenant_id) {\n  return {\n    success: false,\n    error: { code: 'INVALID_RESPONSE', message: 'Missing tenant_id in API response' },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    latency_ms: latencyMs\n  };\n}\n\n// Return RFC-079 compliant response\nreturn {\n  success: true,\n  data: {\n    tenant_id: apiData.tenant_id,\n    package: apiData.package || null\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  latency_ms: latencyMs\n};"
       }
     },
     {
