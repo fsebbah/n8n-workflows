@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Scriptorium QC Page Review v1.1\n\n**Endpoint:** POST /webhook/scriptorium-qc-review\n\n**Auth:** Bearer token (SCRIPTORIUM_N8N_API_KEY)\n\n---\n⚠️ **SETUP REQUIS APRÈS IMPORT:**\n1. Créer credential Header Auth:\n   - Name: `Scriptorium API Key`\n   - Header: `Authorization`\n   - Value: `<clé partagée avec Scriptorium>`\n2. Ouvrir node 'Webhook Trigger'\n3. Sélectionner le credential créé\n4. Sauvegarder et activer\n---\n\n**Input:**\n- `page.image_base64`: Image JPEG (≤2 Mpx)\n- `prompt.rendered_text`: Prompt système\n- `qc.*`: Indicateurs heuristiques\n- `model`: (optionnel) anthropic|openai|google|mistral\n- `options.include_ocr`: (optionnel) OCR hybride\n\n**Output:**\n- `decision`: confirme_qc|infirme_qc|revue_humaine\n- `confidence`: 0.0-1.0\n- `verdict_recommended`: accepte|a_verifier|rejete\n- `ocr.*`: (si include_ocr) texte extrait\n\n**Ref:** RFC-02 §11, §23, §25",
+        "content": "## Scriptorium QC Page Review v1.3\n\n**Endpoint:** POST /webhook/scriptorium-qc-review\n\n**Auth:** Header Auth (clé partagée)\n\n---\n⚠️ **SETUP REQUIS APRÈS IMPORT:**\n1. Créer credential Header Auth:\n   - Name: `Scriptorium API Key`\n   - Header: `Authorization`\n   - Value: `<clé partagée avec Scriptorium>`\n2. Ouvrir node 'Webhook Trigger'\n3. Sélectionner le credential créé\n4. Sauvegarder et activer\n---\n\n**Input:**\n- `page.image_base64`: Image JPEG (≤2 Mpx)\n- `prompt.rendered_text`: Prompt système\n- `qc.*`: Indicateurs heuristiques\n- `model`: (optionnel) anthropic|openai|google|mistral\n- `options.include_ocr`: (optionnel) OCR hybride\n- `api_keys.anthropic`: Clé API Anthropic\n- `api_keys.openai`: Clé API OpenAI\n- `api_keys.google`: Clé API Google\n- `api_keys.mistral`: Clé API Mistral\n\n**Output:**\n- `decision`: confirme_qc|infirme_qc|revue_humaine\n- `confidence`: 0.0-1.0\n- `verdict_recommended`: accepte|a_verifier|rejete\n- `ocr.*`: (si include_ocr) texte extrait\n\n**Ref:** RFC-02 §11, §23, §25",
         "height": 420,
         "width": 360,
         "color": 5
@@ -43,7 +43,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Validate incoming payload from Scriptorium\n// Ref: RFC-02 §4.2, §25 (OCR hybride)\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\n// Required fields\nif (!body.schema_version) errors.push('Missing schema_version');\nif (!body.request_id) errors.push('Missing request_id');\nif (!body.page?.image_base64) errors.push('Missing page.image_base64');\nif (!body.prompt?.rendered_text) errors.push('Missing prompt.rendered_text');\nif (!body.qc?.verdict) errors.push('Missing qc.verdict');\n\n// Validate model parameter (for benchmark mode)\nconst validModels = ['default', 'anthropic', 'openai', 'google', 'mistral'];\nconst requestedModel = body.model || 'default';\nif (!validModels.includes(requestedModel)) {\n  errors.push(`Invalid model '${requestedModel}'. Must be one of: ${validModels.join(', ')}`);\n}\n\n// OCR options (RFC-02 §25)\nconst includeOcr = body.options?.include_ocr === true;\nconst ocrFallbackOnly = body.options?.ocr_fallback_only !== false; // default true\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      errors: errors,\n      request_id: body.request_id || 'unknown'\n    }\n  }];\n}\n\n// Build OCR prompt section if needed (RFC-02 §25.6)\nlet systemPrompt = body.prompt.rendered_text;\nif (includeOcr) {\n  const ocrSection = `\\n\\n## Extraction du texte (OCR)\\n\\nEn plus de l'analyse QC, extrais le texte complet de la page.\\n- Préserve la structure paragraphes/lignes.\\n- Signale les mots illisibles avec [?].\\n- Indique la langue détectée.\\n\\nLe champ \\\"ocr\\\" de ta réponse JSON doit inclure :\\n- \\\"extracted\\\": true\\n- \\\"text\\\": le texte complet\\n- \\\"language_detected\\\": code ISO 639-1\\n- \\\"confidence\\\": 0.0-1.0\\n- \\\"word_count\\\": nombre de mots\\n- \\\"issues\\\": array de problèmes détectés (type, position, context)`;\n  systemPrompt += ocrSection;\n}\n\n// Extract and prepare data for LLM\nreturn [{\n  json: {\n    valid: true,\n    request_id: body.request_id,\n    schema_version: body.schema_version,\n    // Model selection (for benchmark)\n    model: requestedModel,\n    // Image data\n    image_base64: body.page.image_base64,\n    image_mime: body.page.image_mime || 'image/jpeg',\n    // Prompt (with OCR section if enabled)\n    system_prompt: systemPrompt,\n    // OCR options\n    include_ocr: includeOcr,\n    ocr_fallback_only: ocrFallbackOnly,\n    // QC context for reference\n    qc_verdict: body.qc.verdict,\n    qc_anomalies: body.qc.anomalies || [],\n    qc_indicators: body.qc.indicators || {},\n    // Book context\n    book_id: body.book?.id,\n    book_title: body.book?.title,\n    page_id: body.page?.page_id,\n    // Full payload for logging\n    original_payload: body\n  }\n}];"
+        "jsCode": "// Validate incoming payload from Scriptorium\n// Ref: RFC-02 §4.2, §25 (OCR hybride)\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\n// Required fields\nif (!body.schema_version) errors.push('Missing schema_version');\nif (!body.request_id) errors.push('Missing request_id');\nif (!body.page?.image_base64) errors.push('Missing page.image_base64');\nif (!body.prompt?.rendered_text) errors.push('Missing prompt.rendered_text');\nif (!body.qc?.verdict) errors.push('Missing qc.verdict');\n\n// Validate model parameter (for benchmark mode)\nconst validModels = ['default', 'anthropic', 'openai', 'google', 'mistral'];\nconst requestedModel = body.model || 'default';\nif (!validModels.includes(requestedModel)) {\n  errors.push(`Invalid model '${requestedModel}'. Must be one of: ${validModels.join(', ')}`);\n}\n\n// Validate API keys (passed by Scriptorium, not from n8n env)\nconst apiKeys = body.api_keys || {};\nif (requestedModel === 'anthropic' || requestedModel === 'default') {\n  if (!apiKeys.anthropic) errors.push('Missing api_keys.anthropic');\n}\nif (requestedModel === 'openai') {\n  if (!apiKeys.openai) errors.push('Missing api_keys.openai');\n}\nif (requestedModel === 'google') {\n  if (!apiKeys.google) errors.push('Missing api_keys.google');\n}\nif (requestedModel === 'mistral') {\n  if (!apiKeys.mistral) errors.push('Missing api_keys.mistral');\n}\n\n// OCR options (RFC-02 §25)\nconst includeOcr = body.options?.include_ocr === true;\nconst ocrFallbackOnly = body.options?.ocr_fallback_only !== false; // default true\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      errors: errors,\n      request_id: body.request_id || 'unknown'\n    }\n  }];\n}\n\n// Build OCR prompt section if needed (RFC-02 §25.6)\nlet systemPrompt = body.prompt.rendered_text;\nif (includeOcr) {\n  const ocrSection = `\\n\\n## Extraction du texte (OCR)\\n\\nEn plus de l'analyse QC, extrais le texte complet de la page.\\n- Préserve la structure paragraphes/lignes.\\n- Signale les mots illisibles avec [?].\\n- Indique la langue détectée.\\n\\nLe champ \\\"ocr\\\" de ta réponse JSON doit inclure :\\n- \\\"extracted\\\": true\\n- \\\"text\\\": le texte complet\\n- \\\"language_detected\\\": code ISO 639-1\\n- \\\"confidence\\\": 0.0-1.0\\n- \\\"word_count\\\": nombre de mots\\n- \\\"issues\\\": array de problèmes détectés (type, position, context)`;\n  systemPrompt += ocrSection;\n}\n\n// Extract and prepare data for LLM\nreturn [{\n  json: {\n    valid: true,\n    request_id: body.request_id,\n    schema_version: body.schema_version,\n    // Model selection (for benchmark)\n    model: requestedModel,\n    // API keys (from Scriptorium payload)\n    anthropic_api_key: apiKeys.anthropic || '',\n    openai_api_key: apiKeys.openai || '',\n    google_api_key: apiKeys.google || '',\n    mistral_api_key: apiKeys.mistral || '',\n    // Image data\n    image_base64: body.page.image_base64,\n    image_mime: body.page.image_mime || 'image/jpeg',\n    // Prompt (with OCR section if enabled)\n    system_prompt: systemPrompt,\n    // OCR options\n    include_ocr: includeOcr,\n    ocr_fallback_only: ocrFallbackOnly,\n    // QC context for reference\n    qc_verdict: body.qc.verdict,\n    qc_anomalies: body.qc.anomalies || [],\n    qc_indicators: body.qc.indicators || {},\n    // Book context\n    book_id: body.book?.id,\n    book_title: body.book?.title,\n    page_id: body.page?.page_id,\n    // Full payload for logging\n    original_payload: body\n  }\n}];"
       },
       "id": "validate-payload",
       "name": "Validate Payload",
@@ -235,7 +235,7 @@
           "parameters": [
             {
               "name": "x-api-key",
-              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+              "value": "={{ $('Validate Payload').first().json.anthropic_api_key }}"
             },
             {
               "name": "anthropic-version",
@@ -245,7 +245,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1024, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: $('Validate Payload').first().json.image_mime, data: $('Validate Payload').first().json.image_base64 } }, { type: 'text', text: $('Validate Payload').first().json.system_prompt }] }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 16384, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: $('Validate Payload').first().json.image_mime, data: $('Validate Payload').first().json.image_base64 } }, { type: 'text', text: $('Validate Payload').first().json.system_prompt }] }] }) }}",
         "options": {
           "timeout": 60000
         }
@@ -269,13 +269,13 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+              "value": "=Bearer {{ $('Validate Payload').first().json.openai_api_key }}"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', max_tokens: 1024, messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:' + $('Validate Payload').first().json.image_mime + ';base64,' + $('Validate Payload').first().json.image_base64 } }, { type: 'text', text: $('Validate Payload').first().json.system_prompt }] }], response_format: { type: 'json_object' } }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', max_tokens: 16384, messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:' + $('Validate Payload').first().json.image_mime + ';base64,' + $('Validate Payload').first().json.image_base64 } }, { type: 'text', text: $('Validate Payload').first().json.system_prompt }] }], response_format: { type: 'json_object' } }) }}",
         "options": {
           "timeout": 60000
         }
@@ -299,13 +299,13 @@
           "parameters": [
             {
               "name": "key",
-              "value": "={{ $env.GOOGLE_API_KEY }}"
+              "value": "={{ $('Validate Payload').first().json.google_api_key }}"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ inline_data: { mime_type: $('Validate Payload').first().json.image_mime, data: $('Validate Payload').first().json.image_base64 } }, { text: $('Validate Payload').first().json.system_prompt }] }], generationConfig: { maxOutputTokens: 1024, responseMimeType: 'application/json' } }) }}",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ inline_data: { mime_type: $('Validate Payload').first().json.image_mime, data: $('Validate Payload').first().json.image_base64 } }, { text: $('Validate Payload').first().json.system_prompt }] }], generationConfig: { maxOutputTokens: 16384, responseMimeType: 'application/json' } }) }}",
         "options": {
           "timeout": 60000
         }
@@ -329,13 +329,13 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $env.MISTRAL_API_KEY }}"
+              "value": "=Bearer {{ $('Validate Payload').first().json.mistral_api_key }}"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'pixtral-large-latest', max_tokens: 1024, messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:' + $('Validate Payload').first().json.image_mime + ';base64,' + $('Validate Payload').first().json.image_base64 } }, { type: 'text', text: $('Validate Payload').first().json.system_prompt }] }], response_format: { type: 'json_object' } }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'pixtral-large-latest', max_tokens: 16384, messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:' + $('Validate Payload').first().json.image_mime + ';base64,' + $('Validate Payload').first().json.image_base64 } }, { type: 'text', text: $('Validate Payload').first().json.system_prompt }] }], response_format: { type: 'json_object' } }) }}",
         "options": {
           "timeout": 60000
         }
@@ -359,7 +359,7 @@
           "parameters": [
             {
               "name": "x-api-key",
-              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+              "value": "={{ $('Validate Payload').first().json.anthropic_api_key }}"
             },
             {
               "name": "anthropic-version",
@@ -369,7 +369,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1024, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: $('Validate Payload').first().json.image_mime, data: $('Validate Payload').first().json.image_base64 } }, { type: 'text', text: $('Validate Payload').first().json.system_prompt }] }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 16384, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: $('Validate Payload').first().json.image_mime, data: $('Validate Payload').first().json.image_base64 } }, { type: 'text', text: $('Validate Payload').first().json.system_prompt }] }] }) }}",
         "options": {
           "timeout": 60000
         }

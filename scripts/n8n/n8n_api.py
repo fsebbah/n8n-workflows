@@ -255,21 +255,71 @@ def delete_workflow(workflow_id):
         print(f"❌ Delete failed: {response.text if response else 'No response'}")
         return False
 
-def update_workflow(workflow_id, json_file):
-    """Update workflow from JSON file"""
+def update_workflow(workflow_id, json_file, activate_after=True):
+    """
+    Update workflow from JSON file (preserves workflow ID and webhook registration).
+
+    This is the PREFERRED method for updating workflows as it:
+    - Preserves the workflow ID
+    - Keeps webhook registrations intact (no "Active version not found" errors)
+    - No need to restart n8n server
+
+    Args:
+        workflow_id: ID of the workflow to update
+        json_file: Path to the JSON file with new workflow definition
+        activate_after: If True, reactivate the workflow after update
+
+    Returns:
+        The new workflow ID (same as input) or None if failed
+    """
     if not os.path.exists(json_file):
         print(f"Error: File not found: {json_file}")
-        return
+        return None
 
     with open(json_file) as f:
         workflow_data = json.load(f)
 
-    response = api_request('PUT', f'/workflows/{workflow_id}', workflow_data)
-    if response and response.status_code == 200:
-        d = response.json()
-        print(f"✅ Updated workflow: {d.get('name')} (ID: {d.get('id')})")
+    # Remove properties that shouldn't be in PUT request
+    # NOTE: 'active' is READ-ONLY on PUT - must use /activate endpoint instead
+    properties_to_remove = [
+        'id', 'active', 'versionId', 'createdAt', 'updatedAt',
+        'meta', 'tags', 'triggerCount', 'staticData', 'isArchived',
+        'activeVersionId', 'versionCounter', 'description', 'pinData',
+        'activeVersion', 'shared'
+    ]
+    for prop in properties_to_remove:
+        workflow_data.pop(prop, None)
+
+    response = api_request('PUT', f'/workflows/{workflow_id}', workflow_data, debug=True)
+
+    # n8n API returns 200 for successful updates
+    if response and response.status_code in [200, 201]:
+        try:
+            d = response.json()
+            print(f"✅ Updated workflow: {d.get('name')} (ID: {d.get('id')})")
+        except Exception as e:
+            print(f"✅ Updated workflow (response parse warning: {e})")
+            d = {'id': workflow_id}
+
+        # Reactivate to ensure webhook is properly registered
+        if activate_after:
+            print(f"   Reactivating to ensure webhook registration...")
+            # Deactivate first
+            api_request('POST', f'/workflows/{workflow_id}/deactivate', data={})
+            # Then activate
+            act_response = api_request('POST', f'/workflows/{workflow_id}/activate', data={})
+            if act_response and act_response.status_code == 200:
+                print(f"   ✅ Webhook re-registered successfully")
+            else:
+                print(f"   ⚠️  Reactivation may have failed: {act_response.text if act_response else 'No response'}")
+
+        return d.get('id', workflow_id)
     else:
-        print(f"❌ Update failed: {response.text if response else 'No response'}")
+        if response is not None:
+            print(f"❌ Update failed (HTTP {response.status_code}): {response.text[:500] if response.text else 'Empty body'}")
+        else:
+            print(f"❌ Update failed: No response from server")
+        return None
 
 def find_workflow_by_name(name):
     """Find workflow ID by exact name"""
@@ -559,16 +609,22 @@ def batch_reimport(list_file, workflows_dir=None, dry_run=False, delete_old=True
         f.write('\n'.join(log_messages))
     print(f"\n📝 Log saved to: {log_file}")
 
-def batch_reimport_single(workflow_name, workflows_dir=None, dry_run=False, delete_old=True, use_webhook_path=False):
+def batch_reimport_single(workflow_name, workflows_dir=None, dry_run=False, delete_old=True, use_webhook_path=False, force_new=False):
     """
     Reimport a single workflow by name or webhook path.
 
+    IMPORTANT: By default, this function uses PUT (update in place) when a workflow
+    with the same name exists. This preserves the workflow ID and avoids
+    "Active version not found" webhook errors. Use --force-new to use the old
+    delete + import behavior.
+
     Args:
-        workflow_name: Name of the workflow file (e.g., GUILD_-_Server_Sync) or webhook path if use_webhook_path=True
+        workflow_name: Name of the workflow file (e.g., GUILD_-_Server_Sync)
         workflows_dir: Directory containing workflow JSON files
         dry_run: If True, don't actually make changes
-        delete_old: If True, delete existing workflow(s) after import
+        delete_old: If True, delete duplicate workflows after update (keeps primary)
         use_webhook_path: If True, search by webhook path instead of workflow name
+        force_new: If True, use delete + import instead of update (old behavior)
     """
     from datetime import datetime
 
@@ -604,7 +660,7 @@ def batch_reimport_single(workflow_name, workflows_dir=None, dry_run=False, dele
     print(f"File: {json_file}")
     print(f"Webhook path: {webhook_path or 'N/A'}")
     print(f"Dry run: {dry_run}")
-    print(f"Delete old: {delete_old}")
+    print(f"Mode: {'DELETE + IMPORT (force-new)' if force_new else 'UPDATE IN PLACE (recommended)'}")
     print("")
 
     # Find existing workflows - prefer webhook path search if available
@@ -635,25 +691,84 @@ def batch_reimport_single(workflow_name, workflows_dir=None, dry_run=False, dele
             print(f"   No existing workflow found")
 
     if dry_run:
-        for w in existing_workflows:
-            print(f"[DRY RUN] Would deactivate: {w['name']} (ID: {w['id']})")
-        print(f"[DRY RUN] Would import: {json_file.name}")
-        print(f"[DRY RUN] Would activate new workflow")
-        if delete_old and existing_workflows:
-            print(f"[DRY RUN] Would prompt to delete {len(existing_workflows)} old workflow(s)")
+        if existing_workflows and not force_new:
+            print(f"[DRY RUN] Would UPDATE workflow: {existing_workflows[0]['id']} (preserves ID, no webhook issues)")
+        else:
+            for w in existing_workflows:
+                print(f"[DRY RUN] Would deactivate: {w['name']} (ID: {w['id']})")
+            print(f"[DRY RUN] Would import: {json_file.name}")
+        print(f"[DRY RUN] Would activate workflow")
+        if delete_old and len(existing_workflows) > 1:
+            print(f"[DRY RUN] Would prompt to delete {len(existing_workflows) - 1} duplicate workflow(s)")
         return True
 
     try:
-        # Step 1: Deactivate ALL existing workflows
-        print(f"\n1. Deactivating existing workflows...")
+        # ========================================
+        # PREFERRED: Update in place (preserves ID)
+        # ========================================
+        if existing_workflows and not force_new:
+            primary_workflow = existing_workflows[0]
+            print(f"\n1. Using UPDATE IN PLACE (preserves workflow ID, avoids webhook issues)")
+            print(f"   Target: {primary_workflow['id']} ({primary_workflow['name']})")
+
+            # Deactivate first
+            if primary_workflow.get('active'):
+                print(f"   Deactivating for update...")
+                api_request('POST', f"/workflows/{primary_workflow['id']}/deactivate", data={})
+
+            # Update the workflow
+            print(f"\n2. Updating workflow with new definition...")
+            new_id = update_workflow(primary_workflow['id'], str(json_file), activate_after=True)
+
+            if not new_id:
+                print(f"❌ Update failed, falling back to import...")
+                # Fall through to import logic
+            else:
+                # Success! Handle duplicates if any
+                if delete_old and len(existing_workflows) > 1:
+                    duplicates = existing_workflows[1:]
+                    print(f"\n3. Found {len(duplicates)} duplicate workflow(s) to clean up")
+                    for w in duplicates:
+                        print(f"   Deactivating and deleting: {w['id']} ({w['name']})")
+                        api_request('POST', f"/workflows/{w['id']}/deactivate", data={})
+                        resp = api_request('DELETE', f"/workflows/{w['id']}")
+                        if resp and resp.status_code in [200, 204]:
+                            print(f"   ✅ Deleted duplicate: {w['id']}")
+                        else:
+                            print(f"   ⚠️  Delete failed: {resp.text if resp else 'No response'}")
+
+                print(f"\n{'='*60}")
+                print(f"✅ Successfully updated: {display_name}")
+                print(f"   Workflow ID: {new_id} (preserved)")
+                print(f"   Webhook should work immediately (no restart needed)")
+                print(f"{'='*60}")
+                return True
+
+        # ========================================
+        # FALLBACK: Delete + Import (creates new ID)
+        # ========================================
+        print(f"\n1. Using DELETE + IMPORT mode (creates new workflow ID)")
+
+        # Deactivate ALL existing workflows
+        print(f"   Deactivating existing workflows...")
         for w in existing_workflows:
             if w.get('active'):
                 print(f"   Deactivating: {w['id']} ({w['name']})")
-                api_request('POST', f"/workflows/{w['id']}/deactivate")
+                api_request('POST', f"/workflows/{w['id']}/deactivate", data={})
             else:
                 print(f"   Already inactive: {w['id']} ({w['name']})")
 
-        # Step 2: Import new workflow
+        # Delete existing if delete_old is True
+        if delete_old and existing_workflows:
+            print(f"\n   Deleting existing workflows...")
+            for w in existing_workflows:
+                resp = api_request('DELETE', f"/workflows/{w['id']}")
+                if resp and resp.status_code in [200, 204]:
+                    print(f"   ✅ Deleted: {w['id']} ({w['name']})")
+                else:
+                    print(f"   ⚠️  Delete failed: {resp.text if resp else 'No response'}")
+
+        # Import new workflow
         print(f"\n2. Importing: {json_file.name}")
         new_id = import_workflow(str(json_file), debug=False)
 
@@ -661,7 +776,7 @@ def batch_reimport_single(workflow_name, workflows_dir=None, dry_run=False, dele
             print(f"❌ Import failed")
             return False
 
-        # Step 3: Activate new workflow
+        # Activate new workflow
         print(f"\n3. Activating: {new_id}")
         response = api_request('POST', f'/workflows/{new_id}/activate', data={})
 
@@ -671,54 +786,11 @@ def batch_reimport_single(workflow_name, workflows_dir=None, dry_run=False, dele
             error_msg = response.text if response else 'No response'
             print(f"   ⚠️  Activation failed: {error_msg}")
 
-        # Step 4: Delete old workflows (with confirmation)
-        if delete_old and existing_workflows:
-            print(f"\n4. Delete old workflows")
-            print(f"   {'='*50}")
-            print(f"   The following old workflow(s) can be deleted:")
-            for i, w in enumerate(existing_workflows, 1):
-                print(f"   {i}. {w['id']}: {w['name']}")
-            print(f"   {'='*50}")
-            print(f"   Options:")
-            print(f"     a = Delete ALL old workflows")
-            print(f"     y = Confirm each one by one")
-            print(f"     n = Skip deletion (keep old workflows)")
-            print("")
-
-            choice = input("   Your choice [a/y/n]: ").strip().lower()
-
-            if choice == 'a':
-                # Delete all
-                print(f"\n   Deleting all {len(existing_workflows)} old workflow(s)...")
-                for w in existing_workflows:
-                    resp = api_request('DELETE', f"/workflows/{w['id']}")
-                    if resp and resp.status_code in [200, 204]:
-                        print(f"   ✅ Deleted: {w['id']} ({w['name']})")
-                    else:
-                        print(f"   ❌ Delete failed: {w['id']} - {resp.text if resp else 'No response'}")
-
-            elif choice == 'y':
-                # Confirm each one
-                for w in existing_workflows:
-                    confirm = input(f"   Delete {w['id']} ({w['name']})? [y/n]: ").strip().lower()
-                    if confirm == 'y':
-                        resp = api_request('DELETE', f"/workflows/{w['id']}")
-                        if resp and resp.status_code in [200, 204]:
-                            print(f"   ✅ Deleted: {w['id']}")
-                        else:
-                            print(f"   ❌ Delete failed: {resp.text if resp else 'No response'}")
-                    else:
-                        print(f"   ⏭️  Skipped: {w['id']}")
-
-            else:
-                print(f"   ⏭️  Skipping deletion. Old workflows kept.")
-
-        elif not existing_workflows:
-            print(f"\n4. No old workflows to delete.")
-
         print(f"\n{'='*60}")
         print(f"✅ Successfully reimported: {display_name}")
         print(f"   New workflow ID: {new_id}")
+        print(f"   ⚠️  NOTE: If webhook shows 'Active version not found',")
+        print(f"      restart n8n or wait a few seconds for cache to refresh.")
         print(f"{'='*60}")
         return True
 
@@ -837,7 +909,7 @@ def main():
         list_workflows_by_webhook_path(sys.argv[2])
     elif action == 'batch-reimport':
         if len(sys.argv) < 3:
-            print("Usage: python3 n8n_api.py batch-reimport <list_file_or_workflow> [--dry-run] [--no-delete]")
+            print("Usage: python3 n8n_api.py batch-reimport <list_file_or_workflow> [options]")
             print("")
             print("Arguments:")
             print("  <list_file>   File containing workflow names (one per line)")
@@ -845,12 +917,21 @@ def main():
             print("")
             print("Options:")
             print("  --dry-run    Show what would be done without making changes")
-            print("  --no-delete  Don't delete existing workflows (update in place)")
+            print("  --no-delete  Don't delete duplicate workflows")
+            print("  --force-new  Force DELETE + IMPORT instead of UPDATE (creates new ID)")
+            print("")
+            print("Default behavior (recommended):")
+            print("  - If workflow exists: UPDATE IN PLACE (preserves ID, no webhook issues)")
+            print("  - If workflow doesn't exist: IMPORT new workflow")
+            print("  - Duplicates are automatically cleaned up")
+            print("")
+            print("Use --force-new only if you need a fresh workflow ID.")
             print("")
             print("Note: Uses PostgreSQL to find workflows by webhook path (handles duplicates)")
             return
         dry_run = '--dry-run' in sys.argv
         delete_old = '--no-delete' not in sys.argv
+        force_new = '--force-new' in sys.argv
         target = sys.argv[2]
 
         # Check if it's a file or a workflow name
@@ -859,7 +940,7 @@ def main():
             batch_reimport(target, dry_run=dry_run, delete_old=delete_old)
         else:
             # It's a single workflow name - create temp list
-            batch_reimport_single(target, dry_run=dry_run, delete_old=delete_old)
+            batch_reimport_single(target, dry_run=dry_run, delete_old=delete_old, force_new=force_new)
     else:
         show_help()
 
