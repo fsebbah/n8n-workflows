@@ -349,11 +349,11 @@ https://www.googleapis.com/auth/classroom.profile.photos
 
 ### Phase 3: Tests & Documentation
 
-| # | Task | Description | Effort |
-|---|------|-------------|--------|
-| 3.1 | Tests manuels | Tester chaque opération MCP Classroom | 1j |
-| 3.2 | Tests sync | Tester workflow sync end-to-end | 0.5j |
-| 3.3 | Doc MCP API | `docs/mcp/GOOGLE_CLASSROOM_MCP_API.md` | 0.5j |
+| # | Task | Description | Effort | Statut |
+|---|------|-------------|--------|--------|
+| 3.1 | Tests manuels | Tester chaque opération MCP Classroom | 1j | ⏳ |
+| 3.2 | Tests sync | Tester workflow sync end-to-end | 0.5j | ⏳ |
+| 3.3 | Doc MCP API | `docs/mcp/GOOGLE_CLASSROOM_MCP_API.md` | 0.5j | ✅ |
 
 ---
 
@@ -537,8 +537,8 @@ https://www.googleapis.com/auth/classroom.profile.photos
 | 1.1 | Développement node `classroomToolDynamic` | 3j | ✅ Terminé |
 | 1.2 | Workflow MCP Classroom Server | 1j | ✅ Terminé |
 | 2 | Workflow Sync Programme | 1.5j | ✅ Terminé |
-| 3 | Tests + Documentation | 1.5j | ⏳ En attente |
-| **Total** | | **7j** | **~4.5j réalisés** |
+| 3 | Tests + Documentation | 1.5j | 🟡 Doc OK, tests pending |
+| **Total** | | **7j** | **~5j réalisés** |
 
 ### Répartition détaillée Phase 1 (Node Custom)
 
@@ -645,3 +645,4 @@ https://www.googleapis.com/auth/classroom.profile.photos
 - **2026-05-06** — ✅ Phase 1.1 terminée : Node `classroomToolDynamic` créé (7 resources, 34 opérations)
 - **2026-05-06** — ✅ Phase 1.2 terminée : Workflow `MCP_-_Google_Classroom_Server.json` (37 nodes)
 - **2026-05-06** — ✅ Phase 2 terminée : Workflow `Expert_Program_Classroom_Sync.json` (20 nodes)
+- **2026-05-06** — ✅ Phase 3.3 terminée : Documentation `docs/mcp/GOOGLE_CLASSROOM_MCP_API.md` (895 lignes)
