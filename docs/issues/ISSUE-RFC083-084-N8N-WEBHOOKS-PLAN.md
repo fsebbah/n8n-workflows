@@ -328,24 +328,24 @@ https://www.googleapis.com/auth/classroom.profile.photos
 
 | # | Task | Description | Effort | Statut |
 |---|------|-------------|--------|--------|
-| 1.1 | Scaffold node | Créer structure `n8n-nodes-classroom-dynamic` basée sur calendarToolDynamic | 0.5j | ❌ |
-| 1.2 | Resource course | 6 opérations (create, get, getAll, update, delete, archive) | 0.3j | ❌ |
-| 1.3 | Resource courseWork | 5 opérations + workType enum | 0.3j | ❌ |
-| 1.4 | Resource studentSubmission | 5 opérations (get, getAll, return, grade, modifyAttachments) | 0.3j | ❌ |
-| 1.5 | Resources student/teacher | 8 opérations (4 chacune) | 0.3j | ❌ |
-| 1.6 | Resources announcement/topic | 10 opérations (5 chacune) | 0.3j | ❌ |
-| 1.7 | Pagination + Erreurs | Gestion pageToken, returnAll, error wrapper | 0.5j | ❌ |
-| 1.8 | Tests unitaires | Coverage des 7 resources + edge cases | 0.5j | ❌ |
-| 1.9 | Workflow MCP Server | `MCP_-_Google_Classroom_Server.json` | 1j | ❌ |
+| 1.1 | Scaffold node | Créer structure `n8n-nodes-classroom-dynamic` basée sur calendarToolDynamic | 0.5j | ✅ |
+| 1.2 | Resource course | 6 opérations (create, get, getAll, update, delete, archive) | 0.3j | ✅ |
+| 1.3 | Resource courseWork | 5 opérations + workType enum | 0.3j | ✅ |
+| 1.4 | Resource studentSubmission | 5 opérations (get, getAll, return, grade, modifyAttachments) | 0.3j | ✅ |
+| 1.5 | Resources student/teacher | 8 opérations (4 chacune) | 0.3j | ✅ |
+| 1.6 | Resources announcement/topic | 10 opérations (5 chacune) | 0.3j | ✅ |
+| 1.7 | Pagination + Erreurs | Gestion pageToken, returnAll, error wrapper | 0.5j | ✅ |
+| 1.8 | Tests unitaires | Coverage des 7 resources + edge cases | 0.5j | ⏳ (à faire) |
+| 1.9 | Workflow MCP Server | `MCP_-_Google_Classroom_Server.json` | 1j | ✅ |
 
 ### Phase 2: Workflow Sync Programme (Séquentiel)
 
-| # | Task | Description | Dépendance | Effort |
-|---|------|-------------|------------|--------|
-| 2.1 | Workflow base | Webhook receiver + validation payload | Phase 1 | 0.5j |
-| 2.2 | Loop séquences | Créer topics via MCP-Classroom | 2.1 | 0.3j |
-| 2.3 | Loop séances | Créer courseWork via MCP-Classroom | 2.2 | 0.5j |
-| 2.4 | Callback back | POST résultat avec IDs créés | 2.3 | 0.2j |
+| # | Task | Description | Dépendance | Effort | Statut |
+|---|------|-------------|------------|--------|--------|
+| 2.1 | Workflow base | Webhook receiver + validation payload | Phase 1 | 0.5j | ✅ |
+| 2.2 | Loop séquences | Créer topics via MCP-Classroom | 2.1 | 0.3j | ✅ |
+| 2.3 | Loop séances | Créer courseWork via MCP-Classroom | 2.2 | 0.5j | ✅ |
+| 2.4 | Callback back | POST résultat avec IDs créés | 2.3 | 0.2j | ✅ |
 
 ### Phase 3: Tests & Documentation
 
@@ -534,11 +534,11 @@ https://www.googleapis.com/auth/classroom.profile.photos
 
 | Phase | Composant | Effort | Statut |
 |-------|-----------|--------|--------|
-| 1.1 | Développement node `classroomToolDynamic` | 3j | ❌ |
-| 1.2 | Workflow MCP Classroom Server | 1j | ❌ |
-| 2 | Workflow Sync Programme | 1.5j | ❌ |
-| 3 | Tests + Documentation | 1.5j | ❌ |
-| **Total** | | **7j** | |
+| 1.1 | Développement node `classroomToolDynamic` | 3j | ✅ Terminé |
+| 1.2 | Workflow MCP Classroom Server | 1j | ✅ Terminé |
+| 2 | Workflow Sync Programme | 1.5j | ✅ Terminé |
+| 3 | Tests + Documentation | 1.5j | ⏳ En attente |
+| **Total** | | **7j** | **~4.5j réalisés** |
 
 ### Répartition détaillée Phase 1 (Node Custom)
 
@@ -642,3 +642,6 @@ https://www.googleapis.com/auth/classroom.profile.photos
 
 - **2026-05-06** — Création du plan d'implémentation n8n pour RFC-083 et RFC-084
 - **2026-05-06** — Décision Option A (node custom) actée + ajout spécification complète `classroomToolDynamic`
+- **2026-05-06** — ✅ Phase 1.1 terminée : Node `classroomToolDynamic` créé (7 resources, 34 opérations)
+- **2026-05-06** — ✅ Phase 1.2 terminée : Workflow `MCP_-_Google_Classroom_Server.json` (37 nodes)
+- **2026-05-06** — ✅ Phase 2 terminée : Workflow `Expert_Program_Classroom_Sync.json` (20 nodes)
