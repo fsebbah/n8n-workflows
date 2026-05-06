@@ -1,0 +1,574 @@
+{
+  "name": "Expert Program Classroom Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "expert-program-classroom-sync",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-001",
+      "name": "Webhook Receiver",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 300],
+      "webhookId": "expert-program-classroom-sync"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-required-fields",
+              "leftValue": "={{ $json.body.expert_response_id && $json.body.course_id && $json.body.access_token && $json.body.programme }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-001",
+      "name": "Validate Payload",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: \"invalid_payload\", message: \"Missing required fields: expert_response_id, course_id, access_token, programme\" } }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "error-validation-001",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [700, 460]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Initialiser le contexte de synchronisation\nconst body = $input.first().json.body;\n\nconst context = {\n  expert_response_id: body.expert_response_id,\n  course_id: body.course_id,\n  access_token: body.access_token,\n  callback_url: body.callback_url || null,\n  webhook_base_url: $env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678/webhook'\n};\n\nconst sequences = body.programme.architecture || [];\nconst sessions = body.programme.progression || [];\n\nreturn [{\n  json: {\n    context,\n    sequences,\n    sessions,\n    current_sequence_index: 0,\n    current_session_index: 0,\n    results: {\n      topic_mapping: {},\n      topic_ids: [],\n      coursework_ids: [],\n      errors: []\n    },\n    stats: {\n      total_sequences: sequences.length,\n      total_sessions: sessions.length,\n      started_at: new Date().toISOString()\n    },\n    phase: 'topics'\n  }\n}];"
+      },
+      "id": "init-context-001",
+      "name": "Initialize Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "more-sequences",
+              "leftValue": "={{ $json.current_sequence_index < $json.sequences.length }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-more-sequences-001",
+      "name": "More Sequences?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Préparer la requête pour créer le topic courant\nconst data = $input.first().json;\nconst idx = data.current_sequence_index;\nconst sequence = data.sequences[idx];\n\nconst topicName = sequence.titre || sequence.title || `Séquence ${sequence.id || (idx + 1)}`;\n\nreturn [{\n  json: {\n    ...data,\n    current_sequence: sequence,\n    mcp_request: {\n      access_token: data.context.access_token,\n      resource: 'topic',\n      operation: 'create',\n      course_id: data.context.course_id,\n      name: topicName\n    }\n  }\n}];"
+      },
+      "id": "prepare-topic-001",
+      "name": "Prepare Topic Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.context.webhook_base_url }}/mcp-classroom",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.mcp_request) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "create-topic-001",
+      "name": "MCP Create Topic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 180]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Traiter la réponse de création du topic et incrémenter l'index\nconst prevData = $('Prepare Topic Request').first().json;\nconst mcpResponse = $input.first().json;\n\nconst data = { ...prevData };\nconst sequenceId = data.current_sequence.id || String(data.current_sequence_index);\n\n// Extraire l'ID du topic créé\nconst topicData = mcpResponse.data || mcpResponse;\nconst topicId = topicData.topicId || topicData.id;\n\nif (topicId && mcpResponse.success !== false) {\n  data.results.topic_mapping[sequenceId] = topicId;\n  data.results.topic_ids.push(topicId);\n} else {\n  data.results.errors.push({\n    type: 'topic_creation_failed',\n    sequence_id: sequenceId,\n    sequence_name: data.current_sequence.titre || data.current_sequence.title,\n    error: mcpResponse.error || topicData.error || 'Unknown error'\n  });\n}\n\n// Incrémenter l'index pour la prochaine itération\ndata.current_sequence_index = data.current_sequence_index + 1;\ndelete data.current_sequence;\ndelete data.mcp_request;\n\nreturn [{ json: data }];"
+      },
+      "id": "process-topic-response-001",
+      "name": "Process Topic Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1580, 180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "more-sessions",
+              "leftValue": "={{ $json.current_session_index < $json.sessions.length }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-more-sessions-001",
+      "name": "More Sessions?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1140, 420]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Préparer la requête pour créer le courseWork courant\nconst data = $input.first().json;\nconst idx = data.current_session_index;\nconst session = data.sessions[idx];\n\n// Trouver le topicId associé via sequence_id\nconst sequenceId = session.sequence_id || null;\nconst topicId = sequenceId ? (data.results.topic_mapping[sequenceId] || null) : null;\n\n// Construire la description enrichie\nlet description = session.description || '';\nif (session.objectifs && Array.isArray(session.objectifs) && session.objectifs.length > 0) {\n  description += '\\n\\nObjectifs pédagogiques:\\n' + session.objectifs.map(o => `• ${o}`).join('\\n');\n}\nif (session.duree_minutes) {\n  description += `\\n\\nDurée estimée: ${session.duree_minutes} minutes`;\n}\n\nconst courseWorkTitle = session.titre || session.title || `Séance ${session.id || (idx + 1)}`;\n\nreturn [{\n  json: {\n    ...data,\n    current_session: session,\n    mcp_request: {\n      access_token: data.context.access_token,\n      resource: 'courseWork',\n      operation: 'create',\n      course_id: data.context.course_id,\n      title: courseWorkTitle,\n      description: description.trim(),\n      work_type: session.work_type || 'ASSIGNMENT',\n      state: 'DRAFT',\n      topic_id: topicId\n    }\n  }\n}];"
+      },
+      "id": "prepare-coursework-001",
+      "name": "Prepare CourseWork Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.context.webhook_base_url }}/mcp-classroom",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.mcp_request) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "create-coursework-001",
+      "name": "MCP Create CourseWork",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1580, 320]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Traiter la réponse de création du courseWork et incrémenter l'index\nconst prevData = $('Prepare CourseWork Request').first().json;\nconst mcpResponse = $input.first().json;\n\nconst data = { ...prevData };\nconst sessionId = data.current_session.id || String(data.current_session_index);\n\n// Extraire l'ID du courseWork créé\nconst cwData = mcpResponse.data || mcpResponse;\nconst courseWorkId = cwData.id;\n\nif (courseWorkId && mcpResponse.success !== false) {\n  data.results.coursework_ids.push({\n    session_id: sessionId,\n    coursework_id: courseWorkId,\n    sequence_id: data.current_session.sequence_id || null,\n    topic_id: data.mcp_request.topic_id,\n    title: data.mcp_request.title\n  });\n} else {\n  data.results.errors.push({\n    type: 'coursework_creation_failed',\n    session_id: sessionId,\n    session_title: data.current_session.titre || data.current_session.title,\n    error: mcpResponse.error || cwData.error || 'Unknown error'\n  });\n}\n\n// Incrémenter l'index pour la prochaine itération\ndata.current_session_index = data.current_session_index + 1;\ndelete data.current_session;\ndelete data.mcp_request;\n\nreturn [{ json: data }];"
+      },
+      "id": "process-coursework-response-001",
+      "name": "Process CourseWork Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 320]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-callback",
+              "leftValue": "={{ $json.context.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-callback-001",
+      "name": "Has Callback URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1360, 540]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Préparer le payload de callback\nconst data = $input.first().json;\n\nreturn [{\n  json: {\n    ...data,\n    callback_payload: {\n      expert_response_id: data.context.expert_response_id,\n      course_id: data.context.course_id,\n      topic_ids: data.results.topic_ids,\n      coursework_ids: data.results.coursework_ids.map(c => c.coursework_id),\n      topic_mapping: data.results.topic_mapping,\n      detailed_coursework: data.results.coursework_ids,\n      errors: data.results.errors,\n      synced_at: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "id": "prepare-callback-001",
+      "name": "Prepare Callback Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1580, 480]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.context.callback_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callback_payload) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "callback-back-001",
+      "name": "Callback to Back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 480]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Préparer la réponse finale après callback\nconst prevData = $('Prepare Callback Payload').first().json;\n\nreturn [{\n  json: {\n    ...prevData,\n    callback_sent: true\n  }\n}];"
+      },
+      "id": "after-callback-001",
+      "name": "After Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 480]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Marquer qu'il n'y a pas de callback\nconst data = $input.first().json;\n\nreturn [{\n  json: {\n    ...data,\n    callback_sent: false\n  }\n}];"
+      },
+      "id": "no-callback-001",
+      "name": "No Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1580, 640]
+    },
+    {
+      "parameters": {},
+      "id": "merge-final-001",
+      "name": "Merge Final",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2020, 580]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Préparer la réponse finale\nconst data = $input.first().json;\n\nconst hasErrors = data.results.errors.length > 0;\nconst partialSuccess = hasErrors && (data.results.topic_ids.length > 0 || data.results.coursework_ids.length > 0);\n\nconst response = {\n  success: !hasErrors,\n  partial_success: partialSuccess,\n  data: {\n    expert_response_id: data.context.expert_response_id,\n    course_id: data.context.course_id,\n    topics_created: data.results.topic_ids.length,\n    coursework_created: data.results.coursework_ids.length,\n    topic_ids: data.results.topic_ids,\n    coursework_ids: data.results.coursework_ids.map(c => c.coursework_id),\n    topic_mapping: data.results.topic_mapping,\n    detailed_coursework: data.results.coursework_ids,\n    callback_sent: data.callback_sent,\n    synced_at: new Date().toISOString(),\n    stats: {\n      ...data.stats,\n      completed_at: new Date().toISOString(),\n      topics_requested: data.stats.total_sequences,\n      sessions_requested: data.stats.total_sessions,\n      errors_count: data.results.errors.length\n    }\n  }\n};\n\nif (hasErrors) {\n  response.errors = data.results.errors;\n}\n\nreturn [{ json: response }];"
+      },
+      "id": "prepare-response-001",
+      "name": "Prepare Final Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2240, 580]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.partial_success ? 207 : 500) }}"
+        }
+      },
+      "id": "respond-success-001",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2460, 580]
+    }
+  ],
+  "connections": {
+    "Webhook Receiver": {
+      "main": [
+        [
+          {
+            "node": "Validate Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Payload": {
+      "main": [
+        [
+          {
+            "node": "Initialize Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Context": {
+      "main": [
+        [
+          {
+            "node": "More Sequences?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "More Sequences?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Topic Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "More Sessions?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Topic Request": {
+      "main": [
+        [
+          {
+            "node": "MCP Create Topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Create Topic": {
+      "main": [
+        [
+          {
+            "node": "Process Topic Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Topic Response": {
+      "main": [
+        [
+          {
+            "node": "More Sequences?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "More Sessions?": {
+      "main": [
+        [
+          {
+            "node": "Prepare CourseWork Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Callback URL?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare CourseWork Request": {
+      "main": [
+        [
+          {
+            "node": "MCP Create CourseWork",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Create CourseWork": {
+      "main": [
+        [
+          {
+            "node": "Process CourseWork Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process CourseWork Response": {
+      "main": [
+        [
+          {
+            "node": "More Sessions?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Callback URL?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback Payload": {
+      "main": [
+        [
+          {
+            "node": "Callback to Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Callback to Back": {
+      "main": [
+        [
+          {
+            "node": "After Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "After Callback": {
+      "main": [
+        [
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Callback": {
+      "main": [
+        [
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Final": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Final Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "MCP"
+    },
+    {
+      "name": "Google Classroom"
+    },
+    {
+      "name": "RFC-083"
+    },
+    {
+      "name": "Expert"
+    },
+    {
+      "name": "Sync"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2026-05-06T00:00:00.000Z",
+  "versionId": "1"
+}
