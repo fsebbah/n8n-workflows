@@ -5,24 +5,50 @@ Documentation technique pour l'équipe MCP Server sur l'intégration des webhook
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   Frontend      │────▶│   MCP Server    │────▶│      n8n        │
-│   (chat.api)    │     │  ClassroomTool  │     │  Webhook        │
-└─────────────────┘     └─────────────────┘     └────────┬────────┘
-                                                         │
-                                                         ▼
-                                                ┌─────────────────┐
-                                                │  Google         │
-                                                │  Classroom API  │
-                                                └─────────────────┘
+┌──────────────┐      ┌──────────────┐      ┌──────────────┐
+│   Frontend   │─────▶│     API      │─────▶│  MCP Server  │
+│              │      │  (chat.api)  │      │              │
+└──────────────┘      └──────────────┘      └──────┬───────┘
+                                                   │
+                      ┌────────────────────────────┴────────────────────────────┐
+                      │                                                         │
+                      ▼                                                         ▼
+        ┌─────────────────────────────┐              ┌─────────────────────────────────────┐
+        │  /webhook/mcp-classroom     │              │  /webhook/expert-program-classroom- │
+        │  (Opérations CRUD unitaires)│              │  sync (Orchestration batch)         │
+        │  35 opérations disponibles  │◀─────────────│  Crée Topics + CourseWorks          │
+        └──────────────┬──────────────┘   appelle    └─────────────────────────────────────┘
+                       │                  en interne
+                       ▼
+              ┌─────────────────┐
+              │  Google         │
+              │  Classroom API  │
+              └─────────────────┘
 ```
 
 ## Webhooks disponibles
 
-| Webhook | URL | Usage |
-|---------|-----|-------|
-| **MCP Classroom** | `POST /webhook/mcp-classroom` | Opérations CRUD Classroom |
-| **Expert Program Sync** | `POST /webhook/expert-program-classroom-sync` | Synchronisation programmes experts |
+| Webhook | URL | Usage | Quand l'utiliser |
+|---------|-----|-------|------------------|
+| **MCP Classroom** | `POST /webhook/mcp-classroom` | Opérations CRUD unitaires | Lister, créer, modifier, supprimer UNE ressource |
+| **Expert Program Sync** | `POST /webhook/expert-program-classroom-sync` | Orchestration batch | Synchroniser un programme expert COMPLET (cours + topics + devoirs) |
+
+### Choix du webhook
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Besoin de l'équipe MCP                    │  Webhook à appeler     │
+├────────────────────────────────────────────┼────────────────────────┤
+│  Lister les cours d'un utilisateur         │  mcp-classroom         │
+│  Créer UN cours                            │  mcp-classroom         │
+│  Créer UN devoir                           │  mcp-classroom         │
+│  Noter une soumission                      │  mcp-classroom         │
+│  Lister les étudiants                      │  mcp-classroom         │
+│  ─────────────────────────────────────────────────────────────────  │
+│  Synchroniser un programme expert complet  │  expert-program-sync   │
+│  (crée cours + N topics + M devoirs)       │  (1 appel = tout)      │
+└────────────────────────────────────────────┴────────────────────────┘
+```
 
 ---
 
