@@ -729,6 +729,63 @@ git+https://github.com/fsebbah/azy-mcp.git@staging
 # - RFC-079 TenantResolver
 ```
 
+#### Communication inter-services (Redis Streams)
+
+Les plugins utilisent plusieurs **Redis Streams** pour communiquer avec le backend :
+
+| Stream | Direction | Usage |
+|--------|-----------|-------|
+| `discord:commands` | Backend → Plugin | Commandes Discord (RFC-062) : update_guild, create_channel, get_roles... |
+| `discord:results` | Plugin → Backend | Réponses aux commandes avec correlation_id |
+| `bot:resync` | Backend → Plugin | Demandes de re-sync des guilds (RFC-060) |
+| `discord:dm:{project_id}` | n8n → Plugin | Notifications Stripe (checkout, subscription) |
+
+```
+┌─────────────┐  discord:commands   ┌─────────────┐
+│  chat.api   │ ──────────────────▶ │   Plugin    │
+│  (Backend)  │                     │  (Discord)  │
+│             │ ◀────────────────── │             │
+└─────────────┘  discord:results    └─────────────┘
+       │                                   │
+       │ XADD avec correlation_id          │ XREAD consumer group
+       │                                   │ Répond avec même correlation_id
+```
+
+#### Webhooks n8n appelés par les plugins
+
+| Webhook | Usage | Exemple |
+|---------|-------|---------|
+| `mcp-tenant-resolve` | Résolution tenant + modèles LLM (RFC-079) | Au démarrage du bot |
+| `mcp-entity-*` | CRUD entités métier | mcp-entity-save, mcp-entity-search |
+| `mcp-recipe-search` | Recherche vectorielle recettes | Qdrant + reranking |
+| `mcp-document-*` | Traitement documents (RFC-014) | OCR, extraction, parsing |
+| `plugin-config-get` | Configuration plugin externalisée | entity_type, webhook_prefix |
+| `stripe-register-project` | Enregistrement projet Stripe | Au démarrage |
+
+#### Pattern Lazy Initialization (RFC-079)
+
+Certains services dépendent de `resolved_models` (disponible après TenantResolver).
+Pattern utilisé pour différer leur création :
+
+```python
+# src/mentions.py - DocumentWorkflowService initialisé à la demande
+def _get_workflow_service(self) -> "DocumentWorkflowService | None":
+    if self._workflow_service_initialized:
+        return self._workflow_service
+    self._workflow_service_initialized = True
+
+    # Accès aux modèles résolus via n8n_client
+    resolved_models = getattr(self.n8n_client, "resolved_models", None)
+    if not resolved_models:
+        return None
+
+    self._workflow_service = DocumentWorkflowService(
+        n8n_client=self.n8n_client,
+        model=resolved_models.chat_mini,  # Modèle du tenant
+    )
+    return self._workflow_service
+```
+
 ### 2.4 API Backend (chat.api)
 
 | Aspect | Description |
@@ -1487,9 +1544,12 @@ Commandes vocales `/voice start|end|status` :
 | Aspect | Description |
 |--------|-------------|
 | **Rôle** | Serveur d'outils MCP (Model Context Protocol) + API REST |
-| **Technologies** | Python 3.11+, FastAPI, asyncio |
-| **Port** | 8765 |
+| **Technologies** | Python 3.11+, FastAPI, asyncio, httpx |
+| **Port** | 8765 (défaut, configurable via `MCP_SERVER_PORT`) |
+| **Repo** | `azy.mcp` |
 | **Fonctionnalités** | Wrappers outils, API REST, analyseurs, storage |
+
+> ⚠️ **Note port** : Le port par défaut est `8765`. En environnement de dev, chat.api peut utiliser `8002` (`MCP_SERVER_URL=http://pi6.local:8002`). Vérifier la cohérence avec DevOps.
 
 #### Architecture interne
 
@@ -1659,12 +1719,42 @@ curl -X POST http://mcp-server:8765/api/tools/classroom/execute \
 ```
 
 **Relations :**
-- Appelé par **Chatbot-Core** via MCP protocol (conversations)
-- Appelé par **chat.api** via API REST (opérations directes)
-- Appelle **n8n webhooks** pour exécuter les opérations
-- Ne communique JAMAIS directement avec les services externes
+- Appelé par **Chatbot-Core** via MCP protocol stdio (conversations Discord)
+- Appelé par **chat.api** via :
+  - API REST `POST /api/tools/{id}/execute` (opérations directes)
+  - WebSocket `ws://:8765/mcp` (streaming, chat.api fait proxy WS bidirectionnel vers le front)
+- Appelle **chat.api** `GET /api/n8n/google/token` pour résoudre les tokens OAuth (BYOT)
+- Appelle **n8n webhooks** pour exécuter les opérations Google/Media/Knowledge
+- Ne communique **JAMAIS** directement avec Google APIs (toujours via n8n)
 
-**Pattern BYOT (Bring Your Own Token) :**
+#### Intégration WebSocket avec chat.api
+
+chat.api expose `/ws/mcp/execute/{conversation_id}` au front et fait du **proxy bidirectionnel** vers Azy-MCP :
+
+```
+┌─────────┐    WS     ┌─────────────┐    WS    ┌─────────────┐
+│  Front  │ ────────▶ │  chat.api   │ ───────▶ │   Azy-MCP   │
+│         │ ◀──────── │ (proxy WS)  │ ◀─────── │ ws://:8765  │
+└─────────┘           └─────────────┘          └─────────────┘
+                           │
+                           │ Injection :
+                           │ - X-Tenant-ID
+                           │ - Token OAuth (résolu)
+                           │ - correlation_id
+                           ▼
+```
+
+**Format des trames** : JSON-RPC 2.0 standard MCP (pas de format custom).
+
+**Codes de fermeture WebSocket** :
+| Code | Signification |
+|------|---------------|
+| `1000` | Fermeture normale |
+| `1008` | Auth échouée |
+| `1011` | Erreur serveur Azy-MCP |
+| `4003` | Accès tenant refusé |
+
+**Pattern BYOT (Bring Your Own Token) — flux complet :**
 
 ```
 ┌─────────────┐    X-Tenant-ID     ┌─────────────┐
@@ -1672,33 +1762,60 @@ curl -X POST http://mcp-server:8765/api/tools/classroom/execute \
 │             │    X-User-ID       │             │
 └─────────────┘                    └──────┬──────┘
                                           │
-                                          │ Récupère OAuth token
-                                          │ via tenant/user IDs
+                                          │ 1. Appelle chat.api pour
+                                          │    résoudre le token OAuth
+                                          │    GET /api/n8n/google/token
+                                          │    ?service={service}&user_id={uid}
+                                          ▼
+                                   ┌─────────────┐
+                                   │  chat.api   │ ← Token resolver
+                                   │  (Redis +   │   (avec auto-refresh)
+                                   │   Google)   │
+                                   └──────┬──────┘
+                                          │
+                                          │ 2. Retourne access_token
+                                          ▼
+                                   ┌─────────────┐
+                                   │   Azy-MCP   │
+                                   │  (injecte   │
+                                   │   token)    │
+                                   └──────┬──────┘
+                                          │
+                                          │ 3. Appelle n8n avec token
                                           ▼
                                    ┌─────────────┐
                                    │     n8n     │
                                    │ (avec token)│
                                    └──────┬──────┘
                                           │
-                                          │ Utilise token
+                                          │ 4. Appelle Google API
                                           ▼
                                    ┌─────────────┐
                                    │ Google APIs │
                                    └─────────────┘
-
-→ Aucun token stocké dans n8n (multi-tenant)
-→ Tokens récupérés à la volée via X-Tenant-ID + X-User-ID
 ```
+
+**Points clés BYOT :**
+- **chat.api** est l'autorité OAuth (stocke tokens Redis, gère refresh)
+- **Azy-MCP** appelle `/api/n8n/google/token` pour résoudre le token avant chaque opération Google
+- **n8n** reçoit le token en paramètre, ne le stocke jamais (stateless, multi-tenant)
+- Si le token est expiré, chat.api le refresh automatiquement avant de le retourner
 
 #### Configuration (variables d'environnement)
 
 | Variable | Description | Défaut |
 |----------|-------------|--------|
-| `MCP_SERVER_PORT` | Port du serveur | 8765 |
+| `MCP_SERVER_PORT` | Port du serveur (REST + WS) | 8765 |
+| `MCP_SERVER_HOST` | Host d'écoute | 0.0.0.0 |
 | `N8N_WEBHOOK_URL` | URL de base n8n | http://localhost:5678 |
 | `N8N_WEBHOOK_SECRET` | Secret HMAC (optionnel) | - |
+| `CHAT_API_URL` | URL chat.api (pour résolution tokens BYOT) | http://localhost:8000 |
+| `CHAT_API_SERVICE_TOKEN` | Service Token pour appels chat.api | - |
 | `REDIS_URL` | URL Redis pour cache | - |
 | `LOG_LEVEL` | Niveau de log | INFO |
+| `CORS_ORIGINS` | Origins CORS autorisées | * |
+
+> **Harmonisation DevOps** : S'assurer que `MCP_SERVER_PORT` ici correspond à `MCP_SERVER_URL` côté chat.api.
 
 #### Phases du projet
 
@@ -1894,6 +2011,7 @@ Callback avec résultat
 |---------|----------|-------------|
 | **Multi-tenant** | TenantResolver | Résolution user_id → tenant + package LLM |
 | **Discord Commands** | DiscordCommandListener, CommandExecutor | Exécution commandes via Redis Streams |
+| **Server Sync** | ServerSyncManager, ResyncSubscriber | Sync infos guild vers backend (RFC-060) |
 | **Onboarding** | OnboardingCog, OnboardingRedisService | Parcours onboarding multi-étapes |
 | **Voice** | VoiceRealtimeCog, VoiceRealtimeService | Sessions vocales temps réel |
 | **Gamification** | BadgeService, LeaderboardService | Badges et classements |
