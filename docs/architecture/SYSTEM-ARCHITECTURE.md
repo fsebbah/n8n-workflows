@@ -8,57 +8,98 @@
 
 ## 1. Vue d'ensemble
 
-Le système est composé de plusieurs couches qui communiquent entre elles :
+Le système est composé de deux flux principaux :
+
+### Flux 1 : Frontend → chat.api → Azy-MCP → N8N
+
+```
+┌──────────────┐      ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
+│   Frontend   │─────▶│   chat.api   │─────▶│   Azy-MCP    │─────▶│     N8N      │
+│   (Web UI)   │      │              │      │ (MCP Server) │      │  (Webhooks)  │
+└──────────────┘      └──────────────┘      └──────────────┘      └──────┬───────┘
+                                                                         │
+                                                                         ▼
+                                                              ┌─────────────────────┐
+                                                              │  Services Externes  │
+                                                              │  Google, LLM, etc.  │
+                                                              └─────────────────────┘
+```
+
+### Flux 2 : Plugin / Discord → Chatbot-Core → Azy-MCP → N8N
+
+```
+┌──────────────┐      ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
+│   Discord    │─────▶│              │      │              │      │              │
+│    Bot       │      │  Chatbot-    │─────▶│   Azy-MCP    │─────▶│     N8N      │
+├──────────────┤      │    Core      │      │ (MCP Server) │      │  (Webhooks)  │
+│   Plugin     │─────▶│              │      │              │      │              │
+│  (VS Code)   │      │              │      │              │      │              │
+└──────────────┘      └──────────────┘      └──────────────┘      └──────┬───────┘
+                                                                         │
+                                                                         ▼
+                                                              ┌─────────────────────┐
+                                                              │  Services Externes  │
+                                                              │  Google, LLM, etc.  │
+                                                              └─────────────────────┘
+```
+
+### Schéma global unifié
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                              POINTS D'ENTRÉE                                     │
 │                                                                                  │
-│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
-│   │   Frontend   │    │   Discord    │    │   Plugin     │    │  API Direct  │  │
-│   │   (Web UI)   │    │    Bot       │    │  (VS Code,   │    │  (webhooks)  │  │
-│   │              │    │              │    │   IDE...)    │    │              │  │
-│   └──────┬───────┘    └──────┬───────┘    └──────┬───────┘    └──────┬───────┘  │
-│          │                   │                   │                   │          │
-└──────────│───────────────────│───────────────────│───────────────────│──────────┘
-           │                   │                   │                   │
-           │ WebSocket         │ WebSocket         │ HTTP/WS           │ HTTP
-           │                   │                   │                   │
-           ▼                   ▼                   ▼                   ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           API BACKEND (chat.api)                                 │
-│                                                                                  │
-│   - Point d'entrée unifié pour toutes les requêtes                              │
-│   - Gestion des sessions et authentification                                     │
-│   - Routage vers les services appropriés                                         │
-│   - Orchestration des appels                                                     │
-│                                                                                  │
-└─────────────────────────────────────┬───────────────────────────────────────────┘
-                                      │
-           ┌──────────────────────────┼──────────────────────────┐
-           │                          │                          │
-           ▼                          ▼                          ▼
-┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
-│   Chatbot-Core   │      │    Azy-MCP       │      │     N8N          │
-│                  │      │   (MCP Server)   │      │   (Webhooks)     │
-│  Logique IA      │      │                  │      │                  │
-│  Conversations   │◀────▶│  Outils Google   │─────▶│  Workflows       │
-│  Mémoire         │      │  Outils métier   │      │  Automatisations │
-│                  │      │                  │      │                  │
-└──────────────────┘      └────────┬─────────┘      └────────┬─────────┘
-                                   │                         │
-                                   └────────────┬────────────┘
-                                                │
-                                                ▼
-                                   ┌─────────────────────────┐
-                                   │   Services Externes     │
-                                   │                         │
-                                   │  - Google APIs          │
-                                   │  - OpenAI / Anthropic   │
-                                   │  - Bases de données     │
-                                   │  - Services tiers       │
-                                   └─────────────────────────┘
+│        ┌──────────────┐              ┌──────────────┐    ┌──────────────┐       │
+│        │   Frontend   │              │   Discord    │    │   Plugin     │       │
+│        │   (Web UI)   │              │    Bot       │    │  (VS Code)   │       │
+│        └──────┬───────┘              └──────┬───────┘    └──────┬───────┘       │
+│               │                             │                   │               │
+└───────────────│─────────────────────────────│───────────────────│───────────────┘
+                │                             │                   │
+                ▼                             └─────────┬─────────┘
+┌──────────────────────────┐                           │
+│      chat.api            │                           │
+│  (Backend API)           │                           │
+└────────────┬─────────────┘                           │
+             │                                         │
+             │                                         ▼
+             │                          ┌──────────────────────────┐
+             │                          │      Chatbot-Core        │
+             │                          │  (Moteur IA / Conversations)
+             │                          └────────────┬─────────────┘
+             │                                       │
+             └───────────────┬───────────────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────┐
+              │        Azy-MCP           │
+              │     (MCP Server)         │
+              │  Wrappers outils Google  │
+              └────────────┬─────────────┘
+                           │
+                           ▼
+              ┌──────────────────────────┐
+              │          N8N             │
+              │      (Webhooks)          │
+              │  Workflows & Automations │
+              └────────────┬─────────────┘
+                           │
+                           ▼
+              ┌──────────────────────────┐
+              │   Services Externes      │
+              │                          │
+              │  - Google APIs           │
+              │  - OpenAI / Anthropic    │
+              │  - Bases de données      │
+              │  - Services tiers        │
+              └──────────────────────────┘
 ```
+
+**Points clés :**
+- **Frontend** passe TOUJOURS par `chat.api` → `Azy-MCP` → `N8N`
+- **Discord/Plugin** passent par `Chatbot-Core` → `Azy-MCP` → `N8N`
+- **N8N** est le SEUL à appeler les services externes (Google, LLM, etc.)
+- **Azy-MCP** est le point de passage obligé pour tous les outils
 
 ---
 
@@ -220,40 +261,22 @@ N8N
 | **Interne** | `/webhook/internal-*` | Communication entre workflows |
 
 **Relations :**
-- Reçoit les requêtes de Azy-MCP
-- Peut être appelé directement par chat.api
-- Appelle les APIs externes (Google, etc.)
+- Reçoit les requêtes UNIQUEMENT de Azy-MCP
+- Appelle les services externes (Google APIs, LLMs, bases de données, etc.)
+- Est le SEUL composant à communiquer avec les services externes
 
 ---
 
 ## 3. Flux de données
 
-### 3.1 Conversation utilisateur simple
+### 3.1 Flux Frontend (Web UI) - Opération Google
 
 ```
-User: "Bonjour"
+User (Frontend): "Montre mes emails non lus"
     ↓
 Frontend (WebSocket)
     ↓
-chat.api (routing)
-    ↓
-Chatbot-Core (génération)
-    ↓
-LLM (OpenAI/Anthropic)
-    ↓
-Réponse: "Bonjour ! Comment puis-je vous aider ?"
-```
-
-### 3.2 Utilisation d'un outil Google
-
-```
-User: "Montre mes emails non lus"
-    ↓
-Frontend (WebSocket)
-    ↓
-chat.api (routing)
-    ↓
-Chatbot-Core (détecte intention = outil Gmail)
+chat.api
     ↓
 Azy-MCP (GmailTool.list_emails)
     ↓
@@ -264,12 +287,48 @@ Google Gmail API
 Réponse avec liste des emails
 ```
 
-### 3.3 Workflow métier complexe
+### 3.2 Flux Discord/Plugin - Conversation IA
 
 ```
-Admin: "Synchronise le programme expert #123 vers Classroom"
+User (Discord): "Bonjour, aide-moi avec mon code"
     ↓
-Frontend / API
+Discord Bot
+    ↓
+Chatbot-Core (conversation IA)
+    ↓
+Azy-MCP (si outil nécessaire)
+    ↓
+n8n (appel LLM via webhook)
+    ↓
+OpenAI / Anthropic
+    ↓
+Réponse générée par l'IA
+```
+
+### 3.3 Flux Discord/Plugin - Opération Google
+
+```
+User (Plugin VS Code): "Crée un événement dans mon calendrier"
+    ↓
+Plugin
+    ↓
+Chatbot-Core (détecte intention = outil Calendar)
+    ↓
+Azy-MCP (CalendarTool.create_event)
+    ↓
+n8n (/webhook/mcp-calendar, operation: "event.create")
+    ↓
+Google Calendar API
+    ↓
+Confirmation de création
+```
+
+### 3.4 Workflow métier complexe (Frontend)
+
+```
+Admin (Frontend): "Synchronise le programme expert #123 vers Classroom"
+    ↓
+Frontend
     ↓
 chat.api
     ↓
@@ -277,11 +336,11 @@ Azy-MCP (ClassroomTool.sync_program)
     ↓
 n8n (/webhook/expert-program-classroom-sync)
     ↓
-n8n crée Topics, CourseWorks (appelle mcp-classroom en interne)
+n8n crée Topics + CourseWorks (appelle mcp-classroom en interne)
     ↓
 Google Classroom API
     ↓
-Callback vers chat.api avec résultat
+Callback avec résultat
 ```
 
 ---
