@@ -119,7 +119,7 @@ returns:
 |------|-------------|--------------|
 | `script` | Exécute un script Python sandboxé | `runtime`, `script`, `timeout_seconds` |
 | `asset` | Charge un fichier statique avec sélection conditionnelle | `select.when/then/else` |
-| `llm_call` | Appelle un LLM via webhook n8n | `webhook`, `model_tier`, `system_prompt_file`, `user_prompt_file`, `context` |
+| `llm_call` | Appelle un LLM via webhook n8n (`text-generator`) | `model`, `system_prompt_file`, `user_prompt_file`, `context` — cf. §7.4.3 |
 | `llm_call_with_anthropic_skill` | Appelle un LLM avec skills Anthropic (docx, etc.) | `anthropic_skills` |
 | `storage` | Persiste un fichier sur Drive/MinIO | `target`, `file`, `metadata` |
 
@@ -756,47 +756,54 @@ def validate_step(step: dict) -> None:
             )
 ```
 
-#### 7.4.3 Workflow n8n : résolution des credentials
+#### 7.4.3 Webhook n8n existant : `text-generator`
 
-Le webhook n8n `llm-request` est responsable de :
+> **Le webhook existe déjà** : `POST /webhook/text-generator`
+> Workflow : `MCP - Text Generator`
 
-1. **Résoudre le tenant** via `X-Tenant-ID` (passé par Azy-MCP)
-2. **Récupérer les credentials** depuis les variables d'environnement ou le credential store n8n
-3. **Appliquer les quotas** par tenant (rate limit, crédits)
-4. **Logger l'usage** pour le billing et l'audit
-5. **Exécuter l'appel** vers le provider (Anthropic, OpenAI, etc.)
+Ce webhook est le point d'entrée unifié pour les appels LLM depuis les skills.
+Les credentials sont gérés côté n8n (credential store), jamais exposés au caller.
 
-**Exemple de payload vers n8n :**
+**Input Schema :**
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `prompt` | string | ✅ | Prompt utilisateur |
+| `system_prompt` | string | ❌ | Instructions système pour le modèle |
+| `model` | string | ❌ | `gpt-4o` (défaut), `gpt-4o-mini`, `gpt-4-turbo` |
+| `temperature` | number | ❌ | 0-2 (défaut: 0.7) |
+| `max_tokens` | integer | ❌ | Défaut: 2048 |
+| `user_id` | string | ❌ | ID utilisateur pour tracing |
+| `guild_id` | string | ❌ | ID guild pour tracing |
+
+**Exemple de payload depuis un skill :**
 
 ```json
 {
-  "tenant_id": "tenant-123",
-  "user_id": "user-456",
-  "model_tier": "sonnet",
-  "messages": [
-    { "role": "system", "content": "Tu es un assistant pédagogique." },
-    { "role": "user", "content": "Génère une progression..." }
-  ],
+  "prompt": "Génère une progression pédagogique pour...",
+  "system_prompt": "Tu es un assistant pédagogique expert en création de programmes.",
+  "model": "gpt-4o",
   "max_tokens": 4096,
-  "correlation_id": "skill-exec-abc123"
+  "user_id": "user-456",
+  "guild_id": "guild-789"
 }
 ```
 
-**n8n résout en interne :**
+**Output :**
 
-```javascript
-// Dans le workflow n8n llm-request
-const modelMap = {
-  "haiku": { provider: "anthropic", model: "claude-3-haiku-20240307" },
-  "sonnet": { provider: "anthropic", model: "claude-sonnet-4-20250514" },
-  "opus": { provider: "anthropic", model: "claude-opus-4-20250514" },
-  "gpt4": { provider: "openai", model: "gpt-4o" },
-};
-
-const config = modelMap[input.model_tier];
-const apiKey = $env[`${config.provider.toUpperCase()}_API_KEY`];
-// apiKey n'est JAMAIS retourné au caller
+```json
+{
+  "text": "## Progression Mathématiques 6e\n\n...",
+  "model": "gpt-4o",
+  "finish_reason": "stop"
+}
 ```
+
+**Sécurité côté n8n :**
+- Les credentials OpenAI/Anthropic sont stockés dans le **credential store n8n**
+- Le workflow utilise ces credentials via des références (`{{ $credentials.openAiApi.apiKey }}`)
+- Les credentials ne sont **jamais** retournés dans la réponse
+- Le `user_id` et `guild_id` permettent l'audit et le rate limiting
 
 #### 7.4.4 Sandbox réseau renforcé (scripts Python)
 
