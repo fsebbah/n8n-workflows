@@ -896,9 +896,9 @@ Pas seulement la chaîne descendante (chat.api → Azy-MCP → n8n). Il y a auss
 
 | Composant | Source |
 |---|---|
-| OAuth client web | `secrets/client_secret_<id>.googleusercontent.com.json` — client_id `988813278641-...` |
-| Service account Firebase Admin SDK | `secrets/firebase-admin.json` — `<...>@authent-service.iam.gserviceaccount.com` |
-| Redirect URIs configurées (GCP Console) | `https://app.azy.solutions/api/auth/google/callback`, `https://azy.solutions/api/auth/google/callback`, `https://authent-service.firebaseapp.com/__/auth/handler`, etc. |
+| OAuth client web | Fichier JSON credentials (non versionné) |
+| Service account Firebase Admin SDK | Fichier JSON service account (non versionné) |
+| Redirect URIs configurées (GCP Console) | URIs de callback configurées dans la console GCP |
 
 **Implication majeure** : la **Google verification** (pour les sensitive scopes Classroom + Gmail) est **portée par Azy** (le projet `authent-service`), **pas par chaque tenant**. C'est un *one-shot* — verification active = tous les tenants en bénéficient. Cf. RFC-083 §C.6 + §D.11.2.
 
@@ -1182,7 +1182,7 @@ Permissions ajoutées récemment (à connaître pour les autres équipes) :
 | `BACKEND_URL` | URL publique chat.api (pour callbacks) | `https://apidev.azy.solutions` |
 | `GOOGLE_OAUTH_REDIRECT_URI` | callback OAuth Google | `https://apidev.azy.solutions/api/auth/google/callback` |
 | `JWT_SECRET_KEY` | secret JWT (signature interne) | (généré) |
-| `FIREBASE_*` | credentials Firebase Admin SDK | `secrets/firebase-admin.json` |
+| `FIREBASE_*` | credentials Firebase Admin SDK | (fichier JSON non versionné) |
 | `STRIPE_SECRET_KEY` | clé Stripe | (optionnel — billing) |
 | `MCP_BATCH_INTERNAL_TOKEN` | Bearer pour `/batch/*` Azy-MCP | (RFC-072) |
 
