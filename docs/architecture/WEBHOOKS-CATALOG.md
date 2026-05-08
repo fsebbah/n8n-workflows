@@ -1,7 +1,7 @@
 # Catalogue des Webhooks Actifs n8n
 
 > **Généré le:** 2026-05-08
-> **Total:** 193 webhooks uniques dans 237 workflows actifs
+> **Total:** 167 webhooks uniques dans 237 workflows actifs
 
 Ce document catalogue tous les webhooks actifs de l'instance n8n, organisés par catégorie fonctionnelle.
 
@@ -12,7 +12,6 @@ Ce document catalogue tous les webhooks actifs de l'instance n8n, organisés par
 | Catégorie | Nombre | Description |
 |-----------|--------|-------------|
 | [MCP (Model Context Protocol)](#mcp-model-context-protocol) | 8 | Intégration services Google et outils MCP |
-| [Torah / Judaïca](#torah--judaïca) | 26 | Traduction et gestion de textes religieux |
 | [Discord](#discord) | 14 | Intégration bot Discord |
 | [Stripe / Facturation](#stripe--facturation) | 11 | Paiements et abonnements |
 | [E-commerce / Panier](#e-commerce--panier) | 14 | Gestion panier et commandes |
@@ -53,45 +52,6 @@ Webhooks pour l'intégration avec les services Google via le protocole MCP.
 | `mcp/dataset/generate` | Génération de datasets | `POST /webhook/mcp/dataset/generate` |
 
 > **Voir aussi:** [MCP Classroom Integration](../mcp/MCP_CLASSROOM_INTEGRATION.md)
-
----
-
-## Torah / Judaïca
-
-Système complet de traduction et gestion de textes religieux juifs.
-
-| Webhook | Description |
-|---------|-------------|
-| `torah-translate` | Traduction de texte Torah |
-| `torah-translate-batch` | Traduction en lot |
-| `torah-translate-chapter` | Traduction d'un chapitre |
-| `torah-translate-page-worker` | Worker de traduction de page |
-| `torah-translation-status` | Statut de traduction |
-| `torah-chunk` | Découpage de texte |
-| `torah-vocalization` | Vocalisation (nikud) |
-| `torah-batch-translate` | Traduction batch |
-| `torah-corpus` | Corpus de textes |
-| `torah-corpus-sedarim` | Corpus des Sedarim |
-| `torah-corpus-traites` | Corpus des Traités |
-| `torah-discord-message` | Messages Discord Torah |
-| `torah-discord-translate-pivot` | Pivot de traduction Discord |
-| `torah-error` | Gestion des erreurs |
-| `torah-generate-pdf` | Génération PDF |
-| `torah-get-chapter` | Récupérer un chapitre |
-| `torah-get-page` | Récupérer une page |
-| `torah-get-page-translations` | Traductions d'une page |
-| `torah-get-section` | Récupérer une section |
-| `torah-index` | Indexation |
-| `torah-job-status` | Statut des jobs |
-| `torah-list` | Liste des textes |
-| `torah-list-sections` | Liste des sections |
-| `torah-registry` | Registre Torah |
-| `torah-result-get` | Récupérer un résultat |
-| `torah-result-store` | Stocker un résultat |
-| `torah-review-action` | Action de révision |
-| `torah-router` | Routeur Torah |
-| `torah-save` | Sauvegarde |
-| `torah-submit-review` | Soumettre une révision |
 
 ---
 
@@ -432,7 +392,7 @@ POST http://pi6.local:5678/webhook/{webhook-path}
 **Exemples :**
 - `POST http://pi6.local:5678/webhook/mcp-gmail`
 - `POST http://pi6.local:5678/webhook/discord-registry`
-- `POST http://pi6.local:5678/webhook/torah-translate`
+- `POST http://pi6.local:5678/webhook/cart-checkout`
 
 ---
 
