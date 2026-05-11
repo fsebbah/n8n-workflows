@@ -221,34 +221,35 @@ peut continuer à lire le body ou switch sur headers selon ses préférences.
 Doc MCP v2 introduit le **pattern BYOT** (§Pattern BYOT) :
 
 > *"chat.api fournit la clé API du provider LLM dans chaque requête.
-> Aucun fallback sur les variables d'environnement côté Azy-MCP ou n8n."*
+> Aucun fallback sur les variables d'environnement **côté Azy-MCP ou n8n**."*
 
-Implication : `api_key` **doit être présent** dans tous les payloads
-`/api/llm/skills/invoke`, `/api/llm/stream/init`, `POST /webhook/llm-call-*`.
+→ ⚠️ **Lecture précise** : le doc interdit le fallback env **chez MCP
+et n8n**, pas chez chat.api. Le « BYOT » désigne ici le **caller HTTP
+(chat.api)**, pas le tenant final. **Pas de multi-tenant key management
+à mettre en place.**
 
-### 8.2 Question ouverte — source de l'`api_key`
+Cohérent avec RFC-085 §7.4.1 acquise depuis le début :
 
-Mon code actuel **ne fournit pas** `api_key` (j'avais noté que Azy-MCP
-résolvait en interposition). Mais le doc v2 dit le contraire : c'est
-**chat.api** qui doit fournir la clé.
+> *"Les clés Anthropic restent côté Azy (chat.api → N8N)"*
 
-**Question** : d'où chat.api lit-il l'`api_key` du tenant ?
+### 8.2 Décision actée (clarifiée 2026-05-12)
 
-| Option | Description | Effort |
-|---|---|---|
-| **Table existante** | Si déjà présente (ex. `tenant_llm_credentials`) — à investiguer | 0.25j coordination |
-| **Clé Azy unique partagée** | Via `ANTHROPIC_API_KEY` env. Pas vraiment BYOT mais simple. | 0.25j |
-| **Nouvelle table tenant** | Créer `llm_provider_credentials` avec chiffrement at-rest + UI admin pour saisie | ~1.5j |
-
-→ **À trancher avec produit** : est-ce que chaque tenant doit fournir
-ses propres clés Anthropic/OpenAI (vrai BYOT) ou Azy met sa clé maison
-partagée (cas commun) ?
+| Aspect | Valeur |
+|---|---|
+| Source `api_key` | `os.getenv("ANTHROPIC_API_KEY")` côté chat.api (clé Azy maison, partagée entre tenants) |
+| Passage à MCP | Dans body payload : `api_key: <env>` |
+| Table tenant `llm_provider_credentials` | ❌ **Non nécessaire** en V1 |
+| Multi-tenant key management | Différé V2+ (si un jour des tenants veulent leur propre clé) |
 
 ### 8.3 Action chat.api
 
-- ⏸ Tranche produit + back (~30 min)
-- ✅ Selon le choix : ajouter `api_key` dans `_build_mcp_params` et
-  `_build_stream_params` (chat.api existant)
+- ✅ Lire `os.getenv("ANTHROPIC_API_KEY")` au boot de `SkillsLLMService` /
+  `SkillsStreamService` (DI via settings)
+- ✅ Ajouter `api_key` dans `_build_mcp_params` et `_build_stream_params`
+- ✅ Idem provider-specific : `OPENAI_API_KEY`, `MISTRAL_API_KEY` (selon
+  le `provider_code` résolu)
+
+**Effort estimé** : ~0.25j (plumbing pur, pas de DB).
 
 ---
 
@@ -261,7 +262,7 @@ Total estimé : **~4.5j** (hors résolution Divergence #4).
 | Refonte transport streaming HTTP→WS (Divergence #1) | 2-3j | — |
 | Endpoints proxy MCP runs `POST /api/skills/{name}/runs` etc. (Divergence #3) | 1-1.5j | — |
 | Ajout `X-*` headers dans les dispatches (Divergence #5) | 0.25j | — |
-| Intégration BYOT `api_key` (Tâche transverse §8) | 0.25-1.5j selon option | Décision produit |
+| Intégration BYOT `api_key` (Tâche transverse §8) | 0.25j | — (décision actée : env Azy) |
 | Endpoint sync filesystem MCP `POST /api/admin/skills/sync-from-mcp` (optionnel) | 0.5j | — |
 | Tests refonte + doc compagnon update | 0.5j | — |
 
@@ -297,7 +298,7 @@ principalement la **couche transport** (HTTP→WS) et le **routing** (proxy MCP)
 2. **WebSocket transport** : URL exacte (`wss://...`), authent (Service Token ? mTLS ?), format des frames (texte JSON simple ou MessagePack ?), retry/reconnect policy
 3. **Endpoints `/runs/{id}/continue` côté MCP** : payload exact attendu pour `/continue` (juste le `result` string ou enveloppe ?), gestion concurrent runs/user, TTL
 4. **Filesystem MCP `GET /api/skills?path=`** : qui maintient le filesystem (déploiement git ? upload admin ?), comment chat.api détecte les changements pour la synchro registry tenant
-5. **BYOT api_key source** : convention Azy globale ou registry tenant à créer ? Si tenant : qui code la UI admin de saisie ?
+5. ~~BYOT api_key source~~ → **Résolu** (cf. §8.2) : clé Azy maison dans env `ANTHROPIC_API_KEY` côté chat.api, transmise à MCP. Pas de multi-tenant key management.
 6. **Auth des endpoints MCP côté chat.api** : Service Token unique chat.api → MCP ou délégation par-request (signed JWT) ?
 
 ---
@@ -305,7 +306,7 @@ principalement la **couche transport** (HTTP→WS) et le **routing** (proxy MCP)
 ## 12. Suite immédiate
 
 - ⏸ **Coordination réunion archi** Backend + MCP + Local Agent pour acter les 6 questions §11
-- ⏸ **Décision produit** sur BYOT source (Tâche §8)
+- ~~Décision produit sur BYOT source~~ → ✅ Résolu (env Azy maison cf. §8.2)
 - ⏸ Mise à jour des 3 docs compagnons (`skills-llm-invoke-contract.md`, `skills-llm-stream-contract.md`, `INDEX-SKILLS-FRONTEND.md`) une fois l'alignement fait
 - ⏸ Ouverture de la PR V1.2 d'alignement (~4.5j de scope cumulé)
 
@@ -346,18 +347,18 @@ Les 4 webhooks LLM sont **implémentés et déployés** selon le pattern BYOT v2
 
 ### 14.2 Conformité BYOT
 
-Tous les webhooks **exigent `api_key`** dans le payload — aucun fallback sur les variables d'environnement :
+Les webhooks n8n **exigent `api_key`** dans le payload — aucun fallback sur les variables d'environnement **côté n8n** :
 
 ```json
 {
   "provider": "anthropic",
   "model": "claude-sonnet-4-20250514",
-  "api_key": "sk-ant-...",  // ⚠️ REQUIS - validation stricte
+  "api_key": "sk-ant-...",  // ⚠️ REQUIS par n8n - validation stricte
   "messages": [...]
 }
 ```
 
-→ **Conforme** à la directive BYOT §8 du présent document.
+→ **Cohérent** avec la décision §8.2 : chat.api lit `os.getenv("ANTHROPIC_API_KEY")` et le transmet à n8n via le payload.
 
 ### 14.3 Architecture streaming n8n → MCP → chat.api
 
@@ -387,16 +388,14 @@ Concernant la **Divergence #1** (WebSocket vs HTTP callback) :
 | #4 Dispatch steps cloud | ⚠️ À clarifier | Qui appelle n8n : chat.api ou MCP ? |
 | #5 Headers X-* | ❌ Aucun | n8n lit `metadata` du body |
 
-### 14.5 Question ouverte pour l'équipe MCP
+### 14.5 Recommandation n8n pour Divergence #4
 
-**Concernant Divergence #4** (§6) — Option A recommandée :
+**Option A recommandée** (endpoint MCP `/api/llm/dispatch`) :
 
-Si MCP expose `POST /api/llm/dispatch`, c'est **MCP qui appellera les webhooks n8n** avec les credentials BYOT. Cela est cohérent avec :
+Si MCP expose cet endpoint, c'est **MCP qui appellera les webhooks n8n** avec les credentials BYOT. Cela est cohérent avec :
 - Le pattern "toujours via MCP"
 - L'audit centralisé côté MCP
 - Le fait que MCP a déjà le `callback_url` pour recevoir les paquets streaming
-
-→ **Recommandation n8n** : Option A (endpoint MCP `/api/llm/dispatch`)
 
 ### 14.6 Référence documentation
 
