@@ -1,0 +1,319 @@
+{
+  "name": "Claude - Call Stream With Skills",
+  "description": "Anthropic-only streaming webhook with Files API for generating .docx, .xlsx files",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Claude - Call Stream With Skills\n\n**Endpoint:** POST /webhook/claude-call-stream-with-skills\n\n**Description:** Streaming Claude avec Files API - le plus complexe des 4 webhooks.\nCombine streaming par paquets + génération de fichiers.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"api_key\", \"model\", \"messages\", \"container\", \"callback_url\", \"correlation_id\"],\n  \"properties\": {\n    \"api_key\": { \"type\": \"string\" },\n    \"model\": { \"type\": \"string\" },\n    \"betas\": { \"type\": \"array\", \"default\": [\"files-api-2025-04-14\"] },\n    \"system\": { \"type\": \"string\" },\n    \"messages\": { \"type\": \"array\" },\n    \"max_tokens\": { \"type\": \"integer\", \"default\": 16000 },\n    \"container\": { \"skills\": [...] },\n    \"callback_url\": { \"type\": \"string\" },\n    \"correlation_id\": { \"type\": \"string\" },\n    \"stream_config\": {...},\n    \"metadata\": { \"type\": \"object\" }\n  }\n}\n```\n\n**Output (immediate):** { status: 'streaming', correlation_id }\n**Callbacks:** Packets to callback_url, final packet includes files",
+        "height": 620,
+        "width": 450,
+        "color": 2
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 40]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "claude-call-stream-with-skills",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-stream-skills",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 340],
+      "webhookId": "claude-call-stream-with-skills-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Claude Stream With Skills\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: api_key ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string') {\n  errors.push('api_key requis');\n}\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model || 'claude-sonnet-4-20250514';\n\n// --- REQUIRED: messages ---\nconst messages = body.messages || ctx.messages;\nif (!messages || !Array.isArray(messages) || messages.length === 0) {\n  errors.push('messages requis');\n}\n\n// --- REQUIRED: container with skills ---\nconst container = body.container || ctx.container;\nif (!container || !container.skills || container.skills.length === 0) {\n  errors.push('container.skills requis');\n}\n\n// --- REQUIRED: callback_url ---\nconst callbackUrl = body.callback_url || ctx.callback_url;\nif (!callbackUrl || typeof callbackUrl !== 'string') {\n  errors.push('callback_url requis');\n}\n\n// --- REQUIRED: correlation_id ---\nconst correlationId = body.correlation_id || ctx.correlation_id;\nif (!correlationId || typeof correlationId !== 'string') {\n  errors.push('correlation_id requis');\n}\n\n// --- Optional ---\nconst betas = body.betas || ctx.betas || ['files-api-2025-04-14'];\nconst system = body.system || ctx.system || null;\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 16000);\nconst tools = body.tools || ctx.tools || [];\nconst metadata = body.metadata || ctx.metadata || {};\n\nconst streamConfig = {\n  flush_timeout_ms: body.stream_config?.flush_timeout_ms || 500,\n  flush_token_count: body.stream_config?.flush_token_count || 20,\n  flush_size_bytes: body.stream_config?.flush_size_bytes || 4096\n};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    correlation_id: correlationId,\n    metadata: metadata\n  };\n}\n\nreturn {\n  valid: true,\n  api_key: apiKey.trim(),\n  model: model,\n  betas: betas,\n  system: system,\n  messages: messages,\n  max_tokens: maxTokens,\n  container: container,\n  tools: tools,\n  callback_url: callbackUrl,\n  correlation_id: correlationId,\n  stream_config: streamConfig,\n  metadata: metadata,\n  startTime: Date.now()\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 340]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [700, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nreturn {\n  success: false,\n  status: 'error',\n  correlation_id: input.correlation_id,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  metadata: input.metadata\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 520]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE STREAM REQUEST\n// ============================================\n\nconst data = $json;\n\nreturn {\n  immediate_response: {\n    success: true,\n    status: 'streaming',\n    correlation_id: data.correlation_id,\n    message: 'Stream with skills initiated. Packets will be sent to callback_url.'\n  },\n  stream_request: data\n};"
+      },
+      "id": "prepare-stream",
+      "name": "Prepare Stream",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 240]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.immediate_response) }}",
+        "options": {
+          "responseCode": 202,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-streaming",
+      "name": "Respond Streaming",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.stream_request.api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "anthropic-beta",
+              "value": "={{ $json.stream_request.betas.join(',') }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const req = $json.stream_request;\n  const body = {\n    model: req.model,\n    max_tokens: req.max_tokens,\n    messages: req.messages,\n    container: req.container,\n    stream: true\n  };\n  if (req.system) body.system = req.system;\n  if (req.tools && req.tools.length > 0) body.tools = req.tools;\n  return JSON.stringify(body);\n})() }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "http-anthropic-stream-skills",
+      "name": "Anthropic Stream Skills",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 320],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESS RESPONSE & EXTRACT FILES\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Prepare Stream').first().json;\nconst req = prevData.stream_request;\nconst startTime = req.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\n\n// Extract text content\nlet textContent = '';\nconst fileRefs = [];\n\nif (input.content) {\n  for (const block of input.content) {\n    if (block.type === 'text') {\n      textContent += block.text;\n    }\n    // Check for file artifacts\n    if (block.type === 'tool_result' && block.output?.file_id) {\n      fileRefs.push({\n        file_id: block.output.file_id,\n        name: block.output.name || 'document',\n        mime_type: block.output.mime_type\n      });\n    }\n  }\n}\n\n// Check container_result for files\nif (input.container_result?.files) {\n  for (const file of input.container_result.files) {\n    fileRefs.push({\n      file_id: file.file_id,\n      name: file.name,\n      mime_type: file.mime_type\n    });\n  }\n}\n\n// Build final packet with files\nconst finalPacket = {\n  correlation_id: req.correlation_id,\n  sequence: 1,\n  events: [\n    { type: 'content_block_delta', delta: { text: textContent } },\n    { type: 'message_stop' }\n  ],\n  final: true,\n  cumulative_tokens: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0),\n  usage: input.usage || { input_tokens: 0, output_tokens: 0 },\n  provider: 'anthropic',\n  model: req.model,\n  duration_ms: latencyMs,\n  timestamp: new Date().toISOString(),\n  metadata: req.metadata,\n  // Files are included in final packet for Skills\n  files: fileRefs.map(f => ({\n    file_id: f.file_id,\n    name: f.name,\n    mime_type: f.mime_type,\n    download_url: `https://api.anthropic.com/v1/files/${f.file_id}/content`\n  }))\n};\n\nreturn {\n  callback_url: req.callback_url,\n  packet: finalPacket,\n  api_key: req.api_key\n};"
+      },
+      "id": "process-response",
+      "name": "Process Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1380, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{ $json.packet.correlation_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.packet) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send-callback",
+      "name": "Send to Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1620, 320],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Stream",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Stream": {
+      "main": [
+        [
+          {
+            "node": "Respond Streaming",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Anthropic Stream Skills",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Stream Skills": {
+      "main": [
+        [
+          {
+            "node": "Process Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Response": {
+      "main": [
+        [
+          {
+            "node": "Send to Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "tags": ["llm", "anthropic", "skills", "files-api", "streaming"]
+}
