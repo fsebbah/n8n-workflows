@@ -1,12 +1,13 @@
-# Contrat I/O : Webhooks n8n ↔ Anthropic
+# Contrat I/O : Webhooks n8n LLM Multi-Provider
 
 > **Document technique** pour l'équipe DevOps/n8n
 >
 > Définit les spécifications exactes des webhooks LLM à implémenter.
+> **Pattern BYOT (Bring Your Own Token)** : le caller fournit toujours `provider`, `model` et `api_key`.
 
 | Métadonnée | Valeur |
 |------------|--------|
-| **Version** | 1.0.0 |
+| **Version** | 2.0.0 |
 | **Date** | 2026-05-11 |
 | **RFCs liées** | RFC-085 (Skills), RFC-086 (Streaming) |
 | **Statut** | 🟡 À implémenter |
@@ -16,28 +17,39 @@
 ## Vue d'ensemble
 
 ```
-┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
-│ chat.api │────▶│ Azy-MCP  │────▶│   n8n    │────▶│Anthropic │
-└──────────┘     └──────────┘     └──────────┘     └──────────┘
-                                        │
-                                        ▼
-                                 4 webhooks :
-                                 • claude-call-messages
-                                 • claude-call-with-skills
-                                 • claude-call-stream
-                                 • claude-call-stream-with-skills
++------------+     +------------+     +------------+     +---------------------+
+| chat.api   |---->| Azy-MCP    |---->|   n8n      |---->| Anthropic / OpenAI  |
++------------+     +------------+     +------------+     | / Mistral           |
+                                           |            +---------------------+
+                                           v
+                                    4 webhooks :
+                                    - llm-call-messages (multi-provider)
+                                    - claude-call-with-skills (Anthropic only)
+                                    - llm-call-stream (multi-provider)
+                                    - claude-call-stream-with-skills (Anthropic only)
 ```
+
+### Pattern BYOT (Bring Your Own Token)
+
+> ⚠️ **IMPORTANT** : Tous les webhooks multi-provider exigent :
+> - `provider` : `anthropic`, `openai`, ou `mistral` — **REQUIS**
+> - `model` : Modèle du provider (ex: `claude-sonnet-4-20250514`, `gpt-4o`) — **REQUIS**
+> - `api_key` : Clé API du provider — **REQUIS, pas de fallback sur $env**
+> - `temperature` : Optionnel, défaut 0.7
+>
+> Si `api_key` n'est pas fourni, le webhook retourne une erreur 400.
+> Il n'y a **aucun fallback** sur les variables d'environnement.
 
 ---
 
-## 1. Webhook `claude-call-messages`
+## 1. Webhook `llm-call-messages` (Multi-Provider)
 
-**Objectif** : Appel LLM Anthropic simple (sans skills, sans streaming).
+**Objectif** : Appel LLM simple multi-provider (sans skills, sans streaming).
 
 ### 1.1 Endpoint
 
 ```
-POST /webhook/claude-call-messages
+POST /webhook/llm-call-messages
 Content-Type: application/json
 X-Service-Token: <token>
 ```
@@ -46,7 +58,10 @@ X-Service-Token: <token>
 
 ```json
 {
+  "provider": "anthropic",
   "model": "claude-sonnet-4-20250514",
+  "api_key": "sk-ant-api03-...",
+  "temperature": 0.7,
   "system": "Tu es un assistant pédagogique expert.",
   "messages": [
     {
@@ -55,7 +70,6 @@ X-Service-Token: <token>
     }
   ],
   "max_tokens": 4096,
-  "temperature": 0.7,
   "metadata": {
     "correlation_id": "skill-exec-abc123",
     "tenant_id": "tenant-123",
@@ -66,14 +80,16 @@ X-Service-Token: <token>
 
 | Champ | Type | Requis | Description |
 |-------|------|--------|-------------|
-| `model` | string | ✅ | Modèle Anthropic (`claude-sonnet-4-20250514`, `claude-opus-4-20250514`, etc.) |
+| `provider` | string | ✅ | `anthropic`, `openai`, `mistral` |
+| `model` | string | ✅ | Modèle du provider |
+| `api_key` | string | ✅ | Clé API — **REQUIS, pas de fallback** |
+| `temperature` | number | ❌ | Défaut: 0.7 (range 0-1 Anthropic, 0-2 OpenAI) |
 | `system` | string | ❌ | System prompt |
-| `messages` | array | ✅ | Messages conversation (format Anthropic) |
+| `messages` | array | ✅ | Messages conversation (format provider) |
 | `max_tokens` | integer | ❌ | Défaut: 4096 |
-| `temperature` | number | ❌ | Défaut: 0.7 (range 0-1) |
 | `metadata` | object | ❌ | Passé tel quel dans la réponse (tracing) |
 
-### 1.3 Output Schema
+### 1.3 Output Schema (unifié)
 
 ```json
 {
@@ -84,6 +100,7 @@ X-Service-Token: <token>
       "text": "## Progression Mathématiques 6e\n\n### Séquence 1 : Les nombres entiers\n..."
     }
   ],
+  "provider": "anthropic",
   "model": "claude-sonnet-4-20250514",
   "usage": {
     "input_tokens": 245,
@@ -104,9 +121,9 @@ X-Service-Token: <token>
 {
   "success": false,
   "error": {
-    "type": "anthropic_error",
-    "code": "rate_limit_exceeded",
-    "message": "Rate limit exceeded. Please retry after 60 seconds."
+    "code": "MISSING_API_KEY",
+    "message": "api_key is required. No fallback to environment variables.",
+    "http_status": 400
   },
   "metadata": {
     "correlation_id": "skill-exec-abc123"
@@ -116,54 +133,141 @@ X-Service-Token: <token>
 
 | Code erreur | HTTP | Description |
 |-------------|------|-------------|
+| `MISSING_API_KEY` | 400 | api_key non fourni |
+| `INVALID_PROVIDER` | 400 | Provider non supporté |
 | `invalid_request` | 400 | Payload invalide |
 | `authentication_error` | 401 | Clé API invalide |
-| `rate_limit_exceeded` | 429 | Rate limit Anthropic |
-| `anthropic_overloaded` | 529 | Anthropic surchargé |
+| `rate_limit_exceeded` | 429 | Rate limit provider |
+| `provider_overloaded` | 529 | Provider surchargé |
 | `internal_error` | 500 | Erreur n8n interne |
 
 ### 1.5 Implémentation n8n
 
 ```javascript
-// Workflow: claude-call-messages
+// Workflow: llm-call-messages
 
 // 1. Webhook Trigger
 const input = $input.all()[0].json;
+const { provider, model, api_key, temperature, system, messages, max_tokens, metadata } = input;
 
-// 2. HTTP Request vers Anthropic
+// 2. Validation - api_key REQUIS
+if (!api_key) {
+  return {
+    success: false,
+    error: {
+      code: 'MISSING_API_KEY',
+      message: 'api_key is required. No fallback to environment variables.',
+      http_status: 400
+    },
+    metadata
+  };
+}
+
+// 3. Configuration par provider
+const PROVIDER_CONFIG = {
+  anthropic: {
+    url: 'https://api.anthropic.com/v1/messages',
+    headers: {
+      'anthropic-version': '2023-06-01',
+      'x-api-key': api_key,
+      'content-type': 'application/json',
+    },
+    buildBody: () => ({
+      model,
+      system,
+      messages,
+      max_tokens: max_tokens || 4096,
+      temperature: temperature || 0.7,
+    }),
+    formatResponse: (r) => ({
+      content: r.content,
+      usage: r.usage,
+      stop_reason: r.stop_reason,
+    }),
+  },
+  openai: {
+    url: 'https://api.openai.com/v1/chat/completions',
+    headers: {
+      'Authorization': `Bearer ${api_key}`,
+      'content-type': 'application/json',
+    },
+    buildBody: () => ({
+      model,
+      messages: [
+        ...(system ? [{ role: 'system', content: system }] : []),
+        ...messages,
+      ],
+      max_tokens: max_tokens || 4096,
+      temperature: temperature || 0.7,
+    }),
+    formatResponse: (r) => ({
+      content: [{ type: 'text', text: r.choices[0].message.content }],
+      usage: { input_tokens: r.usage.prompt_tokens, output_tokens: r.usage.completion_tokens },
+      stop_reason: r.choices[0].finish_reason,
+    }),
+  },
+  mistral: {
+    url: 'https://api.mistral.ai/v1/chat/completions',
+    headers: {
+      'Authorization': `Bearer ${api_key}`,
+      'content-type': 'application/json',
+    },
+    buildBody: () => ({
+      model,
+      messages: [
+        ...(system ? [{ role: 'system', content: system }] : []),
+        ...messages,
+      ],
+      max_tokens: max_tokens || 4096,
+      temperature: temperature || 0.7,
+    }),
+    formatResponse: (r) => ({
+      content: [{ type: 'text', text: r.choices[0].message.content }],
+      usage: { input_tokens: r.usage.prompt_tokens, output_tokens: r.usage.completion_tokens },
+      stop_reason: r.choices[0].finish_reason,
+    }),
+  },
+};
+
+const config = PROVIDER_CONFIG[provider];
+if (!config) {
+  return {
+    success: false,
+    error: {
+      code: 'INVALID_PROVIDER',
+      message: `Provider '${provider}' not supported. Use: anthropic, openai, mistral`,
+      http_status: 400
+    },
+    metadata
+  };
+}
+
+// 4. Appel API
 const response = await $http.request({
   method: 'POST',
-  url: 'https://api.anthropic.com/v1/messages',
-  headers: {
-    'anthropic-version': '2023-06-01',
-    'x-api-key': $env.ANTHROPIC_API_KEY,
-    'content-type': 'application/json',
-  },
-  body: {
-    model: input.model,
-    system: input.system,
-    messages: input.messages,
-    max_tokens: input.max_tokens || 4096,
-    temperature: input.temperature || 0.7,
-  },
+  url: config.url,
+  headers: config.headers,
+  body: config.buildBody(),
 });
 
-// 3. Formater la réponse
+// 5. Formater la réponse
+const formatted = config.formatResponse(response);
 return {
   success: true,
-  content: response.content,
-  model: response.model,
-  usage: response.usage,
-  stop_reason: response.stop_reason,
-  metadata: input.metadata,
+  ...formatted,
+  provider,
+  model: response.model || model,
+  metadata,
 };
 ```
 
 ---
 
-## 2. Webhook `claude-call-with-skills`
+## 2. Webhook `claude-call-with-skills` (Anthropic uniquement)
 
 **Objectif** : Appel LLM avec Anthropic Skills (génération `.docx`, `.xlsx`, etc.).
+
+> ⚠️ Ce webhook reste **Anthropic-only** car les Skills sont une fonctionnalité spécifique à Anthropic.
 
 ### 2.1 Endpoint
 
@@ -177,6 +281,7 @@ X-Service-Token: <token>
 
 ```json
 {
+  "api_key": "sk-ant-api03-...",
   "model": "claude-sonnet-4-20250514",
   "betas": ["files-api-2025-04-14", "interleaved-thinking-2025-05-14"],
   "system": "Tu es un assistant qui génère des documents professionnels.",
@@ -206,6 +311,7 @@ X-Service-Token: <token>
 
 | Champ | Type | Requis | Description |
 |-------|------|--------|-------------|
+| `api_key` | string | ✅ | Clé API Anthropic — **REQUIS** |
 | `model` | string | ✅ | Modèle Anthropic |
 | `betas` | array | ✅ | Features beta à activer |
 | `system` | string | ❌ | System prompt |
@@ -234,14 +340,6 @@ X-Service-Token: <token>
     {
       "type": "text",
       "text": "J'ai généré le document Word avec la progression pédagogique."
-    },
-    {
-      "type": "tool_use",
-      "id": "toolu_abc123",
-      "name": "create_document",
-      "input": {
-        "title": "Progression Mathématiques 6e"
-      }
     }
   ],
   "files": [
@@ -265,34 +363,26 @@ X-Service-Token: <token>
 }
 ```
 
-### 2.5 Logique interne n8n
-
-```
-1. POST https://api.anthropic.com/v1/messages
-   Headers:
-     - anthropic-version: 2023-06-01
-     - anthropic-beta: files-api-2025-04-14,interleaved-thinking-2025-05-14
-     - x-api-key: $ANTHROPIC_API_KEY
-
-2. Parser la réponse pour extraire les file_id
-
-3. Pour chaque file_id trouvé:
-   GET https://api.anthropic.com/v1/files/{file_id}/content
-   Headers:
-     - x-api-key: $ANTHROPIC_API_KEY
-
-   → Récupérer le contenu binaire
-   → Encoder en base64
-
-4. Construire la réponse avec les fichiers encodés
-```
-
-### 2.6 Implémentation n8n
+### 2.5 Implémentation n8n
 
 ```javascript
 // Workflow: claude-call-with-skills
 
 const input = $input.all()[0].json;
+const { api_key, model, betas, system, messages, max_tokens, container, tools, metadata } = input;
+
+// Validation api_key
+if (!api_key) {
+  return {
+    success: false,
+    error: {
+      code: 'MISSING_API_KEY',
+      message: 'api_key is required.',
+      http_status: 400
+    },
+    metadata
+  };
+}
 
 // 1. Appel Anthropic avec betas
 const response = await $http.request({
@@ -300,17 +390,17 @@ const response = await $http.request({
   url: 'https://api.anthropic.com/v1/messages',
   headers: {
     'anthropic-version': '2023-06-01',
-    'anthropic-beta': input.betas.join(','),
-    'x-api-key': $env.ANTHROPIC_API_KEY,
+    'anthropic-beta': betas.join(','),
+    'x-api-key': api_key,
     'content-type': 'application/json',
   },
   body: {
-    model: input.model,
-    system: input.system,
-    messages: input.messages,
-    max_tokens: input.max_tokens || 16000,
-    container: input.container,
-    tools: input.tools || [],
+    model,
+    system,
+    messages,
+    max_tokens: max_tokens || 16000,
+    container,
+    tools: tools || [],
   },
 });
 
@@ -332,9 +422,7 @@ for (const fileInfo of fileIds) {
   const fileResponse = await $http.request({
     method: 'GET',
     url: `https://api.anthropic.com/v1/files/${fileInfo.file_id}/content`,
-    headers: {
-      'x-api-key': $env.ANTHROPIC_API_KEY,
-    },
+    headers: { 'x-api-key': api_key },
     encoding: 'arraybuffer',
   });
 
@@ -351,24 +439,24 @@ for (const fileInfo of fileIds) {
 return {
   success: true,
   content: response.content,
-  files: files,
+  files,
   model: response.model,
   usage: response.usage,
   stop_reason: response.stop_reason,
-  metadata: input.metadata,
+  metadata,
 };
 ```
 
 ---
 
-## 3. Webhook `claude-call-stream`
+## 3. Webhook `llm-call-stream` (Multi-Provider)
 
-**Objectif** : Streaming LLM avec callbacks par paquets (RFC-086).
+**Objectif** : Streaming LLM multi-provider avec callbacks par paquets (RFC-086).
 
 ### 3.1 Endpoint
 
 ```
-POST /webhook/claude-call-stream
+POST /webhook/llm-call-stream
 Content-Type: application/json
 X-Service-Token: <token>
 ```
@@ -377,7 +465,10 @@ X-Service-Token: <token>
 
 ```json
 {
+  "provider": "anthropic",
   "model": "claude-sonnet-4-20250514",
+  "api_key": "sk-ant-api03-...",
+  "temperature": 0.7,
   "system": "Tu es un assistant pédagogique.",
   "messages": [
     { "role": "user", "content": "Explique la photosynthèse en détail." }
@@ -399,6 +490,9 @@ X-Service-Token: <token>
 
 | Champ | Type | Requis | Description |
 |-------|------|--------|-------------|
+| `provider` | string | ✅ | `anthropic`, `openai`, `mistral` |
+| `model` | string | ✅ | Modèle du provider |
+| `api_key` | string | ✅ | Clé API — **REQUIS** |
 | `callback_url` | string | ✅ | URL pour recevoir les paquets |
 | `correlation_id` | string | ✅ | ID unique pour corréler les paquets |
 | `stream_config` | object | ❌ | Config flush (défauts raisonnables) |
@@ -413,50 +507,17 @@ X-Service-Token: <token>
 }
 ```
 
-### 3.4 Format des callbacks (POST vers callback_url)
+### 3.4 Format des callbacks
 
-**Paquet intermédiaire :**
-
-```json
-{
-  "correlation_id": "stream-abc123",
-  "sequence": 3,
-  "events": [
-    { "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "La photosynthèse est " } },
-    { "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "un processus par lequel " } },
-    { "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "les plantes convertissent " } }
-  ],
-  "cumulative_tokens": 156,
-  "timestamp": "2026-05-11T10:30:00.500Z"
-}
-```
-
-**Paquet final :**
-
-```json
-{
-  "correlation_id": "stream-abc123",
-  "sequence": 42,
-  "events": [
-    { "type": "message_stop" }
-  ],
-  "final": true,
-  "usage": {
-    "input_tokens": 45,
-    "output_tokens": 1234
-  },
-  "model": "claude-sonnet-4-20250514",
-  "stop_reason": "end_turn",
-  "duration_ms": 8500,
-  "timestamp": "2026-05-11T10:30:08.500Z"
-}
-```
+Voir RFC-086 pour le format détaillé des paquets.
 
 ---
 
-## 4. Webhook `claude-call-stream-with-skills`
+## 4. Webhook `claude-call-stream-with-skills` (Anthropic uniquement)
 
 **Objectif** : Streaming + Anthropic Skills.
+
+> ⚠️ Ce webhook reste **Anthropic-only** car les Skills sont spécifiques à Anthropic.
 
 ### 4.1 Endpoint
 
@@ -468,10 +529,11 @@ X-Service-Token: <token>
 
 ### 4.2 Input Schema
 
-Combine les champs de `claude-call-with-skills` et `claude-call-stream` :
+Combine les champs de `claude-call-with-skills` et `llm-call-stream` :
 
 ```json
 {
+  "api_key": "sk-ant-api03-...",
   "model": "claude-sonnet-4-20250514",
   "betas": ["files-api-2025-04-14"],
   "system": "...",
@@ -489,103 +551,53 @@ Combine les champs de `claude-call-with-skills` et `claude-call-stream` :
 
 ### 4.3 Particularité : fichiers dans le paquet final
 
-```json
-{
-  "correlation_id": "stream-skill-abc123",
-  "sequence": 50,
-  "final": true,
-  "files": [
-    {
-      "file_id": "file-xyz789",
-      "name": "document.docx",
-      "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "size_bytes": 45678,
-      "content_base64": "UEsDBBQAAAAI..."
-    }
-  ],
-  "usage": {
-    "input_tokens": 2000,
-    "output_tokens": 8000
-  },
-  "model": "claude-sonnet-4-20250514",
-  "stop_reason": "end_turn",
-  "duration_ms": 45000
-}
-```
+Les fichiers générés sont inclus dans le paquet `final: true`.
 
 ---
 
-## 5. Variables d'environnement n8n
+## 5. Timeouts recommandés
 
-| Variable | Description | Exemple |
-|----------|-------------|---------|
-| `ANTHROPIC_API_KEY` | Clé API Anthropic | `sk-ant-api03-...` |
-| `SERVICE_TOKEN` | Token pour callbacks authentifiés | `svc-token-...` |
-
-**⚠️ Sécurité** : Ces variables ne doivent JAMAIS apparaître dans les logs ou les réponses.
-
----
-
-## 6. Validation X-Service-Token
-
-Tous les webhooks doivent valider le `X-Service-Token` entrant :
-
-```javascript
-// En début de workflow
-const serviceToken = $request.headers['x-service-token'];
-const expectedToken = $env.EXPECTED_SERVICE_TOKEN;
-
-if (serviceToken !== expectedToken) {
-  return {
-    success: false,
-    error: {
-      type: 'authentication_error',
-      code: 'invalid_service_token',
-      message: 'Invalid or missing X-Service-Token'
-    }
-  };
-}
-```
-
----
-
-## 7. Timeouts recommandés
-
-| Webhook | Timeout HTTP | Timeout Anthropic |
-|---------|--------------|-------------------|
-| `claude-call-messages` | 120s | 60s |
+| Webhook | Timeout HTTP | Timeout Provider |
+|---------|--------------|------------------|
+| `llm-call-messages` | 120s | 60s |
 | `claude-call-with-skills` | 300s | 180s |
-| `claude-call-stream` | 30s (réponse initiale) | N/A (async) |
+| `llm-call-stream` | 30s (réponse initiale) | N/A (async) |
 | `claude-call-stream-with-skills` | 30s (réponse initiale) | N/A (async) |
 
 ---
 
-## 8. Checklist de validation
+## 6. Checklist de validation
 
 ### Pour chaque webhook :
 
 - [ ] Endpoint accessible via POST
 - [ ] Validation `X-Service-Token`
+- [ ] **Validation `api_key` REQUIS** (pas de fallback $env)
 - [ ] Parsing correct du payload
-- [ ] Appel Anthropic avec bons headers
-- [ ] Gestion des erreurs Anthropic (4xx, 5xx)
+- [ ] Appel provider avec bons headers
+- [ ] Gestion des erreurs provider (4xx, 5xx)
 - [ ] Format de réponse conforme au schéma
 - [ ] `metadata` passé en entrée retourné en sortie
-- [ ] Logs structurés (sans secrets)
+- [ ] Logs structurés (sans secrets, sans api_key)
 - [ ] Timeout configuré
 
 ### Tests E2E :
 
-- [ ] `claude-call-messages` : message simple → réponse texte
+- [ ] `llm-call-messages` Anthropic : message simple → réponse texte
+- [ ] `llm-call-messages` OpenAI : message simple → réponse texte
+- [ ] `llm-call-messages` Mistral : message simple → réponse texte
+- [ ] `llm-call-messages` sans api_key → erreur 400
 - [ ] `claude-call-with-skills` : demande docx → fichier base64 retourné
-- [ ] `claude-call-stream` : message → callbacks reçus → paquet final
+- [ ] `llm-call-stream` : message → callbacks reçus → paquet final
 - [ ] `claude-call-stream-with-skills` : demande docx → callbacks + fichier final
 
 ---
 
-## 9. Références
+## 7. Références
 
 - [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)
+- [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat)
+- [Mistral Chat API](https://docs.mistral.ai/api/)
 - [Anthropic Streaming](https://docs.anthropic.com/en/api/streaming)
 - [Anthropic Files API (beta)](https://docs.anthropic.com/en/api/files)
 - [RFC-085 Skills Engine](../rfc/RFC-085-SKILLS-ENGINE.md)

@@ -119,7 +119,7 @@ returns:
 |------|-------------|--------------|
 | `script` | Exécute un script Python sandboxé | `runtime`, `script`, `timeout_seconds` |
 | `asset` | Charge un fichier statique avec sélection conditionnelle | `select.when/then/else` |
-| `llm_call` | Appelle un LLM via webhook n8n (`text-generator`) | `model`, `system_prompt_file`, `user_prompt_file`, `context` — cf. §7.4.3 |
+| `llm_call` | Appelle un LLM via webhook n8n (`llm-call-messages` multi-provider) | `provider`, `model`, `system_prompt_file`, `user_prompt_file`, `context` — cf. §7.4.3 |
 | `llm_call_with_anthropic_skill` | Appelle un LLM avec skills Anthropic (docx, etc.) | `anthropic_skills` |
 | `storage` | Persiste un fichier sur Drive/MinIO | `target`, `file`, `metadata` |
 
@@ -855,54 +855,94 @@ def validate_step(step: dict) -> None:
             )
 ```
 
-#### 7.4.3 Webhook n8n existant : `text-generator`
+#### 7.4.3 Webhooks n8n multi-provider : Pattern BYOT (Bring Your Own Token)
 
-> **Le webhook existe déjà** : `POST /webhook/text-generator`
-> Workflow : `MCP - Text Generator`
+> **Pattern unifié pour tous les webhooks LLM** : Le caller fournit le provider,
+> le modèle et la clé API. Pas de fallback sur les variables d'environnement.
+> Cette approche permet le multi-tenant avec facturation séparée.
 
-Ce webhook est le point d'entrée unifié pour les appels LLM depuis les skills.
-Les credentials sont gérés côté n8n (credential store), jamais exposés au caller.
+##### Webhooks disponibles
 
-**Input Schema :**
+| Webhook | Endpoint | Description |
+|---------|----------|-------------|
+| `text-generator` | `POST /webhook/text-generator` | Génération de texte (prompt simple) |
+| `llm-call-messages` | `POST /webhook/llm-call-messages` | Appel LLM format messages natif |
+| `llm-summarizer` | `POST /webhook/llm-summarizer` | Résumé de texte |
+| `claude-call-with-skills` | `POST /webhook/claude-call-with-skills` | Anthropic Skills (docx, xlsx) — Anthropic uniquement |
+
+##### Input Schema unifié (multi-provider)
 
 | Paramètre | Type | Requis | Description |
 |-----------|------|--------|-------------|
-| `prompt` | string | ✅ | Prompt utilisateur |
-| `system_prompt` | string | ❌ | Instructions système pour le modèle |
-| `model` | string | ❌ | `gpt-4o` (défaut), `gpt-4o-mini`, `gpt-4-turbo` |
-| `temperature` | number | ❌ | 0-2 (défaut: 0.7) |
-| `max_tokens` | integer | ❌ | Défaut: 2048 |
-| `user_id` | string | ❌ | ID utilisateur pour tracing |
-| `guild_id` | string | ❌ | ID guild pour tracing |
+| `provider` | string | ✅ | `anthropic`, `openai`, `mistral` |
+| `model` | string | ✅ | Modèle du provider (ex: `claude-sonnet-4-20250514`, `gpt-4o`) |
+| `api_key` | string | ✅ | Clé API du provider — **REQUIS, pas de fallback** |
+| `temperature` | number | ❌ | 0-1 (Anthropic) ou 0-2 (OpenAI) — défaut: 0.7 |
+| `max_tokens` | integer | ❌ | Défaut: 4096 |
+| `messages` | array | ✅* | Format messages natif du provider (*pour `llm-call-messages`) |
+| `system` | string | ❌ | System prompt (format Anthropic) |
+| `prompt` | string | ✅* | Prompt simple (*pour `text-generator`) |
+| `metadata` | object | ❌ | Passé tel quel dans la réponse (tracing) |
 
-**Exemple de payload depuis un skill :**
+> ⚠️ **IMPORTANT** : Si `api_key` n'est pas fourni, le webhook retourne une erreur 400.
+> Il n'y a **aucun fallback** sur `$env.ANTHROPIC_API_KEY` ou `$env.OPENAI_API_KEY`.
+
+**Exemple de payload multi-provider :**
 
 ```json
 {
-  "prompt": "Génère une progression pédagogique pour...",
-  "system_prompt": "Tu es un assistant pédagogique expert en création de programmes.",
-  "model": "gpt-4o",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-20250514",
+  "api_key": "sk-ant-api03-...",
+  "temperature": 0.7,
+  "system": "Tu es un assistant pédagogique expert.",
+  "messages": [
+    { "role": "user", "content": "Génère une progression pédagogique pour..." }
+  ],
   "max_tokens": 4096,
-  "user_id": "user-456",
-  "guild_id": "guild-789"
+  "metadata": {
+    "correlation_id": "skill-exec-abc123",
+    "user_id": "user-456",
+    "tenant_id": "tenant-789"
+  }
 }
 ```
 
-**Output :**
+**Output unifié :**
 
 ```json
 {
-  "text": "## Progression Mathématiques 6e\n\n...",
-  "model": "gpt-4o",
-  "finish_reason": "stop"
+  "success": true,
+  "content": [{ "type": "text", "text": "## Progression Mathématiques 6e\n\n..." }],
+  "model": "claude-sonnet-4-20250514",
+  "usage": { "input_tokens": 245, "output_tokens": 1832 },
+  "stop_reason": "end_turn",
+  "metadata": { "correlation_id": "skill-exec-abc123", "user_id": "user-456" }
 }
 ```
 
-**Sécurité côté n8n :**
-- Les credentials OpenAI/Anthropic sont stockés dans le **credential store n8n**
-- Le workflow utilise ces credentials via des références (`{{ $credentials.openAiApi.apiKey }}`)
-- Les credentials ne sont **jamais** retournés dans la réponse
-- Le `user_id` et `guild_id` permettent l'audit et le rate limiting
+**Erreur si `api_key` manquant :**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "MISSING_API_KEY",
+    "message": "api_key is required. No fallback to environment variables.",
+    "http_status": 400
+  }
+}
+```
+
+**Architecture de routage n8n :**
+
+```
+Input → Validate (api_key requis) → Switch(provider) → HTTP Request → Format → Response
+                                         │
+                                         ├─ anthropic → api.anthropic.com/v1/messages
+                                         ├─ openai    → api.openai.com/v1/chat/completions
+                                         └─ mistral   → api.mistral.ai/v1/chat/completions
+```
 
 #### 7.4.4 Sandbox réseau renforcé (scripts Python)
 
@@ -1239,7 +1279,7 @@ azy-mcp @ git+https://github.com/fsebbah/azy.mcp.git@staging
     retenu** (cf. §C.4 #1 Annexe Backend). Gate côté chat.api dans
     `SkillsLLMService` ; n8n reste custodian credentials sans logique
     quota/audit/billing. Concrètement : 2 webhooks distincts
-    `claude-call-messages` + `claude-call-with-skills` consommés via
+    `llm-call-messages` + `claude-call-with-skills` consommés via
     Azy-MCP `/api/tools/anthropic/execute`. Toute la logique
     quota/audit/billing/résolution model_tier vit dans
     `SkillsLLMService` côté chat.api.
@@ -1733,19 +1773,28 @@ POST /api/llm/skills/invoke
 **Deux workflows distincts** (recommandé pour ne pas mélanger les responsabilités) :
 
 ```
-POST /webhook/claude-call-messages
-  → reçoit { model, system, messages, max_tokens }
-  → POST https://api.anthropic.com/v1/messages (sans betas, sans container)
-  → retourne le JSON de réponse Anthropic
+POST /webhook/llm-call-messages (MULTI-PROVIDER)
+  → reçoit { provider, model, api_key, temperature, system, messages, max_tokens, metadata }
+  → Switch(provider):
+      - anthropic → POST https://api.anthropic.com/v1/messages
+      - openai    → POST https://api.openai.com/v1/chat/completions
+      - mistral   → POST https://api.mistral.ai/v1/chat/completions
+  → retourne le JSON de réponse unifié
 
-POST /webhook/claude-call-with-skills
-  → reçoit { model, betas, container, tools, messages, max_tokens }
+POST /webhook/claude-call-with-skills (ANTHROPIC UNIQUEMENT)
+  → reçoit { api_key, model, betas, container, tools, messages, max_tokens, metadata }
   → POST https://api.anthropic.com/v1/messages (avec betas + headers)
   → pour chaque file_id retourné : GET /v1/files/{file_id}/content
-  → retourne { response_content, files: [{ name, mime_type, content_base64 }] }
+  → retourne { success, content, files: [{ name, mime_type, content_base64 }], metadata }
 ```
 
-Les deux utilisent **la clé API Anthropic d'Azy** (variable d'env N8N). Aucune clé n'est exposée côté agent ou côté frontend.
+> ⚠️ **Pattern BYOT (Bring Your Own Token)** : Le caller fournit toujours `api_key`.
+> Pas de fallback sur les variables d'environnement n8n.
+> Ceci permet le multi-tenant avec facturation séparée par clé API.
+
+**Pourquoi `claude-call-with-skills` reste Anthropic-only ?**
+Les Anthropic Skills (génération `.docx`, `.xlsx`, `.pptx`) sont une fonctionnalité
+spécifique à l'API Anthropic. Il n'existe pas d'équivalent chez OpenAI ou Mistral.
 
 ---
 
@@ -1770,7 +1819,7 @@ Les deux utilisent **la clé API Anthropic d'Azy** (variable d'env N8N). Aucune 
 |---|---|---|
 | Module `app/skills/` côté Azy Local Agent (executor, scanner, sandbox, endpoints) | 3-5 jours | Local Agent |
 | Endpoint `/api/llm/skills/invoke` côté chat.api (gestion mode `messages` + `with_skills`, décompte crédits) | 2-3 jours | Backend |
-| Workflow N8N `claude-call-messages` (probablement déjà existant ou variante simple) | 0.5 jour | DevOps / N8N |
+| Workflow N8N `llm-call-messages` (multi-provider : Anthropic, OpenAI, Mistral) | 1 jour | DevOps / N8N |
 | Workflow N8N `claude-call-with-skills` (nouveau, gère betas + Files API) | 1-2 jours | DevOps / N8N |
 | Composant Modal Quick-Action côté frontend qui orchestre les 3 endpoints | 1-2 jours | Frontend |
 | Skill `progression_pedagogique` (déjà drafté, à ajuster pipeline) | 0.5 jour (ajustements) | déjà fait |
@@ -1842,7 +1891,7 @@ Les deux utilisent **la clé API Anthropic d'Azy** (variable d'env N8N). Aucune 
 | 2 modes LLM distincts (`messages` vs `with_skills`) | ✅ Le mode `with_skills` est nouveau côté chat.api (besoins Files API Anthropic + base64 download via N8N). |
 | Endpoint chat.api unique `POST /api/llm/skills/invoke` avec discriminator `mode` | ✅ Naming retenu (vs ma proposition initiale `/api/skills/llm-step`). |
 | Pattern d'orchestration option B (pause/reprise côté agent local) | ✅ chat.api ne connaît pas le skill — reçoit juste un step LLM tagué pour audit. Pas de `SkillExecutor` côté back. |
-| 2 workflows N8N distincts (`claude-call-messages`, `claude-call-with-skills`) | ✅ chat.api dispatch via Azy-MCP `/api/tools/anthropic/execute` qui choisit le webhook. |
+| 2 workflows N8N distincts (`llm-call-messages`, `claude-call-with-skills`) | ✅ chat.api dispatch via Azy-MCP `/api/tools/anthropic/execute` qui choisit le webhook. |
 | Décompte crédits côté chat.api (pas N8N) | ✅ Cohérent avec `LLMBillingService` existant + `llm_call_audit` (RFC-PC-1). |
 
 **Précisions back complémentaires** :
@@ -2131,7 +2180,7 @@ Le scénario V2 différé concerne uniquement le déclenchement *implicite* via 
 |---|---|---|
 | 1 | Endpoint chat.api `POST /api/llm/skills/invoke` (Pydantic discriminator `mode`) | ✅ Acté |
 | 2 | Ne **pas** dupliquer `SkillExecutor` côté chat.api — c'est l'agent local qui pilote (option B pause/reprise) | ✅ Acté |
-| 3 | 2 workflows N8N distincts (`claude-call-messages`, `claude-call-with-skills`) consommés via Azy-MCP `/api/tools/anthropic/execute` | ✅ Acté côté back |
+| 3 | 2 workflows N8N distincts (`llm-call-messages`, `claude-call-with-skills`) consommés via Azy-MCP `/api/tools/anthropic/execute` | ✅ Acté côté back |
 | 4 | Décompte crédits côté chat.api dans `LLMBillingService`, audit dans `llm_call_audit.metadata` JSONB | ✅ Réutilise existant |
 | 5 | 2 quotas spécifiques skills (`skill_executions_per_day_per_user`, `skill_tokens_per_day_per_tenant`) | ✅ Pattern `quota_usage` étendu |
 | 6 | Flow 1 (interception WS MCP) **différé V2** | ✅ Acté |
@@ -2292,7 +2341,7 @@ Si la key existe → HTTP 429 skill_cooldown_active avec details:
 |---|---|---|
 | 1 | Endpoint chat.api `POST /api/llm/skills/invoke` (Pydantic discriminator `mode`) | ✅ Acté |
 | 2 | Pas de `SkillExecutor` côté chat.api — agent local pilote (option B) | ✅ Acté |
-| 3 | 2 workflows N8N distincts (`claude-call-messages`, `claude-call-with-skills`) consommés via Azy-MCP | ✅ Acté côté back |
+| 3 | 2 workflows N8N distincts (`llm-call-messages`, `claude-call-with-skills`) consommés via Azy-MCP | ✅ Acté côté back |
 | 4 | Décompte crédits côté chat.api dans `LLMBillingService`, audit dans `llm_call_audit.metadata` JSONB | ✅ Réutilise existant |
 | 5 | Quotas journaliers + tokens (Q14 v1) | ✅ Acté |
 | 6 | **Garde-fou concurrence max 3 skills / user** *(nouveau Q14 v2)* | ✅ Acté |
@@ -2725,7 +2774,7 @@ L'expert a souligné que le mode `with_skills` (Anthropic Files API + base64 dow
 
 | Gate | Effet sur front |
 |---|---|
-| Webhook `claude-call-messages` livré | Permet la recette des skills `mode: messages` (raisonnement pur, génération JSON) |
+| Webhook `llm-call-messages` livré | Permet la recette des skills `mode: messages` (raisonnement pur, génération JSON) |
 | Webhook `claude-call-with-skills` livré | Permet la recette du `.docx` final dans `progression_pedagogique`. **Sans ça, pas de recette E2E V1 du skill emblématique.** |
 
 → **Action front** : adapter les **tests Vitest unit** pour ne pas dépendre du webhook (mocks complets côté front). Garder la recette E2E (J5 §5.3 du plan) pour quand DevOps a livré les 2 webhooks.
@@ -2746,7 +2795,7 @@ PLAN-RFC-085-FRONT-V1.md :
 
 | Section | Mise à jour suite à §C.10 + §C.11 |
 |---|---|
-| §1 Pré-requis | ✅ Toujours valide. Préciser que les 2 webhooks N8N (`claude-call-messages` + `claude-call-with-skills`) sont des **gates de déploiement V1**. |
+| §1 Pré-requis | ✅ Toujours valide. Préciser que les 2 webhooks N8N (`llm-call-messages` + `claude-call-with-skills`) sont des **gates de déploiement V1**. |
 | §2 Plan jour-par-jour | ✅ Inchangé. J1-J5 OK. |
 | §3 Découpage 4 PRs | ✅ Inchangé. |
 | §4 Risques | Ajouter risque : webhook `claude-call-with-skills` non livré → recette E2E `progression_pedagogique` impossible. Mitigation = recette en 2 phases : phase A `mode: messages` only (livrable plus tôt), phase B avec `.docx` quand webhook prêt. |

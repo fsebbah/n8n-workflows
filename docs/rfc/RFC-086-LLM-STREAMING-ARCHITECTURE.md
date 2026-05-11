@@ -152,8 +152,8 @@ n8n accumule:
 
 3. chat.api      → Azy-MCP     : WS message { type: "llm_start", ... }
 
-4. Azy-MCP       → n8n         : POST /webhook/claude-call-stream
-                                 { ..., callback_url, correlation_id }
+4. Azy-MCP       → n8n         : POST /webhook/llm-call-stream
+                                 { provider, model, api_key, ..., callback_url, correlation_id }
 
 5. chat.api      → Frontend    : SSE connection ouverte
                                  { type: "stream_ready", correlation_id }
@@ -198,14 +198,20 @@ n8n accumule:
 
 ## 5. Implémentation n8n
 
-### 5.1 Nouveau webhook : `claude-call-stream`
+### 5.1 Nouveau webhook : `llm-call-stream` (Multi-Provider)
+
+> ⚠️ **Pattern BYOT (Bring Your Own Token)** : Le caller fournit `provider`, `model`
+> et `api_key`. Pas de fallback sur les variables d'environnement.
 
 ```
-POST /webhook/claude-call-stream
+POST /webhook/llm-call-stream
 
 Input:
 {
+  "provider": "anthropic",
   "model": "claude-sonnet-4-20250514",
+  "api_key": "sk-ant-api03-...",
+  "temperature": 0.7,
   "system": "...",
   "messages": [...],
   "max_tokens": 4096,
@@ -215,6 +221,10 @@ Input:
     "flush_timeout_ms": 500,
     "flush_token_count": 20,
     "flush_size_bytes": 4096
+  },
+  "metadata": {
+    "tenant_id": "tenant-123",
+    "user_id": "user-456"
   }
 }
 
@@ -229,14 +239,113 @@ Callbacks (asynchrones):
 → POST callback_url avec paquet final
 ```
 
-### 5.2 Pseudo-code du workflow n8n
+**Providers supportés :**
+
+| Provider | Endpoint streaming | Notes |
+|----------|-------------------|-------|
+| `anthropic` | `api.anthropic.com/v1/messages` | SSE natif |
+| `openai` | `api.openai.com/v1/chat/completions` | SSE natif |
+| `mistral` | `api.mistral.ai/v1/chat/completions` | SSE natif |
+
+**Erreur si `api_key` manquant :**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "MISSING_API_KEY",
+    "message": "api_key is required. No fallback to environment variables.",
+    "http_status": 400
+  }
+}
+```
+
+### 5.2 Pseudo-code du workflow n8n (Multi-Provider)
 
 ```javascript
-// Node 1: Webhook Trigger (claude-call-stream)
+// Node 1: Webhook Trigger (llm-call-stream)
 const input = $input.all()[0].json;
-const { callback_url, correlation_id, stream_config } = input;
+const { provider, model, api_key, temperature, callback_url, correlation_id, stream_config, metadata } = input;
 
-// Node 2: Code - Stream avec accumulation
+// Node 2: Validation - api_key REQUIS (pas de fallback)
+if (!api_key) {
+  return {
+    success: false,
+    error: {
+      code: 'MISSING_API_KEY',
+      message: 'api_key is required. No fallback to environment variables.',
+      http_status: 400
+    }
+  };
+}
+
+// Node 3: Configuration par provider
+const PROVIDER_CONFIG = {
+  anthropic: {
+    url: 'https://api.anthropic.com/v1/messages',
+    headers: {
+      'anthropic-version': '2023-06-01',
+      'x-api-key': api_key,
+      'content-type': 'application/json',
+    },
+    buildBody: (data) => ({
+      model: data.model,
+      system: data.system,
+      messages: data.messages,
+      max_tokens: data.max_tokens,
+      temperature: data.temperature || 0.7,
+      stream: true,
+    }),
+  },
+  openai: {
+    url: 'https://api.openai.com/v1/chat/completions',
+    headers: {
+      'Authorization': `Bearer ${api_key}`,
+      'content-type': 'application/json',
+    },
+    buildBody: (data) => ({
+      model: data.model,
+      messages: [
+        ...(data.system ? [{ role: 'system', content: data.system }] : []),
+        ...data.messages,
+      ],
+      max_tokens: data.max_tokens,
+      temperature: data.temperature || 0.7,
+      stream: true,
+    }),
+  },
+  mistral: {
+    url: 'https://api.mistral.ai/v1/chat/completions',
+    headers: {
+      'Authorization': `Bearer ${api_key}`,
+      'content-type': 'application/json',
+    },
+    buildBody: (data) => ({
+      model: data.model,
+      messages: [
+        ...(data.system ? [{ role: 'system', content: data.system }] : []),
+        ...data.messages,
+      ],
+      max_tokens: data.max_tokens,
+      temperature: data.temperature || 0.7,
+      stream: true,
+    }),
+  },
+};
+
+const config = PROVIDER_CONFIG[provider];
+if (!config) {
+  return {
+    success: false,
+    error: {
+      code: 'INVALID_PROVIDER',
+      message: `Provider '${provider}' not supported. Use: anthropic, openai, mistral`,
+      http_status: 400
+    }
+  };
+}
+
+// Node 4: Code - Stream avec accumulation
 const FLUSH_TIMEOUT = stream_config?.flush_timeout_ms || 500;
 const FLUSH_TOKENS = stream_config?.flush_token_count || 20;
 const FLUSH_BYTES = stream_config?.flush_size_bytes || 4096;
@@ -256,11 +365,14 @@ async function flush(isFinal = false, usage = null) {
     events: buffer,
     cumulative_tokens: cumulativeTokens,
     timestamp: new Date().toISOString(),
+    metadata, // Passthrough
   };
 
   if (isFinal) {
     packet.final = true;
     packet.usage = usage;
+    packet.provider = provider;
+    packet.model = model;
   }
 
   await $http.post(callback_url, packet, {
@@ -272,21 +384,11 @@ async function flush(isFinal = false, usage = null) {
   lastFlush = Date.now();
 }
 
-// Stream depuis Anthropic
-const response = await fetch('https://api.anthropic.com/v1/messages', {
+// Stream depuis le provider
+const response = await fetch(config.url, {
   method: 'POST',
-  headers: {
-    'anthropic-version': '2023-06-01',
-    'x-api-key': $env.ANTHROPIC_API_KEY,
-    'content-type': 'application/json',
-  },
-  body: JSON.stringify({
-    model: input.model,
-    system: input.system,
-    messages: input.messages,
-    max_tokens: input.max_tokens,
-    stream: true,
-  }),
+  headers: config.headers,
+  body: JSON.stringify(config.buildBody(input)),
 });
 
 const reader = response.body.getReader();
@@ -297,21 +399,22 @@ while (true) {
   if (done) break;
 
   const chunk = decoder.decode(value);
-  const events = parseSSEEvents(chunk);
+  const events = parseSSEEvents(chunk, provider); // Adapter parsing selon provider
 
   for (const event of events) {
-    if (event.type === 'content_block_delta') {
-      buffer.push(event);
+    // Normaliser les events selon le provider
+    if (isContentDelta(event, provider)) {
+      buffer.push(normalizeEvent(event, provider));
       bufferBytes += JSON.stringify(event).length;
-      cumulativeTokens++; // Approximation, le vrai compte est dans message_delta
+      cumulativeTokens++;
     }
 
-    if (event.type === 'message_delta' && event.usage) {
-      cumulativeTokens = event.usage.output_tokens;
+    if (isUsageUpdate(event, provider)) {
+      cumulativeTokens = extractOutputTokens(event, provider);
     }
 
-    if (event.type === 'message_stop') {
-      await flush(true, event.usage || { input_tokens: 0, output_tokens: cumulativeTokens });
+    if (isStreamEnd(event, provider)) {
+      await flush(true, extractUsage(event, provider));
       break;
     }
 
@@ -327,7 +430,7 @@ while (true) {
   }
 }
 
-return { status: 'completed', correlation_id };
+return { status: 'completed', correlation_id, provider, model };
 ```
 
 ---
@@ -408,10 +511,14 @@ Les deux modes peuvent coexister. Le frontend peut proposer :
 
 ## 9. Webhooks n8n à créer
 
-| Webhook | Description | Priorité |
-|---------|-------------|----------|
-| `claude-call-stream` | Streaming avec callbacks par paquets | 🔴 Haute |
-| `claude-call-stream-with-skills` | Idem + Anthropic Skills (Files API) | 🔴 Haute |
+| Webhook | Description | Multi-Provider | Priorité |
+|---------|-------------|----------------|----------|
+| `llm-call-stream` | Streaming avec callbacks par paquets | ✅ Oui (Anthropic, OpenAI, Mistral) | 🔴 Haute |
+| `claude-call-stream-with-skills` | Streaming + Anthropic Skills (Files API) | ❌ Anthropic uniquement | 🔴 Haute |
+
+> **Pourquoi `claude-call-stream-with-skills` reste Anthropic-only ?**
+> Les Anthropic Skills (génération `.docx`, `.xlsx`) sont une fonctionnalité spécifique
+> à l'API Anthropic. Il n'existe pas d'équivalent chez OpenAI ou Mistral.
 
 ---
 
@@ -434,13 +541,13 @@ Les deux modes peuvent coexister. Le frontend peut proposer :
 
 | Phase | Contenu | Durée |
 |-------|---------|-------|
-| **Phase 1** | Webhook `claude-call-stream` + tests unitaires | 1-2j |
+| **Phase 1** | Webhook `llm-call-stream` multi-provider + tests unitaires | 2-3j |
 | **Phase 2** | Intégration Azy-MCP (réception callbacks) | 1j |
 | **Phase 3** | Intégration chat.api (audit, billing, forward SSE) | 1-2j |
 | **Phase 4** | Tests E2E avec frontend | 1j |
-| **Phase 5** | Webhook `claude-call-stream-with-skills` | 1j |
+| **Phase 5** | Webhook `claude-call-stream-with-skills` (Anthropic only) | 1j |
 
-**Total estimé : 5-7 jours**
+**Total estimé : 6-8 jours**
 
 ---
 

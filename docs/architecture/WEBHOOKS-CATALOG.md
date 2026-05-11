@@ -1,7 +1,7 @@
 # Catalogue des Webhooks Actifs n8n
 
-> **Généré le:** 2026-05-08
-> **Total:** 167 webhooks uniques dans 237 workflows actifs
+> **Généré le:** 2026-05-11
+> **Total:** 171 webhooks uniques dans 237 workflows actifs
 
 Ce document catalogue tous les webhooks actifs de l'instance n8n, organisés par catégorie fonctionnelle.
 
@@ -17,7 +17,7 @@ Ce document catalogue tous les webhooks actifs de l'instance n8n, organisés par
 | [E-commerce / Panier](#e-commerce--panier) | 14 | Gestion panier et commandes |
 | [Documents](#documents) | 11 | Extraction et traitement de documents |
 | [Éducation / Learning](#éducation--learning) | 8 | Fonctionnalités éducatives |
-| [IA / LLM](#ia--llm) | 12 | Génération de contenu IA |
+| [IA / LLM](#ia--llm) | 16 | Génération de contenu IA (multi-provider BYOT) |
 | [Recherche](#recherche) | 7 | Moteurs de recherche |
 | [Profil / Utilisateur](#profil--utilisateur) | 11 | Gestion des profils |
 | [Médias](#médias) | 8 | Images, vidéos, audio |
@@ -165,20 +165,26 @@ Fonctionnalités éducatives et d'apprentissage.
 
 Intégration des modèles de langage et génération de contenu IA.
 
-| Webhook | Description |
-|---------|-------------|
-| `llm-request-validator` | Validation requêtes LLM |
-| `llm-intention` | Détection d'intention |
-| `llm-summarizer` | Résumé automatique |
-| `llm-url-extractor` | Extraction d'URLs |
-| `text-generator` | Génération de texte |
-| `code-generator` | Génération de code |
-| `chart-generator` | Génération de graphiques |
-| `summarizer` | Résumé de texte |
-| `text-embedder` | Embedding de texte |
-| `image-embedder` | Embedding d'images |
-| `analyze-message` | Analyse de message |
-| `analyze-feedback` | Analyse de feedback |
+> **Pattern BYOT (Bring Your Own Token)** : Les webhooks multi-provider requièrent `provider`, `model`, `api_key` et `temperature` dans le body. Aucun fallback sur les variables d'environnement - `api_key` est **obligatoire**.
+
+| Webhook | Description | Provider |
+|---------|-------------|----------|
+| `llm-call-messages` | Appel LLM synchrone (messages API) | Multi-provider (BYOT) |
+| `llm-call-stream` | Appel LLM streaming par paquets | Multi-provider (BYOT) |
+| `claude-call-with-skills` | Appel Claude avec Files API (génération .docx, .xlsx) | Anthropic only |
+| `claude-call-stream-with-skills` | Streaming Claude avec Files API | Anthropic only |
+| `text-generator` | Génération de texte (legacy, sera migré vers llm-call-messages) | Multi-provider (BYOT) |
+| `llm-request-validator` | Validation requêtes LLM | - |
+| `llm-intention` | Détection d'intention | - |
+| `llm-summarizer` | Résumé automatique | Multi-provider |
+| `llm-url-extractor` | Extraction d'URLs | - |
+| `code-generator` | Génération de code | - |
+| `chart-generator` | Génération de graphiques | - |
+| `summarizer` | Résumé de texte | - |
+| `text-embedder` | Embedding de texte | - |
+| `image-embedder` | Embedding d'images | - |
+| `analyze-message` | Analyse de message | - |
+| `analyze-feedback` | Analyse de feedback | - |
 
 ---
 
@@ -408,3 +414,4 @@ POST http://pi6.local:5678/webhook/{webhook-path}
    - [Architecture Système](./SYSTEM-ARCHITECTURE.md)
    - [MCP Classroom Integration](../mcp/MCP_CLASSROOM_INTEGRATION.md)
    - [Google Services Integration](./GOOGLE-SERVICES-INTEGRATION.md)
+   - [Contrat Webhooks LLM Multi-Provider](../guides/skills-n8n-anthropic-contract.md) - Spécifications I/O détaillées
