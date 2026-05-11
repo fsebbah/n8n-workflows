@@ -1,0 +1,374 @@
+{
+  "name": "Claude - Call With Skills",
+  "description": "Anthropic-only webhook with Files API for generating .docx, .xlsx files",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Claude - Call With Skills (Anthropic Files API)\n\n**Endpoint:** POST /webhook/claude-call-with-skills\n\n**Description:** Appel Claude avec Files API pour générer des documents (.docx, .xlsx, etc.)\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"api_key\", \"model\", \"messages\", \"container\"],\n  \"properties\": {\n    \"api_key\": { \"type\": \"string\", \"description\": \"Anthropic API key (REQUIRED)\" },\n    \"model\": { \"type\": \"string\", \"default\": \"claude-sonnet-4-20250514\" },\n    \"betas\": { \"type\": \"array\", \"default\": [\"files-api-2025-04-14\"] },\n    \"system\": { \"type\": \"string\" },\n    \"messages\": { \"type\": \"array\" },\n    \"max_tokens\": { \"type\": \"integer\", \"default\": 16000 },\n    \"container\": {\n      \"skills\": [{ \"type\": \"anthropic\", \"skill_id\": \"docx|xlsx|...\" }]\n    },\n    \"tools\": { \"type\": \"array\" },\n    \"metadata\": { \"type\": \"object\" }\n  }\n}\n```\n\n**Skills disponibles:**\n- `docx` : Génère .docx (Word)\n- `xlsx` : Génère .xlsx (Excel)\n- `code_sandbox` : Exécution code Python\n- `artifact_file` : Fichiers arbitraires\n\n**ANTHROPIC ONLY** - Les Skills sont spécifiques à Anthropic.",
+        "height": 680,
+        "width": 450,
+        "color": 3
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 40]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "claude-call-with-skills",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-skills",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 340],
+      "webhookId": "claude-call-with-skills-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Claude Call With Skills\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: api_key ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string') {\n  errors.push('api_key requis (Anthropic key)');\n}\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model || 'claude-sonnet-4-20250514';\n\n// --- REQUIRED: messages ---\nconst messages = body.messages || ctx.messages;\nif (!messages || !Array.isArray(messages) || messages.length === 0) {\n  errors.push('messages requis');\n}\n\n// --- REQUIRED: container with skills ---\nconst container = body.container || ctx.container;\nif (!container || !container.skills || container.skills.length === 0) {\n  errors.push('container.skills requis (ex: [{ type: \"anthropic\", skill_id: \"docx\" }])');\n}\n\n// --- Optional ---\nconst betas = body.betas || ctx.betas || ['files-api-2025-04-14'];\nconst system = body.system || ctx.system || null;\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 16000);\nconst tools = body.tools || ctx.tools || [];\nconst metadata = body.metadata || ctx.metadata || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    metadata: metadata\n  };\n}\n\nreturn {\n  valid: true,\n  api_key: apiKey.trim(),\n  model: model,\n  betas: betas,\n  system: system,\n  messages: messages,\n  max_tokens: maxTokens,\n  container: container,\n  tools: tools,\n  metadata: metadata,\n  startTime: Date.now()\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 340]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [700, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  metadata: input.metadata\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 520]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 520]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "anthropic-beta",
+              "value": "={{ $json.betas.join(',') }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  const body = {\n    model: data.model,\n    max_tokens: data.max_tokens,\n    messages: data.messages,\n    container: data.container\n  };\n  if (data.system) body.system = data.system;\n  if (data.tools && data.tools.length > 0) body.tools = data.tools;\n  return JSON.stringify(body);\n})() }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "http-anthropic-skills",
+      "name": "Anthropic Skills API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 240],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// EXTRACT FILE IDs FROM RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\n// Handle API error\nif (input.error) {\n  return {\n    success: false,\n    error: {\n      code: input.error.type || 'ANTHROPIC_ERROR',\n      message: input.error.message || 'Anthropic Skills API error',\n      http_status: 500\n    },\n    metadata: prevData.metadata,\n    api_key: prevData.api_key\n  };\n}\n\n// Extract text content and file references\nconst textContent = [];\nconst fileRefs = [];\n\nfor (const block of (input.content || [])) {\n  if (block.type === 'text') {\n    textContent.push(block.text);\n  }\n  // Check for tool_use blocks that might contain file references\n  if (block.type === 'tool_use' && block.name === 'create_document') {\n    // The file_id will be in the subsequent tool_result\n    // or in the container's file output\n  }\n}\n\n// Check for files in container output\nif (input.container_result?.files) {\n  for (const file of input.container_result.files) {\n    fileRefs.push({\n      file_id: file.file_id,\n      name: file.name,\n      mime_type: file.mime_type,\n      size: file.size\n    });\n  }\n}\n\n// Alternative: Check content blocks for file artifacts\nfor (const block of (input.content || [])) {\n  if (block.type === 'tool_result' && block.output?.file_id) {\n    fileRefs.push({\n      file_id: block.output.file_id,\n      name: block.output.name || 'document',\n      mime_type: block.output.mime_type || 'application/octet-stream'\n    });\n  }\n}\n\nreturn {\n  success: true,\n  has_files: fileRefs.length > 0,\n  file_refs: fileRefs,\n  text_content: textContent.join('\\n'),\n  raw_response: input,\n  model: input.model || prevData.model,\n  usage: input.usage || { input_tokens: 0, output_tokens: 0 },\n  stop_reason: input.stop_reason || 'end_turn',\n  metadata: prevData.metadata,\n  api_key: prevData.api_key,\n  startTime: startTime\n};"
+      },
+      "id": "extract-files",
+      "name": "Extract File IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 240]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-files",
+              "leftValue": "={{ $json.has_files }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-files",
+      "name": "Has Files?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1360, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// DOWNLOAD FILES FROM ANTHROPIC FILES API\n// Note: This is a simplified version\n// Real implementation needs to iterate over file_refs\n// ============================================\n\nconst data = $json;\nconst files = [];\n\n// For each file reference, download the file content\n// Using the Anthropic Files API: GET /v1/files/{file_id}/content\nfor (const fileRef of data.file_refs) {\n  try {\n    const fileUrl = `https://api.anthropic.com/v1/files/${fileRef.file_id}/content`;\n    \n    // Note: In a real implementation, you would make an HTTP request here\n    // For now, we store the file reference with download URL\n    files.push({\n      file_id: fileRef.file_id,\n      name: fileRef.name,\n      mime_type: fileRef.mime_type,\n      download_url: fileUrl,\n      // base64_content would be populated after download\n      base64_content: null,\n      download_headers: {\n        'x-api-key': data.api_key,\n        'anthropic-version': '2023-06-01'\n      }\n    });\n  } catch (error) {\n    files.push({\n      file_id: fileRef.file_id,\n      error: error.message\n    });\n  }\n}\n\nconst latencyMs = Date.now() - (data.startTime || Date.now());\n\nreturn {\n  success: true,\n  content: [\n    {\n      type: 'text',\n      text: data.text_content\n    }\n  ],\n  files: files,\n  provider: 'anthropic',\n  model: data.model,\n  usage: data.usage,\n  stop_reason: data.stop_reason,\n  metadata: data.metadata,\n  _trace: {\n    provider: 'anthropic',\n    model: data.model,\n    latency_ms: latencyMs,\n    files_count: files.length\n  }\n};"
+      },
+      "id": "download-files",
+      "name": "Download Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1580, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT RESPONSE WITHOUT FILES\n// ============================================\n\nconst data = $json;\nconst latencyMs = Date.now() - (data.startTime || Date.now());\n\nreturn {\n  success: data.success !== false,\n  content: [\n    {\n      type: 'text',\n      text: data.text_content || ''\n    }\n  ],\n  files: [],\n  provider: 'anthropic',\n  model: data.model,\n  usage: data.usage || { input_tokens: 0, output_tokens: 0 },\n  stop_reason: data.stop_reason || 'end_turn',\n  metadata: data.metadata,\n  error: data.error || null,\n  _trace: {\n    provider: 'anthropic',\n    model: data.model,\n    latency_ms: latencyMs,\n    files_count: 0\n  }\n};"
+      },
+      "id": "format-no-files",
+      "name": "Format (No Files)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1580, 320]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "merge-responses",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1800, 240]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2020, 240]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Anthropic Skills API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Skills API": {
+      "main": [
+        [
+          {
+            "node": "Extract File IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract File IDs": {
+      "main": [
+        [
+          {
+            "node": "Has Files?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Files?": {
+      "main": [
+        [
+          {
+            "node": "Download Files",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format (No Files)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Files": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format (No Files)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "tags": ["llm", "anthropic", "skills", "files-api"]
+}
