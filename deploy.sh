@@ -3,14 +3,18 @@
 # Deploy script pour n8n
 # ============================================
 # Usage:
-#   ./deploy.sh          - Restart seulement (pm2 restart n8n)
-#   ./deploy.sh --build  - Rebuild complet (npm install + restart)
-#   ./deploy.sh --docker - Mode Docker (docker compose)
-#   ./deploy.sh --help   - Aide
+#   ./deploy.sh              - Restart seulement (pm2 restart n8n)
+#   ./deploy.sh --build      - Rebuild complet (npm install + restart)
+#   ./deploy.sh --docker     - Mode Docker (docker compose)
+#   ./deploy.sh --services   - Déployer aussi les micro-services (Redis XADD)
+#   ./deploy.sh --help       - Aide
 #
 # Ce script gère deux modes de déploiement :
 # - pm2 (défaut) : n8n tourne via pm2 sur ce serveur
 # - docker : n8n tourne dans un container Docker
+#
+# Micro-services disponibles :
+# - redis-xadd : Service Redis XADD pour n8n 2.0 (remplace Execute Command)
 # ============================================
 
 set -e
@@ -18,9 +22,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CUSTOM_NODES_DIR="$SCRIPT_DIR/custom-nodes"
 DOCKER_DIR="$SCRIPT_DIR/docker"
+SERVICES_DIR="$SCRIPT_DIR/services"
 
 MODE="restart"
 RUNTIME="pm2"  # pm2 ou docker
+DEPLOY_SERVICES=false
 
 # Couleurs pour les logs
 RED='\033[0;31m'
@@ -43,24 +49,37 @@ for arg in "$@"; do
         --docker|-d)
             RUNTIME="docker"
             ;;
+        --services|-s)
+            DEPLOY_SERVICES=true
+            ;;
         --help|-h)
             echo "Usage: ./deploy.sh [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  (aucun)        Restart n8n (pm2 restart)"
-            echo "  --build, -b    Rebuild complet (npm install dans custom-nodes + restart)"
-            echo "  --docker, -d   Mode Docker (utilise docker compose au lieu de pm2)"
-            echo "  --help, -h     Afficher cette aide"
+            echo "  (aucun)          Restart n8n (pm2 restart)"
+            echo "  --build, -b      Rebuild complet (npm install dans custom-nodes + restart)"
+            echo "  --docker, -d     Mode Docker (utilise docker compose au lieu de pm2)"
+            echo "  --services, -s   Déployer aussi les micro-services (Redis XADD)"
+            echo "  --help, -h       Afficher cette aide"
             echo ""
             echo "Exemples:"
-            echo "  ./deploy.sh              # Restart simple via pm2"
-            echo "  ./deploy.sh --build      # npm install + restart via pm2"
-            echo "  ./deploy.sh --docker     # Restart via docker compose"
-            echo "  ./deploy.sh --build -d   # npm install + restart via docker"
+            echo "  ./deploy.sh                  # Restart simple via pm2"
+            echo "  ./deploy.sh --build          # npm install + restart via pm2"
+            echo "  ./deploy.sh --services       # Restart n8n + micro-services via pm2"
+            echo "  ./deploy.sh --docker         # Restart via docker compose"
+            echo "  ./deploy.sh --build -d       # npm install + restart via docker"
+            echo "  ./deploy.sh --docker -s      # Restart n8n + services via docker"
+            echo "  ./deploy.sh -d -s --build    # Build complet avec services en docker"
+            echo ""
+            echo "Micro-services disponibles (--services):"
+            echo "  - redis-xadd : Service Redis XADD pour Redis Streams (port 8765)"
+            echo "                 Requis pour workflows utilisant \$env.REDIS_XADD_SERVICE_URL"
             echo ""
             echo "Quand utiliser --build:"
             echo "  - Ajout/mise à jour d'un custom node (package.json modifié)"
             echo "  - Après git pull avec changements dans custom-nodes/"
+            echo ""
+            echo "Documentation: docs/n8n/REDIS_XADD_SERVICE.md"
             exit 0
             ;;
     esac
@@ -70,7 +89,7 @@ echo ""
 echo "============================================"
 echo "       n8n Deploy Script"
 echo "============================================"
-echo "Mode: $MODE | Runtime: $RUNTIME"
+echo "Mode: $MODE | Runtime: $RUNTIME | Services: $DEPLOY_SERVICES"
 echo "============================================"
 echo ""
 
@@ -117,6 +136,51 @@ do_build() {
 }
 
 # ============================================
+# Fonction : Déployer les micro-services
+# ============================================
+do_deploy_services() {
+    log_info "Déploiement des micro-services..."
+
+    if [ "$RUNTIME" == "docker" ]; then
+        log_info "Déploiement Redis XADD Service via Docker..."
+        cd "$SERVICES_DIR"
+
+        # Build et démarrage avec docker compose
+        docker compose -f docker-compose.redis-xadd.yml up -d --build
+
+        log_success "Redis XADD Service déployé via Docker"
+    else
+        log_info "Déploiement Redis XADD Service via PM2..."
+
+        # Vérifier l'environnement virtuel Python
+        VENV_DIR="$SCRIPT_DIR/.venv"
+        if [ ! -d "$VENV_DIR" ]; then
+            log_warn "Environnement virtuel non trouvé, création..."
+            python3 -m venv "$VENV_DIR"
+        fi
+
+        # Installer les dépendances si nécessaire
+        if [ "$MODE" == "build" ]; then
+            log_info "Installation des dépendances Python..."
+            "$VENV_DIR/bin/pip" install -q -r "$SERVICES_DIR/requirements-redis-xadd.txt"
+        fi
+
+        # Restart ou démarrer le service
+        if pm2 list | grep -q "redis-xadd"; then
+            log_info "Restart redis-xadd..."
+            pm2 restart redis-xadd
+        else
+            log_info "Démarrage redis-xadd..."
+            pm2 start "$SERVICES_DIR/redis_xadd_service.py" \
+                --name redis-xadd \
+                --interpreter "$VENV_DIR/bin/python3"
+        fi
+
+        log_success "Redis XADD Service déployé via PM2"
+    fi
+}
+
+# ============================================
 # Fonction : Vérification post-deploy
 # ============================================
 do_verify() {
@@ -154,6 +218,32 @@ do_verify() {
             exit 1
         fi
     fi
+
+    # Vérification des services si déployés
+    if [ "$DEPLOY_SERVICES" == "true" ]; then
+        do_verify_services
+    fi
+}
+
+# ============================================
+# Fonction : Vérification des micro-services
+# ============================================
+do_verify_services() {
+    log_info "Vérification des micro-services..."
+
+    # Vérifier Redis XADD Service
+    sleep 2
+    if curl -s http://localhost:8765/health > /dev/null 2>&1; then
+        log_success "Redis XADD Service: healthy"
+        curl -s http://localhost:8765/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'  Redis: {d[\"redis_host\"]}:{d[\"redis_port\"]} DB={d[\"redis_db\"]} - connected: {d[\"redis_connected\"]}')" 2>/dev/null || true
+    else
+        log_warn "Redis XADD Service: not responding (port 8765)"
+        if [ "$RUNTIME" == "docker" ]; then
+            docker logs redis-xadd-service --tail 10 2>&1 || true
+        else
+            pm2 logs redis-xadd --lines 10 --nostream 2>&1 || true
+        fi
+    fi
 }
 
 # ============================================
@@ -162,14 +252,23 @@ do_verify() {
 case $MODE in
     "restart")
         do_restart
+        if [ "$DEPLOY_SERVICES" == "true" ]; then
+            do_deploy_services
+        fi
         sleep 2
         do_verify
         ;;
     "build")
         do_build
+        if [ "$DEPLOY_SERVICES" == "true" ]; then
+            do_deploy_services
+        fi
         ;;
 esac
 
 echo ""
 log_success "Deploy terminé !"
+if [ "$DEPLOY_SERVICES" == "true" ]; then
+    log_info "Services: redis-xadd → http://localhost:8765"
+fi
 echo "============================================"

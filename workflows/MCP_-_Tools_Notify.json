@@ -1,27 +1,16 @@
 {
-  "updatedAt": "2026-05-15T12:00:00.000Z",
-  "createdAt": "2026-02-06T14:31:23.679Z",
-  "id": "OSrxWa6DdzXVvFJt",
+  "id": "mcp-tools-notify-001",
   "name": "MCP - Tools Notify",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
-        "content": "## MCP - Tools Notify\n\n**Endpoint:** POST /webhook/mcp/tools/notify\n\n**Source:** RFC-030, RFC-090\n\n**Description:**\nNotifie les plugins via Redis Stream\nquand un workflow MCP-* est modifié.\n\n**Input:** {action, workflow_name}\n**Output:** XADD tools:events:stream\n\n**Note:** Utilise redis-cli via Execute Command\ncar le node Redis natif n8n ne supporte pas XADD.",
-        "height": 340,
-        "width": 320,
-        "color": 4
+        "content": "## MCP - Tools Notify\n\n**Endpoint:** POST /webhook/mcp/tools/notify\n\n**Note:** Utilise le micro-service Redis XADD (services/redis_xadd_service.py)\nSolution pour n8n 2.0 (Execute Command supprimé)"
       },
-      "id": "mcp-notify-0000",
-      "name": "Documentation",
+      "id": "1",
+      "name": "Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        -200,
-        60
-      ]
+      "position": [0, 0]
     },
     {
       "parameters": {
@@ -30,127 +19,62 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "mcp-notify-0001",
-      "name": "Webhook POST",
+      "id": "2",
+      "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        200,
-        300
-      ],
-      "webhookId": "mcp-tools-notify"
+      "position": [200, 200],
+      "webhookId": "mcp-tools-notify-v2"
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PREPARE NOTIFICATION PAYLOAD\n// ============================================\n// RFC-090: Notification via Redis Streams (XADD)\n// Le node Redis natif n8n ne supporte pas XADD,\n// donc on utilise redis-cli via Execute Command.\n// ============================================\n\nconst input = $input.first().json;\n\n// Validate input\nconst action = input.body?.action || input.action || 'workflow_updated';\nconst workflowName = input.body?.workflow_name || input.workflow_name || input.body?.name || input.name || 'unknown';\n\n// Valid actions\nconst validActions = ['workflow_added', 'workflow_modified', 'workflow_deleted', 'workflow_updated'];\nif (!validActions.includes(action)) {\n  throw new Error(`Invalid action: ${action}. Valid: ${validActions.join(', ')}`);\n}\n\n// Timestamp ISO\nconst timestamp = new Date().toISOString();\n\n// Redis connection info (from environment or defaults)\nconst redisHost = $env.REDIS_HOST || 'host3.local';\nconst redisPort = $env.REDIS_PORT || '6379';\nconst redisDb = $env.REDIS_NOTIFICATIONS_DB || '5';\nconst streamKey = 'tools:events:stream';\n\n// Escape special characters for shell command\nconst escapeShell = (str) => {\n  return String(str).replace(/'/g, \"'\\\\''\");\n};\n\nreturn {\n  // Data fields\n  event: 'tools_updated',\n  action: action,\n  workflow_name: workflowName,\n  source: 'n8n:MCP-Tools-Notify',\n  timestamp: timestamp,\n  \n  // Redis connection\n  redis_host: redisHost,\n  redis_port: redisPort,\n  redis_db: redisDb,\n  stream_key: streamKey,\n  \n  // Pre-built redis-cli command\n  redis_command: `redis-cli -h ${escapeShell(redisHost)} -p ${escapeShell(redisPort)} -n ${escapeShell(redisDb)} XADD ${escapeShell(streamKey)} '*' event '${escapeShell('tools_updated')}' action '${escapeShell(action)}' workflow_name '${escapeShell(workflowName)}' source '${escapeShell('n8n:MCP-Tools-Notify')}' timestamp '${escapeShell(timestamp)}'`\n};"
+        "method": "POST",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/tools/notify",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "action",
+              "value": "={{ $json.body?.action || 'workflow_updated' }}"
+            },
+            {
+              "name": "workflow_name",
+              "value": "={{ $json.body?.workflow_name || 'unknown' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
       },
-      "id": "mcp-notify-0002",
-      "name": "Prepare Payload",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        420,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "command": "={{ $json.redis_command }}",
-        "options": {}
-      },
-      "id": "mcp-notify-0003",
-      "name": "XADD via redis-cli",
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
-      "position": [
-        640,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// PARSE XADD RESPONSE\n// ============================================\n// redis-cli XADD returns the stream entry ID\n// Format: \"1234567890123-0\" (timestamp-sequence)\n// ============================================\n\nconst input = $input.first().json;\nconst stdout = input.stdout || '';\nconst stderr = input.stderr || '';\n\n// Check for errors\nif (stderr && stderr.trim()) {\n  throw new Error(`Redis XADD failed: ${stderr}`);\n}\n\n// Parse the stream ID from stdout\nconst streamId = stdout.trim();\n\nif (!streamId || !streamId.includes('-')) {\n  throw new Error(`Invalid XADD response: ${stdout}`);\n}\n\n// Get original payload from previous node\nconst payload = $('Prepare Payload').first().json;\n\nreturn {\n  success: true,\n  stream_id: streamId,\n  stream_key: payload.stream_key,\n  event: payload.event,\n  action: payload.action,\n  workflow_name: payload.workflow_name,\n  timestamp: payload.timestamp\n};"
-      },
-      "id": "mcp-notify-0005",
-      "name": "Parse Response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        860,
-        300
-      ]
+      "id": "3",
+      "name": "Redis XADD Service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 200]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify($json) }}",
-        "options": {}
+        "responseBody": "={{ JSON.stringify({ success: $json.success, stream_id: $json.stream_id, action: $json.action || 'unknown' }) }}"
       },
-      "id": "mcp-notify-0004",
-      "name": "Respond Success",
+      "id": "5",
+      "name": "Response",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1080,
-        300
-      ]
+      "position": [600, 200]
     }
   ],
   "connections": {
-    "Webhook POST": {
-      "main": [
-        [
-          {
-            "node": "Prepare Payload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Webhook": {
+      "main": [[{ "node": "Redis XADD Service", "type": "main", "index": 0 }]]
     },
-    "Prepare Payload": {
-      "main": [
-        [
-          {
-            "node": "XADD via redis-cli",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "XADD via redis-cli": {
-      "main": [
-        [
-          {
-            "node": "Parse Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse Response": {
-      "main": [
-        [
-          {
-            "node": "Respond Success",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Redis XADD Service": {
+      "main": [[{ "node": "Response", "type": "main", "index": 0 }]]
     }
   },
   "settings": {
-    "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "rfc090-execute-command-xadd",
-  "triggerCount": 1,
-  "tags": []
+    "executionOrder": "v1"
+  }
 }
