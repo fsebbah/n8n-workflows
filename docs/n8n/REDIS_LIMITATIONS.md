@@ -214,8 +214,32 @@ Value: {"name": "John", "age": 30}
 
 ---
 
-## 8. Références
+## 8. Solution: Redis XADD Micro-Service
 
+Depuis **mai 2026**, une solution officielle est disponible pour utiliser Redis Streams depuis n8n :
+
+### Le micro-service Redis XADD
+
+Un micro-service FastAPI (`services/redis_xadd_service.py`) permet à n8n d'exécuter `XADD` via HTTP Request :
+
+```
+n8n HTTP Request → Redis XADD Service (port 8765) → Redis Streams
+```
+
+**Avantages :**
+- Compatible n8n 2.0 (pas besoin d'Execute Command)
+- Supporte XADD avec MAXLEN
+- Endpoint dédié `/tools/notify` pour MCP
+- Déployable avec PM2 ou Docker
+
+**Documentation complète :** [REDIS_XADD_SERVICE.md](./REDIS_XADD_SERVICE.md)
+
+---
+
+## 9. Références
+
+- [REDIS_XADD_SERVICE.md](./REDIS_XADD_SERVICE.md) - Documentation du micro-service
 - [RFC-032: Migration Redis Streams](../rfc/RFC-032-REDIS-STREAMS-MIGRATION.md)
 - [RFC-033: Batch LLM Generation](../rfc/RFC-033-BATCH-LLM-GENERATION.md)
+- [RFC-089/RFC-090: Skills API Architecture](../rfc/)
 - [n8n Redis Node Documentation](https://docs.n8n.io/integrations/builtin/app-nodes/n8n-nodes-base.redis/)

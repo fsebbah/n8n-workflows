@@ -1,0 +1,59 @@
+version: '3.8'
+
+# Docker Compose pour Redis XADD Service
+# Déploiement autonome ou intégration avec n8n existant
+#
+# Usage:
+#   docker-compose -f docker-compose.redis-xadd.yml up -d
+#
+# Variables d'environnement à définir:
+#   - REDIS_HOST: Hôte Redis (défaut: redis)
+#   - REDIS_PORT: Port Redis (défaut: 6379)
+#   - REDIS_DB_NOTIFICATION: Base Redis (défaut: 5)
+#   - REDIS_PASSWORD: Mot de passe Redis (optionnel)
+
+services:
+  redis-xadd-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.redis-xadd
+    image: n8n-redis-xadd:latest
+    container_name: redis-xadd-service
+    restart: unless-stopped
+    ports:
+      - "${REDIS_XADD_PORT:-8765}:8765"
+    environment:
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_DB_NOTIFICATION=${REDIS_DB_NOTIFICATION:-5}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_XADD_SERVICE_PORT=8765
+    networks:
+      - n8n-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # Redis optionnel - décommenter si pas de Redis existant
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: n8n-redis
+  #   restart: unless-stopped
+  #   command: redis-server --appendonly yes
+  #   volumes:
+  #     - redis-data:/data
+  #   ports:
+  #     - "6379:6379"
+  #   networks:
+  #     - n8n-network
+
+networks:
+  n8n-network:
+    external: true
+    name: ${DOCKER_NETWORK:-n8n-network}
+
+# volumes:
+#   redis-data:
