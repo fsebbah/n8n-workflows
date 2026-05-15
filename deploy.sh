@@ -52,11 +52,15 @@ for arg in "$@"; do
         --services|-s)
             DEPLOY_SERVICES=true
             ;;
+        --init|-i)
+            MODE="init"
+            ;;
         --help|-h)
             echo "Usage: ./deploy.sh [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  (aucun)          Restart n8n (pm2 restart)"
+            echo "  --init, -i       Initialiser l'environnement (venv + dépendances) sans démarrer"
             echo "  --build, -b      Rebuild complet (npm install dans custom-nodes + restart)"
             echo "  --docker, -d     Mode Docker (utilise docker compose au lieu de pm2)"
             echo "  --services, -s   Déployer aussi les micro-services (Redis XADD)"
@@ -64,12 +68,17 @@ for arg in "$@"; do
             echo ""
             echo "Exemples:"
             echo "  ./deploy.sh                  # Restart simple via pm2"
+            echo "  ./deploy.sh --init           # Première installation: créer .venv + installer deps"
             echo "  ./deploy.sh --build          # npm install + restart via pm2"
             echo "  ./deploy.sh --services       # Restart n8n + micro-services via pm2"
             echo "  ./deploy.sh --docker         # Restart via docker compose"
             echo "  ./deploy.sh --build -d       # npm install + restart via docker"
             echo "  ./deploy.sh --docker -s      # Restart n8n + services via docker"
             echo "  ./deploy.sh -d -s --build    # Build complet avec services en docker"
+            echo ""
+            echo "Première installation:"
+            echo "  ./deploy.sh --init           # Crée .venv et installe les dépendances Python"
+            echo "  ./deploy.sh --services       # Puis démarre n8n + services"
             echo ""
             echo "Micro-services disponibles (--services):"
             echo "  - redis-xadd : Service Redis XADD pour Redis Streams (port 8765)"
@@ -92,6 +101,47 @@ echo "============================================"
 echo "Mode: $MODE | Runtime: $RUNTIME | Services: $DEPLOY_SERVICES"
 echo "============================================"
 echo ""
+
+# ============================================
+# Fonction : Initialisation de l'environnement
+# ============================================
+do_init() {
+    log_info "Initialisation de l'environnement..."
+
+    # Créer l'environnement virtuel Python
+    VENV_DIR="$SCRIPT_DIR/.venv"
+    if [ ! -d "$VENV_DIR" ]; then
+        log_info "[1/3] Création de l'environnement virtuel Python..."
+        python3 -m venv "$VENV_DIR"
+        log_success "Environnement virtuel créé: $VENV_DIR"
+    else
+        log_info "[1/3] Environnement virtuel existe déjà: $VENV_DIR"
+    fi
+
+    # Installer les dépendances Python pour les services
+    log_info "[2/3] Installation des dépendances Python (services)..."
+    "$VENV_DIR/bin/pip" install --upgrade pip -q
+    if [ -f "$SERVICES_DIR/requirements.txt" ]; then
+        "$VENV_DIR/bin/pip" install -q -r "$SERVICES_DIR/requirements.txt"
+        log_success "Dépendances Python installées"
+    else
+        log_warn "Fichier requirements.txt non trouvé dans $SERVICES_DIR"
+    fi
+
+    # Installer les dépendances npm pour custom-nodes
+    log_info "[3/3] Installation des dépendances npm (custom-nodes)..."
+    if [ -f "$CUSTOM_NODES_DIR/package.json" ]; then
+        cd "$CUSTOM_NODES_DIR"
+        npm install -q
+        log_success "Dépendances npm installées"
+    else
+        log_warn "Fichier package.json non trouvé dans $CUSTOM_NODES_DIR"
+    fi
+
+    echo ""
+    log_success "Initialisation terminée !"
+    log_info "Prochaine étape: ./deploy.sh --services"
+}
 
 # ============================================
 # Fonction : Restart simple
@@ -250,6 +300,9 @@ do_verify_services() {
 # Exécution principale
 # ============================================
 case $MODE in
+    "init")
+        do_init
+        ;;
     "restart")
         do_restart
         if [ "$DEPLOY_SERVICES" == "true" ]; then
