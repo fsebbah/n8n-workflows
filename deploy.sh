@@ -210,7 +210,11 @@ do_deploy_services() {
         fi
 
         # Build et démarrage avec docker compose
-        docker compose -f docker-compose.redis-xadd.yml up -d --build
+        docker compose -f docker-compose.redis-xadd.yml up -d --build --remove-orphans
+
+        # Nettoyer les anciennes images (dangling)
+        log_info "Nettoyage des anciennes images Docker..."
+        docker image prune -f --filter "dangling=true" 2>/dev/null || true
 
         log_success "Redis XADD Service déployé via Docker"
     else
