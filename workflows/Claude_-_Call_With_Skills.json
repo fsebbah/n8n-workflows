@@ -1,13 +1,13 @@
 {
   "name": "Claude - Call With Skills",
-  "description": "Anthropic-only webhook with Files API for generating .docx, .xlsx files",
+  "description": "Anthropic Skills API avec Batch Processing - génération asynchrone de documents",
   "active": true,
   "nodes": [
     {
       "parameters": {
-        "content": "## Claude - Call With Skills (Anthropic Skills API)\n\n**Endpoint:** POST /webhook/claude-call-with-skills\n\n**Description:** Appel Claude avec Skills API pour générer des documents (.docx, .xlsx, .pptx, etc.)\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"api_key\", \"messages\", \"container\"],\n  \"properties\": {\n    \"api_key\": { \"type\": \"string\", \"description\": \"Anthropic API key (REQUIRED)\" },\n    \"model\": { \"type\": \"string\", \"default\": \"claude-sonnet-4-20250514\" },\n    \"betas\": { \"type\": \"array\", \"default\": [\"code-execution-2025-08-25\", \"skills-2025-10-02\"] },\n    \"system\": { \"type\": \"string\" },\n    \"messages\": { \"type\": \"array\" },\n    \"max_tokens\": { \"type\": \"integer\", \"default\": 16000 },\n    \"container\": {\n      \"skills\": [{ \"type\": \"anthropic\", \"skill_id\": \"docx|xlsx|pptx|pdf\", \"version\": \"latest\" }]\n    },\n    \"tools\": { \"type\": \"array\", \"description\": \"code_execution tool auto-added\" },\n    \"metadata\": { \"type\": \"object\" }\n  }\n}\n```\n\n**Skills disponibles:**\n- `docx` : Génère .docx (Word)\n- `xlsx` : Génère .xlsx (Excel)\n- `pptx` : Génère .pptx (PowerPoint)\n- `pdf` : Génère .pdf\n\n**Note:** Le tool code_execution est automatiquement ajouté.\n\n**ANTHROPIC ONLY** - Les Skills sont spécifiques à Anthropic.",
-        "height": 680,
-        "width": 450,
+        "content": "## Claude - Call With Skills (Batch Mode)\n\n**Endpoint:** POST /webhook/claude-call-with-skills\n\n**Description:** Appel Claude avec Skills API via Batch Processing.\nLes requêtes sont soumises de manière asynchrone pour éviter les timeouts.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"api_key\", \"messages\", \"container\", \"callback_url\"],\n  \"properties\": {\n    \"api_key\": { \"type\": \"string\" },\n    \"model\": { \"type\": \"string\", \"default\": \"claude-sonnet-4-20250514\" },\n    \"betas\": { \"type\": \"array\", \"default\": [\"code-execution-2025-08-25\", \"skills-2025-10-02\"] },\n    \"system\": { \"type\": \"string\" },\n    \"messages\": { \"type\": \"array\" },\n    \"max_tokens\": { \"type\": \"integer\", \"default\": 16000 },\n    \"container\": { \"skills\": [...] },\n    \"callback_url\": { \"type\": \"string\", \"description\": \"URL pour recevoir les résultats\" },\n    \"correlation_id\": { \"type\": \"string\", \"description\": \"ID unique (auto-généré si absent)\" },\n    \"metadata\": { \"type\": \"object\" }\n  }\n}\n```\n\n**Réponse immédiate (202):**\n```json\n{\n  \"status\": \"processing\",\n  \"batch_id\": \"msgbatch_xxx\",\n  \"correlation_id\": \"...\",\n  \"message\": \"Batch submitted. Results will be sent to callback_url.\"\n}\n```\n\n**Callback (quand terminé):**\nLes résultats complets avec fichiers sont envoyés à callback_url.\n\n**Note:** Utilise le Batch API (50% moins cher, pas de timeout)",
+        "height": 700,
+        "width": 480,
         "color": 3
       },
       "id": "doc-sticky",
@@ -32,7 +32,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - Claude Call With Skills\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: api_key ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string') {\n  errors.push('api_key requis (Anthropic key)');\n}\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model || 'claude-sonnet-4-20250514';\n\n// --- REQUIRED: messages ---\nconst messages = body.messages || ctx.messages;\nif (!messages || !Array.isArray(messages) || messages.length === 0) {\n  errors.push('messages requis');\n}\n\n// --- REQUIRED: container with skills ---\nconst container = body.container || ctx.container;\nif (!container || !container.skills || container.skills.length === 0) {\n  errors.push('container.skills requis (ex: [{ type: \"anthropic\", skill_id: \"docx\" }])');\n}\n\n// --- Skills API requires specific betas (NOT files-api) ---\nconst SKILLS_BETAS = ['code-execution-2025-08-25', 'skills-2025-10-02'];\nconst betas = body.betas || ctx.betas || SKILLS_BETAS;\n\nconst system = body.system || ctx.system || null;\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 16000);\n\n// --- Skills API requires code_execution tool ---\nlet tools = body.tools || ctx.tools || [];\nconst hasCodeExecution = tools.some(t => t.type === 'code_execution_20250825' || t.name === 'code_execution');\nif (!hasCodeExecution) {\n  tools = [{ type: 'code_execution_20250825', name: 'code_execution' }, ...tools];\n}\n\nconst metadata = body.metadata || ctx.metadata || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    metadata: metadata\n  };\n}\n\nreturn {\n  valid: true,\n  api_key: apiKey.trim(),\n  model: model,\n  betas: betas,\n  system: system,\n  messages: messages,\n  max_tokens: maxTokens,\n  container: container,\n  tools: tools,\n  metadata: metadata,\n  startTime: Date.now()\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Claude Call With Skills (Batch Mode)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: api_key ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string') {\n  errors.push('api_key requis (Anthropic key)');\n}\n\n// --- REQUIRED: callback_url (for async results) ---\nconst callbackUrl = body.callback_url || ctx.callback_url;\nif (!callbackUrl || typeof callbackUrl !== 'string') {\n  errors.push('callback_url requis pour recevoir les résultats');\n}\n\n// --- correlation_id (auto-generate if not provided) ---\nconst correlationId = body.correlation_id || ctx.correlation_id || `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model || 'claude-sonnet-4-20250514';\n\n// --- REQUIRED: messages ---\nconst messages = body.messages || ctx.messages;\nif (!messages || !Array.isArray(messages) || messages.length === 0) {\n  errors.push('messages requis');\n}\n\n// --- REQUIRED: container with skills ---\nconst container = body.container || ctx.container;\nif (!container || !container.skills || container.skills.length === 0) {\n  errors.push('container.skills requis (ex: [{ type: \"anthropic\", skill_id: \"docx\" }])');\n}\n\n// --- Skills API requires specific betas ---\nconst SKILLS_BETAS = ['code-execution-2025-08-25', 'skills-2025-10-02'];\nconst betas = body.betas || ctx.betas || SKILLS_BETAS;\n\nconst system = body.system || ctx.system || null;\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 16000);\n\n// --- Skills API requires code_execution tool ---\nlet tools = body.tools || ctx.tools || [];\nconst hasCodeExecution = tools.some(t => t.type === 'code_execution_20250825' || t.name === 'code_execution');\nif (!hasCodeExecution) {\n  tools = [{ type: 'code_execution_20250825', name: 'code_execution' }, ...tools];\n}\n\nconst metadata = body.metadata || ctx.metadata || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    correlation_id: correlationId,\n    metadata: metadata\n  };\n}\n\nreturn {\n  valid: true,\n  api_key: apiKey.trim(),\n  model: model,\n  betas: betas,\n  system: system,\n  messages: messages,\n  max_tokens: maxTokens,\n  container: container,\n  tools: tools,\n  callback_url: callbackUrl,\n  correlation_id: correlationId,\n  metadata: metadata,\n  submitted_at: new Date().toISOString()\n};"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -71,7 +71,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  metadata: input.metadata\n};"
+        "jsCode": "const input = $input.first().json;\n\nreturn {\n  success: false,\n  status: 'error',\n  correlation_id: input.correlation_id,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  metadata: input.metadata\n};"
       },
       "id": "build-error",
       "name": "Build Error",
@@ -104,7 +104,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "https://api.anthropic.com/v1/messages/batches",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -129,13 +129,13 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ (() => {\n  const data = $json;\n  const body = {\n    model: data.model,\n    max_tokens: data.max_tokens,\n    messages: data.messages,\n    container: data.container,\n    tools: data.tools\n  };\n  if (data.system) body.system = data.system;\n  return JSON.stringify(body);\n})() }}",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  \n  // Build the batch request with a single message request\n  const messageParams = {\n    model: data.model,\n    max_tokens: data.max_tokens,\n    messages: data.messages,\n    container: data.container,\n    tools: data.tools\n  };\n  if (data.system) messageParams.system = data.system;\n  \n  const batchRequest = {\n    requests: [\n      {\n        custom_id: data.correlation_id,\n        params: messageParams\n      }\n    ]\n  };\n  \n  return JSON.stringify(batchRequest);\n})() }}",
         "options": {
-          "timeout": 300000
+          "timeout": 30000
         }
       },
-      "id": "http-anthropic-skills",
-      "name": "Anthropic Skills API",
+      "id": "http-create-batch",
+      "name": "Create Batch",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [920, 240],
@@ -143,10 +143,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// EXTRACT FILE IDs FROM RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\n// Handle API error\nif (input.error) {\n  return {\n    success: false,\n    error: {\n      code: input.error.type || 'ANTHROPIC_ERROR',\n      message: input.error.message || 'Anthropic Skills API error',\n      http_status: 500\n    },\n    metadata: prevData.metadata,\n    api_key: prevData.api_key\n  };\n}\n\n// Extract text content and file references\nconst textContent = [];\nconst fileRefs = [];\n\nfor (const block of (input.content || [])) {\n  if (block.type === 'text') {\n    textContent.push(block.text);\n  }\n  // Check for tool_use blocks that might contain file references\n  if (block.type === 'tool_use' && block.name === 'create_document') {\n    // The file_id will be in the subsequent tool_result\n    // or in the container's file output\n  }\n}\n\n// Check for files in container output\nif (input.container_result?.files) {\n  for (const file of input.container_result.files) {\n    fileRefs.push({\n      file_id: file.file_id,\n      name: file.name,\n      mime_type: file.mime_type,\n      size: file.size\n    });\n  }\n}\n\n// Alternative: Check content blocks for file artifacts\nfor (const block of (input.content || [])) {\n  if (block.type === 'tool_result' && block.output?.file_id) {\n    fileRefs.push({\n      file_id: block.output.file_id,\n      name: block.output.name || 'document',\n      mime_type: block.output.mime_type || 'application/octet-stream'\n    });\n  }\n}\n\nreturn {\n  success: true,\n  has_files: fileRefs.length > 0,\n  file_refs: fileRefs,\n  text_content: textContent.join('\\n'),\n  raw_response: input,\n  model: input.model || prevData.model,\n  usage: input.usage || { input_tokens: 0, output_tokens: 0 },\n  stop_reason: input.stop_reason || 'end_turn',\n  metadata: prevData.metadata,\n  api_key: prevData.api_key,\n  startTime: startTime\n};"
+        "jsCode": "// ============================================\n// PREPARE BATCH DATA FOR REDIS STORAGE\n// ============================================\n\nconst batchResponse = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\n// Check for batch creation error\nif (batchResponse.error || !batchResponse.id) {\n  return {\n    success: false,\n    status: 'error',\n    correlation_id: prevData.correlation_id,\n    error: {\n      code: batchResponse.error?.type || 'BATCH_CREATE_ERROR',\n      message: batchResponse.error?.message || 'Failed to create batch',\n      http_status: 500\n    },\n    metadata: prevData.metadata\n  };\n}\n\n// Prepare data for Redis storage\nreturn {\n  success: true,\n  batch_id: batchResponse.id,\n  processing_status: batchResponse.processing_status,\n  correlation_id: prevData.correlation_id,\n  callback_url: prevData.callback_url,\n  api_key: prevData.api_key,\n  model: prevData.model,\n  metadata: prevData.metadata,\n  submitted_at: prevData.submitted_at,\n  expires_at: batchResponse.expires_at,\n  // For Redis XADD\n  redis_data: {\n    batch_id: batchResponse.id,\n    correlation_id: prevData.correlation_id,\n    callback_url: prevData.callback_url,\n    api_key: prevData.api_key,\n    model: prevData.model,\n    status: 'pending',\n    submitted_at: prevData.submitted_at,\n    metadata: JSON.stringify(prevData.metadata)\n  }\n};"
       },
-      "id": "extract-files",
-      "name": "Extract File IDs",
+      "id": "prepare-batch-data",
+      "name": "Prepare Batch Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1140, 240]
@@ -161,8 +161,8 @@
           },
           "conditions": [
             {
-              "id": "has-files",
-              "leftValue": "={{ $json.has_files }}",
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
               "rightValue": true,
               "operator": {
                 "type": "boolean",
@@ -174,52 +174,46 @@
         },
         "options": {}
       },
-      "id": "if-has-files",
-      "name": "Has Files?",
+      "id": "if-batch-success",
+      "name": "Batch Created?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [1360, 240]
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// DOWNLOAD FILES FROM ANTHROPIC FILES API\n// Aligned with contract §3.4 (filename, size_bytes)\n// ============================================\n\nconst data = $json;\nconst files = [];\n\n// For each file reference, build download info\n// Using the Anthropic Files API: GET /v1/files/{file_id}/content\nfor (const fileRef of data.file_refs) {\n  try {\n    const fileUrl = `https://api.anthropic.com/v1/files/${fileRef.file_id}/content`;\n    \n    // Contract §3.4 compliant: filename, size_bytes, download_url\n    files.push({\n      file_id: fileRef.file_id,\n      filename: fileRef.name,           // Aligned: name → filename\n      mime_type: fileRef.mime_type,\n      size_bytes: fileRef.size || 0,    // Aligned: size → size_bytes\n      download_url: fileUrl\n    });\n  } catch (error) {\n    files.push({\n      file_id: fileRef.file_id,\n      error: error.message\n    });\n  }\n}\n\nconst latencyMs = Date.now() - (data.startTime || Date.now());\n\nreturn {\n  success: true,\n  content: [\n    {\n      type: 'text',\n      text: data.text_content\n    }\n  ],\n  files: files,\n  provider: 'anthropic',\n  model: data.model,\n  usage: data.usage,\n  stop_reason: data.stop_reason,\n  metadata: data.metadata,\n  _trace: {\n    provider: 'anthropic',\n    model: data.model,\n    latency_ms: latencyMs,\n    files_count: files.length\n  }\n};"
+        "method": "POST",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/xadd",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  stream: 'llm:batches:pending',\n  fields: $json.redis_data,\n  max_len: 10000\n}) }}",
+        "options": {
+          "timeout": 5000
+        }
       },
-      "id": "download-files",
-      "name": "Download Files",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1580, 160]
+      "id": "store-in-redis",
+      "name": "Store in Redis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1580, 160],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT RESPONSE WITHOUT FILES\n// ============================================\n\nconst data = $json;\nconst latencyMs = Date.now() - (data.startTime || Date.now());\n\nreturn {\n  success: data.success !== false,\n  content: [\n    {\n      type: 'text',\n      text: data.text_content || ''\n    }\n  ],\n  files: [],\n  provider: 'anthropic',\n  model: data.model,\n  usage: data.usage || { input_tokens: 0, output_tokens: 0 },\n  stop_reason: data.stop_reason || 'end_turn',\n  metadata: data.metadata,\n  error: data.error || null,\n  _trace: {\n    provider: 'anthropic',\n    model: data.model,\n    latency_ms: latencyMs,\n    files_count: 0\n  }\n};"
+        "jsCode": "// ============================================\n// BUILD SUCCESS RESPONSE (202 Accepted)\n// ============================================\n\nconst batchData = $('Prepare Batch Data').first().json;\nconst redisResponse = $input.first().json;\n\nreturn {\n  success: true,\n  status: 'processing',\n  batch_id: batchData.batch_id,\n  correlation_id: batchData.correlation_id,\n  message: 'Batch submitted successfully. Results will be sent to callback_url when ready.',\n  expires_at: batchData.expires_at,\n  redis_stream_id: redisResponse.stream_id || null,\n  metadata: batchData.metadata\n};"
       },
-      "id": "format-no-files",
-      "name": "Format (No Files)",
+      "id": "build-success-response",
+      "name": "Build Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1580, 320]
-    },
-    {
-      "parameters": {
-        "mode": "combine",
-        "mergeByFields": {
-          "values": []
-        },
-        "options": {}
-      },
-      "id": "merge-responses",
-      "name": "Merge",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [1800, 240]
+      "position": [1800, 160]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseCode": 202,
           "responseHeaders": {
             "entries": [
               {
@@ -231,10 +225,42 @@
         }
       },
       "id": "respond-success",
-      "name": "Respond",
+      "name": "Respond 202",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [2020, 240]
+      "position": [2020, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Batch creation failed - return error\nconst data = $json;\nreturn {\n  success: false,\n  status: 'error',\n  correlation_id: data.correlation_id,\n  error: data.error,\n  metadata: data.metadata\n};"
+      },
+      "id": "batch-error",
+      "name": "Batch Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1580, 320]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.http_status || 500 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-batch-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1800, 320]
     }
   ],
   "connections": {
@@ -264,7 +290,7 @@
       "main": [
         [
           {
-            "node": "Anthropic Skills API",
+            "node": "Create Batch",
             "type": "main",
             "index": 0
           }
@@ -289,73 +315,73 @@
         ]
       ]
     },
-    "Anthropic Skills API": {
+    "Create Batch": {
       "main": [
         [
           {
-            "node": "Extract File IDs",
+            "node": "Prepare Batch Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Extract File IDs": {
+    "Prepare Batch Data": {
       "main": [
         [
           {
-            "node": "Has Files?",
+            "node": "Batch Created?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Has Files?": {
+    "Batch Created?": {
       "main": [
         [
           {
-            "node": "Download Files",
+            "node": "Store in Redis",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Format (No Files)",
+            "node": "Batch Error",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Download Files": {
+    "Store in Redis": {
       "main": [
         [
           {
-            "node": "Merge",
+            "node": "Build Response",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format (No Files)": {
+    "Build Response": {
       "main": [
         [
           {
-            "node": "Merge",
+            "node": "Respond 202",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Merge": {
+    "Batch Error": {
       "main": [
         [
           {
-            "node": "Respond",
+            "node": "Respond Error",
             "type": "main",
             "index": 0
           }
@@ -369,5 +395,5 @@
     "availableInMCP": true
   },
   "staticData": null,
-  "tags": ["llm", "anthropic", "skills", "files-api"]
+  "tags": ["llm", "anthropic", "skills", "batch", "async"]
 }

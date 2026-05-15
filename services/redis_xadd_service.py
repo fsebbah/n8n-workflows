@@ -214,6 +214,109 @@ async def publish_event(
         raise HTTPException(status_code=500, detail=f"Redis error: {str(e)}")
 
 
+class BatchPendingResponse(BaseModel):
+    """Réponse pour les batches en attente"""
+    success: bool
+    batches: list
+    count: int
+
+
+@app.get("/batches/pending", response_model=BatchPendingResponse)
+async def get_pending_batches(limit: int = 100):
+    """
+    Récupère les batches en attente de traitement depuis Redis.
+    Utilisé par le workflow de polling pour vérifier les batches Anthropic.
+
+    Stream: llm:batches:pending
+    """
+    try:
+        # XRANGE pour lire tous les messages du stream
+        messages = redis_client.xrange("llm:batches:pending", count=limit)
+
+        batches = []
+        for msg_id, fields in messages:
+            batch_data = {
+                "redis_id": msg_id,
+                **fields
+            }
+            # Parse metadata if it's JSON
+            if "metadata" in batch_data and batch_data["metadata"]:
+                try:
+                    batch_data["metadata"] = eval(batch_data["metadata"])
+                except:
+                    pass
+            batches.append(batch_data)
+
+        return BatchPendingResponse(
+            success=True,
+            batches=batches,
+            count=len(batches)
+        )
+
+    except redis.RedisError as e:
+        logger.error(f"Redis error in get_pending_batches: {e}")
+        raise HTTPException(status_code=500, detail=f"Redis error: {str(e)}")
+
+
+@app.delete("/batches/pending/{redis_id}")
+async def delete_pending_batch(redis_id: str):
+    """
+    Supprime un batch du stream pending après traitement.
+    Appelé quand un batch est terminé (succeeded, errored, expired).
+    """
+    try:
+        deleted = redis_client.xdel("llm:batches:pending", redis_id)
+
+        return {
+            "success": deleted > 0,
+            "deleted_count": deleted,
+            "redis_id": redis_id
+        }
+
+    except redis.RedisError as e:
+        logger.error(f"Redis error in delete_pending_batch: {e}")
+        raise HTTPException(status_code=500, detail=f"Redis error: {str(e)}")
+
+
+@app.post("/batches/completed")
+async def store_completed_batch(
+    batch_id: str,
+    correlation_id: str,
+    status: str,
+    result: Dict[str, Any] = None
+):
+    """
+    Stocke un batch terminé dans le stream completed pour historique.
+    """
+    timestamp = datetime.utcnow().isoformat()
+
+    fields = {
+        "batch_id": batch_id,
+        "correlation_id": correlation_id,
+        "status": status,
+        "completed_at": timestamp,
+        "result": str(result) if result else ""
+    }
+
+    try:
+        stream_id = redis_client.xadd(
+            "llm:batches:completed",
+            fields,
+            maxlen=5000,  # Garder les 5000 derniers
+            approximate=True
+        )
+
+        return {
+            "success": True,
+            "stream_id": stream_id,
+            "batch_id": batch_id
+        }
+
+    except redis.RedisError as e:
+        logger.error(f"Redis error in store_completed_batch: {e}")
+        raise HTTPException(status_code=500, detail=f"Redis error: {str(e)}")
+
+
 if __name__ == "__main__":
     port = int(os.getenv("REDIS_XADD_SERVICE_PORT", "8765"))
     logger.info(f"Starting Redis XADD Service on port {port}")

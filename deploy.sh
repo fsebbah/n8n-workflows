@@ -27,6 +27,7 @@ SERVICES_DIR="$SCRIPT_DIR/services"
 MODE="restart"
 RUNTIME="pm2"  # pm2 ou docker
 DEPLOY_SERVICES=false
+SYNC_WORKFLOWS=false
 
 # Couleurs pour les logs
 RED='\033[0;31m'
@@ -52,6 +53,9 @@ for arg in "$@"; do
         --services|-s)
             DEPLOY_SERVICES=true
             ;;
+        --sync|-w)
+            SYNC_WORKFLOWS=true
+            ;;
         --init|-i)
             MODE="init"
             ;;
@@ -64,6 +68,7 @@ for arg in "$@"; do
             echo "  --build, -b      Rebuild complet (npm install dans custom-nodes + restart)"
             echo "  --docker, -d     Mode Docker (utilise docker compose au lieu de pm2)"
             echo "  --services, -s   Déployer aussi les micro-services (Redis XADD)"
+            echo "  --sync, -w       Synchroniser les workflows JSON avec n8n (via API)"
             echo "  --help, -h       Afficher cette aide"
             echo ""
             echo "Exemples:"
@@ -75,6 +80,8 @@ for arg in "$@"; do
             echo "  ./deploy.sh --build -d       # npm install + restart via docker"
             echo "  ./deploy.sh --docker -s      # Restart n8n + services via docker"
             echo "  ./deploy.sh -d -s --build    # Build complet avec services en docker"
+            echo "  ./deploy.sh --sync           # Synchroniser workflows avec n8n (via API)"
+            echo "  ./deploy.sh -s --sync        # Services + sync workflows"
             echo ""
             echo "Première installation:"
             echo "  ./deploy.sh --init           # Crée .venv et installe les dépendances Python"
@@ -98,7 +105,7 @@ echo ""
 echo "============================================"
 echo "       n8n Deploy Script"
 echo "============================================"
-echo "Mode: $MODE | Runtime: $RUNTIME | Services: $DEPLOY_SERVICES"
+echo "Mode: $MODE | Runtime: $RUNTIME | Services: $DEPLOY_SERVICES | Sync: $SYNC_WORKFLOWS"
 echo "============================================"
 echo ""
 
@@ -195,6 +202,13 @@ do_deploy_services() {
         log_info "Déploiement Redis XADD Service via Docker..."
         cd "$SERVICES_DIR"
 
+        # Créer le réseau Docker si nécessaire
+        DOCKER_NETWORK="${DOCKER_NETWORK:-n8n-network}"
+        if ! docker network ls | grep -q "$DOCKER_NETWORK"; then
+            log_info "Création du réseau Docker: $DOCKER_NETWORK"
+            docker network create "$DOCKER_NETWORK"
+        fi
+
         # Build et démarrage avec docker compose
         docker compose -f docker-compose.redis-xadd.yml up -d --build
 
@@ -228,6 +242,98 @@ do_deploy_services() {
 
         log_success "Redis XADD Service déployé via PM2"
     fi
+}
+
+# ============================================
+# Fonction : Synchroniser les workflows avec n8n
+# ============================================
+do_sync_workflows() {
+    log_info "Synchronisation des workflows avec n8n..."
+
+    # Vérifier les variables d'environnement requises
+    if [ -z "$N8N_API_URL" ]; then
+        # Essayer de charger depuis .env.local
+        if [ -f "$SCRIPT_DIR/.env.local" ]; then
+            source "$SCRIPT_DIR/.env.local"
+        fi
+    fi
+
+    N8N_API_URL="${N8N_API_URL:-http://localhost:5678/api/v1}"
+
+    if [ -z "$N8N_API_KEY" ]; then
+        log_error "N8N_API_KEY non défini. Export N8N_API_KEY ou définir dans .env.local"
+        return 1
+    fi
+
+    WORKFLOWS_DIR="$SCRIPT_DIR/workflows"
+
+    # Liste des workflows critiques à synchroniser
+    CRITICAL_WORKFLOWS=(
+        "MCP_-_Tools_Notify.json"
+        "Claude_-_Call_With_Skills.json"
+        "Claude_-_Call_Stream_With_Skills.json"
+        "Claude_-_Batch_Poller.json"
+    )
+
+    for wf_file in "${CRITICAL_WORKFLOWS[@]}"; do
+        if [ ! -f "$WORKFLOWS_DIR/$wf_file" ]; then
+            log_warn "Workflow non trouvé: $wf_file"
+            continue
+        fi
+
+        # Extraire le nom du workflow depuis le JSON
+        wf_name=$(python3 -c "import json; print(json.load(open('$WORKFLOWS_DIR/$wf_file'))['name'])" 2>/dev/null)
+
+        # Chercher si le workflow existe déjà dans n8n
+        log_info "Recherche du workflow: $wf_name"
+
+        existing=$(curl -s -X GET "$N8N_API_URL/workflows" \
+            -H "X-N8N-API-KEY: $N8N_API_KEY" \
+            -H "Content-Type: application/json" | \
+            python3 -c "import sys,json; wfs=json.load(sys.stdin).get('data',[]); matches=[w for w in wfs if w['name']=='$wf_name']; print(matches[0]['id'] if matches else '')" 2>/dev/null)
+
+        if [ -n "$existing" ]; then
+            # Workflow existe → UPDATE
+            log_info "  Mise à jour du workflow $wf_name (ID: $existing)..."
+
+            response=$(curl -s -X PUT "$N8N_API_URL/workflows/$existing" \
+                -H "X-N8N-API-KEY: $N8N_API_KEY" \
+                -H "Content-Type: application/json" \
+                -d @"$WORKFLOWS_DIR/$wf_file")
+
+            if echo "$response" | grep -q '"id"'; then
+                log_success "  Workflow mis à jour: $wf_name"
+            else
+                log_error "  Échec mise à jour: $wf_name"
+                echo "$response" | head -c 200
+            fi
+        else
+            # Workflow n'existe pas → CREATE
+            log_info "  Création du workflow $wf_name..."
+
+            response=$(curl -s -X POST "$N8N_API_URL/workflows" \
+                -H "X-N8N-API-KEY: $N8N_API_KEY" \
+                -H "Content-Type: application/json" \
+                -d @"$WORKFLOWS_DIR/$wf_file")
+
+            if echo "$response" | grep -q '"id"'; then
+                new_id=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+                log_success "  Workflow créé: $wf_name (ID: $new_id)"
+
+                # Activer le workflow
+                curl -s -X PATCH "$N8N_API_URL/workflows/$new_id" \
+                    -H "X-N8N-API-KEY: $N8N_API_KEY" \
+                    -H "Content-Type: application/json" \
+                    -d '{"active": true}' > /dev/null
+                log_info "  Workflow activé"
+            else
+                log_error "  Échec création: $wf_name"
+                echo "$response" | head -c 200
+            fi
+        fi
+    done
+
+    log_success "Synchronisation terminée"
 }
 
 # ============================================
@@ -308,6 +414,10 @@ case $MODE in
         if [ "$DEPLOY_SERVICES" == "true" ]; then
             do_deploy_services
         fi
+        if [ "$SYNC_WORKFLOWS" == "true" ]; then
+            sleep 3  # Attendre que n8n soit prêt
+            do_sync_workflows
+        fi
         sleep 2
         do_verify
         ;;
@@ -315,6 +425,10 @@ case $MODE in
         do_build
         if [ "$DEPLOY_SERVICES" == "true" ]; then
             do_deploy_services
+        fi
+        if [ "$SYNC_WORKFLOWS" == "true" ]; then
+            sleep 3
+            do_sync_workflows
         fi
         ;;
 esac

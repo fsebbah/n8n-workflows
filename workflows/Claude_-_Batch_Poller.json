@@ -1,0 +1,427 @@
+{
+  "name": "Claude - Batch Poller",
+  "description": "Vérifie les batches Anthropic en attente et envoie les résultats via callback",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Claude - Batch Poller\n\n**Trigger:** Cron toutes les 30 secondes\n\n**Description:** Vérifie les batches Anthropic en attente dans Redis.\nQuand un batch est terminé, extrait les résultats et les envoie au callback_url.\n\n**Flow:**\n1. Récupère les batches pending depuis Redis\n2. Pour chaque batch, vérifie le statut via Anthropic API\n3. Si `ended` → récupère les résultats\n4. Extrait les fichiers générés\n5. Envoie les résultats au callback_url\n6. Supprime du stream pending\n\n**Streams Redis:**\n- `llm:batches:pending` - Batches en attente\n- `llm:batches:completed` - Historique des batches terminés",
+        "height": 420,
+        "width": 400,
+        "color": 5
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 40]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Every 30s",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [260, 340]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/batches/pending",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "get-pending-batches",
+      "name": "Get Pending Batches",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 340]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-batches",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-batches",
+      "name": "Has Batches?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [700, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split batches into individual items for processing\nconst batches = $json.batches || [];\nreturn batches.map(batch => ({ json: batch }));"
+      },
+      "id": "split-batches",
+      "name": "Split Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 260]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.anthropic.com/v1/messages/batches/{{ $json.batch_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "check-batch-status",
+      "name": "Check Batch Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 260],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// MERGE BATCH INFO WITH STATUS\n// ============================================\n\nconst statusResponse = $input.first().json;\nconst batchInfo = $('Split Batches').first().json;\n\nreturn {\n  // Original batch info from Redis\n  redis_id: batchInfo.redis_id,\n  batch_id: batchInfo.batch_id,\n  correlation_id: batchInfo.correlation_id,\n  callback_url: batchInfo.callback_url,\n  api_key: batchInfo.api_key,\n  model: batchInfo.model,\n  metadata: batchInfo.metadata,\n  submitted_at: batchInfo.submitted_at,\n  \n  // Status from Anthropic\n  processing_status: statusResponse.processing_status,\n  request_counts: statusResponse.request_counts,\n  results_url: statusResponse.results_url,\n  ended_at: statusResponse.ended_at,\n  created_at: statusResponse.created_at,\n  expires_at: statusResponse.expires_at,\n  \n  // Error handling\n  has_error: !!statusResponse.error,\n  error: statusResponse.error\n};"
+      },
+      "id": "merge-batch-info",
+      "name": "Merge Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 260]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-ended",
+              "leftValue": "={{ $json.processing_status }}",
+              "rightValue": "ended",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-ended",
+      "name": "Batch Ended?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1580, 260]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.results_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "get-batch-results",
+      "name": "Get Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 180],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESS BATCH RESULTS - Extract files and text\n// ============================================\n\nconst resultsRaw = $input.first().json;\nconst batchInfo = $('Merge Info').first().json;\n\n// Parse JSONL results (Anthropic returns newline-delimited JSON)\nlet results = [];\nif (typeof resultsRaw === 'string') {\n  results = resultsRaw.split('\\n').filter(line => line.trim()).map(line => JSON.parse(line));\n} else if (Array.isArray(resultsRaw)) {\n  results = resultsRaw;\n} else if (resultsRaw.data) {\n  results = resultsRaw.data;\n} else {\n  // Single result object\n  results = [resultsRaw];\n}\n\n// Find our result by custom_id (correlation_id)\nconst ourResult = results.find(r => r.custom_id === batchInfo.correlation_id);\n\nif (!ourResult) {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: {\n      code: 'RESULT_NOT_FOUND',\n      message: `No result found for custom_id: ${batchInfo.correlation_id}`\n    },\n    metadata: batchInfo.metadata\n  };\n}\n\n// Check result type\nconst resultType = ourResult.result?.type;\n\nif (resultType === 'errored') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: ourResult.result.error || { code: 'BATCH_ERROR', message: 'Batch processing failed' },\n    metadata: batchInfo.metadata\n  };\n}\n\nif (resultType === 'expired') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: { code: 'BATCH_EXPIRED', message: 'Batch expired before processing' },\n    metadata: batchInfo.metadata\n  };\n}\n\nif (resultType === 'canceled') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: { code: 'BATCH_CANCELED', message: 'Batch was canceled' },\n    metadata: batchInfo.metadata\n  };\n}\n\n// Extract message content\nconst message = ourResult.result?.message || {};\nconst textContent = [];\nconst fileRefs = [];\n\nfor (const block of (message.content || [])) {\n  if (block.type === 'text') {\n    textContent.push(block.text);\n  }\n  if (block.type === 'tool_result' && block.output?.file_id) {\n    fileRefs.push({\n      file_id: block.output.file_id,\n      name: block.output.name || 'document',\n      mime_type: block.output.mime_type || 'application/octet-stream',\n      size: block.output.size\n    });\n  }\n}\n\n// Check container_result for files\nif (message.container_result?.files) {\n  for (const file of message.container_result.files) {\n    fileRefs.push({\n      file_id: file.file_id,\n      name: file.name,\n      mime_type: file.mime_type,\n      size: file.size\n    });\n  }\n}\n\n// Build file download URLs\nconst files = fileRefs.map(f => ({\n  file_id: f.file_id,\n  filename: f.name,\n  mime_type: f.mime_type,\n  size_bytes: f.size || 0,\n  download_url: `https://api.anthropic.com/v1/files/${f.file_id}/content`\n}));\n\nreturn {\n  success: true,\n  batch_id: batchInfo.batch_id,\n  correlation_id: batchInfo.correlation_id,\n  callback_url: batchInfo.callback_url,\n  redis_id: batchInfo.redis_id,\n  api_key: batchInfo.api_key,\n  \n  // Response data for callback\n  content: [{ type: 'text', text: textContent.join('\\n') }],\n  files: files,\n  has_files: files.length > 0,\n  \n  provider: 'anthropic',\n  model: message.model || batchInfo.model,\n  usage: message.usage || { input_tokens: 0, output_tokens: 0 },\n  stop_reason: message.stop_reason || 'end_turn',\n  metadata: batchInfo.metadata,\n  \n  _trace: {\n    batch_id: batchInfo.batch_id,\n    submitted_at: batchInfo.submitted_at,\n    completed_at: new Date().toISOString(),\n    files_count: files.length\n  }\n};"
+      },
+      "id": "process-results",
+      "name": "Process Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{ $json.correlation_id }}"
+            },
+            {
+              "name": "X-Batch-ID",
+              "value": "={{ $json.batch_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  success: $json.success,\n  correlation_id: $json.correlation_id,\n  batch_id: $json.batch_id,\n  content: $json.content,\n  files: $json.files,\n  provider: $json.provider,\n  model: $json.model,\n  usage: $json.usage,\n  stop_reason: $json.stop_reason,\n  metadata: $json.metadata,\n  error: $json.error,\n  _trace: $json._trace\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send-callback",
+      "name": "Send Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2240, 180],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/batches/pending/{{ $('Process Results').first().json.redis_id }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "remove-from-pending",
+      "name": "Remove from Pending",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2460, 180],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/batches/completed",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "batch_id",
+              "value": "={{ $('Process Results').first().json.batch_id }}"
+            },
+            {
+              "name": "correlation_id",
+              "value": "={{ $('Process Results').first().json.correlation_id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $('Process Results').first().json.success ? 'completed' : 'failed' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "store-completed",
+      "name": "Store Completed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2680, 180],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Batch still processing - nothing to do\nreturn { status: 'still_processing', batch_id: $json.batch_id };"
+      },
+      "id": "still-processing",
+      "name": "Still Processing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 340]
+    }
+  ],
+  "connections": {
+    "Every 30s": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Batches": {
+      "main": [
+        [
+          {
+            "node": "Has Batches?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Batches?": {
+      "main": [
+        [
+          {
+            "node": "Split Batches",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Split Batches": {
+      "main": [
+        [
+          {
+            "node": "Check Batch Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Batch Status": {
+      "main": [
+        [
+          {
+            "node": "Merge Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Info": {
+      "main": [
+        [
+          {
+            "node": "Batch Ended?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Ended?": {
+      "main": [
+        [
+          {
+            "node": "Get Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Still Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Results": {
+      "main": [
+        [
+          {
+            "node": "Process Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Results": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Callback": {
+      "main": [
+        [
+          {
+            "node": "Remove from Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove from Pending": {
+      "main": [
+        [
+          {
+            "node": "Store Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": ["llm", "anthropic", "batch", "poller", "async"]
+}
