@@ -17,6 +17,118 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// M3 - Check Idempotency (RFC-089 §5.3)\n// Vérifie si une requête avec cette idempotency_key est déjà en cours ou terminée\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst idempotencyKey = body.idempotency_key;\n\n// Si pas d'idempotency_key, continuer normalement (backward compat)\nif (!idempotencyKey) {\n  return [{ json: { ...input, idempotency: { enabled: false } } }];\n}\n\n// Clé Redis pour l'idempotence\nconst redisKey = `idempotency:classroom-sync:${idempotencyKey}`;\n\n// Note: En production, utiliser le node Redis\n// Pour l'instant, on stocke dans staticData (limité mais fonctionnel)\nconst staticData = $getWorkflowStaticData('global');\nconst cache = staticData.idempotencyCache || {};\nconst now = Date.now();\nconst TTL_MS = 30 * 60 * 1000; // 30 minutes\n\n// Nettoyer les entrées expirées\nfor (const key of Object.keys(cache)) {\n  if (cache[key].expiresAt < now) {\n    delete cache[key];\n  }\n}\n\n// Vérifier si la clé existe\nconst existing = cache[idempotencyKey];\n\nif (existing) {\n  if (existing.status === 'processing') {\n    // Opération en cours - retourner 409 Conflict\n    return [{\n      json: {\n        idempotency: {\n          enabled: true,\n          hit: true,\n          status: 'processing',\n          conflict: true,\n          message: 'Operation already in progress for this idempotency_key'\n        }\n      }\n    }];\n  } else if (existing.status === 'completed') {\n    // Résultat cached - retourner le résultat précédent\n    return [{\n      json: {\n        idempotency: {\n          enabled: true,\n          hit: true,\n          status: 'completed',\n          cachedResult: existing.result\n        }\n      }\n    }];\n  }\n}\n\n// Nouvelle requête - marquer comme \"processing\"\ncache[idempotencyKey] = {\n  status: 'processing',\n  startedAt: new Date().toISOString(),\n  expiresAt: now + TTL_MS\n};\nstaticData.idempotencyCache = cache;\n\nreturn [{\n  json: {\n    ...input,\n    idempotency: {\n      enabled: true,\n      hit: false,\n      key: idempotencyKey\n    }\n  }\n}];"
+      },
+      "id": "check-idempotency-001",
+      "name": "Check Idempotency",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "notes": "M3 - RFC-089 §5.3 - Cache idempotence TTL 30min"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-cached",
+              "leftValue": "={{ $json.idempotency?.hit === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "idempotency-hit-001",
+      "name": "Idempotency Hit?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-conflict",
+              "leftValue": "={{ $json.idempotency?.conflict === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "idempotency-conflict-001",
+      "name": "Is Conflict?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [920, 180]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: \"operation_in_progress\", message: $json.idempotency.message } }) }}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "respond-conflict-001",
+      "name": "Respond 409 Conflict",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 80],
+      "notes": "M3 - Retourne 409 si opération déjà en cours"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.idempotency.cachedResult) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-cached-001",
+      "name": "Respond Cached Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 220],
+      "notes": "M3 - Retourne le résultat cached"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// M5 - Validate Headers (RFC-089 §5.4)\n// Lit X-Google-Access-Token et valide X-Webhook-Secret\n\nconst input = $input.first().json;\nconst headers = input.headers || {};\nconst body = input.body || {};\n\n// Récupérer le secret attendu depuis les variables d'environnement\nconst expectedSecret = $env.MCP_WEBHOOK_SECRET || '';\n\n// Lire le token depuis le header (M5) avec fallback sur body (backward compat)\nconst accessToken = headers['x-google-access-token'] || headers['X-Google-Access-Token'] || body.access_token;\n\n// Valider le webhook secret si configuré\nconst providedSecret = headers['x-webhook-secret'] || headers['X-Webhook-Secret'] || '';\n\nlet validation = {\n  valid: true,\n  errors: []\n};\n\n// Validation du secret (si configuré)\nif (expectedSecret && providedSecret !== expectedSecret) {\n  validation.valid = false;\n  validation.errors.push('Invalid or missing X-Webhook-Secret header');\n}\n\n// Validation du token\nif (!accessToken) {\n  validation.valid = false;\n  validation.errors.push('Missing access_token (provide via X-Google-Access-Token header or body.access_token)');\n}\n\n// Validation des champs requis du body\nif (!body.expert_response_id) {\n  validation.valid = false;\n  validation.errors.push('Missing required field: expert_response_id');\n}\nif (!body.course_id) {\n  validation.valid = false;\n  validation.errors.push('Missing required field: course_id');\n}\nif (!body.programme) {\n  validation.valid = false;\n  validation.errors.push('Missing required field: programme');\n}\n\nreturn [{\n  json: {\n    ...input,\n    body: {\n      ...body,\n      access_token: accessToken  // Normaliser le token dans le body\n    },\n    validation,\n    headers_secured: {\n      token_from_header: !!headers['x-google-access-token'] || !!headers['X-Google-Access-Token'],\n      secret_validated: expectedSecret ? (providedSecret === expectedSecret) : 'not_configured'\n    }\n  }\n}];"
+      },
+      "id": "validate-headers-001",
+      "name": "Validate Headers & Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 380],
+      "notes": "M5 - RFC-089 §5.4 - Sécurité headers webhook"
+    },
+    {
+      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
@@ -26,7 +138,7 @@
           "conditions": [
             {
               "id": "validate-required-fields",
-              "leftValue": "={{ $json.body.expert_response_id && $json.body.course_id && $json.body.access_token && $json.body.programme }}",
+              "leftValue": "={{ $json.validation?.valid === true }}",
               "rightValue": true,
               "operator": {
                 "type": "boolean",
@@ -39,15 +151,15 @@
         "options": {}
       },
       "id": "validate-001",
-      "name": "Validate Payload",
+      "name": "Validation OK?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [480, 300]
+      "position": [1140, 380]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: false, error: { code: \"invalid_payload\", message: \"Missing required fields: expert_response_id, course_id, access_token, programme\" } }) }}",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: \"validation_error\", message: $json.validation.errors.join(', ') } }) }}",
         "options": {
           "responseCode": 400
         }
@@ -56,18 +168,75 @@
       "name": "Respond Validation Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [700, 460]
+      "position": [1360, 500]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Initialiser le contexte de synchronisation\nconst body = $input.first().json.body;\n\nconst context = {\n  expert_response_id: body.expert_response_id,\n  course_id: body.course_id,\n  access_token: body.access_token,\n  callback_url: body.callback_url || null,\n  webhook_base_url: $env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678/webhook'\n};\n\nconst sequences = body.programme.architecture || [];\nconst sessions = body.programme.progression || [];\n\nreturn [{\n  json: {\n    context,\n    sequences,\n    sessions,\n    current_sequence_index: 0,\n    current_session_index: 0,\n    results: {\n      topic_mapping: {},\n      topic_ids: [],\n      coursework_ids: [],\n      errors: []\n    },\n    stats: {\n      total_sequences: sequences.length,\n      total_sessions: sessions.length,\n      started_at: new Date().toISOString()\n    },\n    phase: 'topics'\n  }\n}];"
+        "jsCode": "// Initialiser le contexte de synchronisation\nconst input = $input.first().json;\nconst body = input.body;\n\nconst context = {\n  expert_response_id: body.expert_response_id,\n  course_id: body.course_id,\n  tenant_id: body.tenant_id || 'default',\n  access_token: body.access_token,\n  callback_url: body.callback_url || null,\n  webhook_base_url: $env.N8N_WEBHOOK_BASE_URL || 'http://localhost:5678/webhook',\n  idempotency_key: input.idempotency?.key || null\n};\n\nconst sequences = body.programme.architecture || [];\nconst sessions = body.programme.progression || [];\n\n// M7 - Calculer si on doit passer en mode async\nconst totalOperations = sequences.length + sessions.length;\nconst ASYNC_THRESHOLD = 20;\nconst shouldBeAsync = totalOperations > ASYNC_THRESHOLD;\n\nreturn [{\n  json: {\n    context,\n    sequences,\n    sessions,\n    current_sequence_index: 0,\n    current_session_index: 0,\n    results: {\n      topic_mapping: {},\n      topic_ids: [],\n      coursework_ids: [],\n      errors: []\n    },\n    stats: {\n      total_sequences: sequences.length,\n      total_sessions: sessions.length,\n      total_operations: totalOperations,\n      started_at: new Date().toISOString()\n    },\n    phase: 'topics',\n    async_mode: shouldBeAsync,\n    task_id: shouldBeAsync ? `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` : null\n  }\n}];"
       },
       "id": "init-context-001",
       "name": "Initialize Context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [700, 300]
+      "position": [1360, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-async",
+              "leftValue": "={{ $json.async_mode === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-async-mode-001",
+      "name": "Async Mode?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1580, 380],
+      "notes": "M7 - RFC-089 §5.5.1 - Bascule async > 20 ops"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// M7 - Stocker le task en cours et préparer la réponse 202\nconst data = $input.first().json;\n\n// Stocker dans staticData pour le worker async\nconst staticData = $getWorkflowStaticData('global');\nconst tasks = staticData.asyncTasks || {};\n\ntasks[data.task_id] = {\n  status: 'pending',\n  context: data.context,\n  sequences: data.sequences,\n  sessions: data.sessions,\n  stats: data.stats,\n  createdAt: new Date().toISOString(),\n  expiresAt: Date.now() + (60 * 60 * 1000) // 1h TTL\n};\n\nstaticData.asyncTasks = tasks;\n\nreturn [{\n  json: {\n    task_id: data.task_id,\n    status: 'processing',\n    message: `Operation queued for async processing (${data.stats.total_operations} operations > threshold ${20})`,\n    poll_url: `${data.context.webhook_base_url}/classroom-sync-status?task_id=${data.task_id}`,\n    estimated_duration_seconds: Math.ceil(data.stats.total_operations * 0.5)\n  }\n}];"
+      },
+      "id": "prepare-async-response-001",
+      "name": "Prepare Async Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 260],
+      "notes": "M7 - Retourne 202 + task_id"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "respond-async-001",
+      "name": "Respond 202 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2020, 260],
+      "notes": "M7 - HTTP 202 pour mode async"
     },
     {
       "parameters": {
@@ -96,18 +265,19 @@
       "name": "More Sequences?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [920, 300]
+      "position": [1800, 460]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Préparer la requête pour créer le topic courant\nconst data = $input.first().json;\nconst idx = data.current_sequence_index;\nconst sequence = data.sequences[idx];\n\nconst topicName = sequence.titre || sequence.title || `Séquence ${sequence.id || (idx + 1)}`;\n\nreturn [{\n  json: {\n    ...data,\n    current_sequence: sequence,\n    mcp_request: {\n      access_token: data.context.access_token,\n      resource: 'topic',\n      operation: 'create',\n      course_id: data.context.course_id,\n      name: topicName\n    }\n  }\n}];"
+        "jsCode": "// M6 - Rate Limit Check (RFC-089 §5.5)\n// Token bucket: 50 ops/s par tenant\n\nconst data = $input.first().json;\nconst tenantId = data.context.tenant_id || 'default';\n\n// Utiliser staticData comme cache de rate-limit (en prod: Redis)\nconst staticData = $getWorkflowStaticData('global');\nconst rateLimits = staticData.rateLimits || {};\nconst now = Date.now();\nconst windowKey = `${tenantId}:${Math.floor(now / 1000)}`;\n\n// Initialiser ou incrémenter le compteur\nif (!rateLimits[windowKey]) {\n  rateLimits[windowKey] = { count: 0, expiresAt: now + 2000 };\n}\nrateLimits[windowKey].count++;\n\n// Nettoyer les anciennes fenêtres\nfor (const key of Object.keys(rateLimits)) {\n  if (rateLimits[key].expiresAt < now) {\n    delete rateLimits[key];\n  }\n}\nstaticData.rateLimits = rateLimits;\n\nconst count = rateLimits[windowKey].count;\nconst LIMIT = 50;\n\nlet rateLimitInfo = {\n  current_count: count,\n  limit: LIMIT,\n  window: windowKey,\n  throttled: false,\n  delay_ms: 0\n};\n\n// Si on dépasse la limite, calculer le délai\nif (count > LIMIT) {\n  const delay = Math.min((count - LIMIT) * 20, 5000); // max 5s\n  rateLimitInfo.throttled = true;\n  rateLimitInfo.delay_ms = delay;\n  \n  // Note: En production, implémenter un vrai sleep ou utiliser le node Wait\n  // Pour l'instant on log juste le throttling\n}\n\n// Préparer la requête pour créer le topic courant\nconst idx = data.current_sequence_index;\nconst sequence = data.sequences[idx];\nconst topicName = sequence.titre || sequence.title || `Séquence ${sequence.id || (idx + 1)}`;\n\nreturn [{\n  json: {\n    ...data,\n    current_sequence: sequence,\n    rate_limit: rateLimitInfo,\n    mcp_request: {\n      access_token: data.context.access_token,\n      resource: 'topic',\n      operation: 'create',\n      course_id: data.context.course_id,\n      name: topicName\n    }\n  }\n}];"
       },
       "id": "prepare-topic-001",
-      "name": "Prepare Topic Request",
+      "name": "Rate Limit + Prepare Topic",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1140, 180]
+      "position": [2020, 380],
+      "notes": "M6 - RFC-089 §5.5 - Rate limit 50 ops/s"
     },
     {
       "parameters": {
@@ -124,18 +294,18 @@
       "name": "MCP Create Topic",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1360, 180]
+      "position": [2240, 380]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Traiter la réponse de création du topic et incrémenter l'index\nconst prevData = $('Prepare Topic Request').first().json;\nconst mcpResponse = $input.first().json;\n\nconst data = { ...prevData };\nconst sequenceId = data.current_sequence.id || String(data.current_sequence_index);\n\n// Extraire l'ID du topic créé\nconst topicData = mcpResponse.data || mcpResponse;\nconst topicId = topicData.topicId || topicData.id;\n\nif (topicId && mcpResponse.success !== false) {\n  data.results.topic_mapping[sequenceId] = topicId;\n  data.results.topic_ids.push(topicId);\n} else {\n  data.results.errors.push({\n    type: 'topic_creation_failed',\n    sequence_id: sequenceId,\n    sequence_name: data.current_sequence.titre || data.current_sequence.title,\n    error: mcpResponse.error || topicData.error || 'Unknown error'\n  });\n}\n\n// Incrémenter l'index pour la prochaine itération\ndata.current_sequence_index = data.current_sequence_index + 1;\ndelete data.current_sequence;\ndelete data.mcp_request;\n\nreturn [{ json: data }];"
+        "jsCode": "// Traiter la réponse de création du topic et incrémenter l'index\nconst prevData = $('Rate Limit + Prepare Topic').first().json;\nconst mcpResponse = $input.first().json;\n\nconst data = { ...prevData };\nconst sequenceId = data.current_sequence.id || String(data.current_sequence_index);\n\n// Extraire l'ID du topic créé\nconst topicData = mcpResponse.data || mcpResponse;\nconst topicId = topicData.topicId || topicData.id;\n\nif (topicId && mcpResponse.success !== false) {\n  data.results.topic_mapping[sequenceId] = topicId;\n  data.results.topic_ids.push(topicId);\n} else {\n  data.results.errors.push({\n    type: 'topic_creation_failed',\n    sequence_id: sequenceId,\n    sequence_name: data.current_sequence.titre || data.current_sequence.title,\n    error: mcpResponse.error || topicData.error || 'Unknown error'\n  });\n}\n\n// Incrémenter l'index pour la prochaine itération\ndata.current_sequence_index = data.current_sequence_index + 1;\ndelete data.current_sequence;\ndelete data.mcp_request;\ndelete data.rate_limit;\n\nreturn [{ json: data }];"
       },
       "id": "process-topic-response-001",
       "name": "Process Topic Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1580, 180]
+      "position": [2460, 380]
     },
     {
       "parameters": {
@@ -164,18 +334,19 @@
       "name": "More Sessions?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1140, 420]
+      "position": [2020, 560]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Préparer la requête pour créer le courseWork courant\nconst data = $input.first().json;\nconst idx = data.current_session_index;\nconst session = data.sessions[idx];\n\n// Trouver le topicId associé via sequence_id\nconst sequenceId = session.sequence_id || null;\nconst topicId = sequenceId ? (data.results.topic_mapping[sequenceId] || null) : null;\n\n// Construire la description enrichie\nlet description = session.description || '';\nif (session.objectifs && Array.isArray(session.objectifs) && session.objectifs.length > 0) {\n  description += '\\n\\nObjectifs pédagogiques:\\n' + session.objectifs.map(o => `• ${o}`).join('\\n');\n}\nif (session.duree_minutes) {\n  description += `\\n\\nDurée estimée: ${session.duree_minutes} minutes`;\n}\n\nconst courseWorkTitle = session.titre || session.title || `Séance ${session.id || (idx + 1)}`;\n\nreturn [{\n  json: {\n    ...data,\n    current_session: session,\n    mcp_request: {\n      access_token: data.context.access_token,\n      resource: 'courseWork',\n      operation: 'create',\n      course_id: data.context.course_id,\n      title: courseWorkTitle,\n      description: description.trim(),\n      work_type: session.work_type || 'ASSIGNMENT',\n      state: 'DRAFT',\n      topic_id: topicId\n    }\n  }\n}];"
+        "jsCode": "// M6 - Rate Limit + Préparer la requête pour créer le courseWork courant\nconst data = $input.first().json;\nconst tenantId = data.context.tenant_id || 'default';\n\n// Rate limit check (même logique que pour les topics)\nconst staticData = $getWorkflowStaticData('global');\nconst rateLimits = staticData.rateLimits || {};\nconst now = Date.now();\nconst windowKey = `${tenantId}:${Math.floor(now / 1000)}`;\n\nif (!rateLimits[windowKey]) {\n  rateLimits[windowKey] = { count: 0, expiresAt: now + 2000 };\n}\nrateLimits[windowKey].count++;\nstaticData.rateLimits = rateLimits;\n\nconst idx = data.current_session_index;\nconst session = data.sessions[idx];\n\n// Trouver le topicId associé via sequence_id\nconst sequenceId = session.sequence_id || null;\nconst topicId = sequenceId ? (data.results.topic_mapping[sequenceId] || null) : null;\n\n// Construire la description enrichie\nlet description = session.description || '';\nif (session.objectifs && Array.isArray(session.objectifs) && session.objectifs.length > 0) {\n  description += '\\n\\nObjectifs pédagogiques:\\n' + session.objectifs.map(o => `• ${o}`).join('\\n');\n}\nif (session.duree_minutes) {\n  description += `\\n\\nDurée estimée: ${session.duree_minutes} minutes`;\n}\n\nconst courseWorkTitle = session.titre || session.title || `Séance ${session.id || (idx + 1)}`;\n\nreturn [{\n  json: {\n    ...data,\n    current_session: session,\n    mcp_request: {\n      access_token: data.context.access_token,\n      resource: 'courseWork',\n      operation: 'create',\n      course_id: data.context.course_id,\n      title: courseWorkTitle,\n      description: description.trim(),\n      work_type: session.work_type || 'ASSIGNMENT',\n      state: 'DRAFT',\n      topic_id: topicId\n    }\n  }\n}];"
       },
       "id": "prepare-coursework-001",
-      "name": "Prepare CourseWork Request",
+      "name": "Rate Limit + Prepare CourseWork",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1360, 320]
+      "position": [2240, 500],
+      "notes": "M6 - RFC-089 §5.5 - Rate limit 50 ops/s"
     },
     {
       "parameters": {
@@ -192,18 +363,18 @@
       "name": "MCP Create CourseWork",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1580, 320]
+      "position": [2460, 500]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Traiter la réponse de création du courseWork et incrémenter l'index\nconst prevData = $('Prepare CourseWork Request').first().json;\nconst mcpResponse = $input.first().json;\n\nconst data = { ...prevData };\nconst sessionId = data.current_session.id || String(data.current_session_index);\n\n// Extraire l'ID du courseWork créé\nconst cwData = mcpResponse.data || mcpResponse;\nconst courseWorkId = cwData.id;\n\nif (courseWorkId && mcpResponse.success !== false) {\n  data.results.coursework_ids.push({\n    session_id: sessionId,\n    coursework_id: courseWorkId,\n    sequence_id: data.current_session.sequence_id || null,\n    topic_id: data.mcp_request.topic_id,\n    title: data.mcp_request.title\n  });\n} else {\n  data.results.errors.push({\n    type: 'coursework_creation_failed',\n    session_id: sessionId,\n    session_title: data.current_session.titre || data.current_session.title,\n    error: mcpResponse.error || cwData.error || 'Unknown error'\n  });\n}\n\n// Incrémenter l'index pour la prochaine itération\ndata.current_session_index = data.current_session_index + 1;\ndelete data.current_session;\ndelete data.mcp_request;\n\nreturn [{ json: data }];"
+        "jsCode": "// Traiter la réponse de création du courseWork et incrémenter l'index\nconst prevData = $('Rate Limit + Prepare CourseWork').first().json;\nconst mcpResponse = $input.first().json;\n\nconst data = { ...prevData };\nconst sessionId = data.current_session.id || String(data.current_session_index);\n\n// Extraire l'ID du courseWork créé\nconst cwData = mcpResponse.data || mcpResponse;\nconst courseWorkId = cwData.id;\n\nif (courseWorkId && mcpResponse.success !== false) {\n  data.results.coursework_ids.push({\n    session_id: sessionId,\n    coursework_id: courseWorkId,\n    sequence_id: data.current_session.sequence_id || null,\n    topic_id: data.mcp_request.topic_id,\n    title: data.mcp_request.title\n  });\n} else {\n  data.results.errors.push({\n    type: 'coursework_creation_failed',\n    session_id: sessionId,\n    session_title: data.current_session.titre || data.current_session.title,\n    error: mcpResponse.error || cwData.error || 'Unknown error'\n  });\n}\n\n// Incrémenter l'index pour la prochaine itération\ndata.current_session_index = data.current_session_index + 1;\ndelete data.current_session;\ndelete data.mcp_request;\n\nreturn [{ json: data }];"
       },
       "id": "process-coursework-response-001",
       "name": "Process CourseWork Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1800, 320]
+      "position": [2680, 500]
     },
     {
       "parameters": {
@@ -232,7 +403,7 @@
       "name": "Has Callback URL?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1360, 540]
+      "position": [2240, 680]
     },
     {
       "parameters": {
@@ -243,7 +414,7 @@
       "name": "Prepare Callback Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1580, 480]
+      "position": [2460, 620]
     },
     {
       "parameters": {
@@ -260,7 +431,7 @@
       "name": "Callback to Back",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1800, 480]
+      "position": [2680, 620]
     },
     {
       "parameters": {
@@ -271,7 +442,7 @@
       "name": "After Callback",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2020, 480]
+      "position": [2900, 620]
     },
     {
       "parameters": {
@@ -282,7 +453,7 @@
       "name": "No Callback",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1580, 640]
+      "position": [2460, 780]
     },
     {
       "parameters": {},
@@ -290,18 +461,30 @@
       "name": "Merge Final",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [2020, 580]
+      "position": [2900, 720]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Préparer la réponse finale\nconst data = $input.first().json;\n\nconst hasErrors = data.results.errors.length > 0;\nconst partialSuccess = hasErrors && (data.results.topic_ids.length > 0 || data.results.coursework_ids.length > 0);\n\nconst response = {\n  success: !hasErrors,\n  partial_success: partialSuccess,\n  data: {\n    expert_response_id: data.context.expert_response_id,\n    course_id: data.context.course_id,\n    topics_created: data.results.topic_ids.length,\n    coursework_created: data.results.coursework_ids.length,\n    topic_ids: data.results.topic_ids,\n    coursework_ids: data.results.coursework_ids.map(c => c.coursework_id),\n    topic_mapping: data.results.topic_mapping,\n    detailed_coursework: data.results.coursework_ids,\n    callback_sent: data.callback_sent,\n    synced_at: new Date().toISOString(),\n    stats: {\n      ...data.stats,\n      completed_at: new Date().toISOString(),\n      topics_requested: data.stats.total_sequences,\n      sessions_requested: data.stats.total_sessions,\n      errors_count: data.results.errors.length\n    }\n  }\n};\n\nif (hasErrors) {\n  response.errors = data.results.errors;\n}\n\nreturn [{ json: response }];"
+        "jsCode": "// Préparer la réponse finale\nconst data = $input.first().json;\n\nconst hasErrors = data.results.errors.length > 0;\nconst partialSuccess = hasErrors && (data.results.topic_ids.length > 0 || data.results.coursework_ids.length > 0);\n\nconst response = {\n  success: !hasErrors,\n  partial_success: partialSuccess,\n  data: {\n    expert_response_id: data.context.expert_response_id,\n    course_id: data.context.course_id,\n    topics_created: data.results.topic_ids.length,\n    coursework_created: data.results.coursework_ids.length,\n    topic_ids: data.results.topic_ids,\n    coursework_ids: data.results.coursework_ids.map(c => c.coursework_id),\n    topic_mapping: data.results.topic_mapping,\n    detailed_coursework: data.results.coursework_ids,\n    callback_sent: data.callback_sent,\n    synced_at: new Date().toISOString(),\n    stats: {\n      ...data.stats,\n      completed_at: new Date().toISOString(),\n      topics_requested: data.stats.total_sequences,\n      sessions_requested: data.stats.total_sessions,\n      errors_count: data.results.errors.length\n    }\n  }\n};\n\nif (hasErrors) {\n  response.errors = data.results.errors;\n}\n\nreturn [{ json: { response, idempotency_key: data.context.idempotency_key } }];"
       },
       "id": "prepare-response-001",
       "name": "Prepare Final Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2240, 580]
+      "position": [3120, 720]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// M3 - Store Result in Idempotency Cache (RFC-089 §5.3)\n// Stocker le résultat pour les futures requêtes avec la même clé\n\nconst data = $input.first().json;\nconst idempotencyKey = data.idempotency_key;\n\nif (idempotencyKey) {\n  const staticData = $getWorkflowStaticData('global');\n  const cache = staticData.idempotencyCache || {};\n  \n  if (cache[idempotencyKey]) {\n    cache[idempotencyKey].status = 'completed';\n    cache[idempotencyKey].result = data.response;\n    cache[idempotencyKey].completedAt = new Date().toISOString();\n  }\n  \n  staticData.idempotencyCache = cache;\n}\n\nreturn [{ json: data.response }];"
+      },
+      "id": "store-idempotency-result-001",
+      "name": "Store Idempotency Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3340, 720],
+      "notes": "M3 - RFC-089 §5.3 - Stocker le résultat"
     },
     {
       "parameters": {
@@ -315,7 +498,7 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [2460, 580]
+      "position": [3560, 720]
     }
   ],
   "connections": {
@@ -323,14 +506,72 @@
       "main": [
         [
           {
-            "node": "Validate Payload",
+            "node": "Check Idempotency",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Validate Payload": {
+    "Check Idempotency": {
+      "main": [
+        [
+          {
+            "node": "Idempotency Hit?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency Hit?": {
+      "main": [
+        [
+          {
+            "node": "Is Conflict?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate Headers & Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Conflict?": {
+      "main": [
+        [
+          {
+            "node": "Respond 409 Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Cached Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Headers & Payload": {
+      "main": [
+        [
+          {
+            "node": "Validation OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation OK?": {
       "main": [
         [
           {
@@ -352,7 +593,36 @@
       "main": [
         [
           {
+            "node": "Async Mode?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Async Mode?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Async Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "More Sequences?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Async Response": {
+      "main": [
+        [
+          {
+            "node": "Respond 202 Accepted",
             "type": "main",
             "index": 0
           }
@@ -363,7 +633,7 @@
       "main": [
         [
           {
-            "node": "Prepare Topic Request",
+            "node": "Rate Limit + Prepare Topic",
             "type": "main",
             "index": 0
           }
@@ -377,7 +647,7 @@
         ]
       ]
     },
-    "Prepare Topic Request": {
+    "Rate Limit + Prepare Topic": {
       "main": [
         [
           {
@@ -414,7 +684,7 @@
       "main": [
         [
           {
-            "node": "Prepare CourseWork Request",
+            "node": "Rate Limit + Prepare CourseWork",
             "type": "main",
             "index": 0
           }
@@ -428,7 +698,7 @@
         ]
       ]
     },
-    "Prepare CourseWork Request": {
+    "Rate Limit + Prepare CourseWork": {
       "main": [
         [
           {
@@ -538,6 +808,17 @@
       "main": [
         [
           {
+            "node": "Store Idempotency Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Idempotency Result": {
+      "main": [
+        [
+          {
             "node": "Respond Success",
             "type": "main",
             "index": 0
@@ -552,23 +833,14 @@
   },
   "staticData": null,
   "tags": [
-    {
-      "name": "MCP"
-    },
-    {
-      "name": "Google Classroom"
-    },
-    {
-      "name": "RFC-083"
-    },
-    {
-      "name": "Expert"
-    },
-    {
-      "name": "Sync"
-    }
+    "MCP",
+    "Google Classroom",
+    "RFC-083",
+    "RFC-089",
+    "Expert",
+    "Sync"
   ],
   "triggerCount": 0,
-  "updatedAt": "2026-05-06T00:00:00.000Z",
-  "versionId": "1"
+  "updatedAt": "2026-05-15T00:00:00.000Z",
+  "versionId": "2"
 }
