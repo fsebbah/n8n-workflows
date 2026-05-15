@@ -157,10 +157,19 @@ do_restart() {
     if [ "$RUNTIME" == "docker" ]; then
         log_info "Restart container n8n via Docker..."
         cd "$DOCKER_DIR"
-        docker compose restart n8n
+
+        # Construire les options docker compose
+        COMPOSE_OPTS=""
+        if [ -f ".env.local" ]; then
+            COMPOSE_OPTS="--env-file .env.local"
+        fi
+
+        # Down + Up avec force-recreate pour un vrai restart propre
+        docker compose $COMPOSE_OPTS down
+        docker compose $COMPOSE_OPTS up -d --force-recreate
     else
         log_info "Restart n8n via pm2..."
-        pm2 restart n8n
+        pm2 restart n8n --update-env
     fi
 }
 
