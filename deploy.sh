@@ -218,8 +218,18 @@ do_deploy_services() {
             docker network create "$DOCKER_NETWORK"
         fi
 
+        # Trouver le fichier .env.local (dans docker/ ou à la racine)
+        ENV_FILE=""
+        if [ -f "$DOCKER_DIR/.env.local" ]; then
+            ENV_FILE="--env-file $DOCKER_DIR/.env.local"
+            log_info "Utilisation de $DOCKER_DIR/.env.local"
+        elif [ -f "$SCRIPT_DIR/.env.local" ]; then
+            ENV_FILE="--env-file $SCRIPT_DIR/.env.local"
+            log_info "Utilisation de $SCRIPT_DIR/.env.local"
+        fi
+
         # Build et démarrage avec docker compose
-        docker compose -f docker-compose.redis-xadd.yml up -d --build --remove-orphans
+        docker compose -f docker-compose.redis-xadd.yml $ENV_FILE up -d --build --remove-orphans
 
         # Nettoyer les anciennes images (dangling)
         log_info "Nettoyage des anciennes images Docker..."
