@@ -1088,28 +1088,34 @@ Le node Redis natif de n8n **ne supporte PAS** l'opération `XADD` (Redis Stream
 
 ### 13.3 Solutions de contournement
 
-#### Option A : Node communautaire Redis Enhanced ⭐ RECOMMANDÉE
+#### ~~Option A : Node communautaire Redis Enhanced~~ ❌ NE FONCTIONNE PAS
 
-Installer [`@vicenterusso/n8n-nodes-redis-enhanced`](https://www.npmjs.com/package/@vicenterusso/n8n-nodes-redis-enhanced).
+Le package [`@vicenterusso/n8n-nodes-redis-enhanced`](https://www.npmjs.com/package/@vicenterusso/n8n-nodes-redis-enhanced) supporte 35 opérations Redis mais **NE supporte PAS XADD** (Redis Streams).
 
-| Avantage | Détail |
-|----------|--------|
-| ✅ Intégration native | Apparaît dans l'UI n8n |
-| ✅ 35+ opérations | XADD, XREAD, XRANGE, XLEN, etc. |
-| ✅ Maintenance active | Package npm mis à jour |
+**Opérations supportées par Redis Enhanced :**
+```
+append, dbSize, decrement, delete, get, getMany, hash, hGet, hGetAll,
+hSet, hSetMany, increment, lGet, lIndex, lLen, lPush, lRem, lTrim,
+mGet, mSet, pop, publish, push, rPush, scan, sCard, set, setMany,
+sIsMember, sMembers, sRem, type, zAdd, zRange, zRem
+```
 
-| Inconvénient | Détail |
-|--------------|--------|
-| ⚠️ Dépendance externe | À maintenir avec n8n |
+**Conclusion** : Cette option ne résout pas notre problème.
 
-#### Option B : Execute Command (redis-cli)
+#### Option B : Execute Command (redis-cli) ⭐ SOLUTION RETENUE
 
 Utiliser le node **Execute Command** pour appeler `redis-cli XADD ...`.
 
-| Avantage | Inconvénient |
-|----------|--------------|
-| ✅ Pas de dépendance npm | ⚠️ redis-cli requis sur serveur |
-| ✅ Simple | ⚠️ Escaping JSON complexe |
+| Avantage | Détail |
+|----------|--------|
+| ✅ Pas de dépendance npm | Pas de package à maintenir |
+| ✅ Commande directe | Accès à 100% des commandes Redis |
+| ✅ Simple à déboguer | Test via terminal |
+
+| Inconvénient | Mitigation |
+|--------------|------------|
+| ⚠️ redis-cli requis | Installé via Dockerfile (Alpine: `apk add redis`) |
+| ⚠️ Escaping shell | Fonction `escapeShell()` dans le code |
 
 #### Option C : Micro-service intermédiaire
 
@@ -1119,86 +1125,157 @@ Service Python/FastAPI qui reçoit HTTP et fait XADD.
 |----------|--------------|
 | ✅ Contrôle total | ⚠️ Service supplémentaire à déployer |
 
-**Décision finale** : **Option A** (node communautaire).
+**Décision finale** : **Option B** (Execute Command avec redis-cli).
 
 ---
 
-## 14. Installation du node Redis Enhanced
+## 14. Installation de redis-cli pour XADD
 
-### 14.1 Architecture actuelle n8n (Docker)
+### 14.1 Architecture n8n
 
-```
-docker/
-├── docker-compose.yml
-└── .env.local
+n8n peut tourner en deux modes :
+- **pm2** : redis-cli est généralement déjà disponible sur le serveur
+- **Docker** : redis-cli doit être ajouté à l'image
 
-custom-nodes/
-├── package.json           ← Dépendances des nodes custom
-├── n8n-nodes-*            ← Nodes développés en interne
-└── node_modules/          ← Dépendances installées
-```
+### 14.2 Mode pm2 (serveur direct)
 
-Le docker-compose monte `custom-nodes/` vers `/home/node/.n8n/nodes` dans le container.
-
-### 14.2 Étape 1 : Ajouter la dépendance
-
-Modifier `custom-nodes/package.json` :
-
-```json
-{
-  "name": "installed-nodes",
-  "private": true,
-  "dependencies": {
-    "n8n-nodes-calendar-dynamic": "file:./n8n-nodes-calendar-dynamic",
-    "n8n-nodes-classroom-dynamic": "file:./n8n-nodes-classroom-dynamic",
-    "n8n-nodes-contacts-dynamic": "file:./n8n-nodes-contacts-dynamic",
-    "n8n-nodes-drive-dynamic": "file:./n8n-nodes-drive-dynamic",
-    "n8n-nodes-gemini-image": "file:./n8n-nodes-gemini-image",
-    "n8n-nodes-gmail-dynamic": "file:./n8n-nodes-gmail-dynamic",
-    "n8n-nodes-google-genai-core": "file:./n8n-nodes-google-genai-core",
-    "n8n-nodes-graph-exporter": "file:./n8n-nodes-graph-exporter",
-    "n8n-nodes-graph-transformer": "file:./n8n-nodes-graph-transformer",
-    "n8n-nodes-knowledge-graph": "file:./n8n-nodes-knowledge-graph",
-    "n8n-nodes-veo-video": "file:./n8n-nodes-veo-video",
-    "n8n-nodes-video-transcription": "file:./n8n-nodes-video-transcription",
-    "@vicenterusso/n8n-nodes-redis-enhanced": "^1.0.0"
-  }
-}
-```
-
-### 14.3 Étape 2 : Installer les dépendances
+Vérifier que redis-cli est disponible :
 
 ```bash
-cd /storage6/pi6/n8n-workflows/custom-nodes
-npm install
+redis-cli --version
+# redis-cli 7.x.x
 ```
 
-### 14.4 Étape 3 : Redémarrer n8n (Docker)
-
+Si non installé :
 ```bash
-cd /storage6/pi6/n8n-workflows/docker
-docker compose restart n8n
+# Ubuntu/Debian
+sudo apt-get install redis-tools
+
+# Alpine
+apk add redis
 ```
 
-**Note** : Si n8n tourne via **pm2** (autre installation), utiliser :
+Redémarrer n8n :
 ```bash
 pm2 restart n8n
 ```
 
-### 14.5 Étape 4 : Vérifier l'installation
+### 14.3 Mode Docker
 
-Dans l'UI n8n, rechercher "Redis Enhanced" dans les nodes disponibles. Les opérations XADD, XREAD, etc. doivent être disponibles.
+#### Dockerfile custom (créé)
+
+Fichier `docker/Dockerfile` :
+
+```dockerfile
+# n8n Custom Image with redis-cli
+# Required for Execute Command node to run XADD
+FROM docker.n8n.io/n8nio/n8n:latest
+
+USER root
+RUN apk add --no-cache redis
+RUN redis-cli --version
+USER node
+```
+
+#### docker-compose.yml (modifié)
+
+```yaml
+services:
+  n8n:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: n8n-custom:latest
+    # ... rest of config
+```
+
+#### Construire et démarrer
+
+```bash
+cd /storage6/pi6/n8n-workflows/docker
+docker compose build
+docker compose up -d
+```
+
+### 14.4 Variables d'environnement
+
+Ajouter à `.env.local` :
+
+```bash
+# Redis notifications
+REDIS_HOST=host3.local
+REDIS_PORT=6379
+REDIS_NOTIFICATIONS_DB=5
+```
+
+### 14.5 Workflow MCP - Tools Notify
+
+Le workflow `MCP_-_Tools_Notify.json` a été modifié pour utiliser Execute Command :
+
+```
+[Webhook POST]
+    │
+    ▼
+[Prepare Payload]  ← Construit la commande redis-cli
+    │
+    ▼
+[XADD via redis-cli]  ← Execute Command node
+    │
+    ▼
+[Parse Response]  ← Vérifie le stream_id retourné
+    │
+    ▼
+[Respond Success]
+```
+
+**Commande générée :**
+```bash
+redis-cli -h host3.local -p 6379 -n 5 XADD tools:events:stream '*' \
+  event 'tools_updated' \
+  action 'workflow_updated' \
+  workflow_name 'MCP-Document' \
+  source 'n8n:MCP-Tools-Notify' \
+  timestamp '2026-05-15T12:00:00.000Z'
+```
+
+### 14.6 Tester le workflow
+
+```bash
+curl -X POST http://pi6.local:5678/webhook/mcp/tools/notify \
+  -H "Content-Type: application/json" \
+  -d '{"action": "workflow_updated", "workflow_name": "MCP-Test"}'
+```
+
+Réponse attendue :
+```json
+{
+  "success": true,
+  "stream_id": "1715774400000-0",
+  "stream_key": "tools:events:stream",
+  "event": "tools_updated",
+  "action": "workflow_updated",
+  "workflow_name": "MCP-Test"
+}
+```
+
+Vérifier dans Redis :
+```bash
+redis-cli -h host3.local -p 6379 -n 5 XRANGE tools:events:stream - +
+```
 
 ---
 
 ## 15. Prochaines étapes révisées
 
-### Phase 1 - n8n (immédiat)
+### Phase 1 - n8n (immédiat) ✅ COMPLÉTÉ
 
-- [ ] **Installer node Redis Enhanced** (section 14)
+- [x] **Solution XADD via Execute Command** (redis-cli)
+- [x] Créer Dockerfile custom avec redis-cli (`docker/Dockerfile`)
+- [x] Modifier docker-compose.yml pour builder l'image custom
+- [x] Créer script de déploiement (`deploy.sh`)
+- [x] Modifier workflow `MCP_-_Tools_Notify` pour utiliser Execute Command
 - [ ] Créer workflow `Claude - Call With Skills Async` basé sur patterns existants
 - [ ] Réutiliser structure de `LEARNING_-_Generate_Dispatcher` pour job queue
-- [ ] Utiliser credentials `notifications-redis` (DB 5) existantes
 - [ ] Implémenter Redis XADD vers `skills:results:stream`
 - [ ] Télécharger fichiers Anthropic avant publication (éviter expiration 24h)
 
@@ -1214,6 +1291,19 @@ Dans l'UI n8n, rechercher "Redis Enhanced" dans les nodes disponibles. Les opér
 
 ---
 
+## 16. Fichiers créés/modifiés
+
+| Fichier | Action | Description |
+|---------|--------|-------------|
+| `docker/Dockerfile` | ✅ Créé | Image custom n8n avec redis-cli |
+| `docker/docker-compose.yml` | ✅ Modifié | Build depuis Dockerfile |
+| `deploy.sh` | ✅ Créé | Script de déploiement (pm2/Docker) |
+| `workflows/MCP_-_Tools_Notify.json` | ✅ Modifié | Execute Command au lieu de Redis node |
+| `custom-nodes/package.json` | ✅ Modifié | Redis Enhanced (optionnel) |
+| `docs/rfc/RFC-090-*.md` | ✅ Modifié | Documentation solution finale |
+
+---
+
 _Créé : 2026-05-15_
-_Màj : 2026-05-15 (patterns existants + impact plugin)_
+_Màj : 2026-05-15 (solution Execute Command finalisée)_
 _Équipes : n8n, MCP, chatbot-core, plugin_
