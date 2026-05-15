@@ -861,6 +861,359 @@ B2_APPLICATION_KEY=...
 
 ---
 
+## 11. Patterns existants à réutiliser (2026-05-15)
+
+L'analyse des workflows existants révèle **3 patterns réutilisables** qui couvrent 100% des besoins de cette RFC :
+
+### 11.1 Pattern Job Queue Async — `LEARNING_-_Generate_Dispatcher.json`
+
+**Exactement ce dont nous avons besoin pour la réponse immédiate.**
+
+```javascript
+// Génération du job_id (workflows/LEARNING_-_Generate_Dispatcher.json:37)
+const job_id = `${jobType}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+// Stockage Redis avec TTL
+{
+  "operation": "set",
+  "key": "=job:learning:{{ $json.job_id }}",
+  "value": "={{ JSON.stringify({ job_id, type, status: 'pending', ... }) }}",
+  "expire": true,
+  "ttl": 3600  // 1 heure
+}
+
+// Push vers queue
+{
+  "operation": "push",
+  "list": "queue:learning",
+  "messageData": "={{ job_id }}",
+  "tail": true
+}
+```
+
+**Réutilisation** : Copier la structure de validation + génération job_id + stockage Redis.
+
+### 11.2 Pattern Redis Streams (XADD) — `MCP_-_Tools_Notify.json`
+
+**Alternative au Pub/Sub pour la notification plugin.**
+
+```javascript
+// Node Redis XADD (workflows/MCP_-_Tools_Notify.json:56-99)
+{
+  "operation": "xAdd",
+  "key": "tools:events:stream",
+  "credentials": {
+    "redis": {
+      "id": "notifications-redis",
+      "name": "Redis Notifications (DB 5)"
+    }
+  },
+  "fieldsUi": {
+    "fieldValues": [
+      { "fieldName": "event", "fieldValue": "={{ $json.event }}" },
+      { "fieldName": "action", "fieldValue": "={{ $json.action }}" },
+      { "fieldName": "timestamp", "fieldValue": "={{ $json.timestamp }}" }
+    ]
+  }
+}
+```
+
+**Credentials déjà configurées** : `notifications-redis` (Redis DB 5)
+
+### 11.3 Pattern HTTP Callback + Discord — `MCP-Document-Callback.json`
+
+**Pour le mode callback avec notification Discord directe.**
+
+```javascript
+// Envoi notification Discord (workflows/MCP-Document-Callback.json:165-186)
+{
+  "method": "POST",
+  "url": "=https://discord.com/api/v10/channels/{{ $json.channel_id }}/messages",
+  "headerParameters": {
+    "parameters": [
+      { "name": "Authorization", "value": "=Bot {{ $env.DISCORD_TOKEN }}" }
+    ]
+  }
+}
+```
+
+### 11.4 Tableau de mapping patterns → besoins RFC-090
+
+| Besoin RFC-090 | Pattern existant | Workflow source | Réutilisation |
+|----------------|------------------|-----------------|---------------|
+| Réponse immédiate 202 + job_id | Job Queue Async | `LEARNING_-_Generate_Dispatcher` | 100% |
+| Stockage job Redis + TTL | Redis SET + expire | `LEARNING_-_Generate_Dispatcher` | 100% |
+| Mode `redis` (Plugin) | Redis XADD Stream | `MCP_-_Tools_Notify` | 90% |
+| Mode `callback` (chatbot-core) | HTTP Callback | `MCP-Document-Callback` | 80% |
+| Notification Discord | Discord API REST | `MCP-Document-Callback` | 100% |
+| Credentials Redis | `notifications-redis` (DB 5) | `MCP_-_Tools_Notify` | 100% |
+
+---
+
+## 12. Impact équipe plugin Torah (2026-05-15)
+
+### 12.1 Clarification : Redis Streams vs Redis Pub/Sub
+
+L'analyse des workflows existants révèle que **n8n utilise Redis Streams (XADD)** et non Redis Pub/Sub (PUBLISH).
+
+**⚠️ Point d'architecture important :**
+
+```
+n8n = PRODUCTEUR (XADD)    →    Redis Streams    ←    Plugin = CONSOMMATEUR (XREAD)
+```
+
+- **n8n** ne fait que **XADD** (écriture) — c'est supporté nativement par le node Redis
+- **Le plugin** fait **XREAD** (lecture bloquante) dans un **service background permanent**
+- n8n n'a pas de capacité de listener permanent (c'est un système basé sur triggers)
+
+| Critère | Redis Pub/Sub (section 3.4) | Redis Streams (pattern existant) |
+|---------|----------------------------|----------------------------------|
+| Persistance | ❌ Non (fire & forget) | ✅ Oui (messages stockés) |
+| Consumer groups | ❌ Non | ✅ Oui (multi-consumers) |
+| Replay possible | ❌ Non | ✅ Oui (XREAD depuis un ID) |
+| Accusé de réception | ❌ Non | ✅ Oui (XACK) |
+| **Commande côté n8n** | PUBLISH | **XADD** ✅ supporté |
+| **Commande côté plugin** | SUBSCRIBE/PSUBSCRIBE | **XREAD** (service background) |
+
+**Recommandation révisée** : Utiliser **Redis Streams (XADD)** au lieu de Pub/Sub pour la fiabilité.
+
+**Preuve que n8n supporte XADD** — workflow existant `MCP_-_Tools_Notify.json` :
+```javascript
+{
+  "operation": "xAdd",
+  "key": "tools:events:stream",
+  "credentials": { "redis": { "id": "notifications-redis", "name": "Redis Notifications (DB 5)" } }
+}
+```
+
+### 12.2 Impact pour le plugin Torah
+
+#### ✅ Pas de changement architectural majeur
+
+La RFC-090 section 3.4 reste valide, mais avec une modification technique :
+
+| Avant (Pub/Sub proposé) | Après (Streams recommandé) |
+|-------------------------|----------------------------|
+| `SUBSCRIBE export:*` | `XREAD STREAMS skills:results:stream` |
+| Pattern matching | Consumer groups |
+| Messages perdus si offline | Messages persistés, replay possible |
+
+#### 📝 Modifications mineures côté plugin
+
+```python
+# AVANT (Pub/Sub) — Section 3.4 originale
+await self.pubsub.psubscribe("export:*")
+async for message in self.pubsub.listen():
+    # ...
+
+# APRÈS (Streams) — Pattern aligné sur MCP-Tools-Notify
+last_id = "0"
+while True:
+    messages = await self.redis.xread(
+        {"skills:results:stream": last_id},
+        block=5000  # Block 5 secondes
+    )
+    for stream, entries in messages:
+        for msg_id, fields in entries:
+            await self._handle_export_result(fields)
+            last_id = msg_id
+```
+
+#### 🔄 Avantages pour le plugin
+
+1. **Fiabilité** : Si le bot redémarre, il peut reprendre là où il s'était arrêté
+2. **Multi-instances** : Consumer groups permettent plusieurs bots sans duplication
+3. **Debug** : Messages visibles dans Redis (XRANGE) pour diagnostiquer
+
+### 12.3 Stream name proposé
+
+```
+skills:results:stream
+```
+
+Format du message (champs Redis Stream) :
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `job_id` | string | ID unique du job |
+| `success` | string | "true" ou "false" |
+| `channel_id` | string | Discord channel ID |
+| `message_id` | string | Discord message ID |
+| `files` | string (JSON) | `[{filename, mime_type, content_base64 ou permanent_url}]` |
+| `error` | string | Message d'erreur si échec |
+| `timestamp` | string | ISO 8601 |
+
+### 12.4 Résumé de l'impact plugin Torah
+
+| Aspect | Impact | Action requise |
+|--------|--------|----------------|
+| Architecture | ✅ Aucun | - |
+| Listener Redis | ⚠️ Mineur | Remplacer Pub/Sub par XREAD |
+| Code ExportView | ✅ Aucun | Déjà prévu section 3.4 |
+| Consumer groups | 🆕 Bonus | Optionnel, permet multi-instances |
+| Tests | ⚠️ Mineur | Adapter les mocks Redis |
+
+**Conclusion** : L'équipe plugin n'a qu'une **modification mineure** (listener Redis Stream au lieu de Pub/Sub). Le reste de l'implémentation décrite en section 3.4 reste valide.
+
+---
+
+## 13. Problème XADD non supporté par n8n natif (2026-05-15)
+
+### 13.1 Constat
+
+Le node Redis natif de n8n **ne supporte PAS** l'opération `XADD` (Redis Streams).
+
+**Opérations supportées nativement :**
+| Opération | Supportée | Usage |
+|-----------|-----------|-------|
+| `set` / `get` / `delete` | ✅ | Key-value |
+| `push` / `pop` | ✅ | Lists (queues) |
+| `publish` | ✅ | Pub/Sub |
+| `keys` / `incr` / `info` | ✅ | Utilitaires |
+| **`xAdd` (Streams)** | ❌ | **Non supporté** |
+
+**Source** : [n8n Redis node documentation](https://docs.n8n.io/integrations/builtin/app-nodes/n8n-nodes-base.redis/)
+
+### 13.2 Comparaison des alternatives
+
+| Critère | Redis LIST (RPUSH) | Redis Streams (XADD) |
+|---------|-------------------|----------------------|
+| Persistance | ✅ Oui | ✅ Oui |
+| Multi-consumers | ❌ Non (1 seul) | ✅ Oui (consumer groups) |
+| Replay si crash | ❌ Non (message poppé) | ✅ Oui (reprendre depuis last_id) |
+| Audit/debug | ❌ Messages disparus | ✅ XRANGE pour historique |
+| **Supporté n8n natif** | ✅ Oui | ❌ Non |
+
+**Décision** : Redis Streams est requis pour un système robuste (multi-instances plugin, audit, replay).
+
+### 13.3 Solutions de contournement
+
+#### Option A : Node communautaire Redis Enhanced ⭐ RECOMMANDÉE
+
+Installer [`@vicenterusso/n8n-nodes-redis-enhanced`](https://www.npmjs.com/package/@vicenterusso/n8n-nodes-redis-enhanced).
+
+| Avantage | Détail |
+|----------|--------|
+| ✅ Intégration native | Apparaît dans l'UI n8n |
+| ✅ 35+ opérations | XADD, XREAD, XRANGE, XLEN, etc. |
+| ✅ Maintenance active | Package npm mis à jour |
+
+| Inconvénient | Détail |
+|--------------|--------|
+| ⚠️ Dépendance externe | À maintenir avec n8n |
+
+#### Option B : Execute Command (redis-cli)
+
+Utiliser le node **Execute Command** pour appeler `redis-cli XADD ...`.
+
+| Avantage | Inconvénient |
+|----------|--------------|
+| ✅ Pas de dépendance npm | ⚠️ redis-cli requis sur serveur |
+| ✅ Simple | ⚠️ Escaping JSON complexe |
+
+#### Option C : Micro-service intermédiaire
+
+Service Python/FastAPI qui reçoit HTTP et fait XADD.
+
+| Avantage | Inconvénient |
+|----------|--------------|
+| ✅ Contrôle total | ⚠️ Service supplémentaire à déployer |
+
+**Décision finale** : **Option A** (node communautaire).
+
+---
+
+## 14. Installation du node Redis Enhanced
+
+### 14.1 Architecture actuelle n8n (Docker)
+
+```
+docker/
+├── docker-compose.yml
+└── .env.local
+
+custom-nodes/
+├── package.json           ← Dépendances des nodes custom
+├── n8n-nodes-*            ← Nodes développés en interne
+└── node_modules/          ← Dépendances installées
+```
+
+Le docker-compose monte `custom-nodes/` vers `/home/node/.n8n/nodes` dans le container.
+
+### 14.2 Étape 1 : Ajouter la dépendance
+
+Modifier `custom-nodes/package.json` :
+
+```json
+{
+  "name": "installed-nodes",
+  "private": true,
+  "dependencies": {
+    "n8n-nodes-calendar-dynamic": "file:./n8n-nodes-calendar-dynamic",
+    "n8n-nodes-classroom-dynamic": "file:./n8n-nodes-classroom-dynamic",
+    "n8n-nodes-contacts-dynamic": "file:./n8n-nodes-contacts-dynamic",
+    "n8n-nodes-drive-dynamic": "file:./n8n-nodes-drive-dynamic",
+    "n8n-nodes-gemini-image": "file:./n8n-nodes-gemini-image",
+    "n8n-nodes-gmail-dynamic": "file:./n8n-nodes-gmail-dynamic",
+    "n8n-nodes-google-genai-core": "file:./n8n-nodes-google-genai-core",
+    "n8n-nodes-graph-exporter": "file:./n8n-nodes-graph-exporter",
+    "n8n-nodes-graph-transformer": "file:./n8n-nodes-graph-transformer",
+    "n8n-nodes-knowledge-graph": "file:./n8n-nodes-knowledge-graph",
+    "n8n-nodes-veo-video": "file:./n8n-nodes-veo-video",
+    "n8n-nodes-video-transcription": "file:./n8n-nodes-video-transcription",
+    "@vicenterusso/n8n-nodes-redis-enhanced": "^1.0.0"
+  }
+}
+```
+
+### 14.3 Étape 2 : Installer les dépendances
+
+```bash
+cd /storage6/pi6/n8n-workflows/custom-nodes
+npm install
+```
+
+### 14.4 Étape 3 : Redémarrer n8n (Docker)
+
+```bash
+cd /storage6/pi6/n8n-workflows/docker
+docker compose restart n8n
+```
+
+**Note** : Si n8n tourne via **pm2** (autre installation), utiliser :
+```bash
+pm2 restart n8n
+```
+
+### 14.5 Étape 4 : Vérifier l'installation
+
+Dans l'UI n8n, rechercher "Redis Enhanced" dans les nodes disponibles. Les opérations XADD, XREAD, etc. doivent être disponibles.
+
+---
+
+## 15. Prochaines étapes révisées
+
+### Phase 1 - n8n (immédiat)
+
+- [ ] **Installer node Redis Enhanced** (section 14)
+- [ ] Créer workflow `Claude - Call With Skills Async` basé sur patterns existants
+- [ ] Réutiliser structure de `LEARNING_-_Generate_Dispatcher` pour job queue
+- [ ] Utiliser credentials `notifications-redis` (DB 5) existantes
+- [ ] Implémenter Redis XADD vers `skills:results:stream`
+- [ ] Télécharger fichiers Anthropic avant publication (éviter expiration 24h)
+
+### Phase 2 - Plugin Torah (après n8n)
+
+- [ ] Implémenter listener Redis Streams (XREAD/XREADGROUP)
+- [ ] Optionnel : Implémenter consumer groups pour multi-instances
+- [ ] Reste de l'implémentation section 3.4 inchangé
+
+### Phase 3 - chatbot-core et MCP
+
+- [ ] Inchangé (mode callback HTTP)
+
+---
+
 _Créé : 2026-05-15_
-_Màj : 2026-05-15 (réponse n8n)_
+_Màj : 2026-05-15 (patterns existants + impact plugin)_
 _Équipes : n8n, MCP, chatbot-core, plugin_
