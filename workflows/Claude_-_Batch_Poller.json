@@ -117,7 +117,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// MERGE BATCH INFO WITH STATUS\n// ============================================\n\nconst statusResponse = $input.first().json;\nconst batchInfo = $('Split Batches').first().json;\n\nreturn {\n  // Original batch info from Redis\n  redis_id: batchInfo.redis_id,\n  batch_id: batchInfo.batch_id,\n  correlation_id: batchInfo.correlation_id,\n  callback_url: batchInfo.callback_url,\n  api_key: batchInfo.api_key,\n  model: batchInfo.model,\n  metadata: batchInfo.metadata,\n  submitted_at: batchInfo.submitted_at,\n  \n  // Status from Anthropic\n  processing_status: statusResponse.processing_status,\n  request_counts: statusResponse.request_counts,\n  results_url: statusResponse.results_url,\n  ended_at: statusResponse.ended_at,\n  created_at: statusResponse.created_at,\n  expires_at: statusResponse.expires_at,\n  \n  // Error handling\n  has_error: !!statusResponse.error,\n  error: statusResponse.error\n};"
+        "jsCode": "// ============================================\n// MERGE BATCH INFO WITH STATUS\n// Mode Redis: utilise redis_channel pour notification\n// ============================================\n\nconst statusResponse = $input.first().json;\nconst batchInfo = $('Split Batches').first().json;\n\n// Parse metadata si c'est une string JSON\nlet metadata = batchInfo.metadata;\nif (typeof metadata === 'string') {\n  try { metadata = JSON.parse(metadata); } catch(e) { metadata = {}; }\n}\n\nreturn {\n  // Original batch info from Redis\n  redis_id: batchInfo.redis_id,\n  batch_id: batchInfo.batch_id,\n  correlation_id: batchInfo.correlation_id,\n  redis_channel: batchInfo.redis_channel || metadata?.redis_channel || 'llm:results:stream',\n  api_key: batchInfo.api_key,\n  model: batchInfo.model,\n  metadata: metadata,\n  submitted_at: batchInfo.submitted_at,\n  \n  // Status from Anthropic\n  processing_status: statusResponse.processing_status,\n  request_counts: statusResponse.request_counts,\n  results_url: statusResponse.results_url,\n  ended_at: statusResponse.ended_at,\n  created_at: statusResponse.created_at,\n  expires_at: statusResponse.expires_at,\n  \n  // Error handling\n  has_error: !!statusResponse.error,\n  error: statusResponse.error\n};"
       },
       "id": "merge-batch-info",
       "name": "Merge Info",
@@ -196,7 +196,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $json.callback_url }}",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/xadd",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -204,26 +204,18 @@
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "X-Correlation-ID",
-              "value": "={{ $json.correlation_id }}"
-            },
-            {
-              "name": "X-Batch-ID",
-              "value": "={{ $json.batch_id }}"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  success: $json.success,\n  correlation_id: $json.correlation_id,\n  batch_id: $json.batch_id,\n  content: $json.content,\n  files: $json.files,\n  provider: $json.provider,\n  model: $json.model,\n  usage: $json.usage,\n  stop_reason: $json.stop_reason,\n  metadata: $json.metadata,\n  error: $json.error,\n  _trace: $json._trace\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  stream: $json.metadata?.redis_channel || 'llm:results:stream',\n  fields: {\n    event: 'batch_completed',\n    success: String($json.success),\n    correlation_id: $json.correlation_id,\n    batch_id: $json.batch_id,\n    content: JSON.stringify($json.content || []),\n    files: JSON.stringify($json.files || []),\n    provider: $json.provider || 'anthropic',\n    model: $json.model || '',\n    usage: JSON.stringify($json.usage || {}),\n    stop_reason: $json.stop_reason || '',\n    metadata: JSON.stringify($json.metadata || {}),\n    error: JSON.stringify($json.error || null),\n    completed_at: new Date().toISOString()\n  },\n  max_len: 5000\n}) }}",
         "options": {
-          "timeout": 30000
+          "timeout": 10000
         }
       },
       "id": "send-callback",
-      "name": "Send Callback",
+      "name": "Publish to Redis",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [2240, 180],
