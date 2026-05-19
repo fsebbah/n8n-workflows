@@ -1,11 +1,11 @@
 {
   "name": "Claude - Batch Poller",
-  "description": "Vérifie les batches Anthropic en attente et envoie les résultats via callback",
+  "description": "V\u00e9rifie les batches Anthropic en attente et envoie les r\u00e9sultats via callback",
   "active": true,
   "nodes": [
     {
       "parameters": {
-        "content": "## Claude - Batch Poller\n\n**Trigger:** Cron toutes les 30 secondes\n\n**Description:** Vérifie les batches Anthropic en attente dans Redis.\nQuand un batch est terminé, extrait les résultats et les envoie au callback_url.\n\n**Flow:**\n1. Récupère les batches pending depuis Redis\n2. Pour chaque batch, vérifie le statut via Anthropic API\n3. Si `ended` → récupère les résultats\n4. Extrait les fichiers générés\n5. Envoie les résultats au callback_url\n6. Supprime du stream pending\n\n**Streams Redis:**\n- `llm:batches:pending` - Batches en attente\n- `llm:batches:completed` - Historique des batches terminés",
+        "content": "## Claude - Batch Poller\n\n**Trigger:** Cron toutes les 30 secondes\n\n**Description:** V\u00e9rifie les batches Anthropic en attente dans Redis.\nQuand un batch est termin\u00e9, extrait les r\u00e9sultats et les envoie au callback_url.\n\n**Flow:**\n1. R\u00e9cup\u00e8re les batches pending depuis Redis\n2. Pour chaque batch, v\u00e9rifie le statut via Anthropic API\n3. Si `ended` \u2192 r\u00e9cup\u00e8re les r\u00e9sultats\n4. Extrait les fichiers g\u00e9n\u00e9r\u00e9s\n5. Envoie les r\u00e9sultats au callback_url\n6. Supprime du stream pending\n\n**Streams Redis:**\n- `llm:batches:pending` - Batches en attente\n- `llm:batches:completed` - Historique des batches termin\u00e9s",
         "height": 420,
         "width": 400,
         "color": 5
@@ -14,7 +14,10 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [40, 40]
+      "position": [
+        40,
+        40
+      ]
     },
     {
       "parameters": {
@@ -31,7 +34,10 @@
       "name": "Every 30s",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [260, 340]
+      "position": [
+        260,
+        340
+      ]
     },
     {
       "parameters": {
@@ -45,7 +51,10 @@
       "name": "Get Pending Batches",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [480, 340]
+      "position": [
+        480,
+        340
+      ]
     },
     {
       "parameters": {
@@ -74,7 +83,10 @@
       "name": "Has Batches?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [700, 340]
+      "position": [
+        700,
+        340
+      ]
     },
     {
       "parameters": {
@@ -84,7 +96,10 @@
       "name": "Split Batches",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [920, 260]
+      "position": [
+        920,
+        260
+      ]
     },
     {
       "parameters": {
@@ -112,7 +127,10 @@
       "name": "Check Batch Status",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1140, 260],
+      "position": [
+        1140,
+        260
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -123,7 +141,10 @@
       "name": "Merge Info",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1360, 260]
+      "position": [
+        1360,
+        260
+      ]
     },
     {
       "parameters": {
@@ -152,7 +173,10 @@
       "name": "Batch Ended?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1580, 260]
+      "position": [
+        1580,
+        260
+      ]
     },
     {
       "parameters": {
@@ -180,18 +204,24 @@
       "name": "Get Results",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1800, 180],
+      "position": [
+        1800,
+        180
+      ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PROCESS BATCH RESULTS - Extract files and text\n// ============================================\n\nconst resultsRaw = $input.first().json;\nconst batchInfo = $('Merge Info').first().json;\n\n// Parse JSONL results (Anthropic returns newline-delimited JSON)\nlet results = [];\nif (typeof resultsRaw === 'string') {\n  results = resultsRaw.split('\\n').filter(line => line.trim()).map(line => JSON.parse(line));\n} else if (Array.isArray(resultsRaw)) {\n  results = resultsRaw;\n} else if (resultsRaw.data) {\n  results = resultsRaw.data;\n} else {\n  // Single result object\n  results = [resultsRaw];\n}\n\n// Find our result by custom_id (correlation_id)\nconst ourResult = results.find(r => r.custom_id === batchInfo.correlation_id);\n\nif (!ourResult) {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: {\n      code: 'RESULT_NOT_FOUND',\n      message: `No result found for custom_id: ${batchInfo.correlation_id}`\n    },\n    metadata: batchInfo.metadata\n  };\n}\n\n// Check result type\nconst resultType = ourResult.result?.type;\n\nif (resultType === 'errored') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: ourResult.result.error || { code: 'BATCH_ERROR', message: 'Batch processing failed' },\n    metadata: batchInfo.metadata\n  };\n}\n\nif (resultType === 'expired') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: { code: 'BATCH_EXPIRED', message: 'Batch expired before processing' },\n    metadata: batchInfo.metadata\n  };\n}\n\nif (resultType === 'canceled') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: { code: 'BATCH_CANCELED', message: 'Batch was canceled' },\n    metadata: batchInfo.metadata\n  };\n}\n\n// Extract message content\nconst message = ourResult.result?.message || {};\nconst textContent = [];\nconst fileRefs = [];\n\nfor (const block of (message.content || [])) {\n  if (block.type === 'text') {\n    textContent.push(block.text);\n  }\n  if (block.type === 'tool_result' && block.output?.file_id) {\n    fileRefs.push({\n      file_id: block.output.file_id,\n      name: block.output.name || 'document',\n      mime_type: block.output.mime_type || 'application/octet-stream',\n      size: block.output.size\n    });\n  }\n}\n\n// Check container_result for files\nif (message.container_result?.files) {\n  for (const file of message.container_result.files) {\n    fileRefs.push({\n      file_id: file.file_id,\n      name: file.name,\n      mime_type: file.mime_type,\n      size: file.size\n    });\n  }\n}\n\n// Build file download URLs\nconst files = fileRefs.map(f => ({\n  file_id: f.file_id,\n  filename: f.name,\n  mime_type: f.mime_type,\n  size_bytes: f.size || 0,\n  download_url: `https://api.anthropic.com/v1/files/${f.file_id}/content`\n}));\n\nreturn {\n  success: true,\n  batch_id: batchInfo.batch_id,\n  correlation_id: batchInfo.correlation_id,\n  callback_url: batchInfo.callback_url,\n  redis_id: batchInfo.redis_id,\n  api_key: batchInfo.api_key,\n  \n  // Response data for callback\n  content: [{ type: 'text', text: textContent.join('\\n') }],\n  files: files,\n  has_files: files.length > 0,\n  \n  provider: 'anthropic',\n  model: message.model || batchInfo.model,\n  usage: message.usage || { input_tokens: 0, output_tokens: 0 },\n  stop_reason: message.stop_reason || 'end_turn',\n  metadata: batchInfo.metadata,\n  \n  _trace: {\n    batch_id: batchInfo.batch_id,\n    submitted_at: batchInfo.submitted_at,\n    completed_at: new Date().toISOString(),\n    files_count: files.length\n  }\n};"
+        "jsCode": "// ============================================\n// PROCESS BATCH RESULTS - Extract files and text\n// FIX: Handle data as JSON string\n// ============================================\n\nconst resultsRaw = $input.first().json;\nconst batchInfo = $('Merge Info').first().json;\n\n// Handle undefined/null input\nif (!resultsRaw) {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    redis_id: batchInfo.redis_id,\n    error: { code: 'NO_RESULTS', message: 'Results response was empty' },\n    metadata: batchInfo.metadata\n  };\n}\n\n// Parse results - handle various formats\nlet results = [];\n\n// Case 1: resultsRaw.data is a JSON string (JSONL format from Anthropic)\nif (resultsRaw.data && typeof resultsRaw.data === 'string') {\n  results = resultsRaw.data.split('\\n').filter(line => line.trim()).map(line => JSON.parse(line));\n}\n// Case 2: resultsRaw itself is a string\nelse if (typeof resultsRaw === 'string') {\n  results = resultsRaw.split('\\n').filter(line => line.trim()).map(line => JSON.parse(line));\n}\n// Case 3: resultsRaw.data is an array\nelse if (resultsRaw.data && Array.isArray(resultsRaw.data)) {\n  results = resultsRaw.data;\n}\n// Case 4: resultsRaw is an array\nelse if (Array.isArray(resultsRaw)) {\n  results = resultsRaw;\n}\n// Case 5: resultsRaw has custom_id directly (single result)\nelse if (resultsRaw.custom_id) {\n  results = [resultsRaw];\n}\n// Case 6: Fallback - wrap as array\nelse {\n  results = [resultsRaw];\n}\n\n// Ensure results is an array\nif (!Array.isArray(results)) {\n  results = [];\n}\n\n// Find our result by custom_id (correlation_id)\nconst ourResult = results.find(r => r && r.custom_id === batchInfo.correlation_id);\n\nif (!ourResult) {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: {\n      code: 'RESULT_NOT_FOUND',\n      message: `No result found for custom_id: ${batchInfo.correlation_id}. Available: ${results.map(r => r?.custom_id).join(', ')}`\n    },\n    metadata: batchInfo.metadata\n  };\n}\n\n// Check result type\nconst resultType = ourResult.result?.type;\n\nif (resultType === 'errored') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: ourResult.result.error || { code: 'BATCH_ERROR', message: 'Batch processing failed' },\n    metadata: batchInfo.metadata\n  };\n}\n\nif (resultType === 'expired') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: { code: 'BATCH_EXPIRED', message: 'Batch expired before processing' },\n    metadata: batchInfo.metadata\n  };\n}\n\nif (resultType === 'canceled') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: { code: 'BATCH_CANCELED', message: 'Batch was canceled' },\n    metadata: batchInfo.metadata\n  };\n}\n\n// Extract message content\nconst message = ourResult.result?.message || {};\nconst textContent = [];\nconst fileRefs = [];\n\nfor (const block of (message.content || [])) {\n  if (block.type === 'text') {\n    textContent.push(block.text);\n  }\n  if (block.type === 'tool_result' && block.output?.file_id) {\n    fileRefs.push({\n      file_id: block.output.file_id,\n      name: block.output.name || 'document',\n      mime_type: block.output.mime_type || 'application/octet-stream',\n      size: block.output.size\n    });\n  }\n}\n\n// Check container_result for files\nif (message.container_result?.files) {\n  for (const file of message.container_result.files) {\n    fileRefs.push({\n      file_id: file.file_id,\n      name: file.name,\n      mime_type: file.mime_type,\n      size: file.size\n    });\n  }\n}\n\n// Build file download URLs\nconst files = fileRefs.map(f => ({\n  file_id: f.file_id,\n  filename: f.name,\n  mime_type: f.mime_type,\n  size_bytes: f.size || 0,\n  download_url: `https://api.anthropic.com/v1/files/${f.file_id}/content`\n}));\n\nreturn {\n  success: true,\n  batch_id: batchInfo.batch_id,\n  correlation_id: batchInfo.correlation_id,\n  callback_url: batchInfo.callback_url,\n  redis_id: batchInfo.redis_id,\n  api_key: batchInfo.api_key,\n  \n  // Response data for callback\n  content: [{ type: 'text', text: textContent.join('\\n') }],\n  files: files,\n  has_files: files.length > 0,\n  \n  provider: 'anthropic',\n  model: message.model || batchInfo.model,\n  usage: message.usage || { input_tokens: 0, output_tokens: 0 },\n  stop_reason: message.stop_reason || 'end_turn',\n  metadata: batchInfo.metadata,\n  \n  _trace: {\n    batch_id: batchInfo.batch_id,\n    submitted_at: batchInfo.submitted_at,\n    completed_at: new Date().toISOString(),\n    files_count: files.length\n  }\n};"
       },
       "id": "process-results",
       "name": "Process Results",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2020, 180]
+      "position": [
+        2020,
+        180
+      ]
     },
     {
       "parameters": {
@@ -218,7 +248,10 @@
       "name": "Publish to Redis",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2240, 180],
+      "position": [
+        2240,
+        180
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -233,7 +266,10 @@
       "name": "Remove from Pending",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2460, 180],
+      "position": [
+        2460,
+        180
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -265,7 +301,10 @@
       "name": "Store Completed",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2680, 180],
+      "position": [
+        2680,
+        180
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -276,7 +315,10 @@
       "name": "Still Processing",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1800, 340]
+      "position": [
+        1800,
+        340
+      ]
     }
   ],
   "connections": {
@@ -415,5 +457,11 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
-  "tags": ["llm", "anthropic", "batch", "poller", "async"]
+  "tags": [
+    "llm",
+    "anthropic",
+    "batch",
+    "poller",
+    "async"
+  ]
 }
