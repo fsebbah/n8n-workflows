@@ -1,7 +1,8 @@
 # Redis XADD Micro-Service pour n8n
 
 **Date:** 2026-05-15
-**Dernière mise à jour:** 2026-05-15
+**Dernière mise à jour:** 2026-05-20
+**Version:** 1.1.0
 **Référence:** RFC-089, RFC-090
 **Fichier:** `services/redis_xadd_service.py`
 
@@ -63,6 +64,9 @@ services/redis_xadd_service.py
 | `/xadd` | POST | XADD générique sur n'importe quel stream |
 | `/tools/notify` | POST | Endpoint spécifique pour MCP Tools Notify |
 | `/events/publish` | POST | Endpoint générique pour publier des événements |
+| `/key/{key}` | GET | Lire une clé Redis (remplace `cat file`) |
+| `/key/{key}` | PUT | Écrire une clé Redis (remplace `echo > file`) |
+| `/key/{key}` | DELETE | Supprimer une clé Redis (remplace `rm file`) |
 
 ### 2.3 Configuration
 
@@ -113,6 +117,66 @@ curl -X POST http://localhost:8765/tools/notify \
     "action": "workflow_updated",
     "workflow_name": "My Workflow"
   }'
+```
+
+#### Lire une clé (GET /key/{key})
+```bash
+curl http://localhost:8765/key/n8n:pending_channels
+```
+
+Réponse (clé existe) :
+```json
+{
+  "success": true,
+  "key": "n8n:pending_channels",
+  "value": "{\"channel_id\":\"123\"}\n{\"channel_id\":\"456\"}",
+  "exists": true
+}
+```
+
+Réponse (clé n'existe pas) :
+```json
+{
+  "success": true,
+  "key": "n8n:pending_channels",
+  "value": null,
+  "exists": false
+}
+```
+
+#### Écrire une clé (PUT /key/{key})
+```bash
+curl -X PUT http://localhost:8765/key/n8n:pending_channels \
+  -H "Content-Type: application/json" \
+  -d '{
+    "value": "{\"channel_id\":\"123\"}\n{\"channel_id\":\"456\"}",
+    "ttl": 86400
+  }'
+```
+
+Réponse :
+```json
+{
+  "success": true,
+  "key": "n8n:pending_channels",
+  "value": "{\"channel_id\":\"123\"}\n{\"channel_id\":\"456\"}"
+}
+```
+
+> **Note:** Le paramètre `ttl` est optionnel (en secondes). Sans TTL, la clé n'expire jamais.
+
+#### Supprimer une clé (DELETE /key/{key})
+```bash
+curl -X DELETE http://localhost:8765/key/n8n:pending_channels
+```
+
+Réponse :
+```json
+{
+  "success": true,
+  "key": "n8n:pending_channels",
+  "exists": true
+}
 ```
 
 ---
@@ -522,7 +586,59 @@ async def xadd(request: XAddRequest):
 
 ---
 
-## 8. Références
+## 8. Migration ExecuteCommand → HTTP Request
+
+### 8.1 Contexte
+
+Depuis n8n 2.0, le node `ExecuteCommand` est désactivé par défaut. Les workflows qui utilisaient des commandes shell pour lire/écrire des fichiers doivent être migrés vers des appels HTTP au service Redis XADD.
+
+### 8.2 Exemple : CHANNELS---Private-Recovery
+
+Ce workflow a été migré de fichiers locaux vers Redis :
+
+| Ancien (ExecuteCommand) | Nouveau (HTTP Request) |
+|-------------------------|------------------------|
+| `cat /var/log/n8n/pending_channels.log` | `GET /key/n8n:pending_channels` |
+| `rm /var/log/n8n/pending_channels.log` | `DELETE /key/n8n:pending_channels` |
+| `echo '...' > /var/log/n8n/pending_channels.log` | `PUT /key/n8n:pending_channels` |
+
+### 8.3 Avantages de la migration
+
+1. **Compatibilité n8n 2.0+** : Pas besoin de réactiver ExecuteCommand
+2. **Persistance** : Redis est plus robuste qu'un fichier local
+3. **Scalabilité** : Fonctionne en environnement distribué (Docker, Kubernetes)
+4. **Observabilité** : Les clés Redis sont inspectables avec redis-cli
+
+### 8.4 Configuration n8n dans le workflow
+
+Utiliser la variable d'environnement dans les URLs :
+
+```
+{{ $env.REDIS_XADD_SERVICE_URL }}/key/n8n:pending_channels
+```
+
+### 8.5 Adaptation du code JavaScript
+
+**Avant (lecture fichier):**
+```javascript
+const output = $input.first().json.stdout || '';
+if (!output.trim()) {
+  return { has_entries: false };
+}
+```
+
+**Après (lecture Redis):**
+```javascript
+const response = $input.first().json;
+if (!response.exists || !response.value) {
+  return { has_entries: false };
+}
+const content = response.value;
+```
+
+---
+
+## 9. Références
 
 - [REDIS_LIMITATIONS.md](./REDIS_LIMITATIONS.md) - Limitations Redis dans n8n
 - [RFC-089](../rfc/) - Skills API Architecture
