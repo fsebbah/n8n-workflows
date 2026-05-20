@@ -39,8 +39,8 @@ redis_client = redis.Redis(
 
 app = FastAPI(
     title="Redis XADD Service",
-    description="Micro-service pour Redis Streams XADD - Remplace Execute Command dans n8n 2.0",
-    version="1.0.0"
+    description="Micro-service pour Redis Streams XADD et clés simples - Remplace Execute Command dans n8n 2.0",
+    version="1.1.0"
 )
 
 
@@ -73,6 +73,109 @@ class HealthResponse(BaseModel):
     redis_host: str
     redis_port: int
     redis_db: int
+
+
+class KeyValue(BaseModel):
+    """Valeur pour une clé Redis"""
+    value: str = Field(..., description="Valeur à stocker")
+    ttl: Optional[int] = Field(None, description="Time-to-live en secondes (optionnel)")
+
+
+class KeyResponse(BaseModel):
+    """Réponse pour les opérations sur clés"""
+    success: bool
+    key: str
+    value: Optional[str] = None
+    exists: Optional[bool] = None
+
+
+# ============================================
+# ENDPOINTS POUR CLÉS SIMPLES (GET/SET/DELETE)
+# Remplace les ExecuteCommand qui lisent/écrivent des fichiers
+# ============================================
+
+@app.get("/key/{key:path}", response_model=KeyResponse)
+async def get_key(key: str):
+    """
+    Lit la valeur d'une clé Redis.
+
+    Équivalent de: cat /path/to/file
+    Remplace: ExecuteCommand avec 'cat file'
+
+    Retourne success=true et value si la clé existe,
+    success=true et value=null si la clé n'existe pas.
+    """
+    try:
+        value = redis_client.get(key)
+
+        return KeyResponse(
+            success=True,
+            key=key,
+            value=value,
+            exists=value is not None
+        )
+
+    except redis.RedisError as e:
+        logger.error(f"Redis error in get_key: {e}")
+        raise HTTPException(status_code=500, detail=f"Redis error: {str(e)}")
+
+
+@app.put("/key/{key:path}", response_model=KeyResponse)
+async def set_key(key: str, data: KeyValue):
+    """
+    Écrit une valeur dans une clé Redis.
+
+    Équivalent de: echo 'value' > /path/to/file
+    Remplace: ExecuteCommand avec 'echo > file'
+
+    Paramètres:
+    - key: Nom de la clé (peut contenir des / pour simuler des chemins)
+    - value: Valeur à stocker
+    - ttl: Durée de vie en secondes (optionnel)
+    """
+    try:
+        if data.ttl:
+            redis_client.setex(key, data.ttl, data.value)
+        else:
+            redis_client.set(key, data.value)
+
+        logger.info(f"SET {key} (ttl={data.ttl})")
+
+        return KeyResponse(
+            success=True,
+            key=key,
+            value=data.value
+        )
+
+    except redis.RedisError as e:
+        logger.error(f"Redis error in set_key: {e}")
+        raise HTTPException(status_code=500, detail=f"Redis error: {str(e)}")
+
+
+@app.delete("/key/{key:path}", response_model=KeyResponse)
+async def delete_key(key: str):
+    """
+    Supprime une clé Redis.
+
+    Équivalent de: rm /path/to/file
+    Remplace: ExecuteCommand avec 'rm file'
+
+    Retourne success=true même si la clé n'existait pas.
+    """
+    try:
+        deleted = redis_client.delete(key)
+
+        logger.info(f"DEL {key} (deleted={deleted})")
+
+        return KeyResponse(
+            success=True,
+            key=key,
+            exists=deleted > 0
+        )
+
+    except redis.RedisError as e:
+        logger.error(f"Redis error in delete_key: {e}")
+        raise HTTPException(status_code=500, detail=f"Redis error: {str(e)}")
 
 
 @app.get("/health", response_model=HealthResponse)
