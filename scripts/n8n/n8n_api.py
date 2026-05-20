@@ -36,6 +36,28 @@ N8N_API_URL = config.get('N8N_API_URL', 'http://pi6.local:5678/api/v1')
 N8N_WEBHOOK_BASE_URL = config.get('N8N_WEBHOOK_BASE_URL', 'http://pi6.local:5678/webhook')
 N8N_API_KEY = config.get('N8N_API_KEY', '')
 
+def apply_host_override():
+    """Apply --host override if provided in command line arguments"""
+    global N8N_API_URL, N8N_WEBHOOK_BASE_URL
+    for i, arg in enumerate(sys.argv):
+        if arg == '--host' and i + 1 < len(sys.argv):
+            host = sys.argv[i + 1]
+            # Remove --host and its value from argv so other parsers don't see it
+            sys.argv.pop(i)
+            sys.argv.pop(i)
+            # Update URLs
+            if not host.startswith('http'):
+                host = f'http://{host}'
+            if ':' not in host.split('//')[-1]:
+                host = f'{host}:5678'
+            N8N_API_URL = f'{host}/api/v1'
+            N8N_WEBHOOK_BASE_URL = f'{host}/webhook'
+            print(f"[INFO] Using host: {host}")
+            break
+
+# Apply host override before anything else
+apply_host_override()
+
 # PostgreSQL configuration for n8n database
 DB_CONFIG = {
     'host': config.get('DB_POSTGRESDB_HOST', 'databases.local'),
@@ -805,7 +827,11 @@ def show_help():
     """Show help message"""
     print("n8n API Helper Script")
     print("")
-    print("Usage: python3 n8n_api.py <action> [params]")
+    print("Usage: python3 n8n_api.py [--host <host>] <action> [params]")
+    print("")
+    print("Global options:")
+    print("  --host <host>           Override n8n host (e.g., host2.local, http://host2.local:5678)")
+    print("                          Default: from .env.local or pi6.local:5678")
     print("")
     print("Actions:")
     print("  list                    List all workflows")
