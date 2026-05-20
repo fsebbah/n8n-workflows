@@ -37,15 +37,16 @@ N8N_WEBHOOK_BASE_URL = config.get('N8N_WEBHOOK_BASE_URL', 'http://pi6.local:5678
 N8N_API_KEY = config.get('N8N_API_KEY', '')
 
 def apply_host_override():
-    """Apply --host override if provided in command line arguments"""
-    global N8N_API_URL, N8N_WEBHOOK_BASE_URL
-    for i, arg in enumerate(sys.argv):
-        if arg == '--host' and i + 1 < len(sys.argv):
+    """Apply --host and --api-key overrides if provided in command line arguments"""
+    global N8N_API_URL, N8N_WEBHOOK_BASE_URL, N8N_API_KEY, HEADERS
+
+    # Process --host
+    i = 0
+    while i < len(sys.argv):
+        if sys.argv[i] == '--host' and i + 1 < len(sys.argv):
             host = sys.argv[i + 1]
-            # Remove --host and its value from argv so other parsers don't see it
             sys.argv.pop(i)
             sys.argv.pop(i)
-            # Update URLs
             if not host.startswith('http'):
                 host = f'http://{host}'
             if ':' not in host.split('//')[-1]:
@@ -53,7 +54,15 @@ def apply_host_override():
             N8N_API_URL = f'{host}/api/v1'
             N8N_WEBHOOK_BASE_URL = f'{host}/webhook'
             print(f"[INFO] Using host: {host}")
-            break
+        elif sys.argv[i] == '--api-key' and i + 1 < len(sys.argv):
+            N8N_API_KEY = sys.argv[i + 1]
+            sys.argv.pop(i)
+            sys.argv.pop(i)
+            print(f"[INFO] Using custom API key: {N8N_API_KEY[:20]}...")
+        else:
+            i += 1
+
+    # Note: HEADERS will be created after this function with the updated N8N_API_KEY
 
 # Apply host override before anything else
 apply_host_override()
@@ -827,11 +836,13 @@ def show_help():
     """Show help message"""
     print("n8n API Helper Script")
     print("")
-    print("Usage: python3 n8n_api.py [--host <host>] <action> [params]")
+    print("Usage: python3 n8n_api.py [--host <host>] [--api-key <key>] <action> [params]")
     print("")
     print("Global options:")
     print("  --host <host>           Override n8n host (e.g., host2.local, http://host2.local:5678)")
     print("                          Default: from .env.local or pi6.local:5678")
+    print("  --api-key <key>         Override API key (required when using different host)")
+    print("                          Each n8n instance has its own API key")
     print("")
     print("Actions:")
     print("  list                    List all workflows")
