@@ -757,6 +757,97 @@ L'index `ix_n8n_files_user_message (user_id, message_id)` rend cette requête tr
 
 > ℹ️ Cet endpoint sera spec'd plus en détail dans RFC-094 §5 (volet front) — listé ici pour montrer le payoff de la traçabilité.
 
+### 8.13 Webhooks n8n — proxy vers chat.api
+
+Le workflow **Files - B2 Operations** expose deux webhooks permettant aux plugins d'accéder aux opérations B2 via n8n (qui route vers chat.api avec le bon token).
+
+#### 8.13.1 `POST /webhook/files/presign`
+
+Régénère une URL présignée de téléchargement.
+
+**Request:**
+```http
+POST /webhook/files/presign HTTP/1.1
+Host: n8n.example.com
+Content-Type: application/json
+```
+
+```jsonc
+{
+  "file_id":       "f_4e9b...",      // ✅ obligatoire — UUID retourné par import
+  "tenant_id":     "Z6F3GSWB",       // ✅ obligatoire — pour sélection du token
+  "valid_seconds": 3600              // ⚪ optionnel — défaut 3600, max 7200
+}
+```
+
+**Response — 200 OK:**
+```jsonc
+{
+  "file_id":       "f_4e9b...",
+  "download_url":  "https://s3.../...?X-Amz-Signature=...",
+  "expires_at":    "2026-05-21T20:30:00Z",
+  "valid_seconds": 3600
+}
+```
+
+**Errors:**
+| HTTP | `error` | Cas |
+|------|---------|-----|
+| 400 | `missing_file_id` | `file_id` absent |
+| 400 | `missing_tenant_id` | `tenant_id` absent |
+| 401 | `unknown_tenant` | Pas de token configuré pour ce tenant |
+| 404 | `file_not_found` | Fichier inexistant ou hors scope |
+| 410 | `file_expired` | Fichier déjà purgé (TTL B2 dépassé) |
+
+#### 8.13.2 `POST /webhook/files/delete`
+
+Supprime un fichier B2 avant expiration (idempotent).
+
+**Request:**
+```http
+POST /webhook/files/delete HTTP/1.1
+Host: n8n.example.com
+Content-Type: application/json
+```
+
+```jsonc
+{
+  "file_id":   "f_4e9b...",      // ✅ obligatoire
+  "tenant_id": "Z6F3GSWB"        // ✅ obligatoire
+}
+```
+
+**Response — 204 (body JSON pour compatibilité):**
+```jsonc
+{
+  "file_id": "f_4e9b...",
+  "deleted": true
+}
+```
+
+**Errors:**
+| HTTP | `error` | Cas |
+|------|---------|-----|
+| 400 | `missing_file_id` | `file_id` absent |
+| 400 | `missing_tenant_id` | `tenant_id` absent |
+| 401 | `unknown_tenant` | Pas de token configuré |
+| 404 | `file_not_found` | Fichier inexistant (idempotent = OK) |
+
+#### 8.13.3 Configuration n8n
+
+Variables d'environnement requises :
+
+```bash
+# URL de chat.api
+CHAT_API_BASE_URL=https://api.staging.example.com
+
+# Token de service par tenant (même config que Claude Batch Poller)
+SERVICE_TOKEN_Z6F3GSWB=sk-srv-xxxx...
+SERVICE_TOKEN_ABCD1234=sk-srv-yyyy...
+```
+
+> ℹ️ Ces webhooks partagent la même configuration de tokens que le workflow **Claude Batch Poller** (§8.7.4).
+
 ---
 
 ## 9. Statut + prochaines étapes
@@ -771,8 +862,9 @@ L'index `ix_n8n_files_user_message (user_id, message_id)` rend cette requête tr
 | Endpoint `DELETE /api/n8n/files/{file_id}` | ⏳ chat.api |
 | Cron purge expirés (toutes les heures) | ⏳ chat.api |
 | Lifecycle policy B2 `batch/` 30j (filet sécurité) | ⏳ ops |
-| Modif workflow Claude Batch Poller pour appeler l'endpoint | ⏳ équipe n8n |
-| Notif Redis enrichie (`files[]`) | ⏳ équipe n8n |
+| Modif workflow Claude Batch Poller pour appeler l'endpoint | 🟢 PR #362 mergée |
+| Notif Redis enrichie (`files[]`) | 🟢 PR #362 mergée |
+| Workflow Files - B2 Operations (presign, delete) | 🟢 En cours |
 | Consommation `files[]` + presign côté front | ⏳ équipe plugin |
 | Endpoint front `GET /api/files/by-message/{message_id}` (§8.12) | ⏳ chat.api |
 

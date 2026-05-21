@@ -1,0 +1,291 @@
+{
+  "name": "Files - B2 Operations",
+  "description": "Webhooks proxy pour les opérations fichiers B2 via chat.api (presign, delete)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Files - B2 Operations\n\n**Description:** Proxy n8n pour les opérations fichiers B2 via chat.api.\nLes plugins appellent ces webhooks, n8n route vers chat.api avec le bon X-Service-Token.\n\n**Webhooks:**\n- `POST /webhook/files/presign` - Régénère une URL présignée\n- `POST /webhook/files/delete` - Supprime un fichier B2\n\n**Pattern:** Plugin → n8n (tenant routing) → chat.api → B2\n\n**Env requises:**\n- `CHAT_API_BASE_URL` - URL de chat.api\n- `SERVICE_TOKEN_{TENANT_ID}` - Token par tenant\n\n**Doc:** docs/guides/n8n-backblaze-documents.md §8.13",
+        "height": 340,
+        "width": 400,
+        "color": 5
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 40]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "files/presign",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-presign",
+      "name": "Webhook Presign",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 200],
+      "webhookId": "files-presign"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "files/delete",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-delete",
+      "name": "Webhook Delete",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 480],
+      "webhookId": "files-delete"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE PRESIGN REQUEST & GET SERVICE TOKEN\n// ============================================\n\nconst body = $input.first().json.body || $input.first().json;\n\n// Extract required fields\nconst file_id = body.file_id;\nconst tenant_id = body.tenant_id;\nconst valid_seconds = body.valid_seconds || 3600;\n\n// Validate required fields\nif (!file_id) {\n  return {\n    error: true,\n    status: 400,\n    message: 'missing_file_id',\n    detail: 'file_id is required'\n  };\n}\n\nif (!tenant_id) {\n  return {\n    error: true,\n    status: 400,\n    message: 'missing_tenant_id',\n    detail: 'tenant_id is required for token routing'\n  };\n}\n\n// Validate valid_seconds range\nif (valid_seconds < 60 || valid_seconds > 7200) {\n  return {\n    error: true,\n    status: 400,\n    message: 'invalid_valid_seconds',\n    detail: 'valid_seconds must be between 60 and 7200'\n  };\n}\n\n// Get service token for tenant\nconst serviceToken = $env[`SERVICE_TOKEN_${tenant_id}`];\nif (!serviceToken) {\n  return {\n    error: true,\n    status: 401,\n    message: 'unknown_tenant',\n    detail: `No service token configured for tenant: ${tenant_id}`\n  };\n}\n\n// Return validated data\nreturn {\n  error: false,\n  file_id: file_id,\n  tenant_id: tenant_id,\n  valid_seconds: valid_seconds,\n  service_token: serviceToken,\n  api_base_url: $env.CHAT_API_BASE_URL || 'http://localhost:8080'\n};"
+      },
+      "id": "validate-presign",
+      "name": "Validate Presign",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATE DELETE REQUEST & GET SERVICE TOKEN\n// ============================================\n\nconst body = $input.first().json.body || $input.first().json;\n\n// Extract required fields\nconst file_id = body.file_id;\nconst tenant_id = body.tenant_id;\n\n// Validate required fields\nif (!file_id) {\n  return {\n    error: true,\n    status: 400,\n    message: 'missing_file_id',\n    detail: 'file_id is required'\n  };\n}\n\nif (!tenant_id) {\n  return {\n    error: true,\n    status: 400,\n    message: 'missing_tenant_id',\n    detail: 'tenant_id is required for token routing'\n  };\n}\n\n// Get service token for tenant\nconst serviceToken = $env[`SERVICE_TOKEN_${tenant_id}`];\nif (!serviceToken) {\n  return {\n    error: true,\n    status: 401,\n    message: 'unknown_tenant',\n    detail: `No service token configured for tenant: ${tenant_id}`\n  };\n}\n\n// Return validated data\nreturn {\n  error: false,\n  file_id: file_id,\n  tenant_id: tenant_id,\n  service_token: serviceToken,\n  api_base_url: $env.CHAT_API_BASE_URL || 'http://localhost:8080'\n};"
+      },
+      "id": "validate-delete",
+      "name": "Validate Delete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 480]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-presign-error",
+      "name": "Presign Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [700, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-delete-error",
+      "name": "Delete Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [700, 480]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.api_base_url }}/api/n8n/files/{{ $json.file_id }}/presign",
+        "authentication": "none",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "valid_seconds",
+              "value": "={{ $json.valid_seconds }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.service_token }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "call-presign-api",
+      "name": "Call Presign API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 120],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $json.api_base_url }}/api/n8n/files/{{ $json.file_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.service_token }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "call-delete-api",
+      "name": "Call Delete API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 400],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.message, detail: $json.detail }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "respond-presign-error",
+      "name": "Respond Presign Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [920, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.message, detail: $json.detail }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "respond-delete-error",
+      "name": "Respond Delete Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [920, 560]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESS PRESIGN API RESPONSE\n// ============================================\n\nconst response = $input.first().json;\nconst validatedData = $('Validate Presign').first().json;\n\n// Check for HTTP errors (response might have error status)\nif (response.error || response.statusCode >= 400) {\n  return {\n    success: false,\n    status: response.statusCode || 500,\n    error: response.error || 'api_error',\n    detail: response.message || response.detail || 'Unknown error from chat.api'\n  };\n}\n\n// Success - return presigned URL data\nreturn {\n  success: true,\n  status: 200,\n  file_id: response.file_id || validatedData.file_id,\n  download_url: response.download_url,\n  expires_at: response.expires_at,\n  valid_seconds: response.valid_seconds || validatedData.valid_seconds\n};"
+      },
+      "id": "process-presign-response",
+      "name": "Process Presign Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PROCESS DELETE API RESPONSE\n// ============================================\n\nconst response = $input.first().json;\nconst validatedData = $('Validate Delete').first().json;\n\n// Check for HTTP errors\nif (response.error || (response.statusCode && response.statusCode >= 400 && response.statusCode !== 404)) {\n  return {\n    success: false,\n    status: response.statusCode || 500,\n    error: response.error || 'api_error',\n    detail: response.message || response.detail || 'Unknown error from chat.api'\n  };\n}\n\n// Success (204 No Content) or already deleted (404 is idempotent)\nreturn {\n  success: true,\n  status: 204,\n  file_id: validatedData.file_id,\n  deleted: true\n};"
+      },
+      "id": "process-delete-response",
+      "name": "Process Delete Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.success ? JSON.stringify({ file_id: $json.file_id, download_url: $json.download_url, expires_at: $json.expires_at, valid_seconds: $json.valid_seconds }) : JSON.stringify({ error: $json.error, detail: $json.detail }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "respond-presign-success",
+      "name": "Respond Presign",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1360, 120]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.success ? JSON.stringify({ file_id: $json.file_id, deleted: true }) : JSON.stringify({ error: $json.error, detail: $json.detail }) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "respond-delete-success",
+      "name": "Respond Delete",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1360, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Presign": {
+      "main": [[{ "node": "Validate Presign", "type": "main", "index": 0 }]]
+    },
+    "Webhook Delete": {
+      "main": [[{ "node": "Validate Delete", "type": "main", "index": 0 }]]
+    },
+    "Validate Presign": {
+      "main": [[{ "node": "Presign Error?", "type": "main", "index": 0 }]]
+    },
+    "Validate Delete": {
+      "main": [[{ "node": "Delete Error?", "type": "main", "index": 0 }]]
+    },
+    "Presign Error?": {
+      "main": [
+        [{ "node": "Respond Presign Error", "type": "main", "index": 0 }],
+        [{ "node": "Call Presign API", "type": "main", "index": 0 }]
+      ]
+    },
+    "Delete Error?": {
+      "main": [
+        [{ "node": "Respond Delete Error", "type": "main", "index": 0 }],
+        [{ "node": "Call Delete API", "type": "main", "index": 0 }]
+      ]
+    },
+    "Call Presign API": {
+      "main": [[{ "node": "Process Presign Response", "type": "main", "index": 0 }]]
+    },
+    "Call Delete API": {
+      "main": [[{ "node": "Process Delete Response", "type": "main", "index": 0 }]]
+    },
+    "Process Presign Response": {
+      "main": [[{ "node": "Respond Presign", "type": "main", "index": 0 }]]
+    },
+    "Process Delete Response": {
+      "main": [[{ "node": "Respond Delete", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": ["files", "b2", "backblaze", "proxy", "webhook"]
+}
