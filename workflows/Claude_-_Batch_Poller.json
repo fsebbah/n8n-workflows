@@ -5,7 +5,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Claude - Batch Poller\n\n**Trigger:** Cron toutes les 30 secondes\n\n**Description:** V\u00e9rifie les batches Anthropic en attente dans Redis.\nQuand un batch est termin\u00e9, extrait les r\u00e9sultats et les envoie au callback_url.\n\n**Flow:**\n1. R\u00e9cup\u00e8re les batches pending depuis Redis\n2. Pour chaque batch, v\u00e9rifie le statut via Anthropic API\n3. Si `ended` \u2192 r\u00e9cup\u00e8re les r\u00e9sultats\n4. Extrait les fichiers g\u00e9n\u00e9r\u00e9s\n5. Envoie les r\u00e9sultats au callback_url\n6. Supprime du stream pending\n\n**Streams Redis:**\n- `llm:batches:pending` - Batches en attente\n- `llm:batches:completed` - Historique des batches termin\u00e9s",
+        "content": "## Claude - Batch Poller\n\n**Trigger:** Cron toutes les 30 secondes\n\n**Description:** V\u00e9rifie les batches Anthropic en attente dans Redis.\nQuand un batch est termin\u00e9, extrait les r\u00e9sultats et les envoie au callback_url.\n\n**Flow:**\n1. R\u00e9cup\u00e8re les batches pending depuis Redis\n2. Pour chaque batch, v\u00e9rifie le statut via Anthropic API\n3. Si `ended` \u2192 r\u00e9cup\u00e8re les r\u00e9sultats\n4. Extrait les fichiers g\u00e9n\u00e9r\u00e9s\n5. **Import B2** : Si fichiers pr\u00e9sents, appelle chat.api pour stockage B2\n6. Envoie les r\u00e9sultats au callback_url (Redis stream)\n7. Supprime du stream pending\n\n**Streams Redis:**\n- `llm:batches:pending` - Batches en attente\n- `llm:batches:completed` - Historique des batches termin\u00e9s\n\n**Env requises pour B2:**\n- `CHAT_API_BASE_URL` - URL de chat.api\n- `SERVICE_TOKEN_{TENANT_ID}` - Token par tenant",
         "height": 420,
         "width": 400,
         "color": 5
@@ -225,6 +225,19 @@
     },
     {
       "parameters": {
+        "jsCode": "// ============================================\n// IMPORT FILES TO B2 VIA CHAT.API\n// Pattern C-bis: n8n → chat.api → (Anthropic GET → B2 PUT)\n// Doc: docs/guides/n8n-backblaze-documents.md §8\n// ============================================\n\nconst input = $input.first().json;\n\n// If no files or not successful, pass through unchanged\nif (!input.success || !input.has_files || !input.files?.length) {\n  return input;\n}\n\n// Get traceability keys from metadata (§8.7)\nconst metadata = input.metadata || {};\nconst tenant_id = metadata.tenant_id;\nconst user_id = metadata.user_id;\nconst message_id = metadata.message_id;\n\n// Validate required keys\nif (!tenant_id || !user_id || !message_id) {\n  console.log('[WARN] Missing traceability keys for B2 import:', { tenant_id, user_id, message_id });\n  return {\n    ...input,\n    _b2_import: {\n      status: 'skipped',\n      reason: 'missing_traceability_keys',\n      missing: { tenant_id: !tenant_id, user_id: !user_id, message_id: !message_id }\n    }\n  };\n}\n\n// Get service token for tenant (env: SERVICE_TOKEN_{TENANT_ID})\nconst serviceToken = $env[`SERVICE_TOKEN_${tenant_id}`];\nif (!serviceToken) {\n  console.log(`[WARN] No service token found for tenant: ${tenant_id}`);\n  return {\n    ...input,\n    _b2_import: {\n      status: 'skipped',\n      reason: 'no_service_token',\n      tenant_id: tenant_id\n    }\n  };\n}\n\n// API base URL\nconst apiBaseUrl = $env.CHAT_API_BASE_URL || 'http://localhost:8080';\n\n// Import each file to B2\nconst importedFiles = [];\nconst importErrors = [];\n\nfor (const file of input.files) {\n  if (!file.file_id) {\n    importErrors.push({ error: 'missing_file_id', file });\n    continue;\n  }\n  \n  try {\n    const response = await fetch(`${apiBaseUrl}/api/n8n/files/import-from-anthropic`, {\n      method: 'POST',\n      headers: {\n        'Content-Type': 'application/json',\n        'X-Service-Token': serviceToken\n      },\n      body: JSON.stringify({\n        anthropic_file_id: file.file_id,\n        user_id: user_id,\n        message_id: message_id,\n        filename: file.filename,\n        mime_type: file.mime_type\n      })\n    });\n    \n    if (!response.ok) {\n      throw new Error(`API error: ${response.status} ${response.statusText}`);\n    }\n    \n    const data = await response.json();\n    \n    importedFiles.push({\n      anthropic_file_id: file.file_id,\n      original_filename: file.filename,\n      mime_type: file.mime_type,\n      size_bytes: file.size_bytes,\n      // B2 enriched data from chat.api\n      b2_file_id: data.file_id,\n      b2_file_key: data.b2_file_key,\n      download_url: data.download_url,\n      expires_at: data.expires_at\n    });\n  } catch (error) {\n    console.log(`[ERROR] B2 import failed for file ${file.file_id}:`, error.message);\n    importErrors.push({\n      file_id: file.file_id,\n      filename: file.filename,\n      error: error.message\n    });\n    // Keep original file info with error flag\n    importedFiles.push({\n      ...file,\n      b2_import_error: error.message\n    });\n  }\n}\n\nreturn {\n  ...input,\n  files: importedFiles,\n  _b2_import: {\n    status: importErrors.length === 0 ? 'success' : (importedFiles.some(f => !f.b2_import_error) ? 'partial' : 'failed'),\n    imported_count: importedFiles.filter(f => f.b2_file_id).length,\n    total_files: input.files.length,\n    errors: importErrors.length > 0 ? importErrors : undefined\n  }\n};"
+      },
+      "id": "import-files-to-b2",
+      "name": "Import Files to B2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        180
+      ]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/xadd",
         "authentication": "none",
@@ -249,7 +262,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2240,
+        2460,
         180
       ],
       "onError": "continueRegularOutput"
@@ -267,7 +280,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2460,
+        2680,
         180
       ],
       "onError": "continueRegularOutput"
@@ -302,7 +315,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2680,
+        2900,
         180
       ],
       "onError": "continueRegularOutput"
@@ -419,6 +432,17 @@
       ]
     },
     "Process Results": {
+      "main": [
+        [
+          {
+            "node": "Import Files to B2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Import Files to B2": {
       "main": [
         [
           {
