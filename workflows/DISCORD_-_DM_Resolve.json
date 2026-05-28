@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## DISCORD - DM Resolve (RFC-095)\n\n**Endpoint:** POST /webhook/discord/dm-resolve\n\n**Description:** Résout le personae pour un DM élève. Orchestre 2 appels API puis dispatch selon le statut.\n\n**Input:**\n```json\n{\n  \"guild_id\": \"string\",\n  \"user_id\": \"string\",\n  \"question\": \"string\"\n}\n```\n\n**Flow:**\n1. Validate input\n2. GET /api/n8n/tenants/resolve → tenant_id\n3. GET /api/n8n/personae/resolve-dm → ResolveDmResponse\n4. Switch sur status:\n   - resolved → dispatch chatbot-core\n   - out_of_scope → retourne decline_reason\n   - needs_clarification → retourne candidates\n\n**Output:** Dépend du statut (voir RFC-095)\n\n**RFC:** RFC-095-PERSONAE-MULTI-LEVELS (B3)\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"status\", \"personae\", \"decline_reason\", \"clarification_candidates\"],\n  \"domain\": \"discord-education\"\n}\n```"
+        "content": "## DISCORD - DM Resolve (RFC-095)\n\n**Endpoint:** POST /webhook/discord/dm-resolve\n\n**Description:** Résout le personae pour un DM élève. Orchestre 2 appels API puis dispatch selon le statut.\n\n**Input:**\n```json\n{\n  \"guild_id\": \"string\",\n  \"user_id\": \"string\",\n  \"question\": \"string\",\n  \"specialty_id\": \"string (optionnel, pour re-resolve après clarification)\"\n}\n```\n\n**Flow:**\n1. Validate input (+ specialty_id optionnel)\n2. GET /api/n8n/tenants/resolve → tenant_id\n3. GET /api/n8n/personae/resolve-dm?specialty_id=... → ResolveDmResponse\n4. Check API response (404 = specialty_not_found)\n5. Switch sur status:\n   - resolved → dispatch chatbot-core\n   - out_of_scope → retourne decline_reason\n   - needs_clarification → retourne candidates\n\n**Output:** Dépend du statut (voir RFC-095)\n\n**RFC:** RFC-095-PERSONAE-MULTI-LEVELS (B3)\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"status\", \"personae\", \"decline_reason\", \"clarification_candidates\"],\n  \"domain\": \"discord-education\"\n}\n```"
       },
       "id": "doc-1",
       "name": "Documentation",
@@ -27,7 +27,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATE INPUT (RFC-095 DM Resolve)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst startTime = Date.now();\n\n// --- Validate required fields ---\nconst errors = [];\n\nif (!body.guild_id) errors.push('guild_id requis');\nif (!body.user_id) errors.push('user_id requis');\nif (!body.question || typeof body.question !== 'string') errors.push('question requis (string)');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: errors.join(', '),\n      http_status: 400\n    },\n    start_time: startTime\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  valid: true,\n  guild_id: body.guild_id,\n  user_id: body.user_id,\n  question: body.question.trim(),\n  start_time: startTime\n};"
+        "jsCode": "// ============================================\n// VALIDATE INPUT (RFC-095 DM Resolve)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst startTime = Date.now();\n\n// --- Validate required fields ---\nconst errors = [];\n\nif (!body.guild_id) errors.push('guild_id requis');\nif (!body.user_id) errors.push('user_id requis');\nif (!body.question || typeof body.question !== 'string') errors.push('question requis (string)');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: errors.join(', '),\n      http_status: 400\n    },\n    start_time: startTime\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  valid: true,\n  guild_id: body.guild_id,\n  user_id: body.user_id,\n  question: body.question.trim(),\n  specialty_id: body.specialty_id || null,  // optionnel, présent après clarification\n  start_time: startTime\n};"
       },
       "id": "validate-1",
       "name": "Validate Input",
@@ -138,6 +138,10 @@
             {
               "name": "question",
               "value": "={{ $('Validate Input').first().json.question }}"
+            },
+            {
+              "name": "specialty_id",
+              "value": "={{ $('Validate Input').first().json.specialty_id || '' }}"
             }
           ]
         },
@@ -345,6 +349,59 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "position": [1600, 350],
       "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "dm-api-ok",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-dm-api-ok-1",
+      "name": "DM API OK?",
+      "type": "n8n-nodes-base.if",
+      "position": [1600, 100],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD SPECIALTY NOT FOUND ERROR (404)\n// ============================================\n\nconst validateData = $('Validate Input').first().json;\nconst dmResponse = $('Resolve DM Personae').first().json;\n\nreturn {\n  success: false,\n  status: 'error',\n  error: {\n    code: 'SPECIALTY_NOT_FOUND',\n    message: `Specialty introuvable ou inactive: ${validateData.specialty_id}`,\n    http_status: 404,\n    details: dmResponse.body || null\n  },\n  _trace: {\n    workflow: 'DISCORD_-_DM_Resolve',\n    status: 'specialty_not_found',\n    latency_ms: Date.now() - validateData.start_time\n  }\n};"
+      },
+      "id": "build-specialty-error-1",
+      "name": "Build Specialty Error",
+      "type": "n8n-nodes-base.code",
+      "position": [1800, 450],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-specialty-error-1",
+      "name": "Respond Specialty Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [2000, 450],
+      "typeVersion": 1.1
     }
   ],
   "connections": {
@@ -421,7 +478,36 @@
       "main": [
         [
           {
+            "node": "DM API OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DM API OK?": {
+      "main": [
+        [
+          {
             "node": "Status Resolved?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Specialty Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Specialty Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Specialty Error",
             "type": "main",
             "index": 0
           }
