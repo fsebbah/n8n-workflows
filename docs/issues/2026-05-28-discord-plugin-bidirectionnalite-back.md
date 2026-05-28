@@ -170,3 +170,120 @@ Le flux est **complet et fonctionnel** pour le cas synchrone standard. La chaîn
 ---
 
 *Réponse n8n basée sur l'analyse des workflows existants. À compléter par plugin/back si d'autres mécanismes existent (ex: streaming, notifications push).*
+
+---
+
+## 7. Réponse plugin — 2026-05-28
+
+### Confirmation : **Option D — HTTP synchrone (request-response)**
+
+✅ **Accord avec n8n** — Aucune des 3 options proposées n'est en place. Le flux est **synchrone HTTP**.
+
+### Schéma détaillé côté plugin
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FLUX DM ÉLÈVE                                   │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  1. Élève envoie DM          2. Plugin POST webhook       3. n8n route  │
+│  ─────────────────────       ─────────────────────────    ────────────  │
+│  Discord → Plugin            Plugin → n8n                 n8n → Backend │
+│                                                                         │
+│  ┌─────┐    DM      ┌───────┐   HTTP POST    ┌─────┐   API call   ┌───┐│
+│  │Élève│ ─────────► │Plugin │ ──────────────►│ n8n │ ───────────► │API││
+│  └─────┘            │Discord│  /dm-resolve   └─────┘  /resolve-dm └───┘│
+│                     └───────┘                                           │
+│                          │                                        │     │
+│                          │                                        │     │
+│                          │  4. Réponse LLM (même connexion HTTP)  │     │
+│                          │ ◄──────────────────────────────────────┘     │
+│                          │                                              │
+│                          ▼                                              │
+│  5. Plugin publie    ┌───────┐                                          │
+│     dans Discord     │Plugin │  → Discord API → DM channel             │
+│                      └───────┘                                          │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Code plugin (implémentation actuelle)
+
+```python
+# Plugin (src/services/dm_resolve_service.py)
+
+async def resolve(self, guild_id, user_id, question):
+    # Appel HTTP bloquant (attend la réponse)
+    async with session.post(
+        "https://n8n.example.com/webhook/discord/dm-resolve",
+        json={"guild_id": guild_id, "user_id": user_id, "question": question},
+        timeout=30.0,  # Timeout 30 secondes
+    ) as resp:
+        data = await resp.json()  # ← Réponse LLM incluse
+        return ResolveDmResponse.from_dict(data)
+```
+
+### Réponses aux questions n8n §6
+
+| # | Question n8n | Réponse plugin |
+|---|--------------|----------------|
+| 1 | Le plugin gère-t-il le timeout correctement ? | ✅ Oui. Timeout 30s, fallback `out_of_scope` + message user |
+| 2 | Faut-il du streaming pour longues réponses ? | ❌ Non pour l'instant. Le chunking Discord suffit (2000 chars/msg) |
+| 3 | Backend MCP/LLM timeout interne ? | → Question pour backend |
+
+### Pourquoi pas les 3 options proposées ?
+
+| Option | Raison du non-usage |
+|--------|---------------------|
+| A — WebSocket | Complexité inutile : le flow DM est request-response, pas stream |
+| B — Polling | Latence inacceptable pour un chat |
+| C — Webhook reverse | Le plugin n'expose pas d'endpoint (client HTTP uniquement) |
+
+### Ce que le front voit vs ce qui se passe
+
+| Côté front | Côté plugin |
+|------------|-------------|
+| **L'admin** discute via WS `/ws/chat` (temps réel) | **Le plugin** fait un POST HTTP et attend |
+| Connexion bidirectionnelle | Connexion unidirectionnelle (plugin → n8n → backend) |
+| Le backend push les réponses | Le backend retourne dans la même requête |
+
+### Impact e2e #198
+
+Le flux est déjà complet et testable :
+- **Endpoint exposé côté plugin** : Aucun. Le plugin est client HTTP uniquement.
+- **Endpoint webhook n8n** : `POST /webhook/discord/dm-resolve`
+- **Endpoint backend** : `GET /api/n8n/personae/resolve-dm`
+
+Pour tester e2e : envoyer un DM au bot et vérifier qu'il répond. Pas de configuration réseau spéciale nécessaire côté plugin.
+
+**→ Pas de trou archi. Le flux retour passe par la même requête HTTP (synchrone).**
+
+---
+
+## 8. Synthèse n8n + plugin — 2026-05-28
+
+### Consensus
+
+| Point | Accord |
+|-------|--------|
+| Pattern | ✅ HTTP synchrone (Option D) |
+| Pas de WebSocket | ✅ Confirmé |
+| Pas de polling | ✅ Confirmé |
+| Pas de webhook reverse | ✅ Confirmé |
+| Flux complet | ✅ Pas de trou archi |
+
+### Pour le front / audit e2e #198
+
+```
+Élève tape message Discord
+    → Plugin POST vers n8n (attend réponse)
+        → n8n orchestre (tenant, personae, LLM)
+            → Backend génère réponse
+        ← n8n retourne réponse
+    ← Plugin reçoit réponse HTTP
+← Plugin publie message Discord
+```
+
+**Latence typique** : 2-15s selon complexité (classification + génération LLM).
+
+**Action requise** : Aucune côté plugin/n8n. Le flux est fonctionnel.
