@@ -9,6 +9,7 @@ import sys
 import json
 import requests
 from pathlib import Path
+from datetime import datetime
 
 # PostgreSQL support (optional, for webhook path search)
 try:
@@ -114,8 +115,43 @@ def api_request(method, endpoint, data=None, debug=False):
         print(f"Request error: {e}")
         return None
 
+def list_workflows_from_db():
+    """List all workflows from PostgreSQL database"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+
+    try:
+        cursor = conn.cursor()
+        query = """
+            SELECT id, name, active, nodes
+            FROM workflow_entity
+            ORDER BY "updatedAt" DESC
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+
+        workflows = []
+        for row in rows:
+            workflow_id, name, active, nodes = row
+            workflows.append({
+                'id': workflow_id,
+                'name': name,
+                'active': active,
+                'nodes': nodes
+            })
+
+        cursor.close()
+        conn.close()
+        return workflows
+    except Exception as e:
+        print(f"❌ Database query error: {e}")
+        if conn:
+            conn.close()
+        return []
+
 def list_workflows():
-    """List all workflows"""
+    """List all workflows (tries API first, falls back to DB)"""
     response = api_request('GET', '/workflows')
     if response and response.status_code == 200:
         data = response.json()
@@ -123,9 +159,16 @@ def list_workflows():
             status = '✅' if w['active'] else '❌'
             print(f"{status} {w['id']}: {w['name']}")
     else:
-        print(f"Error: {response.status_code if response else 'No response'}")
-        if response:
-            print(response.text)
+        print(f"API unavailable, falling back to PostgreSQL...")
+        workflows = list_workflows_from_db()
+        if workflows:
+            for w in workflows:
+                status = '✅' if w['active'] else '❌'
+                print(f"{status} {w['id']}: {w['name']}")
+        else:
+            print(f"Error: No workflows found")
+            if response:
+                print(response.text)
 
 def get_workflow(workflow_id):
     """Get workflow details"""
@@ -470,6 +513,167 @@ def list_workflows_by_webhook_path(webhook_path):
         print(f"{status} {w['id']}: {w['name']}")
         for wh in w.get('webhooks', []):
             print(f"   └─ {wh.get('httpMethod', 'GET')} /{wh.get('path')} (webhookId: {wh.get('webhookId')})")
+
+def categorize_webhook(name, path, sticky_content=""):
+    """Categorize a webhook based on its name and content"""
+    name_lower = name.lower()
+    path_lower = path.lower() if path else ""
+
+    # Priority categories based on name patterns
+    if 'torah' in name_lower or 'torah' in path_lower:
+        return None  # Excluded
+    elif 'mcp' in name_lower or 'mcp' in path_lower:
+        return 'MCP Tools'
+    elif 'claude' in name_lower:
+        return 'Claude / LLM'
+    elif 'discord' in name_lower:
+        return 'Discord'
+    elif 'guild' in name_lower:
+        return 'Discord'
+    elif 'youtube' in name_lower or 'yt' in name_lower:
+        return 'YouTube'
+    elif 'gmail' in name_lower or 'email' in name_lower or 'mail' in name_lower:
+        return 'Email / Gmail'
+    elif 'drive' in name_lower or 'google' in name_lower:
+        return 'Google Drive / Docs'
+    elif 'calendar' in name_lower:
+        return 'Calendar'
+    elif 'notion' in name_lower:
+        return 'Notion'
+    elif 'airtable' in name_lower or 'baserow' in name_lower:
+        return 'Database'
+    elif 'pdf' in name_lower or 'document' in name_lower:
+        return 'Document Processing'
+    elif 'image' in name_lower or 'video' in name_lower or 'audio' in name_lower:
+        return 'Media Processing'
+    elif 'telegram' in name_lower or 'whatsapp' in name_lower:
+        return 'Messaging'
+    elif 'webhook' in name_lower or 'test' in name_lower:
+        return 'Testing / Utilities'
+    else:
+        return 'Other'
+
+def export_webhooks_registry(output_file='docs/webhooks-registry.json', format_type='detailed'):
+    """
+    Export all active webhooks to a JSON registry file.
+
+    Args:
+        output_file: Path to output JSON file
+        format_type: 'detailed' (full docs) or 'simple' (path + title only)
+    """
+    print("Exporting webhooks registry from PostgreSQL...")
+
+    workflows = list_workflows_from_db()
+    if not workflows:
+        print("❌ No workflows found in database")
+        return False
+
+    print(f"Found {len(workflows)} total workflows")
+
+    # Extract webhooks from active workflows
+    registry = {}
+    excluded_count = 0
+
+    for w in workflows:
+        if not w['active']:
+            continue
+
+        name = w['name']
+
+        # Skip Torah workflows
+        if 'torah' in name.lower():
+            excluded_count += 1
+            continue
+
+        # Find webhook nodes
+        nodes = w.get('nodes', [])
+        if not nodes:
+            continue
+
+        for node in nodes:
+            if 'webhook' not in node.get('type', '').lower():
+                continue
+
+            params = node.get('parameters', {})
+            webhook_path = params.get('path') or node.get('webhookId')
+
+            if not webhook_path:
+                continue
+
+            # Extract sticky note documentation
+            sticky_node = next((n for n in nodes if n.get('type') == 'n8n-nodes-base.stickyNote'), None)
+            sticky_content = sticky_node.get('parameters', {}).get('content', '') if sticky_node else ''
+
+            # Extract description from sticky note
+            description = ""
+            if sticky_content:
+                import re
+                desc_match = re.search(r'\*\*Description[:\s]*\*\*\s*\n?([^\n*]+)', sticky_content, re.IGNORECASE)
+                if desc_match:
+                    description = desc_match.group(1).strip()
+
+            if not description:
+                description = name
+
+            # Categorize
+            category = categorize_webhook(name, webhook_path, sticky_content)
+            if category is None:  # Excluded
+                excluded_count += 1
+                continue
+
+            webhook_entry = {
+                'name': name,
+                'path': webhook_path,
+                'full_url': f"{N8N_WEBHOOK_BASE_URL}/{webhook_path}",
+                'method': params.get('httpMethod', 'POST'),
+                'category': category,
+                'description': description,
+                'workflow_id': w['id']
+            }
+
+            # Add detailed documentation if requested
+            if format_type == 'detailed' and sticky_content:
+                webhook_entry['documentation'] = sticky_content
+
+            # Use path as key to avoid duplicates
+            registry[webhook_path] = webhook_entry
+
+    # Organize by category
+    categorized = {}
+    for path, entry in registry.items():
+        cat = entry['category']
+        if cat not in categorized:
+            categorized[cat] = []
+        categorized[cat].append(entry)
+
+    # Sort categories and webhooks within categories
+    sorted_registry = {}
+    for cat in sorted(categorized.keys()):
+        sorted_registry[cat] = sorted(categorized[cat], key=lambda x: x['name'])
+
+    # Build final output
+    output = {
+        'version': '1.0',
+        'generated_at': datetime.now().isoformat(),
+        'total_webhooks': len(registry),
+        'excluded_torah': excluded_count,
+        'categories': sorted_registry
+    }
+
+    # Write to file
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+
+    print(f"\n✅ Exported {len(registry)} webhooks to {output_file}")
+    print(f"   Excluded {excluded_count} Torah workflows")
+    print(f"   Categories: {len(sorted_registry)}")
+    for cat, webhooks in sorted_registry.items():
+        print(f"      - {cat}: {len(webhooks)} webhooks")
+
+    return True
 
 def batch_reimport(list_file, workflows_dir=None, dry_run=False, delete_old=True, log_file=None):
     """
@@ -859,6 +1063,12 @@ def show_help():
     print("  find-by-webhook <path>  Find workflows by webhook path (PostgreSQL)")
     print("                          Searches n8n database for workflows with matching webhook")
     print("")
+    print("  export-webhooks-registry [output_file] [--simple]")
+    print("                          Export all active webhooks to JSON registry")
+    print("                          Default: docs/webhooks-registry.json")
+    print("                          --simple: Export only path + title (no documentation)")
+    print("                          Excludes Torah workflows")
+    print("")
     print("  batch-reimport <list_file_or_workflow> [--dry-run] [--no-delete]")
     print("                          Reimport workflow(s) from list file or single workflow")
     print("                          - List file: one workflow name per line")
@@ -944,6 +1154,16 @@ def main():
             print("Example: python3 n8n_api.py find-by-webhook server-sync")
             return
         list_workflows_by_webhook_path(sys.argv[2])
+    elif action == 'export-webhooks-registry':
+        # Parse options
+        format_type = 'simple' if '--simple' in sys.argv else 'detailed'
+        # Get output file (skip options starting with --)
+        output_file = 'docs/webhooks-registry.json'
+        for arg in sys.argv[2:]:
+            if not arg.startswith('--'):
+                output_file = arg
+                break
+        export_webhooks_registry(output_file, format_type)
     elif action == 'batch-reimport':
         if len(sys.argv) < 3:
             print("Usage: python3 n8n_api.py batch-reimport <list_file_or_workflow> [options]")
