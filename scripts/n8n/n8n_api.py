@@ -514,6 +514,76 @@ def list_workflows_by_webhook_path(webhook_path):
         for wh in w.get('webhooks', []):
             print(f"   └─ {wh.get('httpMethod', 'GET')} /{wh.get('path')} (webhookId: {wh.get('webhookId')})")
 
+def infer_description_from_name(name, method="POST"):
+    """Infer a description from workflow name when no documentation available"""
+    name_clean = name.replace('_', ' ').replace('-', ' ')
+    name_lower = name.lower()
+
+    # Pattern matching for common operations
+    if 'debit' in name_lower:
+        return "Débite des crédits du compte utilisateur"
+    elif 'credit' in name_lower and 'get' not in name_lower:
+        return "Crédite le compte utilisateur"
+    elif 'billing' in name_lower and 'portal' in name_lower:
+        return "Accès au portail de facturation"
+    elif 'billing' in name_lower:
+        return "Gestion de la facturation"
+    elif 'subscriber' in name_lower or 'subscription' in name_lower:
+        return "Récupère les informations d'abonnement"
+    elif 'transaction' in name_lower:
+        return "Récupère l'historique des transactions"
+    elif 'balance' in name_lower:
+        return "Récupère le solde du compte"
+    elif 'plans' in name_lower or 'pricing' in name_lower:
+        return "Liste les offres et tarifs disponibles"
+    elif 'get' in name_lower:
+        entity = name_clean.split('Get')[-1].strip() if 'Get' in name_clean else name_clean
+        entity = entity.lower().replace('discord', '').replace('mcp', '').strip()
+        return f"Récupère les informations : {entity}" if entity else "Récupère des données"
+    elif 'create' in name_lower:
+        entity = name_clean.split('Create')[-1].strip() if 'Create' in name_clean else name_clean
+        entity = entity.lower().replace('discord', '').replace('mcp', '').strip()
+        return f"Crée un(e) {entity}" if entity else "Crée une ressource"
+    elif 'update' in name_lower:
+        entity = name_clean.split('Update')[-1].strip() if 'Update' in name_clean else name_clean
+        entity = entity.lower().replace('discord', '').replace('mcp', '').strip()
+        return f"Met à jour {entity}" if entity else "Met à jour une ressource"
+    elif 'delete' in name_lower:
+        entity = name_clean.split('Delete')[-1].strip() if 'Delete' in name_clean else name_clean
+        entity = entity.lower().replace('discord', '').replace('mcp', '').strip()
+        return f"Supprime {entity}" if entity else "Supprime une ressource"
+    elif 'list' in name_lower:
+        entity = name_clean.split('List')[-1].strip() if 'List' in name_clean else name_clean
+        entity = entity.lower().replace('discord', '').replace('mcp', '').strip()
+        return f"Liste {entity}" if entity else "Liste des ressources"
+    elif 'resolve' in name_lower:
+        return "Résolution et routage de requête"
+    elif 'sync' in name_lower:
+        return "Synchronisation de données"
+    elif 'verify' in name_lower or 'validate' in name_lower:
+        return "Vérification et validation"
+    elif 'notification' in name_lower or 'notify' in name_lower:
+        return "Envoi de notifications"
+    elif 'search' in name_lower:
+        return "Recherche d'informations"
+    elif 'analyze' in name_lower or 'analysis' in name_lower:
+        return "Analyse de données"
+    elif 'generate' in name_lower:
+        return "Génération de contenu"
+    elif 'transcribe' in name_lower or 'transcript' in name_lower:
+        return "Transcription audio/vidéo"
+    elif 'translate' in name_lower:
+        return "Traduction de texte"
+    elif 'extract' in name_lower:
+        return "Extraction de données"
+    elif 'process' in name_lower:
+        return "Traitement de données"
+    elif 'registry' in name_lower:
+        return "Liste des webhooks disponibles avec métadonnées"
+    else:
+        # Fallback: use the workflow name as-is
+        return f"Workflow: {name_clean}"
+
 def categorize_webhook(name, path, sticky_content=""):
     """Categorize a webhook based on its name and content"""
     name_lower = name.lower()
@@ -604,16 +674,56 @@ def export_webhooks_registry(output_file='docs/webhooks-registry.json', format_t
             sticky_node = next((n for n in nodes if n.get('type') == 'n8n-nodes-base.stickyNote'), None)
             sticky_content = sticky_node.get('parameters', {}).get('content', '') if sticky_node else ''
 
-            # Extract description from sticky note
+            # Extract rich metadata from sticky note
+            import re
+
             description = ""
+            input_schema = None
+            endpoint_line = ""
+
             if sticky_content:
-                import re
-                desc_match = re.search(r'\*\*Description[:\s]*\*\*\s*\n?([^\n*]+)', sticky_content, re.IGNORECASE)
+                # Extract endpoint line
+                endpoint_match = re.search(r'\*\*Endpoint:\*\*\s*([^\n]+)', sticky_content, re.IGNORECASE)
+                if endpoint_match:
+                    endpoint_line = endpoint_match.group(1).strip()
+
+                # Extract description (multi-line, jusqu'au prochain ##)
+                desc_match = re.search(r'\*\*Description[:\s]*\*\*\s*\n?([^\n#]+(?:\n[^\n#]+)*)', sticky_content, re.IGNORECASE | re.MULTILINE)
                 if desc_match:
                     description = desc_match.group(1).strip()
+                    # Clean up extra whitespace
+                    description = ' '.join(description.split())
 
-            if not description:
-                description = name
+                # Extract InputSchema
+                schema_match = re.search(r'\*\*InputSchema:\*\*\s*```json\s*({[\s\S]*?})\s*```', sticky_content, re.IGNORECASE)
+                if schema_match:
+                    try:
+                        input_schema = json.loads(schema_match.group(1))
+                    except:
+                        pass
+
+            # Build better description
+            if description and description != name and description != endpoint_line:
+                # Keep extracted description (it's meaningful)
+                pass
+            elif input_schema and 'properties' in input_schema:
+                # Generate description from InputSchema properties
+                props = input_schema.get('properties', {})
+                if props:
+                    props_desc = ', '.join(list(props.keys())[:5])  # First 5 params
+                    description = f"Paramètres: {props_desc}"
+                else:
+                    # Infer from name
+                    description = infer_description_from_name(name, params.get('httpMethod', 'POST'))
+            else:
+                # Infer from name as fallback
+                description = infer_description_from_name(name, params.get('httpMethod', 'POST'))
+
+            # Add required parameters info if available (but not if already in description)
+            if input_schema and 'required' in input_schema and input_schema['required']:
+                required_params = ', '.join(input_schema['required'][:5])  # Max 5
+                if 'Requis:' not in description:
+                    description = f"{description} | Requis: {required_params}"
 
             # Categorize
             category = categorize_webhook(name, webhook_path, sticky_content)
@@ -630,6 +740,10 @@ def export_webhooks_registry(output_file='docs/webhooks-registry.json', format_t
                 'description': description,
                 'workflow_id': w['id']
             }
+
+            # Add InputSchema if available
+            if input_schema:
+                webhook_entry['input_schema'] = input_schema
 
             # Add detailed documentation if requested
             if format_type == 'detailed' and sticky_content:
