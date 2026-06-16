@@ -1,0 +1,348 @@
+{
+  "name": "RAG - Ingest (RFC-099)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## RAG - Ingest (RFC-099)\n\n**Endpoint:** POST /webhook/rag-ingest\n\n**Description:** Ingestion RAG conforme RFC-099.\nReçoit les requêtes de MCP après authentification Bearer.\nVérifie la signature HMAC, extrait le contenu, chunke, vectorise (text-embedding-3-small 1536d)\net upsert dans Qdrant avec 4 IDs d'isolation (tenant_id, guild_id, bot_id, active).\n\n**Payload entrant (§3.2 RFC-099):**\n```json\n{\n  \"source_id\": \"src_xxx\",\n  \"tenant_id\": \"Z6F3GSWB\",\n  \"guild_id\": \"1286607696153546774\",\n  \"bot_id\": \"987654321\",\n  \"active\": true,\n  \"b2_file_key\": \"tenant/rag/file.pdf\",\n  \"url\": \"https://example.com/doc.pdf\",\n  \"file_type\": \"pdf\",\n  \"extraction_method\": \"pdfplumber\",\n  \"title\": \"Document Title\",\n  \"lang\": \"fr\",\n  \"callback_urls\": {\n    \"progress\": \"https://api/sources/{id}/progress\",\n    \"complete\": \"https://api/sources/{id}/complete\",\n    \"error\": \"https://api/sources/{id}/error\"\n  },\n  \"qdrant_target\": {\n    \"host\": \"host3.local\",\n    \"port\": 20001,\n    \"api_key\": \"...\"\n  }\n}\n```\n\n**Headers requis:**\n- `X-Webhook-Signature: sha256={hmac}` (HMAC-SHA256 du body)\n- `Content-Type: application/json`\n\n**Pipeline:**\n1. Vérification HMAC (N8N_RAG_WEBHOOK_SECRET)\n2. Validation payload\n3. Callback progress (10%)\n4. Fetch + Extract (B2 ou URL)\n5. Callback progress (50%)\n6. Chunking (1000 chars, overlap 200)\n7. Callback progress (70%)\n8. Embedding OpenAI text-embedding-3-small (1536d, batch 50)\n9. Upsert Qdrant collection tenant_{tenant_id}_default avec 4 IDs\n10. Callback complete\n\n**Qdrant payload chunk (§5.1):**\n```json\n{\n  \"text\": \"...\",\n  \"source_id\": \"src_xxx\",\n  \"chunk_index\": 0,\n  \"title\": \"Document Title\",\n  \"source_type\": \"pdf\",\n  \"lang\": \"fr\",\n  \"tenant_id\": \"Z6F3GSWB\",\n  \"guild_id\": \"1286607696153546774\",\n  \"bot_id\": \"987654321\",\n  \"active\": true\n}\n```",
+        "height": 840,
+        "width": 540,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, 80]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-ingest",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [620, 400],
+      "webhookId": "rag-ingest-rfc099"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// HMAC VERIFICATION - RFC-099\n// ============================================\n\nconst crypto = require('crypto');\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Get HMAC signature from header\nconst signatureHeader = headers['x-webhook-signature'] || headers['X-Webhook-Signature'] || '';\nconst providedSignature = signatureHeader.replace('sha256=', '');\n\n// Get secret from env\nconst secret = process.env.N8N_RAG_WEBHOOK_SECRET;\n\nif (!secret) {\n  return {\n    hmac_valid: false,\n    error: 'N8N_RAG_WEBHOOK_SECRET not configured',\n    http_code: 500\n  };\n}\n\nif (!signatureHeader) {\n  return {\n    hmac_valid: false,\n    error: 'Missing X-Webhook-Signature header',\n    http_code: 401\n  };\n}\n\n// Compute HMAC-SHA256\n// Body should be the raw JSON string\nconst bodyString = JSON.stringify(body, null, 0); // Compact JSON\nconst hmac = crypto.createHmac('sha256', secret);\nhmac.update(bodyString, 'utf8');\nconst computedSignature = hmac.digest('hex');\n\n// Timing-safe comparison\nconst isValid = crypto.timingSafeEqual(\n  Buffer.from(providedSignature, 'hex'),\n  Buffer.from(computedSignature, 'hex')\n);\n\nif (!isValid) {\n  return {\n    hmac_valid: false,\n    error: 'Invalid HMAC signature',\n    http_code: 401,\n    debug: {\n      provided: providedSignature.substring(0, 16) + '...',\n      computed: computedSignature.substring(0, 16) + '...'\n    }\n  };\n}\n\nreturn {\n  hmac_valid: true,\n  body: body,\n  headers: headers\n};"
+      },
+      "id": "verify-hmac",
+      "name": "Verify HMAC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [840, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-hmac",
+              "leftValue": "={{ $json.hmac_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-hmac",
+      "name": "HMAC Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1060, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'HMAC_INVALID', message: $json.error, http_code: $json.http_code || 401 } }) }}",
+        "options": {
+          "responseCode": "={{ $json.http_code || 401 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-hmac-error",
+      "name": "Respond HMAC Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1280, 560]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION PAYLOAD - RFC-099 §3.2\n// ============================================\n\nconst body = $('Verify HMAC').item.json.body;\nconst errors = [];\n\n// Required fields\nconst sourceId = body.source_id;\nconst tenantId = body.tenant_id;\nconst guildId = body.guild_id;\nconst botId = body.bot_id;\nconst active = body.active;\nconst fileType = body.file_type;\n\n// File source (b2_file_key OR url)\nconst b2FileKey = body.b2_file_key || null;\nconst url = body.url || null;\n\n// Optional fields\nconst extractionMethod = body.extraction_method || 'auto';\nconst title = body.title || null;\nconst lang = body.lang || null;\nconst callbackUrls = body.callback_urls || {};\nconst qdrantTarget = body.qdrant_target || {};\n\n// Validate required\nif (!sourceId) errors.push('source_id requis');\nif (!tenantId) errors.push('tenant_id requis');\nif (!guildId) errors.push('guild_id requis');\nif (!botId) errors.push('bot_id requis');\nif (active === undefined || active === null) errors.push('active requis');\nif (!fileType) errors.push('file_type requis');\n\n// File source validation\nif (!b2FileKey && !url) {\n  errors.push('b2_file_key ou url requis');\n}\n\n// Callback URLs validation\nif (!callbackUrls.progress || !callbackUrls.complete || !callbackUrls.error) {\n  errors.push('callback_urls.{progress,complete,error} requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    source_id: sourceId\n  };\n}\n\n// Extract Qdrant config (with fallback to env)\nconst qdrantConfig = {\n  host: qdrantTarget.host || process.env.QDRANT_SHARED_1_HOST || 'host3.local',\n  port: qdrantTarget.port || process.env.QDRANT_SHARED_1_PORT || 20001,\n  api_key: qdrantTarget.api_key || process.env.QDRANT_SHARED_1_API_KEY || ''\n};\n\nreturn {\n  valid: true,\n  source_id: sourceId,\n  tenant_id: tenantId,\n  guild_id: guildId,\n  bot_id: botId,\n  active: active,\n  file_type: fileType,\n  b2_file_key: b2FileKey,\n  url: url,\n  extraction_method: extractionMethod,\n  title: title,\n  lang: lang,\n  callback_urls: callbackUrls,\n  qdrant: qdrantConfig,\n  start_time: Date.now()\n};"
+      },
+      "id": "validate-payload",
+      "name": "Validate Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-payload",
+      "name": "Payload Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: { code: 'VALIDATION_ERROR', message: $json.errors.join(', ') } }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1720, 460]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, source_id: $json.source_id, status: 'processing' }) }}",
+        "options": {
+          "responseCode": 202,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-accepted",
+      "name": "Respond Accepted (202)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1720, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CALLBACK PROGRESS - Helper function\n// ============================================\n\nconst ctx = $('Validate Payload').item.json;\n\nreturn {\n  url: ctx.callback_urls.progress,\n  body: {\n    status: 'pending',\n    progress_percent: 10,\n    chunk_count: 0\n  },\n  context: ctx\n};"
+      },
+      "id": "prepare-callback-start",
+      "name": "Prepare Callback Start",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1940, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.context.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "callback-progress-start",
+      "name": "Callback Progress (10%)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2160, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLACEHOLDER: EXTRACTION\n// TODO: Implement real extraction\n// ============================================\n\nconst ctx = $('Prepare Callback Start').item.json.context;\n\n// Placeholder extracted text\nconst extractedText = `[PLACEHOLDER EXTRACTION]\\n\\nSource: ${ctx.source_id}\\nType: ${ctx.file_type}\\nMethod: ${ctx.extraction_method}\\n\\nThis is placeholder text for testing the RAG pipeline.\\nReal implementation will fetch and extract content from B2 or URL.\\n\\nLorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.`;\n\nreturn {\n  ...ctx,\n  extracted_text: extractedText,\n  extraction_success: true,\n  char_count: extractedText.length\n};"
+      },
+      "id": "extract-content",
+      "name": "Extract Content (PLACEHOLDER)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2380, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CHUNKING - RFC-099\n// ============================================\n\nconst ctx = $('Extract Content (PLACEHOLDER)').item.json;\nconst text = ctx.extracted_text || '';\n\n// Chunking parameters\nconst CHUNK_SIZE = 1000; // characters\nconst CHUNK_OVERLAP = 200; // overlap\n\nconst chunks = [];\nlet currentChunk = '';\nlet chunkIndex = 0;\n\n// Split by paragraphs\nconst paragraphs = text.split(/\\n\\n+/);\n\nfor (const para of paragraphs) {\n  if (currentChunk.length + para.length > CHUNK_SIZE && currentChunk.length > 0) {\n    // Save chunk\n    chunks.push({\n      index: chunkIndex,\n      text: currentChunk.trim(),\n      char_count: currentChunk.trim().length\n    });\n    chunkIndex++;\n    \n    // Overlap\n    const words = currentChunk.split(' ');\n    const overlapWords = words.slice(-Math.ceil(CHUNK_OVERLAP / 5));\n    currentChunk = overlapWords.join(' ') + '\\n\\n' + para;\n  } else {\n    currentChunk += (currentChunk ? '\\n\\n' : '') + para;\n  }\n}\n\n// Last chunk\nif (currentChunk.trim()) {\n  chunks.push({\n    index: chunkIndex,\n    text: currentChunk.trim(),\n    char_count: currentChunk.trim().length\n  });\n}\n\nreturn {\n  ...ctx,\n  chunks: chunks,\n  chunk_count: chunks.length\n};"
+      },
+      "id": "chunk-text",
+      "name": "Chunk Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2600, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PLACEHOLDER: EMBEDDING + QDRANT UPSERT\n// TODO: Implement OpenAI embedding + Qdrant\n// ============================================\n\nconst ctx = $('Chunk Text').item.json;\n\n// In real implementation:\n// 1. Batch embed chunks (text-embedding-3-small, 1536d)\n// 2. Create collection tenant_{tenant_id}_default if not exists\n// 3. Upsert points with 4 IDs in payload\n\n// Simulate success\nreturn {\n  ...ctx,\n  embedding_success: true,\n  qdrant_success: true,\n  qdrant_collection: `tenant_${ctx.tenant_id}_default`,\n  points_upserted: ctx.chunk_count,\n  duration_ms: Date.now() - ctx.start_time\n};"
+      },
+      "id": "embed-upsert",
+      "name": "Embed + Upsert Qdrant (PLACEHOLDER)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2820, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE CALLBACK COMPLETE\n// ============================================\n\nconst ctx = $('Embed + Upsert Qdrant (PLACEHOLDER)').item.json;\n\nreturn {\n  url: ctx.callback_urls.complete,\n  body: {\n    success: true,\n    chunk_count: ctx.chunk_count,\n    duration_ms: ctx.duration_ms\n  },\n  tenant_id: ctx.tenant_id\n};"
+      },
+      "id": "prepare-callback-complete",
+      "name": "Prepare Callback Complete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3040, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "callback-complete",
+      "name": "Callback Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3260, 200]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{"node": "Verify HMAC", "type": "main", "index": 0}]]
+    },
+    "Verify HMAC": {
+      "main": [[{"node": "HMAC Valid?", "type": "main", "index": 0}]]
+    },
+    "HMAC Valid?": {
+      "main": [
+        [{"node": "Validate Payload", "type": "main", "index": 0}],
+        [{"node": "Respond HMAC Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Validate Payload": {
+      "main": [[{"node": "Payload Valid?", "type": "main", "index": 0}]]
+    },
+    "Payload Valid?": {
+      "main": [
+        [{"node": "Respond Accepted (202)", "type": "main", "index": 0}],
+        [{"node": "Respond Validation Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Respond Accepted (202)": {
+      "main": [[{"node": "Prepare Callback Start", "type": "main", "index": 0}]]
+    },
+    "Prepare Callback Start": {
+      "main": [[{"node": "Callback Progress (10%)", "type": "main", "index": 0}]]
+    },
+    "Callback Progress (10%)": {
+      "main": [[{"node": "Extract Content (PLACEHOLDER)", "type": "main", "index": 0}]]
+    },
+    "Extract Content (PLACEHOLDER)": {
+      "main": [[{"node": "Chunk Text", "type": "main", "index": 0}]]
+    },
+    "Chunk Text": {
+      "main": [[{"node": "Embed + Upsert Qdrant (PLACEHOLDER)", "type": "main", "index": 0}]]
+    },
+    "Embed + Upsert Qdrant (PLACEHOLDER)": {
+      "main": [[{"node": "Prepare Callback Complete", "type": "main", "index": 0}]]
+    },
+    "Prepare Callback Complete": {
+      "main": [[{"node": "Callback Complete", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false,
+  "tags": []
+}
