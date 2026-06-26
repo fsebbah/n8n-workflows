@@ -1,7 +1,7 @@
 {
   "version": "1.0",
-  "generated_at": "2026-06-09T13:49:53.486456",
-  "total_webhooks": 196,
+  "generated_at": "2026-06-17T21:23:12.483292",
+  "total_webhooks": 197,
   "excluded_torah": 35,
   "categories": {
     "Claude / LLM": [
@@ -3655,6 +3655,16 @@
         "documentation": "## RAG - Delete Source\n\n**Endpoint:** POST /webhook/rag-delete-source\n\n**Description:** Deletes RAG source chunks from Qdrant.\nReceives webhook from chatbot-core API after source deletion.\n\n**Webhook Payload (from API):**\n```json\n{\n  \"action\": \"delete\",\n  \"source_id\": \"src_xxx\",\n  \"tenant_id\": \"Z6F3GSWB\",\n  \"guild_id\": \"1286607696153546774\",\n  \"bot_id\": \"987654321\",\n  \"b2_file_key\": \"tenant/rag/guild/bot/src/file.pdf\",\n  \"backend_api_url\": \"https://apidev.azy.solutions\",\n  \"backend_service_token\": \"xxx\"\n}\n```\n\n**Actions:**\n1. Delete all Qdrant points where source_id matches\n2. Optionally confirm deletion back to API"
       },
       {
+        "name": "RAG - Ingest (RFC-099)",
+        "path": "rag-ingest",
+        "full_url": "http://pi6.local:5678/webhook/rag-ingest",
+        "method": "POST",
+        "category": "Other",
+        "description": "Ingestion RAG conforme RFC-099. Reçoit les requêtes de MCP après authentification Bearer. Vérifie la signature HMAC, extrait le contenu, chunke, vectorise (text-embedding-3-small 1536d) et upsert dans Qdrant avec 4 IDs d'isolation (tenant_id, guild_id, bot_id, active).",
+        "workflow_id": "nwYVLOZzYVrIWt1v",
+        "documentation": "## RAG - Ingest (RFC-099)\n\n**Endpoint:** POST /webhook/rag-ingest\n\n**Description:** Ingestion RAG conforme RFC-099.\nReçoit les requêtes de MCP après authentification Bearer.\nVérifie la signature HMAC, extrait le contenu, chunke, vectorise (text-embedding-3-small 1536d)\net upsert dans Qdrant avec 4 IDs d'isolation (tenant_id, guild_id, bot_id, active).\n\n**Payload entrant (§3.2 RFC-099):**\n```json\n{\n  \"source_id\": \"src_xxx\",\n  \"tenant_id\": \"Z6F3GSWB\",\n  \"guild_id\": \"1286607696153546774\",\n  \"bot_id\": \"987654321\",\n  \"active\": true,\n  \"b2_file_key\": \"tenant/rag/file.pdf\",\n  \"url\": \"https://example.com/doc.pdf\",\n  \"file_type\": \"pdf\",\n  \"extraction_method\": \"pdfplumber\",\n  \"title\": \"Document Title\",\n  \"lang\": \"fr\",\n  \"callback_urls\": {\n    \"progress\": \"https://api/sources/{id}/progress\",\n    \"complete\": \"https://api/sources/{id}/complete\",\n    \"error\": \"https://api/sources/{id}/error\"\n  },\n  \"qdrant_target\": {\n    \"host\": \"host3.local\",\n    \"port\": 20001,\n    \"api_key\": \"...\"\n  }\n}\n```\n\n**Headers requis:**\n- `X-Webhook-Signature: sha256={hmac}` (HMAC-SHA256 du body)\n- `Content-Type: application/json`\n\n**Pipeline:**\n1. Vérification HMAC (N8N_RAG_WEBHOOK_SECRET)\n2. Validation payload\n3. Callback progress (10%)\n4. Fetch + Extract (B2 ou URL)\n5. Callback progress (50%)\n6. Chunking (1000 chars, overlap 200)\n7. Callback progress (70%)\n8. Embedding OpenAI text-embedding-3-small (1536d, batch 50)\n9. Upsert Qdrant collection tenant_{tenant_id}_default avec 4 IDs\n10. Callback complete\n\n**Qdrant payload chunk (§5.1):**\n```json\n{\n  \"text\": \"...\",\n  \"source_id\": \"src_xxx\",\n  \"chunk_index\": 0,\n  \"title\": \"Document Title\",\n  \"source_type\": \"pdf\",\n  \"lang\": \"fr\",\n  \"tenant_id\": \"Z6F3GSWB\",\n  \"guild_id\": \"1286607696153546774\",\n  \"bot_id\": \"987654321\",\n  \"active\": true\n}\n```"
+      },
+      {
         "name": "RAG - Process Source",
         "path": "rag-process-source",
         "full_url": "http://pi6.local:5678/webhook/rag-process-source",
@@ -3919,9 +3929,9 @@
         "full_url": "http://pi6.local:5678/webhook/stripe-register-project",
         "method": "POST",
         "category": "Other",
-        "description": "Enregistre les secrets Stripe d'un projet dans Redis. Appele par le plugin au demarrage.",
+        "description": "Enregistre les secrets Stripe d'un projet via API backend. Appele par le plugin au demarrage.",
         "workflow_id": "aL5ibhL8rUe3Fxbm",
-        "documentation": "## STRIPE - Register Project\n\n**Endpoint:** POST /webhook/stripe-register-project\n\n**Description:** Enregistre les secrets Stripe d'un projet dans Redis.\nAppele par le plugin au demarrage.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah\",\n  \"stripe_key\": \"sk_live_xxx\",\n  \"webhook_secret\": \"whsec_xxx\",\n  \"display_name\": \"Torah App\"\n}\n```\n\n**Redis:**\n```\nHSET project:torah stripe_key \"sk_xxx\"\nHSET project:torah webhook_secret \"whsec_xxx\"\n```\n\n**Response:**\n```json\n{\"success\": true, \"message\": \"Project registered\"}\n```"
+        "documentation": "## STRIPE - Register Project\n\n**Endpoint:** POST /webhook/stripe-register-project\n\n**Description:** Enregistre les secrets Stripe d'un projet via API backend.\nAppele par le plugin au demarrage.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah-fun\",\n  \"stripe_key\": \"sk_live_xxx\",\n  \"webhook_secret\": \"whsec_xxx\",\n  \"display_name\": \"Torah App\",\n  \"tenant_id\": \"815368074995040286\",\n  \"backend_api_url\": \"https://apistaging.azy.solutions\",\n  \"backend_service_token\": \"service_xxx\"\n}\n\nAPI Call: POST /api/admin/stripe/projects\n\nResponse:\n{\n  \"success\": true,\n  \"message\": \"Project registered\",\n  \"project\": { \"project_id\": \"torah-fun\", \"environment\": \"staging\" }\n}"
       },
       {
         "name": "Stripe - Subscription Cancel",
