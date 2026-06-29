@@ -12,7 +12,10 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [40, 80]
+      "position": [
+        40,
+        80
+      ]
     },
     {
       "parameters": {
@@ -25,7 +28,10 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [620, 400],
+      "position": [
+        620,
+        400
+      ],
       "webhookId": "rag-ingest-rfc099"
     },
     {
@@ -41,7 +47,10 @@
       "name": "Compute HMAC",
       "type": "n8n-nodes-base.crypto",
       "typeVersion": 1,
-      "position": [760, 240]
+      "position": [
+        760,
+        240
+      ]
     },
     {
       "parameters": {
@@ -51,7 +60,10 @@
       "name": "Verify HMAC",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [840, 400]
+      "position": [
+        840,
+        400
+      ]
     },
     {
       "parameters": {
@@ -80,7 +92,10 @@
       "name": "HMAC Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1060, 400]
+      "position": [
+        1060,
+        400
+      ]
     },
     {
       "parameters": {
@@ -102,17 +117,23 @@
       "name": "Respond HMAC Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1280, 560]
+      "position": [
+        1280,
+        560
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION PAYLOAD - RFC-099 §3.2\n// ============================================\n\nconst body = $('Verify HMAC').item.json.body;\nconst errors = [];\n\n// Required fields\nconst sourceId = body.source_id;\nconst tenantId = body.tenant_id;\nconst guildId = body.guild_id;\nconst botId = body.bot_id;\nconst active = body.active;\nconst fileType = body.file_type;\n\n// File source (b2_file_key OR url)\nconst b2FileKey = body.b2_file_key || null;\nconst url = body.url || null;\n\n// Optional fields\nconst extractionMethod = body.extraction_method || 'auto';\nconst title = body.title || null;\nconst lang = body.lang || null;\nconst callbackUrls = body.callback_urls || {};\nconst qdrantTarget = body.qdrant_target || {};\n\n// BYOT secrets (payload, plus de process.env dans le sandbox)\nconst openaiApiKey = body.openai_api_key || null;\nconst b2BucketUrl = body.b2_bucket_url || null;\n\n// Validate required\nif (!sourceId) errors.push('source_id requis');\nif (!tenantId) errors.push('tenant_id requis');\nif (!guildId) errors.push('guild_id requis');\nif (!botId) errors.push('bot_id requis');\nif (active === undefined || active === null) errors.push('active requis');\nif (!fileType) errors.push('file_type requis');\nif (!openaiApiKey) errors.push('openai_api_key requis (BYOT embeddings)');\n\n// File source validation\nif (!b2FileKey && !url) {\n  errors.push('b2_file_key ou url requis');\n}\n\n// Callback URLs validation\nif (!callbackUrls.progress || !callbackUrls.complete || !callbackUrls.error) {\n  errors.push('callback_urls.{progress,complete,error} requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    source_id: sourceId\n  };\n}\n\n// Qdrant config (BYOT via payload)\nconst qdrantConfig = {\n  host: qdrantTarget.host || 'host3.local',\n  port: qdrantTarget.port || 20001,\n  api_key: qdrantTarget.api_key || ''\n};\n\nreturn {\n  valid: true,\n  source_id: sourceId,\n  tenant_id: tenantId,\n  guild_id: guildId,\n  bot_id: botId,\n  active: active,\n  file_type: fileType,\n  b2_file_key: b2FileKey,\n  url: url,\n  extraction_method: extractionMethod,\n  title: title,\n  lang: lang,\n  callback_urls: callbackUrls,\n  qdrant: qdrantConfig,\n  openai_api_key: openaiApiKey,\n  b2_bucket_url: b2BucketUrl,\n  start_time: Date.now()\n};"
+        "jsCode": "// ============================================\n// VALIDATION PAYLOAD - RFC-099 §3.2\n// ============================================\n\nconst body = $('Verify HMAC').item.json.body;\nconst errors = [];\n\n// Required fields\nconst sourceId = body.source_id;\nconst tenantId = body.tenant_id;\nconst guildId = body.guild_id;\nconst botId = body.bot_id;\nconst scopeId = body.scope_id;\nconst active = body.active;\nconst fileType = body.file_type;\n\n// File source (b2_file_key OR url)\nconst b2FileKey = body.b2_file_key || null;\nconst url = body.url || null;\n\n// Optional fields\nconst extractionMethod = body.extraction_method || 'auto';\nconst title = body.title || null;\nconst lang = body.lang || null;\nconst callbackUrls = body.callback_urls || {};\nconst qdrantTarget = body.qdrant_target || {};\n\n// Volet 2 (tagging) — pass-through depuis le payload (chat.api -> MCP -> n8n)\nconst controlledVocab = body.controlled_vocab || null;\nconst authorityRole = body.authority_role || null;\nconst subjectOverride = body.subject || null;\nconst docTypeOverride = body.doc_type || null;\n\n// BYOT secrets (payload, plus de process.env dans le sandbox)\nconst openaiApiKey = body.openai_api_key || null;\nconst b2BucketUrl = body.b2_bucket_url || null;\n\n// Validate required\nif (!sourceId) errors.push('source_id requis');\nif (!tenantId) errors.push('tenant_id requis');\nif (!scopeId) errors.push('scope_id requis');\n// guild_id/bot_id optionnels depuis le decouplage Discord (azy.daily#76)\nif (active === undefined || active === null) errors.push('active requis');\nif (!fileType) errors.push('file_type requis');\nif (!openaiApiKey) errors.push('openai_api_key requis (BYOT embeddings)');\n\n// File source validation\nif (!b2FileKey && !url) {\n  errors.push('b2_file_key ou url requis');\n}\n\n// Callback URLs validation\nif (!callbackUrls.progress || !callbackUrls.complete || !callbackUrls.error) {\n  errors.push('callback_urls.{progress,complete,error} requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    source_id: sourceId\n  };\n}\n\n// Qdrant config (BYOT via payload)\nconst qdrantConfig = {\n  host: qdrantTarget.host || 'host3.local',\n  port: qdrantTarget.port || 20001,\n  api_key: qdrantTarget.api_key || '',\n  collection: qdrantTarget.collection || null,\n  vector_size: qdrantTarget.vector_size || 1536\n};\n\nreturn {\n  valid: true,\n  source_id: sourceId,\n  tenant_id: tenantId,\n  guild_id: guildId,\n  bot_id: botId,\n  scope_id: scopeId,\n  controlled_vocab: controlledVocab,\n  authority_role: authorityRole,\n  subject: subjectOverride,\n  doc_type: docTypeOverride,\n  active: active,\n  file_type: fileType,\n  b2_file_key: b2FileKey,\n  url: url,\n  extraction_method: extractionMethod,\n  title: title,\n  lang: lang,\n  callback_urls: callbackUrls,\n  qdrant: qdrantConfig,\n  openai_api_key: openaiApiKey,\n  b2_bucket_url: b2BucketUrl,\n  start_time: Date.now()\n};"
       },
       "id": "validate-payload",
       "name": "Validate Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1280, 300]
+      "position": [
+        1280,
+        300
+      ]
     },
     {
       "parameters": {
@@ -141,7 +162,10 @@
       "name": "Payload Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1500, 300]
+      "position": [
+        1500,
+        300
+      ]
     },
     {
       "parameters": {
@@ -163,7 +187,10 @@
       "name": "Respond Validation Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1720, 460]
+      "position": [
+        1720,
+        460
+      ]
     },
     {
       "parameters": {
@@ -185,7 +212,10 @@
       "name": "Respond Accepted (202)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1720, 200]
+      "position": [
+        1720,
+        200
+      ]
     },
     {
       "parameters": {
@@ -195,7 +225,10 @@
       "name": "Prepare Callback Start",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1940, 200]
+      "position": [
+        1940,
+        200
+      ]
     },
     {
       "parameters": {
@@ -230,7 +263,10 @@
       "name": "Callback Progress (10%)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2160, 200]
+      "position": [
+        2160,
+        200
+      ]
     },
     {
       "parameters": {
@@ -240,7 +276,10 @@
       "name": "Extract Content",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2380, 200]
+      "position": [
+        2380,
+        200
+      ]
     },
     {
       "parameters": {
@@ -250,17 +289,23 @@
       "name": "Chunk Text",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2600, 200]
+      "position": [
+        2600,
+        200
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// EMBEDDING + QDRANT UPSERT - RFC-099 §5.1 (transport: this.helpers.httpRequest)\n// ============================================\n\nconst ctx = $('Chunk Text').item.json;\nconst chunks = ctx.chunks || [];\nif (chunks.length === 0) {\n  throw new Error('No chunks to embed');\n}\n\n// Cle OpenAI BYOT (payload, pas de process.env)\nconst OPENAI_API_KEY = ctx.openai_api_key;\nif (!OPENAI_API_KEY) {\n  throw new Error('openai_api_key requis dans le payload (BYOT embeddings)');\n}\n\n// STEP 1: EMBED (OpenAI text-embedding-3-small, 1536d) — batch 50\nconst BATCH_SIZE = 50;\nconst embeddings = [];\nfor (let i = 0; i < chunks.length; i += BATCH_SIZE) {\n  const batch = chunks.slice(i, i + BATCH_SIZE);\n  const resp = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://api.openai.com/v1/embeddings',\n    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },\n    body: { input: batch.map(c => c.text), model: 'text-embedding-3-small', encoding_format: 'float' },\n    json: true\n  });\n  for (const item of resp.data) embeddings.push(item.embedding);\n}\n\n// STEP 2: QDRANT — config + helper\nconst qHost = ctx.qdrant.host;\nconst qPort = ctx.qdrant.port;\nconst qKey = ctx.qdrant.api_key;\nconst collectionName = `tenant_${ctx.tenant_id}_default`;\nconst qdrantBase = `http://${qHost}:${qPort}`;\n\nconst qReq = async (method, path, bodyObj) => {\n  return await this.helpers.httpRequest({\n    method,\n    url: `${qdrantBase}${path}`,\n    headers: { 'api-key': qKey },\n    body: bodyObj || undefined,\n    json: true,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  });\n};\n\n// STEP 3: CREATE COLLECTION IF NOT EXISTS\nconst exists = await qReq('GET', `/collections/${collectionName}`);\nif (exists.statusCode === 404) {\n  await qReq('PUT', `/collections/${collectionName}`, { vectors: { size: 1536, distance: 'Cosine' } });\n}\n\n// STEP 4: BUILD POINTS (4 IDs RFC-099 §5.1)\nconst points = chunks.map((chunk, i) => ({\n  id: `${ctx.source_id}_chunk_${chunk.index}`,\n  vector: embeddings[i],\n  payload: {\n    text: chunk.text,\n    source_id: ctx.source_id,\n    chunk_index: chunk.index,\n    title: ctx.title || ctx.source_id,\n    source_type: ctx.file_type,\n    lang: ctx.lang || 'unknown',\n    tenant_id: ctx.tenant_id,\n    guild_id: ctx.guild_id,\n    bot_id: ctx.bot_id,\n    active: ctx.active\n  }\n}));\n\n// STEP 5: UPSERT (retry 3x, backoff 1s/2s)\nlet upsertSuccess = false;\nlet lastError = null;\nfor (let attempt = 0; attempt < 3; attempt++) {\n  try {\n    const result = await qReq('PUT', `/collections/${collectionName}/points`, { points });\n    if (result.statusCode === 200) {\n      upsertSuccess = true;\n      break;\n    }\n    lastError = `Qdrant upsert ${result.statusCode}: ${JSON.stringify(result.body)}`;\n  } catch (error) {\n    lastError = error.message;\n  }\n  if (attempt < 2) {\n    await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));\n  }\n}\nif (!upsertSuccess) {\n  throw new Error(`Qdrant upsert failed after 3 attempts: ${lastError}`);\n}\n\nreturn {\n  ...ctx,\n  embedding_success: true,\n  qdrant_success: true,\n  qdrant_collection: collectionName,\n  points_upserted: points.length,\n  duration_ms: Date.now() - ctx.start_time\n};"
+        "jsCode": "// ============================================\n// EMBEDDING + QDRANT UPSERT - RFC-099 §5.1 (transport: this.helpers.httpRequest)\n// ============================================\n\nconst ctx = $('Tag Content').item.json;\nconst chunks = ctx.chunks || [];\nif (chunks.length === 0) {\n  throw new Error('No chunks to embed');\n}\n\n// Cle OpenAI BYOT (payload, pas de process.env)\nconst OPENAI_API_KEY = ctx.openai_api_key;\nif (!OPENAI_API_KEY) {\n  throw new Error('openai_api_key requis dans le payload (BYOT embeddings)');\n}\n\n// STEP 1: EMBED (OpenAI text-embedding-3-small, 1536d) — batch 50\nconst BATCH_SIZE = 50;\nconst embeddings = [];\nfor (let i = 0; i < chunks.length; i += BATCH_SIZE) {\n  const batch = chunks.slice(i, i + BATCH_SIZE);\n  const resp = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://api.openai.com/v1/embeddings',\n    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },\n    body: { input: batch.map(c => c.text), model: 'text-embedding-3-small', encoding_format: 'float' },\n    json: true\n  });\n  for (const item of resp.data) embeddings.push(item.embedding);\n}\n\n// STEP 2: QDRANT — config + helper\nconst qHost = ctx.qdrant.host;\nconst qPort = ctx.qdrant.port;\nconst qKey = ctx.qdrant.api_key;\nconst collectionName = ctx.qdrant.collection || `tenant_${ctx.tenant_id}_default`;\nconst vectorSize = ctx.qdrant.vector_size || 1536;\nconst qdrantBase = `http://${qHost}:${qPort}`;\n\nconst qReq = async (method, path, bodyObj) => {\n  return await this.helpers.httpRequest({\n    method,\n    url: `${qdrantBase}${path}`,\n    headers: { 'api-key': qKey },\n    body: bodyObj || undefined,\n    json: true,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  });\n};\n\n// STEP 3: CREATE COLLECTION IF NOT EXISTS\nconst exists = await qReq('GET', `/collections/${collectionName}`);\nif (exists.statusCode === 404) {\n  await qReq('PUT', `/collections/${collectionName}`, { vectors: { size: vectorSize, distance: 'Cosine' } });\n}\n\n// STEP 4: BUILD POINTS (4 IDs RFC-099 §5.1)\nconst points = chunks.map((chunk, i) => ({\n  id: `${ctx.source_id}_chunk_${chunk.index}`,\n  vector: embeddings[i],\n  payload: {\n    text: chunk.text,\n    source_id: ctx.source_id,\n    chunk_index: chunk.index,\n    title: ctx.title || ctx.source_id,\n    source_type: ctx.file_type,\n    lang: ctx.lang || 'unknown',\n    ...(ctx.tags || {}),\n    tenant_id: ctx.tenant_id,\n    scope_id: ctx.scope_id,\n    guild_id: ctx.guild_id,\n    bot_id: ctx.bot_id,\n    active: ctx.active\n  }\n}));\n\n// STEP 5: UPSERT (retry 3x, backoff 1s/2s)\nlet upsertSuccess = false;\nlet lastError = null;\nfor (let attempt = 0; attempt < 3; attempt++) {\n  try {\n    const result = await qReq('PUT', `/collections/${collectionName}/points`, { points });\n    if (result.statusCode === 200) {\n      upsertSuccess = true;\n      break;\n    }\n    lastError = `Qdrant upsert ${result.statusCode}: ${JSON.stringify(result.body)}`;\n  } catch (error) {\n    lastError = error.message;\n  }\n  if (attempt < 2) {\n    await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));\n  }\n}\nif (!upsertSuccess) {\n  throw new Error(`Qdrant upsert failed after 3 attempts: ${lastError}`);\n}\n\nreturn {\n  ...ctx,\n  embedding_success: true,\n  qdrant_success: true,\n  qdrant_collection: collectionName,\n  points_upserted: points.length,\n  duration_ms: Date.now() - ctx.start_time\n};"
       },
       "id": "embed-upsert",
       "name": "Embed + Upsert Qdrant",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2820, 200]
+      "position": [
+        2940,
+        200
+      ]
     },
     {
       "parameters": {
@@ -270,7 +315,10 @@
       "name": "Prepare Callback Complete",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3040, 200]
+      "position": [
+        3040,
+        200
+      ]
     },
     {
       "parameters": {
@@ -305,54 +353,193 @@
       "name": "Callback Complete",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3260, 200]
+      "position": [
+        3260,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// TAG CONTENT - RFC-106 volet 2 (controlled_vocab + overrides)\n// Clés alignées sur la whitelist query: subject, level, notions, doc_type, origin, authority_role, tags\n// ============================================\n\nconst ctx = $input.first().json;\nconst cv = ctx.controlled_vocab || {};\nconst tags = {};\n\n// Dimensions issues du controlled_vocab (pass-through chat.api)\nif (cv.subject) tags.subject = cv.subject;\nif (cv.level) tags.level = cv.level;\nconst notions = cv.notions || cv.notion;  // normaliser vers 'notions' (pluriel)\nif (notions) tags.notions = notions;\nif (cv.doc_type) tags.doc_type = cv.doc_type;\nif (cv.origin) tags.origin = cv.origin;\nif (cv.tags) tags.tags = cv.tags;\n\n// Overrides declares (precedence — skip inference)\nif (ctx.authority_role) tags.authority_role = ctx.authority_role;\nif (ctx.subject) tags.subject = ctx.subject;\nif (ctx.doc_type) tags.doc_type = ctx.doc_type;\n\n// controlled_vocab absent/null -> aucun tag (inference RFC-099 v1 en lot ulterieur)\nreturn { ...ctx, tags };"
+      },
+      "id": "tag-content",
+      "name": "Tag Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2710,
+        360
+      ]
     }
   ],
   "connections": {
     "Compute HMAC": {
-      "main": [[{"node": "Verify HMAC", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Verify HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Webhook": {
-      "main": [[{"node": "Compute HMAC", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Compute HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Verify HMAC": {
-      "main": [[{"node": "HMAC Valid?", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "HMAC Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "HMAC Valid?": {
       "main": [
-        [{"node": "Validate Payload", "type": "main", "index": 0}],
-        [{"node": "Respond HMAC Error", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Validate Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond HMAC Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Validate Payload": {
-      "main": [[{"node": "Payload Valid?", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Payload Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Payload Valid?": {
       "main": [
-        [{"node": "Respond Accepted (202)", "type": "main", "index": 0}],
-        [{"node": "Respond Validation Error", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Respond Accepted (202)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Respond Accepted (202)": {
-      "main": [[{"node": "Prepare Callback Start", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Prepare Callback Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Prepare Callback Start": {
-      "main": [[{"node": "Callback Progress (10%)", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Callback Progress (10%)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Callback Progress (10%)": {
-      "main": [[{"node": "Extract Content", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Extract Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Extract Content": {
-      "main": [[{"node": "Chunk Text", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Chunk Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Chunk Text": {
-      "main": [[{"node": "Embed + Upsert Qdrant", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Tag Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Embed + Upsert Qdrant": {
-      "main": [[{"node": "Prepare Callback Complete", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Prepare Callback Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Prepare Callback Complete": {
-      "main": [[{"node": "Callback Complete", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Callback Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Content": {
+      "main": [
+        [
+          {
+            "node": "Embed + Upsert Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
