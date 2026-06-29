@@ -1,17 +1,12 @@
 {
-  "updatedAt": "2026-03-16T10:47:16.491Z",
-  "createdAt": "2026-03-16T10:47:08.530Z",
-  "id": "OiObwmYdf1Wertzk",
   "name": "MCP - PDF Layout Translator",
-  "description": null,
   "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
-        "content": "## MCP - PDF Layout Translator\n\n**Endpoint:** POST /webhook/pdf-layout-translator\n\n**Pattern:** Async avec job_id + Callback (RFC-040)\n\n**Input:**\n- `file_url` OU `file_base64`: PDF a traiter\n- `mistral_api_key`: Pour OCR Pixtral\n- `api_key`: Anthropic API key (traduction)\n- `openai_api_key`: Pour verification GPT\n- `target_language` (optionnel): Default 'fr'\n- `source_language` (optionnel): Default 'auto'\n- `callback_url` (optionnel): URL pour callback async\n- `job_id` (optionnel): ID custom ou auto-genere\n\n**Response immediate (sans callback):**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_xxx\",\n  \"status\": \"started\"\n}\n```\n\n**Response immediate (avec callback):**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_xxx\",\n  \"status\": \"processing\"\n}\n```\n(HTTP 202 Accepted)\n\n**Callback POST (RFC-040):**\nHeaders: Content-Type, X-N8N-Signature\n\n**Statut:** GET /webhook/torah-job-status?job_id=xxx",
-        "height": 520,
-        "width": 340,
+        "content": "## MCP - PDF Layout Translator\n\n**Endpoint:** POST /webhook/pdf-layout-translator\n\n**Pattern:** Async avec job_id\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"file_url|file_base64\", \"mistral_api_key\", \"api_key\", \"openai_api_key\"],\n  \"optional\": [\"user_id\", \"guild_id\", \"user_request\", \"target_language\", \"source_language\", \"callback_url\"],\n  \"properties\": {\n    \"file_url\": { \"type\": \"string\", \"description\": \"URL of PDF to process\" },\n    \"file_base64\": { \"type\": \"string\", \"description\": \"Base64 encoded PDF\" },\n    \"file_type\": { \"type\": \"string\", \"default\": \"pdf\" },\n    \"mistral_api_key\": { \"type\": \"string\", \"description\": \"Mistral API key for Pixtral OCR\" },\n    \"api_key\": { \"type\": \"string\", \"description\": \"Anthropic API key for translation\" },\n    \"openai_api_key\": { \"type\": \"string\", \"description\": \"OpenAI API key for verification\" },\n    \"target_language\": { \"type\": \"string\", \"default\": \"fr\" },\n    \"source_language\": { \"type\": \"string\", \"default\": \"auto\" },\n    \"user_id\": { \"type\": \"string\", \"description\": \"User ID for tracing\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Guild ID for tracing\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Original user request\" },\n    \"callback_url\": { \"type\": \"string\", \"description\": \"URL to send result\" }\n  }\n}\n```\n\n**RFC-014 Support:**\n- Accepts both root-level and context.* fields\n- Returns immediate ACK with job_id, result via callback\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": true,\n  \"output_fields\": [\"job_id\", \"success\", \"status\", \"_trace\"],\n  \"domain\": \"document-processing\"\n}\n```",
+        "height": 680,
+        "width": 400,
         "color": 6
       },
       "id": "sticky-doc",
@@ -42,10 +37,10 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\n// Validation\nconst hasFile = !!(body.file_url || body.file_base64);\nconst hasMistralKey = !!body.mistral_api_key;\nconst hasAnthropicKey = !!body.api_key || !!body.anthropic_api_key;\nconst hasOpenAIKey = !!body.openai_api_key;\n\nconst errors = [];\nif (!hasFile) errors.push('file_url ou file_base64 requis');\nif (!hasMistralKey) errors.push('mistral_api_key requis');\nif (!hasAnthropicKey) errors.push('api_key (Anthropic) requis');\nif (!hasOpenAIKey) errors.push('openai_api_key requis');\n\n// Fonction pour detecter le MIME type depuis les magic bytes base64\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  if (prefix.startsWith('Qk')) return 'image/bmp';\n  if (prefix.startsWith('JVBER') || prefix.startsWith('JVBERi')) return 'application/pdf';\n  return null;\n}\n\n// Fonction pour obtenir le MIME type depuis l'extension\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp',\n    'tiff': 'image/tiff', 'tif': 'image/tiff',\n    'pdf': 'application/pdf'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// Preparer l'URL du fichier avec detection MIME intelligente\nlet fileUrl = '';\nlet detectedMime = 'application/pdf';\n\nif (body.file_url) {\n  fileUrl = body.file_url;\n} else if (body.file_base64) {\n  // 1. Essayer depuis file_type param\n  if (body.file_type) {\n    detectedMime = getMimeFromExtension(body.file_type) || 'application/pdf';\n  }\n  // 2. Fallback: detecter depuis magic bytes\n  if (detectedMime === 'application/pdf') {\n    const detected = detectMimeFromBase64(body.file_base64);\n    if (detected) detectedMime = detected;\n  }\n  fileUrl = 'data:' + detectedMime + ';base64,' + body.file_base64;\n}\n\n// Job ID - use provided or generate\nconst jobId = body.job_id || ('job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8));\n\n// Callback URL (RFC-040)\nconst callbackUrl = body.callback_url || null;\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    jobId: jobId,\n    fileUrl: fileUrl,\n    detectedMime: detectedMime,\n    sourceLanguage: body.source_language || 'auto',\n    targetLanguage: body.target_language || 'fr',\n    mistralApiKey: body.mistral_api_key,\n    anthropicApiKey: body.api_key || body.anthropic_api_key,\n    openaiApiKey: body.openai_api_key,\n    callbackUrl: callbackUrl,\n    hasCallback: !!callbackUrl\n  }\n}];"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP PDF Layout Translator\n// RFC-014 Compliant with Optional Tracing Fields\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\nconst startTime = Date.now();\n\n// --- OPTIONAL context fields (for tracing only, NO validation errors if missing) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Required fields with RFC-014 context fallback ---\nconst fileUrl = body.file_url || ctx.file_url;\nconst fileBase64 = body.file_base64 || ctx.file_base64;\nconst mistralApiKey = body.mistral_api_key || ctx.mistral_api_key;\nconst anthropicApiKey = body.api_key || body.anthropic_api_key || ctx.api_key || ctx.anthropic_api_key;\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key;\n\n// Validation of required fields\nif (!fileUrl && !fileBase64) {\n  errors.push('file_url or file_base64 required');\n}\nif (!mistralApiKey) {\n  errors.push('mistral_api_key required');\n}\nif (!anthropicApiKey) {\n  errors.push('api_key (Anthropic) required');\n}\nif (!openaiApiKey) {\n  errors.push('openai_api_key required');\n}\n\n// MIME type detection functions\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  if (prefix.startsWith('Qk')) return 'image/bmp';\n  if (prefix.startsWith('JVBER') || prefix.startsWith('JVBERi')) return 'application/pdf';\n  return null;\n}\n\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp',\n    'tiff': 'image/tiff', 'tif': 'image/tiff',\n    'pdf': 'application/pdf'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// Prepare file URL with intelligent MIME detection\nlet preparedFileUrl = '';\nlet detectedMime = 'application/pdf';\nconst fileType = body.file_type || ctx.file_type;\n\nif (fileUrl) {\n  preparedFileUrl = fileUrl;\n} else if (fileBase64) {\n  // 1. Try from file_type param\n  if (fileType) {\n    detectedMime = getMimeFromExtension(fileType) || 'application/pdf';\n  }\n  // 2. Fallback: detect from magic bytes\n  if (detectedMime === 'application/pdf') {\n    const detected = detectMimeFromBase64(fileBase64);\n    if (detected) detectedMime = detected;\n  }\n  preparedFileUrl = 'data:' + detectedMime + ';base64,' + fileBase64;\n}\n\n// Generate job ID\nconst jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\n// Return result with tracing fields\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    jobId: jobId,\n    fileUrl: preparedFileUrl,\n    detectedMime: detectedMime,\n    sourceLanguage: body.source_language || ctx.source_language || 'auto',\n    targetLanguage: body.target_language || ctx.target_language || 'fr',\n    mistralApiKey: mistralApiKey,\n    anthropicApiKey: anthropicApiKey,\n    openaiApiKey: openaiApiKey,\n    callbackUrl: body.callback_url || ctx.callback_url || null,\n    // Tracing fields (RFC-014)\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    startTime: startTime\n  }\n}];"
       },
       "id": "validation",
-      "name": "Validation",
+      "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -77,69 +72,12 @@
         "options": {}
       },
       "id": "if-valid",
-      "name": "Input Valid?",
+      "name": "Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
         848,
         304
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "check-callback",
-              "leftValue": "={{ $json.hasCallback }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "if-has-callback",
-      "name": "Has Callback URL?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        1072,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'processing' }) }}",
-        "options": {
-          "responseCode": 202,
-          "responseHeaders": {
-            "entries": [
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          }
-        }
-      },
-      "id": "respond-accepted",
-      "name": "Respond 202 Accepted",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        1296,
-        112
       ]
     },
     {
@@ -163,28 +101,28 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1296,
-        304
+        1072,
+        208
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validation').first().json;\n\nconst data = input.body || input;\nconst apiJobId = data.job_id || prevData.jobId;\n\nreturn [{\n  json: {\n    ...prevData,\n    jobId: apiJobId\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst apiJobId = data.job_id || prevData.jobId;\n\nreturn [{\n  json: {\n    ...prevData,\n    jobId: apiJobId\n  }\n}];"
       },
       "id": "extract-job-id",
       "name": "Extract Job ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1520,
-        304
+        1280,
+        208
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'started', message: 'PDF processing started' }) }}",
+        "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'started', message: 'PDF processing started', _trace: { service_response: { status: 'accepted', job_id: $json.jobId }, provider: 'pdf-layout-translator', mode: 'ack', latency_ms: Date.now() - $('Validate Input').first().json.startTime, user_id: $('Validate Input').first().json.user_id, guild_id: $('Validate Input').first().json.guild_id, user_request: $('Validate Input').first().json.user_request } }) }}",
         "options": {
           "responseCode": 200,
           "responseHeaders": {
@@ -202,8 +140,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1744,
-        304
+        1504,
+        208
       ]
     },
     {
@@ -240,21 +178,21 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1968,
+        1728,
         208
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\n// Get validation data - try multiple paths for async vs sync flow\nlet prevData;\ntry {\n  prevData = $('Extract Job ID').first().json;\n} catch (e) {\n  prevData = $('Validation').first().json;\n}\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Verifier erreur OCR\nif (statusCode >= 400) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: data.message || data.error?.message || 'Mistral API error: ' + statusCode\n    }\n  }];\n}\n\nconst ocrText = data.choices?.[0]?.message?.content || '';\n\nif (!ocrText) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: 'OCR returned empty content'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    ocrText: ocrText,\n    ocrSuccess: true,\n    workerPayload: {\n      job_id: prevData.jobId,\n      text: ocrText,\n      source_language: prevData.sourceLanguage === 'auto' ? 'he' : prevData.sourceLanguage,\n      target_language: prevData.targetLanguage,\n      api_key: prevData.anthropicApiKey,\n      openai_api_key: prevData.openaiApiKey,\n      job_type: 'pdf_translation',\n      metadata: {\n        source: 'pdf_layout_translator',\n        ocr_model: 'pixtral-12b-2409'\n      }\n    }\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Extract Job ID').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier erreur OCR\nif (statusCode >= 400) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: data.message || data.error?.message || 'Mistral API error: ' + statusCode\n    }\n  }];\n}\n\nconst ocrText = data.choices?.[0]?.message?.content || '';\n\nif (!ocrText) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: 'OCR returned empty content'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    ocrText: ocrText,\n    ocrSuccess: true,\n    workerPayload: {\n      job_id: prevData.jobId,\n      text: ocrText,\n      source_language: prevData.sourceLanguage === 'auto' ? 'he' : prevData.sourceLanguage,\n      target_language: prevData.targetLanguage,\n      api_key: prevData.anthropicApiKey,\n      openai_api_key: prevData.openaiApiKey,\n      job_type: 'pdf_translation',\n      metadata: {\n        source: 'pdf_layout_translator',\n        ocr_model: 'pixtral-12b-2409'\n      }\n    }\n  }\n}];"
       },
       "id": "extract-ocr",
       "name": "Extract OCR + Prepare Worker",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2192,
+        1952,
         208
       ]
     },
@@ -286,7 +224,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2416,
+        2160,
         208
       ]
     },
@@ -306,21 +244,21 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2640,
+        2384,
         112
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Le worker gere la traduction et met a jour le job\nconst prevData = $('Extract OCR + Prepare Worker').first().json;\n\nconsole.log('PDF Translation job dispatched:', prevData.jobId);\n\nreturn [{\n  json: {\n    jobId: prevData.jobId,\n    status: 'processing',\n    ocrCompleted: true,\n    translationStarted: true,\n    callbackUrl: prevData.callbackUrl,\n    hasCallback: prevData.hasCallback,\n    ocrText: prevData.ocrText\n  }\n}];"
+        "jsCode": "// Le worker gère la traduction et met à jour le job\nconst prevData = $('Extract OCR + Prepare Worker').first().json;\n\nconsole.log('PDF Translation job dispatched:', prevData.jobId);\n\nreturn [{\n  json: {\n    jobId: prevData.jobId,\n    status: 'processing',\n    ocrCompleted: true,\n    translationStarted: true\n  }\n}];"
       },
       "id": "log-completion",
       "name": "Log Completion",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2976,
+        2720,
         32
       ]
     },
@@ -330,7 +268,7 @@
         "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "=  {\n    \"status\": \"failed\",\n    \"error\": {\n      \"code\": \"OCR_FAILED\",\n      \"message\": {{ JSON.stringify($json.ocrError) }}\n    }\n  }",
+        "jsonBody": "=  {\n    \"status\": \"failed\",\n    \"error\": {\n      \"code\": \"OCR_FAILED\",\n      \"message\": {{ $json.ocrError }}\n    }\n  }",
         "options": {
           "timeout": 10000
         }
@@ -340,17 +278,17 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2640,
+        2384,
         304
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR with _trace\n// ============================================\n\nconst input = $input.first().json;\nconst latencyMs = Date.now() - (input.startTime || Date.now());\n\nreturn [{\n  json: {\n    success: false,\n    job_id: input.jobId,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: input.errors.join(', ')\n    },\n    _trace: {\n      service_response: { validation_errors: input.errors },\n      provider: 'pdf-layout-translator',\n      mode: 'error',\n      latency_ms: latencyMs,\n      user_id: input.user_id,\n      guild_id: input.guild_id,\n      user_request: input.user_request\n    }\n  }\n}];"
       },
       "id": "build-error",
-      "name": "Build Error Response",
+      "name": "Build Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -390,7 +328,7 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        3648,
+        2832,
         208
       ]
     },
@@ -406,182 +344,11 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2816,
+        2560,
         32
       ],
       "id": "9f95aff7-2661-4468-b068-0ef1223be48a",
       "name": "Update Job Success"
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "check-callback-success",
-              "leftValue": "={{ $json.hasCallback }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "if-callback-success",
-      "name": "Has Callback? (Success)",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        3136,
-        32
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst prevData = $input.first().json;\n\n// Build callback payload (RFC-040)\nconst body = {\n  success: true,\n  job_id: prevData.jobId,\n  status: 'completed',\n  result: {\n    ocr_completed: true,\n    translation_started: true,\n    ocr_text_length: prevData.ocrText?.length || 0\n  }\n};\n\n// HMAC Signature (RFC-040 format)\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callbackUrl: prevData.callbackUrl,\n    body: body,\n    signature: signature\n  }\n}];"
-      },
-      "id": "prepare-success-callback",
-      "name": "Prepare Success Callback",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        3296,
-        -64
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $json.callbackUrl }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-N8N-Signature",
-              "value": "={{ $json.signature }}"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.body) }}",
-        "options": {
-          "timeout": 30000
-        }
-      },
-      "id": "callback-success",
-      "name": "POST Callback (Success)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3488,
-        -64
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Prepare error data for callback check\nconst prevData = $('Extract OCR + Prepare Worker').first().json;\n\nreturn [{\n  json: {\n    jobId: prevData.jobId,\n    ocrError: prevData.ocrError,\n    callbackUrl: prevData.callbackUrl,\n    hasCallback: prevData.hasCallback\n  }\n}];"
-      },
-      "id": "prepare-error-data",
-      "name": "Prepare Error Data",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2864,
-        304
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "check-callback-error",
-              "leftValue": "={{ $json.hasCallback }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "if-callback-error",
-      "name": "Has Callback? (Error)",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        3088,
-        304
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst prevData = $input.first().json;\n\n// Build error callback payload (RFC-040)\nconst body = {\n  success: false,\n  job_id: prevData.jobId,\n  status: 'failed',\n  error: {\n    code: 'OCR_FAILED',\n    message: prevData.ocrError || 'OCR processing failed'\n  }\n};\n\n// HMAC Signature (RFC-040 format)\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callbackUrl: prevData.callbackUrl,\n    body: body,\n    signature: signature\n  }\n}];"
-      },
-      "id": "prepare-error-callback",
-      "name": "Prepare Error Callback",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        3296,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $json.callbackUrl }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-N8N-Signature",
-              "value": "={{ $json.signature }}"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.body) }}",
-        "options": {
-          "timeout": 30000
-        }
-      },
-      "id": "callback-error",
-      "name": "POST Callback (Error)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3488,
-        208
-      ],
-      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -589,65 +356,36 @@
       "main": [
         [
           {
-            "node": "Validation",
+            "node": "Validate Input",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Validation": {
+    "Validate Input": {
       "main": [
         [
           {
-            "node": "Input Valid?",
+            "node": "Valid?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Input Valid?": {
+    "Valid?": {
       "main": [
-        [
-          {
-            "node": "Has Callback URL?",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Build Error Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has Callback URL?": {
-      "main": [
-        [
-          {
-            "node": "Respond 202 Accepted",
-            "type": "main",
-            "index": 0
-          }
-        ],
         [
           {
             "node": "Create Job",
             "type": "main",
             "index": 0
           }
-        ]
-      ]
-    },
-    "Respond 202 Accepted": {
-      "main": [
+        ],
         [
           {
-            "node": "Mistral Pixtral OCR",
+            "node": "Build Error",
             "type": "main",
             "index": 0
           }
@@ -742,7 +480,7 @@
       "main": [
         [
           {
-            "node": "Has Callback? (Success)",
+            "node": "Done",
             "type": "main",
             "index": 0
           }
@@ -753,14 +491,14 @@
       "main": [
         [
           {
-            "node": "Prepare Error Data",
+            "node": "Done",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Build Error Response": {
+    "Build Error": {
       "main": [
         [
           {
@@ -781,97 +519,6 @@
           }
         ]
       ]
-    },
-    "Has Callback? (Success)": {
-      "main": [
-        [
-          {
-            "node": "Prepare Success Callback",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Done",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Success Callback": {
-      "main": [
-        [
-          {
-            "node": "POST Callback (Success)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "POST Callback (Success)": {
-      "main": [
-        [
-          {
-            "node": "Done",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Error Data": {
-      "main": [
-        [
-          {
-            "node": "Has Callback? (Error)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has Callback? (Error)": {
-      "main": [
-        [
-          {
-            "node": "Prepare Error Callback",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Done",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Error Callback": {
-      "main": [
-        [
-          {
-            "node": "POST Callback (Error)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "POST Callback (Error)": {
-      "main": [
-        [
-          {
-            "node": "Done",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
     }
   },
   "settings": {
@@ -879,78 +526,18 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "b47ab095-03a9-44b7-9e06-6e4e7e58287e",
-  "activeVersionId": "b47ab095-03a9-44b7-9e06-6e4e7e58287e",
-  "versionCounter": 11,
-  "triggerCount": 1,
-  "shared": [
-    {
-      "updatedAt": "2026-03-16T10:47:08.530Z",
-      "createdAt": "2026-03-16T10:47:08.530Z",
-      "role": "workflow:owner",
-      "workflowId": "OiObwmYdf1Wertzk",
-      "projectId": "U3cZjxLpPGVohw1b",
-      "project": {
-        "updatedAt": "2026-02-02T18:03:13.881Z",
-        "createdAt": "2026-02-02T17:54:12.365Z",
-        "id": "U3cZjxLpPGVohw1b",
-        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "projectRelations": [
-          {
-            "updatedAt": "2026-02-02T17:54:12.365Z",
-            "createdAt": "2026-02-02T17:54:12.365Z",
-            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
-            "projectId": "U3cZjxLpPGVohw1b",
-            "user": {
-              "updatedAt": "2026-04-09T12:42:54.002Z",
-              "createdAt": "2026-02-02T17:54:09.643Z",
-              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
-              "email": "fsebbah@azy.solutions",
-              "firstName": "Sebbah",
-              "lastName": "fsebbah@azy.solutions",
-              "personalizationAnswers": {
-                "version": "v4",
-                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
-                "personalization_survey_n8n_version": "2.6.3"
-              },
-              "settings": {
-                "userActivated": true,
-                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
-                "userActivatedAt": 1770062456227,
-                "npsSurvey": {
-                  "waitingForResponse": true,
-                  "ignoredCount": 1,
-                  "lastShownAt": 1771441113942
-                }
-              },
-              "disabled": false,
-              "mfaEnabled": false,
-              "lastActiveAt": "2026-04-09",
-              "isPending": false
-            }
-          }
-        ]
-      }
-    }
-  ],
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-03-16T10:47:08.554Z",
-    "createdAt": "2026-03-16T10:47:08.554Z",
-    "versionId": "b47ab095-03a9-44b7-9e06-6e4e7e58287e",
-    "workflowId": "OiObwmYdf1Wertzk",
+    "updatedAt": "2026-03-24T21:08:26.505Z",
+    "createdAt": "2026-03-24T21:08:26.505Z",
+    "versionId": "714dcb31-1d05-494e-b30a-8c06e3da50f4",
+    "workflowId": "fQgtLkQ8yFdTVjOC",
     "nodes": [
       {
         "parameters": {
-          "content": "## MCP - PDF Layout Translator\n\n**Endpoint:** POST /webhook/pdf-layout-translator\n\n**Pattern:** Async avec job_id + Callback (RFC-040)\n\n**Input:**\n- `file_url` OU `file_base64`: PDF a traiter\n- `mistral_api_key`: Pour OCR Pixtral\n- `api_key`: Anthropic API key (traduction)\n- `openai_api_key`: Pour verification GPT\n- `target_language` (optionnel): Default 'fr'\n- `source_language` (optionnel): Default 'auto'\n- `callback_url` (optionnel): URL pour callback async\n- `job_id` (optionnel): ID custom ou auto-genere\n\n**Response immediate (sans callback):**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_xxx\",\n  \"status\": \"started\"\n}\n```\n\n**Response immediate (avec callback):**\n```json\n{\n  \"success\": true,\n  \"job_id\": \"job_xxx\",\n  \"status\": \"processing\"\n}\n```\n(HTTP 202 Accepted)\n\n**Callback POST (RFC-040):**\nHeaders: Content-Type, X-N8N-Signature\n\n**Statut:** GET /webhook/torah-job-status?job_id=xxx",
-          "height": 520,
-          "width": 340,
+          "content": "## MCP - PDF Layout Translator\n\n**Endpoint:** POST /webhook/pdf-layout-translator\n\n**Pattern:** Async avec job_id\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"file_url|file_base64\", \"mistral_api_key\", \"api_key\", \"openai_api_key\"],\n  \"optional\": [\"user_id\", \"guild_id\", \"user_request\", \"target_language\", \"source_language\", \"callback_url\"],\n  \"properties\": {\n    \"file_url\": { \"type\": \"string\", \"description\": \"URL of PDF to process\" },\n    \"file_base64\": { \"type\": \"string\", \"description\": \"Base64 encoded PDF\" },\n    \"file_type\": { \"type\": \"string\", \"default\": \"pdf\" },\n    \"mistral_api_key\": { \"type\": \"string\", \"description\": \"Mistral API key for Pixtral OCR\" },\n    \"api_key\": { \"type\": \"string\", \"description\": \"Anthropic API key for translation\" },\n    \"openai_api_key\": { \"type\": \"string\", \"description\": \"OpenAI API key for verification\" },\n    \"target_language\": { \"type\": \"string\", \"default\": \"fr\" },\n    \"source_language\": { \"type\": \"string\", \"default\": \"auto\" },\n    \"user_id\": { \"type\": \"string\", \"description\": \"User ID for tracing\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Guild ID for tracing\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Original user request\" },\n    \"callback_url\": { \"type\": \"string\", \"description\": \"URL to send result\" }\n  }\n}\n```\n\n**RFC-014 Support:**\n- Accepts both root-level and context.* fields\n- Returns immediate ACK with job_id, result via callback\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": true,\n  \"output_fields\": [\"job_id\", \"success\", \"status\", \"_trace\"],\n  \"domain\": \"document-processing\"\n}\n```",
+          "height": 680,
+          "width": 400,
           "color": 6
         },
         "id": "sticky-doc",
@@ -981,10 +568,10 @@
       },
       {
         "parameters": {
-          "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\n// Validation\nconst hasFile = !!(body.file_url || body.file_base64);\nconst hasMistralKey = !!body.mistral_api_key;\nconst hasAnthropicKey = !!body.api_key || !!body.anthropic_api_key;\nconst hasOpenAIKey = !!body.openai_api_key;\n\nconst errors = [];\nif (!hasFile) errors.push('file_url ou file_base64 requis');\nif (!hasMistralKey) errors.push('mistral_api_key requis');\nif (!hasAnthropicKey) errors.push('api_key (Anthropic) requis');\nif (!hasOpenAIKey) errors.push('openai_api_key requis');\n\n// Fonction pour detecter le MIME type depuis les magic bytes base64\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  if (prefix.startsWith('Qk')) return 'image/bmp';\n  if (prefix.startsWith('JVBER') || prefix.startsWith('JVBERi')) return 'application/pdf';\n  return null;\n}\n\n// Fonction pour obtenir le MIME type depuis l'extension\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp',\n    'tiff': 'image/tiff', 'tif': 'image/tiff',\n    'pdf': 'application/pdf'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// Preparer l'URL du fichier avec detection MIME intelligente\nlet fileUrl = '';\nlet detectedMime = 'application/pdf';\n\nif (body.file_url) {\n  fileUrl = body.file_url;\n} else if (body.file_base64) {\n  // 1. Essayer depuis file_type param\n  if (body.file_type) {\n    detectedMime = getMimeFromExtension(body.file_type) || 'application/pdf';\n  }\n  // 2. Fallback: detecter depuis magic bytes\n  if (detectedMime === 'application/pdf') {\n    const detected = detectMimeFromBase64(body.file_base64);\n    if (detected) detectedMime = detected;\n  }\n  fileUrl = 'data:' + detectedMime + ';base64,' + body.file_base64;\n}\n\n// Job ID - use provided or generate\nconst jobId = body.job_id || ('job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8));\n\n// Callback URL (RFC-040)\nconst callbackUrl = body.callback_url || null;\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    jobId: jobId,\n    fileUrl: fileUrl,\n    detectedMime: detectedMime,\n    sourceLanguage: body.source_language || 'auto',\n    targetLanguage: body.target_language || 'fr',\n    mistralApiKey: body.mistral_api_key,\n    anthropicApiKey: body.api_key || body.anthropic_api_key,\n    openaiApiKey: body.openai_api_key,\n    callbackUrl: callbackUrl,\n    hasCallback: !!callbackUrl\n  }\n}];"
+          "jsCode": "// ============================================\n// VALIDATION INPUT - MCP PDF Layout Translator\n// RFC-014 Compliant with Optional Tracing Fields\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\nconst startTime = Date.now();\n\n// --- OPTIONAL context fields (for tracing only, NO validation errors if missing) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Required fields with RFC-014 context fallback ---\nconst fileUrl = body.file_url || ctx.file_url;\nconst fileBase64 = body.file_base64 || ctx.file_base64;\nconst mistralApiKey = body.mistral_api_key || ctx.mistral_api_key;\nconst anthropicApiKey = body.api_key || body.anthropic_api_key || ctx.api_key || ctx.anthropic_api_key;\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key;\n\n// Validation of required fields\nif (!fileUrl && !fileBase64) {\n  errors.push('file_url or file_base64 required');\n}\nif (!mistralApiKey) {\n  errors.push('mistral_api_key required');\n}\nif (!anthropicApiKey) {\n  errors.push('api_key (Anthropic) required');\n}\nif (!openaiApiKey) {\n  errors.push('openai_api_key required');\n}\n\n// MIME type detection functions\nfunction detectMimeFromBase64(base64) {\n  const prefix = base64.substring(0, 20);\n  if (prefix.startsWith('/9j/')) return 'image/jpeg';\n  if (prefix.startsWith('iVBOR')) return 'image/png';\n  if (prefix.startsWith('R0lG')) return 'image/gif';\n  if (prefix.startsWith('UklGR')) return 'image/webp';\n  if (prefix.startsWith('Qk')) return 'image/bmp';\n  if (prefix.startsWith('JVBER') || prefix.startsWith('JVBERi')) return 'application/pdf';\n  return null;\n}\n\nfunction getMimeFromExtension(ext) {\n  const map = {\n    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',\n    'png': 'image/png', 'gif': 'image/gif',\n    'webp': 'image/webp', 'bmp': 'image/bmp',\n    'tiff': 'image/tiff', 'tif': 'image/tiff',\n    'pdf': 'application/pdf'\n  };\n  return map[(ext || '').toLowerCase()] || null;\n}\n\n// Prepare file URL with intelligent MIME detection\nlet preparedFileUrl = '';\nlet detectedMime = 'application/pdf';\nconst fileType = body.file_type || ctx.file_type;\n\nif (fileUrl) {\n  preparedFileUrl = fileUrl;\n} else if (fileBase64) {\n  // 1. Try from file_type param\n  if (fileType) {\n    detectedMime = getMimeFromExtension(fileType) || 'application/pdf';\n  }\n  // 2. Fallback: detect from magic bytes\n  if (detectedMime === 'application/pdf') {\n    const detected = detectMimeFromBase64(fileBase64);\n    if (detected) detectedMime = detected;\n  }\n  preparedFileUrl = 'data:' + detectedMime + ';base64,' + fileBase64;\n}\n\n// Generate job ID\nconst jobId = 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\n\n// Return result with tracing fields\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    jobId: jobId,\n    fileUrl: preparedFileUrl,\n    detectedMime: detectedMime,\n    sourceLanguage: body.source_language || ctx.source_language || 'auto',\n    targetLanguage: body.target_language || ctx.target_language || 'fr',\n    mistralApiKey: mistralApiKey,\n    anthropicApiKey: anthropicApiKey,\n    openaiApiKey: openaiApiKey,\n    callbackUrl: body.callback_url || ctx.callback_url || null,\n    // Tracing fields (RFC-014)\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    startTime: startTime\n  }\n}];"
         },
         "id": "validation",
-        "name": "Validation",
+        "name": "Validate Input",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
@@ -1016,69 +603,12 @@
           "options": {}
         },
         "id": "if-valid",
-        "name": "Input Valid?",
+        "name": "Valid?",
         "type": "n8n-nodes-base.if",
         "typeVersion": 2.2,
         "position": [
           848,
           304
-        ]
-      },
-      {
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "id": "check-callback",
-                "leftValue": "={{ $json.hasCallback }}",
-                "rightValue": true,
-                "operator": {
-                  "type": "boolean",
-                  "operation": "equals"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        },
-        "id": "if-has-callback",
-        "name": "Has Callback URL?",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          1072,
-          208
-        ]
-      },
-      {
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'processing' }) }}",
-          "options": {
-            "responseCode": 202,
-            "responseHeaders": {
-              "entries": [
-                {
-                  "name": "Content-Type",
-                  "value": "application/json"
-                }
-              ]
-            }
-          }
-        },
-        "id": "respond-accepted",
-        "name": "Respond 202 Accepted",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1.1,
-        "position": [
-          1296,
-          112
         ]
       },
       {
@@ -1102,28 +632,28 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          1296,
-          304
+          1072,
+          208
         ],
         "onError": "continueRegularOutput"
       },
       {
         "parameters": {
-          "jsCode": "const input = $input.first().json;\nconst prevData = $('Validation').first().json;\n\nconst data = input.body || input;\nconst apiJobId = data.job_id || prevData.jobId;\n\nreturn [{\n  json: {\n    ...prevData,\n    jobId: apiJobId\n  }\n}];"
+          "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst apiJobId = data.job_id || prevData.jobId;\n\nreturn [{\n  json: {\n    ...prevData,\n    jobId: apiJobId\n  }\n}];"
         },
         "id": "extract-job-id",
         "name": "Extract Job ID",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          1520,
-          304
+          1280,
+          208
         ]
       },
       {
         "parameters": {
           "respondWith": "json",
-          "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'started', message: 'PDF processing started' }) }}",
+          "responseBody": "={{ JSON.stringify({ success: true, job_id: $json.jobId, status: 'started', message: 'PDF processing started', _trace: { service_response: { status: 'accepted', job_id: $json.jobId }, provider: 'pdf-layout-translator', mode: 'ack', latency_ms: Date.now() - $('Validate Input').first().json.startTime, user_id: $('Validate Input').first().json.user_id, guild_id: $('Validate Input').first().json.guild_id, user_request: $('Validate Input').first().json.user_request } }) }}",
           "options": {
             "responseCode": 200,
             "responseHeaders": {
@@ -1141,8 +671,8 @@
         "type": "n8n-nodes-base.respondToWebhook",
         "typeVersion": 1.1,
         "position": [
-          1744,
-          304
+          1504,
+          208
         ]
       },
       {
@@ -1179,21 +709,21 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          1968,
+          1728,
           208
         ],
         "onError": "continueRegularOutput"
       },
       {
         "parameters": {
-          "jsCode": "const input = $input.first().json;\n// Get validation data - try multiple paths for async vs sync flow\nlet prevData;\ntry {\n  prevData = $('Extract Job ID').first().json;\n} catch (e) {\n  prevData = $('Validation').first().json;\n}\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Verifier erreur OCR\nif (statusCode >= 400) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: data.message || data.error?.message || 'Mistral API error: ' + statusCode\n    }\n  }];\n}\n\nconst ocrText = data.choices?.[0]?.message?.content || '';\n\nif (!ocrText) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: 'OCR returned empty content'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    ocrText: ocrText,\n    ocrSuccess: true,\n    workerPayload: {\n      job_id: prevData.jobId,\n      text: ocrText,\n      source_language: prevData.sourceLanguage === 'auto' ? 'he' : prevData.sourceLanguage,\n      target_language: prevData.targetLanguage,\n      api_key: prevData.anthropicApiKey,\n      openai_api_key: prevData.openaiApiKey,\n      job_type: 'pdf_translation',\n      metadata: {\n        source: 'pdf_layout_translator',\n        ocr_model: 'pixtral-12b-2409'\n      }\n    }\n  }\n}];"
+          "jsCode": "const input = $input.first().json;\nconst prevData = $('Extract Job ID').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Vérifier erreur OCR\nif (statusCode >= 400) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: data.message || data.error?.message || 'Mistral API error: ' + statusCode\n    }\n  }];\n}\n\nconst ocrText = data.choices?.[0]?.message?.content || '';\n\nif (!ocrText) {\n  return [{\n    json: {\n      ...prevData,\n      ocrSuccess: false,\n      ocrError: 'OCR returned empty content'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    ocrText: ocrText,\n    ocrSuccess: true,\n    workerPayload: {\n      job_id: prevData.jobId,\n      text: ocrText,\n      source_language: prevData.sourceLanguage === 'auto' ? 'he' : prevData.sourceLanguage,\n      target_language: prevData.targetLanguage,\n      api_key: prevData.anthropicApiKey,\n      openai_api_key: prevData.openaiApiKey,\n      job_type: 'pdf_translation',\n      metadata: {\n        source: 'pdf_layout_translator',\n        ocr_model: 'pixtral-12b-2409'\n      }\n    }\n  }\n}];"
         },
         "id": "extract-ocr",
         "name": "Extract OCR + Prepare Worker",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          2192,
+          1952,
           208
         ]
       },
@@ -1225,7 +755,7 @@
         "type": "n8n-nodes-base.if",
         "typeVersion": 2.2,
         "position": [
-          2416,
+          2160,
           208
         ]
       },
@@ -1245,21 +775,21 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          2640,
+          2384,
           112
         ],
         "onError": "continueRegularOutput"
       },
       {
         "parameters": {
-          "jsCode": "// Le worker gere la traduction et met a jour le job\nconst prevData = $('Extract OCR + Prepare Worker').first().json;\n\nconsole.log('PDF Translation job dispatched:', prevData.jobId);\n\nreturn [{\n  json: {\n    jobId: prevData.jobId,\n    status: 'processing',\n    ocrCompleted: true,\n    translationStarted: true,\n    callbackUrl: prevData.callbackUrl,\n    hasCallback: prevData.hasCallback,\n    ocrText: prevData.ocrText\n  }\n}];"
+          "jsCode": "// Le worker gère la traduction et met à jour le job\nconst prevData = $('Extract OCR + Prepare Worker').first().json;\n\nconsole.log('PDF Translation job dispatched:', prevData.jobId);\n\nreturn [{\n  json: {\n    jobId: prevData.jobId,\n    status: 'processing',\n    ocrCompleted: true,\n    translationStarted: true\n  }\n}];"
         },
         "id": "log-completion",
         "name": "Log Completion",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          2976,
+          2720,
           32
         ]
       },
@@ -1269,7 +799,7 @@
           "url": "={{ $env.API_URL }}/api/v2/jobs/{{ $json.jobId }}",
           "sendBody": true,
           "specifyBody": "json",
-          "jsonBody": "=  {\n    \"status\": \"failed\",\n    \"error\": {\n      \"code\": \"OCR_FAILED\",\n      \"message\": {{ JSON.stringify($json.ocrError) }}\n    }\n  }",
+          "jsonBody": "=  {\n    \"status\": \"failed\",\n    \"error\": {\n      \"code\": \"OCR_FAILED\",\n      \"message\": {{ $json.ocrError }}\n    }\n  }",
           "options": {
             "timeout": 10000
           }
@@ -1279,17 +809,17 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          2640,
+          2384,
           304
         ],
         "onError": "continueRegularOutput"
       },
       {
         "parameters": {
-          "jsCode": "const input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+          "jsCode": "// ============================================\n// BUILD VALIDATION ERROR with _trace\n// ============================================\n\nconst input = $input.first().json;\nconst latencyMs = Date.now() - (input.startTime || Date.now());\n\nreturn [{\n  json: {\n    success: false,\n    job_id: input.jobId,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: input.errors.join(', ')\n    },\n    _trace: {\n      service_response: { validation_errors: input.errors },\n      provider: 'pdf-layout-translator',\n      mode: 'error',\n      latency_ms: latencyMs,\n      user_id: input.user_id,\n      guild_id: input.guild_id,\n      user_request: input.user_request\n    }\n  }\n}];"
         },
         "id": "build-error",
-        "name": "Build Error Response",
+        "name": "Build Error",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
@@ -1329,7 +859,7 @@
         "type": "n8n-nodes-base.noOp",
         "typeVersion": 1,
         "position": [
-          3648,
+          2832,
           208
         ]
       },
@@ -1345,182 +875,11 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.3,
         "position": [
-          2816,
+          2560,
           32
         ],
         "id": "9f95aff7-2661-4468-b068-0ef1223be48a",
         "name": "Update Job Success"
-      },
-      {
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "id": "check-callback-success",
-                "leftValue": "={{ $json.hasCallback }}",
-                "rightValue": true,
-                "operator": {
-                  "type": "boolean",
-                  "operation": "equals"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        },
-        "id": "if-callback-success",
-        "name": "Has Callback? (Success)",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          3136,
-          32
-        ]
-      },
-      {
-        "parameters": {
-          "jsCode": "const crypto = require('crypto');\nconst prevData = $input.first().json;\n\n// Build callback payload (RFC-040)\nconst body = {\n  success: true,\n  job_id: prevData.jobId,\n  status: 'completed',\n  result: {\n    ocr_completed: true,\n    translation_started: true,\n    ocr_text_length: prevData.ocrText?.length || 0\n  }\n};\n\n// HMAC Signature (RFC-040 format)\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callbackUrl: prevData.callbackUrl,\n    body: body,\n    signature: signature\n  }\n}];"
-        },
-        "id": "prepare-success-callback",
-        "name": "Prepare Success Callback",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          3296,
-          -64
-        ]
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "={{ $json.callbackUrl }}",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "name": "X-N8N-Signature",
-                "value": "={{ $json.signature }}"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify($json.body) }}",
-          "options": {
-            "timeout": 30000
-          }
-        },
-        "id": "callback-success",
-        "name": "POST Callback (Success)",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          3488,
-          -64
-        ],
-        "onError": "continueRegularOutput"
-      },
-      {
-        "parameters": {
-          "jsCode": "// Prepare error data for callback check\nconst prevData = $('Extract OCR + Prepare Worker').first().json;\n\nreturn [{\n  json: {\n    jobId: prevData.jobId,\n    ocrError: prevData.ocrError,\n    callbackUrl: prevData.callbackUrl,\n    hasCallback: prevData.hasCallback\n  }\n}];"
-        },
-        "id": "prepare-error-data",
-        "name": "Prepare Error Data",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          2864,
-          304
-        ]
-      },
-      {
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            },
-            "conditions": [
-              {
-                "id": "check-callback-error",
-                "leftValue": "={{ $json.hasCallback }}",
-                "rightValue": true,
-                "operator": {
-                  "type": "boolean",
-                  "operation": "equals"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        },
-        "id": "if-callback-error",
-        "name": "Has Callback? (Error)",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          3088,
-          304
-        ]
-      },
-      {
-        "parameters": {
-          "jsCode": "const crypto = require('crypto');\nconst prevData = $input.first().json;\n\n// Build error callback payload (RFC-040)\nconst body = {\n  success: false,\n  job_id: prevData.jobId,\n  status: 'failed',\n  error: {\n    code: 'OCR_FAILED',\n    message: prevData.ocrError || 'OCR processing failed'\n  }\n};\n\n// HMAC Signature (RFC-040 format)\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callbackUrl: prevData.callbackUrl,\n    body: body,\n    signature: signature\n  }\n}];"
-        },
-        "id": "prepare-error-callback",
-        "name": "Prepare Error Callback",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          3296,
-          208
-        ]
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "={{ $json.callbackUrl }}",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "name": "X-N8N-Signature",
-                "value": "={{ $json.signature }}"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify($json.body) }}",
-          "options": {
-            "timeout": 30000
-          }
-        },
-        "id": "callback-error",
-        "name": "POST Callback (Error)",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          3488,
-          208
-        ],
-        "onError": "continueRegularOutput"
       }
     ],
     "connections": {
@@ -1528,65 +887,36 @@
         "main": [
           [
             {
-              "node": "Validation",
+              "node": "Validate Input",
               "type": "main",
               "index": 0
             }
           ]
         ]
       },
-      "Validation": {
+      "Validate Input": {
         "main": [
           [
             {
-              "node": "Input Valid?",
+              "node": "Valid?",
               "type": "main",
               "index": 0
             }
           ]
         ]
       },
-      "Input Valid?": {
+      "Valid?": {
         "main": [
-          [
-            {
-              "node": "Has Callback URL?",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Build Error Response",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Has Callback URL?": {
-        "main": [
-          [
-            {
-              "node": "Respond 202 Accepted",
-              "type": "main",
-              "index": 0
-            }
-          ],
           [
             {
               "node": "Create Job",
               "type": "main",
               "index": 0
             }
-          ]
-        ]
-      },
-      "Respond 202 Accepted": {
-        "main": [
+          ],
           [
             {
-              "node": "Mistral Pixtral OCR",
+              "node": "Build Error",
               "type": "main",
               "index": 0
             }
@@ -1681,7 +1011,7 @@
         "main": [
           [
             {
-              "node": "Has Callback? (Success)",
+              "node": "Done",
               "type": "main",
               "index": 0
             }
@@ -1692,14 +1022,14 @@
         "main": [
           [
             {
-              "node": "Prepare Error Data",
+              "node": "Done",
               "type": "main",
               "index": 0
             }
           ]
         ]
       },
-      "Build Error Response": {
+      "Build Error": {
         "main": [
           [
             {
@@ -1720,101 +1050,12 @@
             }
           ]
         ]
-      },
-      "Has Callback? (Success)": {
-        "main": [
-          [
-            {
-              "node": "Prepare Success Callback",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Done",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Prepare Success Callback": {
-        "main": [
-          [
-            {
-              "node": "POST Callback (Success)",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "POST Callback (Success)": {
-        "main": [
-          [
-            {
-              "node": "Done",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Prepare Error Data": {
-        "main": [
-          [
-            {
-              "node": "Has Callback? (Error)",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Has Callback? (Error)": {
-        "main": [
-          [
-            {
-              "node": "Prepare Error Callback",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Done",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Prepare Error Callback": {
-        "main": [
-          [
-            {
-              "node": "POST Callback (Error)",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "POST Callback (Error)": {
-        "main": [
-          [
-            {
-              "node": "Done",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
       }
     },
     "authors": "Sebbah fsebbah@azy.solutions",
     "name": null,
-    "description": null
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": []
   }
 }

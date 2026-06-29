@@ -4,8 +4,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Save Worker v2.0\n\n**Endpoint:** `POST /webhook/torah-save`\n\n**Routing par `kind` (REQUIRED):**\n- `kind: 'segment'` + `segment_id` → translations_v2\n- `kind: 'commentary'` + `commentary_detail_id` → commentary_translations\n\n**Input:**\n```json\n{\n  \"kind\": \"segment\",\n  \"segment_id\": \"uuid\",\n  \"translated_text\": \"...\",\n  \"target_language\": \"fr\",\n  \"provider\": \"anthropic\",\n  \"model\": \"claude-sonnet-4\",\n  \"job_id\": \"job_abc\"\n}\n```\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"kind\": \"segment\",\n  \"translation_id\": \"uuid\"\n}\n```",
-        "height": 340,
+        "content": "## Torah Save Worker (API v2)\n\n**Endpoint:** `POST /webhook/torah-save`\n\n**3 modes (exactement UN requis):**\n- `segment_id`: → translations_v2\n- `commentary_id`: → commentary_translations\n- `source_text`: → pending_translations\n\n**Input Mode 1 (segment):**\n```json\n{\n  \"segment_id\": \"uuid-segment\",\n  \"translated_text\": \"...\",\n  \"target_language\": \"fr\",\n  \"provider\": \"anthropic\",\n  \"model\": \"claude-sonnet-4\",\n  \"quality_score\": 0.92,\n  \"job_id\": \"job_abc\"\n}\n```\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"mode\": \"segment\",\n  \"translation_id\": \"uuid-new\",\n  \"version\": 4\n}\n```",
+        "height": 320,
         "width": 340,
         "color": 5
       },
@@ -37,7 +37,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Torah Save Worker v2.0 - Strict validation with kind-based routing\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nconst isValidUUID = (str) => str && UUID_REGEX.test(str);\n\n// Helper for error response\nconst errorResponse = (code, message) => [{\n  json: {\n    success: false,\n    error: { code: code, message: message }\n  }\n}];\n\n// ============================================\n// VALIDATION v2.0\n// ============================================\n\nif (!body.translated_text && !body.translation) {\n  return errorResponse('MISSING_TRANSLATION', 'translated_text or translation is required');\n}\n\n// kind is REQUIRED in v2.0\nconst kind = body.kind;\nif (!kind) {\n  return errorResponse('MISSING_KIND', \"Field 'kind' is required. Must be 'segment' or 'commentary'.\");\n}\nif (!['segment', 'commentary'].includes(kind)) {\n  return errorResponse('INVALID_KIND', `Invalid kind '${kind}'. Must be 'segment' or 'commentary'.`);\n}\n\n// Validate ID based on kind\nif (kind === 'segment') {\n  if (!isValidUUID(body.segment_id)) {\n    return errorResponse('MISSING_SEGMENT_ID', \"Field 'segment_id' (UUID) is required when kind='segment'.\");\n  }\n}\n\nif (kind === 'commentary') {\n  if (!isValidUUID(body.commentary_detail_id)) {\n    return errorResponse('MISSING_COMMENTARY_DETAIL_ID', \"Field 'commentary_detail_id' (UUID) is required when kind='commentary'.\");\n  }\n}\n\n// ============================================\n// OUTPUT\n// ============================================\n\nreturn [{\n  json: {\n    valid: true,\n    kind: kind,\n    jobId: body.job_id,\n    translation: body.translated_text || body.translation,\n    segmentId: kind === 'segment' ? body.segment_id : null,\n    commentaryDetailId: kind === 'commentary' ? body.commentary_detail_id : null,\n    targetLanguage: body.target_language || 'fr',\n    provider: body.provider || 'anthropic',\n    model: body.model || 'claude-sonnet-4-20250514',\n    qualityScore: body.quality_score || null,\n    confidenceScore: body.confidence_score || null,\n    requestId: body.request_id || null,\n    llmUsage: body.llm_usage || null,\n    status: body.status || 'approved',\n    notes: body.notes || null,\n    issues: body.issues || [],\n    extraData: body.extra_data || {}\n  }\n}];"
+        "jsCode": "// Parse and validate input (API v2 - segment_id replaces source_text_id + segment_index)\nconst input = $input.first().json;\nconst body = input.body || input;\n\nif (!body.translation && !body.translated_text) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_TRANSLATION', message: 'translation or translated_text is required' }\n    }\n  }];\n}\n\n// API v2: exactly one of segment_id, commentary_id, or source_text must be provided\nconst hasSegmentId = !!body.segment_id;\nconst hasCommentaryId = !!body.commentary_id;\nconst hasSourceText = !!body.source_text;\n\nif (!hasSegmentId && !hasCommentaryId && !hasSourceText) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_ID', message: 'One of segment_id, commentary_id, or source_text is required (API v2)' }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    translation: body.translation || body.translated_text,\n    segmentId: body.segment_id || null,\n    commentaryId: body.commentary_id || null,\n    sourceText: body.source_text || null,\n    targetLanguage: body.target_language || 'fr',\n    provider: body.provider || 'anthropic',\n    model: body.model || 'claude-sonnet-4-20250514',\n    qualityScore: body.quality_score || null,\n    confidenceScore: body.confidence_score || null,\n    requestId: body.request_id || null,\n    llmUsage: body.llm_usage || null,\n    status: body.status || 'approved',\n    notes: body.notes || null,\n    issues: body.issues || [],\n    extraData: body.extra_data || {}\n  }\n}];"
       },
       "id": "parse-input",
       "name": "Parse Input",
@@ -50,42 +50,11 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "leftValue": "={{ $json.valid }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "check-valid",
-      "name": "Valid?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        880,
-        300
-      ]
-    },
-    {
-      "parameters": {
         "method": "POST",
-        "url": "={{ $env.API_URL }}/api/v2/translations/save",
+        "url": "={{ $env.API_URL }}/api/translations/save",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ kind: $json.kind, segment_id: $json.segmentId, commentary_detail_id: $json.commentaryDetailId, translated_text: $json.translation, target_language: $json.targetLanguage, provider: $json.provider, model: $json.model, quality_score: $json.qualityScore, confidence_score: $json.confidenceScore, job_id: $json.jobId, request_id: $json.requestId, llm_usage: $json.llmUsage, status: $json.status, notes: $json.notes, issues: $json.issues, extra_data: $json.extraData }) }}",
+        "jsonBody": "={{ JSON.stringify({ segment_id: $json.segmentId, commentary_id: $json.commentaryId, source_text: $json.sourceText, translated_text: $json.translation, target_language: $json.targetLanguage, provider: $json.provider, model: $json.model, quality_score: $json.qualityScore, confidence_score: $json.confidenceScore, job_id: $json.jobId, request_id: $json.requestId, llm_usage: $json.llmUsage, status: $json.status, notes: $json.notes, issues: $json.issues, extra_data: $json.extraData }) }}",
         "options": {
           "timeout": 30000
         }
@@ -95,44 +64,22 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1100,
-        200
+        880,
+        300
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Format success response\nconst input = $input.first().json;\nconst parseData = $('Parse Input').first().json;\n\nif (input.error) {\n  return [{\n    json: {\n      success: false,\n      kind: parseData.kind,\n      error: {\n        code: 'SAVE_ERROR',\n        message: input.error.message || input.detail?.message || 'Failed to save translation'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: input.success !== false,\n    kind: parseData.kind,\n    translation_id: input.translation_id || input.id,\n    segment_id: parseData.segmentId,\n    commentary_detail_id: parseData.commentaryDetailId,\n    target_language: parseData.targetLanguage,\n    version: input.version || 1,\n    status: input.status || 'approved',\n    created_at: input.created_at,\n    message: input.message || 'Translation saved'\n  }\n}];"
+        "jsCode": "// Format response (API v2)\nconst input = $input.first().json;\n\nif (input.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 'SAVE_ERROR',\n        message: input.error.message || input.detail?.message || 'Failed to save translation'\n      }\n    }\n  }];\n}\n\n// API v2 response format\nreturn [{\n  json: {\n    success: input.success !== false,\n    mode: input.mode || 'segment',\n    translation_id: input.translation_id,\n    segment_id: input.segment_id || null,\n    commentary_id: input.commentary_id || null,\n    target_language: input.target_language,\n    version: input.version || 1,\n    status: input.status || 'approved',\n    created_at: input.created_at,\n    message: input.message || 'Translation saved'\n  }\n}];"
       },
       "id": "format-response",
       "name": "Format Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1320,
-        200
-      ]
-    },
-    {
-      "parameters": {},
-      "id": "output-success",
-      "name": "Output Success",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [
-        1540,
-        200
-      ]
-    },
-    {
-      "parameters": {},
-      "id": "output-error",
-      "name": "Output Error",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [
         1100,
-        400
+        300
       ]
     }
   ],
@@ -152,25 +99,7 @@
       "main": [
         [
           {
-            "node": "Valid?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Valid?": {
-      "main": [
-        [
-          {
             "node": "Save to API",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Output Error",
             "type": "main",
             "index": 0
           }
@@ -187,23 +116,140 @@
           }
         ]
       ]
-    },
-    "Format Response": {
-      "main": [
-        [
-          {
-            "node": "Output Success",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
-  "staticData": null,
-  "tags": []
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-22T16:54:19.492Z",
+    "createdAt": "2026-04-22T16:54:19.492Z",
+    "versionId": "49a4a5f5-abda-450b-95c5-709db34609d6",
+    "workflowId": "SYEtJ4wNHEuMw38v",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Torah Save Worker (API v2)\n\n**Endpoint:** `POST /webhook/torah-save`\n\n**3 modes (exactement UN requis):**\n- `segment_id`: → translations_v2\n- `commentary_id`: → commentary_translations\n- `source_text`: → pending_translations\n\n**Input Mode 1 (segment):**\n```json\n{\n  \"segment_id\": \"uuid-segment\",\n  \"translated_text\": \"...\",\n  \"target_language\": \"fr\",\n  \"provider\": \"anthropic\",\n  \"model\": \"claude-sonnet-4\",\n  \"quality_score\": 0.92,\n  \"job_id\": \"job_abc\"\n}\n```\n\n**Output:**\n```json\n{\n  \"success\": true,\n  \"mode\": \"segment\",\n  \"translation_id\": \"uuid-new\",\n  \"version\": 4\n}\n```",
+          "height": 320,
+          "width": 340,
+          "color": 5
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          40,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "torah-save",
+          "responseMode": "lastNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          440,
+          300
+        ],
+        "webhookId": "torah-save"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Parse and validate input (API v2 - segment_id replaces source_text_id + segment_index)\nconst input = $input.first().json;\nconst body = input.body || input;\n\nif (!body.translation && !body.translated_text) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_TRANSLATION', message: 'translation or translated_text is required' }\n    }\n  }];\n}\n\n// API v2: exactly one of segment_id, commentary_id, or source_text must be provided\nconst hasSegmentId = !!body.segment_id;\nconst hasCommentaryId = !!body.commentary_id;\nconst hasSourceText = !!body.source_text;\n\nif (!hasSegmentId && !hasCommentaryId && !hasSourceText) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_ID', message: 'One of segment_id, commentary_id, or source_text is required (API v2)' }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    translation: body.translation || body.translated_text,\n    segmentId: body.segment_id || null,\n    commentaryId: body.commentary_id || null,\n    sourceText: body.source_text || null,\n    targetLanguage: body.target_language || 'fr',\n    provider: body.provider || 'anthropic',\n    model: body.model || 'claude-sonnet-4-20250514',\n    qualityScore: body.quality_score || null,\n    confidenceScore: body.confidence_score || null,\n    requestId: body.request_id || null,\n    llmUsage: body.llm_usage || null,\n    status: body.status || 'approved',\n    notes: body.notes || null,\n    issues: body.issues || [],\n    extraData: body.extra_data || {}\n  }\n}];"
+        },
+        "id": "parse-input",
+        "name": "Parse Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.API_URL }}/api/translations/save",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ segment_id: $json.segmentId, commentary_id: $json.commentaryId, source_text: $json.sourceText, translated_text: $json.translation, target_language: $json.targetLanguage, provider: $json.provider, model: $json.model, quality_score: $json.qualityScore, confidence_score: $json.confidenceScore, job_id: $json.jobId, request_id: $json.requestId, llm_usage: $json.llmUsage, status: $json.status, notes: $json.notes, issues: $json.issues, extra_data: $json.extraData }) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "save-to-api",
+        "name": "Save to API",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          880,
+          300
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Format response (API v2)\nconst input = $input.first().json;\n\nif (input.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 'SAVE_ERROR',\n        message: input.error.message || input.detail?.message || 'Failed to save translation'\n      }\n    }\n  }];\n}\n\n// API v2 response format\nreturn [{\n  json: {\n    success: input.success !== false,\n    mode: input.mode || 'segment',\n    translation_id: input.translation_id,\n    segment_id: input.segment_id || null,\n    commentary_id: input.commentary_id || null,\n    target_language: input.target_language,\n    version: input.version || 1,\n    status: input.status || 'approved',\n    created_at: input.created_at,\n    message: input.message || 'Translation saved'\n  }\n}];"
+        },
+        "id": "format-response",
+        "name": "Format Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Parse Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Input": {
+        "main": [
+          [
+            {
+              "node": "Save to API",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Save to API": {
+        "main": [
+          [
+            {
+              "node": "Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": []
+  }
 }

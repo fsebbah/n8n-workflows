@@ -1,0 +1,447 @@
+{
+  "name": "Torah Translate Simple",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Translate Simple (Phase 2)\n\n**Endpoint:** `POST /webhook/torah-translate`\n\n**Responsabilite:** Traduire UN segment avec EN-pivot\n\n**Input:**\n```json\n{\n  \"job_id\": \"uuid\",\n  \"segment_id\": \"uuid\",\n  \"text\": \"...\",\n  \"reference_translation\": \"EN text or null\",\n  \"source_language\": \"he\",\n  \"target_language\": \"fr\",\n  \"api_key\": \"sk-ant-...\",\n  \"context\": { \"traite\": \"...\", \"page\": \"...\" }\n}\n```\n\n**Output (structured generation):**\n```json\n{\n  \"success\": true,\n  \"translation\": \"FR translation\",\n  \"english_pivot\": \"Generated EN\",\n  \"method\": \"structured_generation\",\n  \"generated_english\": true\n}\n```\n\n**Modes:**\n- `en_pivot`: reference_translation exists\n- `structured_generation`: EN+FR generated\n- `direct_fallback`: fallback HE->FR",
+        "height": 380,
+        "width": 340,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        40,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-translate",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "webhookId": "torah-translate"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and validate input\n// Phase 2: EN-pivot with structured output generation\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\n\nif (!body.text) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_TEXT', message: 'text is required' }\n    }\n  }];\n}\n\nif (!body.api_key) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_API_KEY', message: 'api_key is required' }\n    }\n  }];\n}\n\nconst sourceLanguage = body.source_language || 'he';\nconst targetLanguage = body.target_language || 'fr';\nconst referenceTranslation = body.reference_translation || null;\nconst hasReferenceTranslation = !!referenceTranslation;\n\n// Phase 2: Determine translation strategy\n// - hasReferenceTranslation=true → use existing EN as pivot (Phase 1)\n// - hasReferenceTranslation=false AND target!='en' → generate EN+target structured\n// - target='en' → direct HE→EN translation\nconst needsStructuredGeneration = !hasReferenceTranslation && targetLanguage !== 'en' && sourceLanguage !== 'en';\nconst isDirectToEnglish = targetLanguage === 'en';\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    segmentId: body.segment_id || null,\n    text: body.text,\n    referenceTranslation: referenceTranslation,\n    hasReferenceTranslation: hasReferenceTranslation,\n    needsStructuredGeneration: needsStructuredGeneration,\n    isDirectToEnglish: isDirectToEnglish,\n    sourceLanguage: sourceLanguage,\n    sourceLangName: languageNames[sourceLanguage] || sourceLanguage,\n    targetLanguage: targetLanguage,\n    targetLangName: languageNames[targetLanguage] || targetLanguage,\n    apiKey: body.api_key,\n    model: body.model || 'claude-sonnet-4-20250514',\n    context: body.context || {},\n    metadata: body.metadata || {}\n  }\n}];"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.needsStructuredGeneration }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-structured",
+      "name": "Needs Structured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.apiKey }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: 8192, messages: [{ role: 'user', content: 'You are an expert translator of Talmudic and Kabbalistic texts.\\n\\nTranslate the following Hebrew text to BOTH English AND ' + $json.targetLangName + '.\\n\\nContext: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\n## Hebrew Source\\n' + $json.text + '\\n\\n## Instructions\\n1. First translate to English using standard Talmudic terminology\\n2. Then translate to ' + $json.targetLangName + ' using the English as reference for terminology and proper nouns\\n3. Return ONLY a valid JSON object with exactly this structure:\\n\\n{\"english_pivot\": \"<English translation>\", \"translation\": \"<' + $json.targetLangName + ' translation>\"}\\n\\nIMPORTANT: Return ONLY the JSON object, no other text.' }] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "claude-structured",
+      "name": "Claude Structured",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Phase 2: Extract structured EN+target translation from single LLM call\nconst input = $input.first().json;\nconst prevData = $('Parse Input').first().json;\n\ntry {\n  const body = input.body || input;\n  \n  if (body.error) {\n    // Fallback: if structured call fails, return error for fallback handling\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: { code: 'CLAUDE_ERROR', message: body.error.message || 'Claude API error' },\n        ...prevData\n      }\n    }];\n  }\n  \n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: { code: 'EMPTY_RESPONSE', message: 'Claude returned empty response' },\n        ...prevData\n      }\n    }];\n  }\n  \n  // Parse JSON from response (handle potential markdown code blocks)\n  let parsed;\n  try {\n    let jsonStr = content.trim();\n    // Remove markdown code block if present\n    if (jsonStr.startsWith('```')) {\n      jsonStr = jsonStr.replace(/^```(?:json)?\\n?/, '').replace(/\\n?```$/, '');\n    }\n    parsed = JSON.parse(jsonStr);\n  } catch (parseErr) {\n    // JSON parse failed - fallback to direct translation\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: { code: 'JSON_PARSE_ERROR', message: 'Failed to parse structured response: ' + parseErr.message },\n        ...prevData\n      }\n    }];\n  }\n  \n  // Validate required fields\n  if (!parsed.english_pivot || !parsed.translation) {\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: { code: 'INVALID_STRUCTURE', message: 'Missing english_pivot or translation in response' },\n        ...prevData\n      }\n    }];\n  }\n  \n  // Success: return both translations\n  return [{\n    json: {\n      success: true,\n      translation: parsed.translation,\n      english_pivot: parsed.english_pivot,\n      method: 'structured_generation',\n      generated_english: true,\n      segment_id: prevData.segmentId,\n      target_language: prevData.targetLanguage,\n      tokens: {\n        input_tokens: usage.input_tokens || 0,\n        output_tokens: usage.output_tokens || 0\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      fallbackToDirectTranslation: true,\n      error: { code: 'PARSE_ERROR', message: e.message },\n      ...prevData\n    }\n  }];\n}"
+      },
+      "id": "extract-structured",
+      "name": "Extract Structured",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.fallbackToDirectTranslation }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-fallback",
+      "name": "Needs Fallback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.apiKey }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: 8192, messages: [{ role: 'user', content: 'Tu es un expert en textes talmudiques et kabbalistiques.\\n\\nTraduis le texte hébreu suivant directement en ' + $json.targetLangName + '.\\n\\nContexte: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\nTexte hébreu:\\n' + $json.text + '\\n\\nRéponds UNIQUEMENT avec la traduction en ' + $json.targetLangName + '.' }] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "claude-fallback",
+      "name": "Claude Fallback Direct",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Phase 2: Extract fallback direct translation (HE→target without EN pivot)\nconst input = $input.first().json;\nconst prevData = $('Extract Structured').first().json;\n\ntry {\n  const body = input.body || input;\n  \n  if (body.error) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'CLAUDE_ERROR', message: body.error.message || 'Claude API error in fallback' }\n      }\n    }];\n  }\n  \n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'EMPTY_RESPONSE', message: 'Claude returned empty response in fallback' }\n      }\n    }];\n  }\n  \n  // Log the original error that caused fallback\n  const originalError = prevData.error || null;\n  \n  return [{\n    json: {\n      success: true,\n      translation: content,\n      english_pivot: null,\n      method: 'direct_fallback',\n      generated_english: false,\n      fallback_reason: originalError ? originalError.code : 'unknown',\n      tokens: {\n        input_tokens: usage.input_tokens || 0,\n        output_tokens: usage.output_tokens || 0\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'PARSE_ERROR', message: e.message }\n    }\n  }];\n}"
+      },
+      "id": "extract-fallback",
+      "name": "Extract Fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.apiKey }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: 8192, messages: [{ role: 'user', content: $json.hasReferenceTranslation ? ('Translate the following Hebrew Talmudic passage to ' + $json.targetLangName + '.\\nUse the official Sefaria/Koren English translation as a reference for terminology, proper nouns, and disambiguation.\\n\\n## Hebrew Source\\n' + $json.text + '\\n\\n## Reference Translation (English, Sefaria/Koren)\\n' + $json.referenceTranslation + '\\n\\n## Instructions\\n- Maintain the same meaning as the Hebrew source\\n- Use standard ' + $json.targetLangName + ' Talmudic terminology\\n- Preserve proper nouns as transliterated in the English reference\\n- If the Hebrew is ambiguous, use the English as a disambiguation hint, not as ground truth\\n\\nProvide the ' + $json.targetLangName + ' translation:') : ('Tu es un expert en textes talmudiques et kabbalistiques. Le texte source est en ' + $json.sourceLangName + '. Traduis directement en ' + $json.targetLangName + '.\\n\\nContexte: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\nTexte à traduire:\\n' + $json.text + '\\n\\nRéponds UNIQUEMENT avec la traduction.') }] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "claude-direct",
+      "name": "Claude Direct",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract direct translation\n// RFC bilingual-translations-en-pivot: track EN pivot usage\nconst input = $input.first().json;\nconst prevData = $('Parse Input').first().json;\n\ntry {\n  const body = input.body || input;\n  \n  if (body.error) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'CLAUDE_ERROR', message: body.error.message || 'Claude API error' }\n      }\n    }];\n  }\n  \n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'EMPTY_RESPONSE', message: 'Claude returned empty response' }\n      }\n    }];\n  }\n  \n  // RFC: indicate if EN pivot was used\n  const usedEnPivot = prevData.hasReferenceTranslation === true;\n  \n  return [{\n    json: {\n      success: true,\n      translation: content,\n      method: usedEnPivot ? 'en_pivot' : 'direct',\n      used_en_reference: usedEnPivot,\n      tokens: {\n        input_tokens: usage.input_tokens || 0,\n        output_tokens: usage.output_tokens || 0\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'PARSE_ERROR', message: e.message }\n    }\n  }];\n}"
+      },
+      "id": "extract-direct",
+      "name": "Extract Direct",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        400
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "output-structured",
+      "name": "Output Structured",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        280
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "output-fallback",
+      "name": "Output Fallback",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        100
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "output-direct",
+      "name": "Output Direct",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Needs Structured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Structured?": {
+      "main": [
+        [
+          {
+            "node": "Claude Structured",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Claude Direct",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Structured": {
+      "main": [
+        [
+          {
+            "node": "Extract Structured",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Structured": {
+      "main": [
+        [
+          {
+            "node": "Needs Fallback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Fallback?": {
+      "main": [
+        [
+          {
+            "node": "Claude Fallback Direct",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Output Structured",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Fallback Direct": {
+      "main": [
+        [
+          {
+            "node": "Extract Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Fallback": {
+      "main": [
+        [
+          {
+            "node": "Output Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Direct": {
+      "main": [
+        [
+          {
+            "node": "Extract Direct",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Direct": {
+      "main": [
+        [
+          {
+            "node": "Output Direct",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [],
+  "active": true
+}

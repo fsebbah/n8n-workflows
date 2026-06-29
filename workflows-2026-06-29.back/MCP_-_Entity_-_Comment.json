@@ -1,0 +1,1406 @@
+{
+  "updatedAt": "2026-03-30T16:00:17.666Z",
+  "createdAt": "2026-03-30T16:00:04.151Z",
+  "id": "d2D9fEeQ8zYuVHA6",
+  "name": "MCP - Entity - Comment",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - Entity - Comment\n\n**Endpoint:** POST /webhook/entity-comment\n\n**Description:** Manages comments on entities (recipes, documents, courses, etc.) stored in PostgreSQL.\n\n**InputSchema:**\n```json\n{\n  \"type\": \"object\",\n  \"required\": [\"action\", \"entity_id\", \"user_id\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"comment\", \"list\", \"edit\", \"delete\"], \"description\": \"Action CRUD\" },\n    \"entity_id\": { \"type\": \"string\", \"description\": \"UUID de l'entite\" },\n    \"entity_type\": { \"type\": \"string\", \"description\": \"Type d'entite: recipe, document, course, etc.\" },\n    \"user_id\": { \"type\": \"string\", \"description\": \"Discord user ID\" },\n    \"content\": { \"type\": \"string\", \"description\": \"Contenu du commentaire (requis pour comment/edit)\" },\n    \"comment_id\": { \"type\": \"string\", \"description\": \"UUID du commentaire (requis pour edit/delete)\" },\n    \"parent_id\": { \"type\": \"string\", \"description\": \"UUID du commentaire parent (pour reponses)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Discord guild ID (optionnel)\" },\n    \"limit\": { \"type\": \"integer\", \"default\": 20, \"description\": \"Nombre max de commentaires (pour action=list)\" },\n    \"offset\": { \"type\": \"integer\", \"default\": 0, \"description\": \"Pagination offset (pour action=list)\" }\n  }\n}\n```\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"comment_id\", \"comments\", \"created_at\", \"updated_at\"],\n  \"domain\": \"entity\"\n}\n```",
+        "height": 700,
+        "width": 420,
+        "color": 5
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        60,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "entity-comment",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-entity-comment",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        300,
+        400
+      ],
+      "webhookId": "entity-comment-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Entity Comment\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\nconst startTime = Date.now();\n\n// --- Get tenant_id from header or body ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || body.tenant_id || ctx.tenant_id || null;\n\n// --- Backend API configuration ---\nconst backendApiUrl = body.backend_api_url || ctx.backend_api_url || null;\nconst backendServiceToken = body.backend_service_token || ctx.backend_service_token || null;\n\n// --- Required fields ---\nconst action = (body.action || ctx.action || '').toLowerCase();\nconst validActions = ['comment', 'list', 'edit', 'delete'];\nif (!action || !validActions.includes(action)) {\n  errors.push(`action invalide: '${action}' (doit etre: ${validActions.join(', ')})`);\n}\n\nconst entityId = body.entity_id || ctx.entity_id || '';\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nif (!entityId) {\n  errors.push('entity_id requis');\n} else if (!uuidRegex.test(entityId)) {\n  errors.push('entity_id invalide (format UUID requis)');\n}\n\nconst userId = body.user_id || ctx.user_id || '';\nif (!userId || userId.trim().length === 0) {\n  errors.push('user_id requis');\n}\n\n// --- Optional fields ---\nconst entityType = body.entity_type || ctx.entity_type || '';\nconst validEntityTypes = ['recipe', 'document', 'course', 'quiz', 'flashcard'];\nif (entityType && !validEntityTypes.includes(entityType)) {\n  errors.push(`entity_type invalide: '${entityType}' (doit etre: ${validEntityTypes.join(', ')})`);\n}\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst content = body.content || ctx.content || '';\nconst commentId = body.comment_id || ctx.comment_id || '';\nconst parentId = body.parent_id || ctx.parent_id || null;\nconst limit = parseInt(body.limit || ctx.limit || 20);\nconst offset = parseInt(body.offset || ctx.offset || 0);\n\n// --- Conditional validations based on action ---\nif ((action === 'comment' || action === 'edit') && (!content || content.trim().length === 0)) {\n  errors.push('content requis pour action=' + action);\n}\n\nif ((action === 'edit' || action === 'delete') && !commentId) {\n  errors.push('comment_id requis pour action=' + action);\n} else if ((action === 'edit' || action === 'delete') && commentId && !uuidRegex.test(commentId)) {\n  errors.push('comment_id invalide (format UUID requis)');\n}\n\nif (parentId && !uuidRegex.test(parentId)) {\n  errors.push('parent_id invalide (format UUID requis)');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId || null,\n    guild_id: guildId,\n    startTime: startTime\n  };\n}\n\nreturn {\n  valid: true,\n  action: action,\n  entity_id: entityId,\n  entity_type: entityType,\n  user_id: userId.trim(),\n  guild_id: guildId,\n  content: content.trim(),\n  comment_id: commentId || null,\n  parent_id: parentId,\n  tenant_id: tenantId,\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken,\n  limit: limit,\n  offset: offset,\n  startTime: startTime\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        740,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\nconst startTime = input.startTime || Date.now();\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'postgresql',\n    mode: 'error',\n    latency_ms: Date.now() - startTime,\n    user_id: input.user_id,\n    guild_id: input.guild_id\n  }\n};"
+      },
+      "id": "build-validation-error",
+      "name": "Build Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1180,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "comment",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "comment",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "list",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "list",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "edit",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "edit",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "delete",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "delete",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "id": "switch-action",
+      "name": "Switch Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id || '' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ action: 'comment', user_id: $json.user_id, guild_id: $json.guild_id, content: $json.content, parent_id: $json.parent_id }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "api-create-comment",
+      "name": "API Create Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comments",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "={{ $json.limit }}"
+            },
+            {
+              "name": "offset",
+              "value": "={{ $json.offset }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id || '' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "api-list-comments",
+      "name": "API List Comments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id || '' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ action: 'edit', user_id: $json.user_id, comment_id: $json.comment_id, content: $json.content }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "api-edit-comment",
+      "name": "API Edit Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        360
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id || '' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ action: 'delete', user_id: $json.user_id, comment_id: $json.comment_id }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "api-delete-comment",
+      "name": "API Delete Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        500
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT CREATE COMMENT RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latency = Date.now() - startTime;\n\n// Handle API errors\nconst statusCode = input.statusCode || 200;\nconst body = input.body || input;\n\nif (statusCode >= 400 || body.error || body.detail) {\n  return {\n    success: false,\n    error: {\n      code: 'API_ERROR',\n      message: body.error?.message || body.detail || 'Failed to create comment',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    _trace: {\n      service_response: body,\n      provider: 'postgresql',\n      action: 'comment',\n      latency_ms: latency,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id\n    }\n  };\n}\n\n// Success response\nreturn {\n  success: true,\n  data: {\n    comment_id: body.comment_id || body.id,\n    entity_id: prevData.entity_id,\n    content: prevData.content,\n    user_id: prevData.user_id,\n    created_at: body.created_at || new Date().toISOString()\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  _trace: {\n    service_response: body,\n    provider: 'postgresql',\n    action: 'comment',\n    entity_type: prevData.entity_type,\n    entity_id: prevData.entity_id,\n    latency_ms: latency,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+      },
+      "id": "format-create-response",
+      "name": "Format Create Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT LIST COMMENTS RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latency = Date.now() - startTime;\n\n// Handle API errors\nconst statusCode = input.statusCode || 200;\nconst body = input.body || input;\n\nif (statusCode >= 400 || body.error || body.detail) {\n  return {\n    success: false,\n    error: {\n      code: 'API_ERROR',\n      message: body.error?.message || body.detail || 'Failed to list comments',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    _trace: {\n      service_response: body,\n      provider: 'postgresql',\n      action: 'list',\n      latency_ms: latency,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id\n    }\n  };\n}\n\n// Extract comments array\nconst comments = body.comments || body.data || (Array.isArray(body) ? body : []);\nconst total = body.total || body.count || comments.length;\n\n// Success response\nreturn {\n  success: true,\n  data: {\n    comments: comments,\n    total: total\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  _trace: {\n    service_response: { comments_count: comments.length, total: total },\n    provider: 'postgresql',\n    action: 'list',\n    entity_type: prevData.entity_type,\n    entity_id: prevData.entity_id,\n    pagination: { limit: prevData.limit, offset: prevData.offset },\n    latency_ms: latency,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+      },
+      "id": "format-list-response",
+      "name": "Format List Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT EDIT COMMENT RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latency = Date.now() - startTime;\n\n// Handle API errors\nconst statusCode = input.statusCode || 200;\nconst body = input.body || input;\n\nif (statusCode >= 400 || body.error || body.detail) {\n  return {\n    success: false,\n    error: {\n      code: 'API_ERROR',\n      message: body.error?.message || body.detail || 'Failed to edit comment',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    _trace: {\n      service_response: body,\n      provider: 'postgresql',\n      action: 'edit',\n      latency_ms: latency,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id\n    }\n  };\n}\n\n// Success response\nreturn {\n  success: true,\n  data: {\n    comment_id: prevData.comment_id,\n    content: prevData.content,\n    updated_at: body.updated_at || new Date().toISOString()\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  _trace: {\n    service_response: body,\n    provider: 'postgresql',\n    action: 'edit',\n    entity_type: prevData.entity_type,\n    entity_id: prevData.entity_id,\n    comment_id: prevData.comment_id,\n    latency_ms: latency,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+      },
+      "id": "format-edit-response",
+      "name": "Format Edit Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT DELETE COMMENT RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latency = Date.now() - startTime;\n\n// Handle API errors\nconst statusCode = input.statusCode || 200;\nconst body = input.body || input;\n\nif (statusCode >= 400 || body.error || body.detail) {\n  return {\n    success: false,\n    error: {\n      code: 'API_ERROR',\n      message: body.error?.message || body.detail || 'Failed to delete comment',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    _trace: {\n      service_response: body,\n      provider: 'postgresql',\n      action: 'delete',\n      latency_ms: latency,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id\n    }\n  };\n}\n\n// Success response\nreturn {\n  success: true,\n  data: {\n    deleted: true,\n    comment_id: prevData.comment_id\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  _trace: {\n    service_response: body,\n    provider: 'postgresql',\n    action: 'delete',\n    entity_type: prevData.entity_type,\n    entity_id: prevData.entity_id,\n    comment_id: prevData.comment_id,\n    latency_ms: latency,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+      },
+      "id": "format-delete-response",
+      "name": "Format Delete Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1680,
+        280
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Switch Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Action": {
+      "main": [
+        [
+          {
+            "node": "API Create Comment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "API List Comments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "API Edit Comment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "API Delete Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Create Comment": {
+      "main": [
+        [
+          {
+            "node": "Format Create Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API List Comments": {
+      "main": [
+        [
+          {
+            "node": "Format List Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Edit Comment": {
+      "main": [
+        [
+          {
+            "node": "Format Edit Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Delete Comment": {
+      "main": [
+        [
+          {
+            "node": "Format Delete Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Create Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format List Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Edit Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Delete Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "7969be56-ce9e-460f-abbb-75718eada26b",
+  "activeVersionId": "7969be56-ce9e-460f-abbb-75718eada26b",
+  "versionCounter": 6,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-30T16:00:04.151Z",
+      "createdAt": "2026-03-30T16:00:04.151Z",
+      "role": "workflow:owner",
+      "workflowId": "d2D9fEeQ8zYuVHA6",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-30T16:00:04.176Z",
+    "createdAt": "2026-03-30T16:00:04.176Z",
+    "versionId": "7969be56-ce9e-460f-abbb-75718eada26b",
+    "workflowId": "d2D9fEeQ8zYuVHA6",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## MCP - Entity - Comment\n\n**Endpoint:** POST /webhook/entity-comment\n\n**Description:** Manages comments on entities (recipes, documents, courses, etc.) stored in PostgreSQL.\n\n**InputSchema:**\n```json\n{\n  \"type\": \"object\",\n  \"required\": [\"action\", \"entity_id\", \"user_id\"],\n  \"properties\": {\n    \"action\": { \"type\": \"string\", \"enum\": [\"comment\", \"list\", \"edit\", \"delete\"], \"description\": \"Action CRUD\" },\n    \"entity_id\": { \"type\": \"string\", \"description\": \"UUID de l'entite\" },\n    \"entity_type\": { \"type\": \"string\", \"description\": \"Type d'entite: recipe, document, course, etc.\" },\n    \"user_id\": { \"type\": \"string\", \"description\": \"Discord user ID\" },\n    \"content\": { \"type\": \"string\", \"description\": \"Contenu du commentaire (requis pour comment/edit)\" },\n    \"comment_id\": { \"type\": \"string\", \"description\": \"UUID du commentaire (requis pour edit/delete)\" },\n    \"parent_id\": { \"type\": \"string\", \"description\": \"UUID du commentaire parent (pour reponses)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Discord guild ID (optionnel)\" },\n    \"limit\": { \"type\": \"integer\", \"default\": 20, \"description\": \"Nombre max de commentaires (pour action=list)\" },\n    \"offset\": { \"type\": \"integer\", \"default\": 0, \"description\": \"Pagination offset (pour action=list)\" }\n  }\n}\n```\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"comment_id\", \"comments\", \"created_at\", \"updated_at\"],\n  \"domain\": \"entity\"\n}\n```",
+          "height": 700,
+          "width": 420,
+          "color": 5
+        },
+        "id": "doc-sticky",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          60,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "entity-comment",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-entity-comment",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          300,
+          400
+        ],
+        "webhookId": "entity-comment-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT - Entity Comment\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\nconst startTime = Date.now();\n\n// --- Get tenant_id from header or body ---\nconst tenantId = headers['x-tenant-id'] || headers['X-Tenant-ID'] || body.tenant_id || ctx.tenant_id || null;\n\n// --- Backend API configuration ---\nconst backendApiUrl = body.backend_api_url || ctx.backend_api_url || null;\nconst backendServiceToken = body.backend_service_token || ctx.backend_service_token || null;\n\n// --- Required fields ---\nconst action = (body.action || ctx.action || '').toLowerCase();\nconst validActions = ['comment', 'list', 'edit', 'delete'];\nif (!action || !validActions.includes(action)) {\n  errors.push(`action invalide: '${action}' (doit etre: ${validActions.join(', ')})`);\n}\n\nconst entityId = body.entity_id || ctx.entity_id || '';\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nif (!entityId) {\n  errors.push('entity_id requis');\n} else if (!uuidRegex.test(entityId)) {\n  errors.push('entity_id invalide (format UUID requis)');\n}\n\nconst userId = body.user_id || ctx.user_id || '';\nif (!userId || userId.trim().length === 0) {\n  errors.push('user_id requis');\n}\n\n// --- Optional fields ---\nconst entityType = body.entity_type || ctx.entity_type || '';\nconst validEntityTypes = ['recipe', 'document', 'course', 'quiz', 'flashcard'];\nif (entityType && !validEntityTypes.includes(entityType)) {\n  errors.push(`entity_type invalide: '${entityType}' (doit etre: ${validEntityTypes.join(', ')})`);\n}\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst content = body.content || ctx.content || '';\nconst commentId = body.comment_id || ctx.comment_id || '';\nconst parentId = body.parent_id || ctx.parent_id || null;\nconst limit = parseInt(body.limit || ctx.limit || 20);\nconst offset = parseInt(body.offset || ctx.offset || 0);\n\n// --- Conditional validations based on action ---\nif ((action === 'comment' || action === 'edit') && (!content || content.trim().length === 0)) {\n  errors.push('content requis pour action=' + action);\n}\n\nif ((action === 'edit' || action === 'delete') && !commentId) {\n  errors.push('comment_id requis pour action=' + action);\n} else if ((action === 'edit' || action === 'delete') && commentId && !uuidRegex.test(commentId)) {\n  errors.push('comment_id invalide (format UUID requis)');\n}\n\nif (parentId && !uuidRegex.test(parentId)) {\n  errors.push('parent_id invalide (format UUID requis)');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId || null,\n    guild_id: guildId,\n    startTime: startTime\n  };\n}\n\nreturn {\n  valid: true,\n  action: action,\n  entity_id: entityId,\n  entity_type: entityType,\n  user_id: userId.trim(),\n  guild_id: guildId,\n  content: content.trim(),\n  comment_id: commentId || null,\n  parent_id: parentId,\n  tenant_id: tenantId,\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken,\n  limit: limit,\n  offset: offset,\n  startTime: startTime\n};"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          520,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          740,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\nconst startTime = input.startTime || Date.now();\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'postgresql',\n    mode: 'error',\n    latency_ms: Date.now() - startTime,\n    user_id: input.user_id,\n    guild_id: input.guild_id\n  }\n};"
+        },
+        "id": "build-validation-error",
+        "name": "Build Validation Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          960,
+          560
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-validation-error",
+        "name": "Respond 400",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1180,
+          560
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "outputKey": "comment",
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.action }}",
+                      "rightValue": "comment",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true
+              },
+              {
+                "outputKey": "list",
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.action }}",
+                      "rightValue": "list",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true
+              },
+              {
+                "outputKey": "edit",
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.action }}",
+                      "rightValue": "edit",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true
+              },
+              {
+                "outputKey": "delete",
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.action }}",
+                      "rightValue": "delete",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "none"
+          }
+        },
+        "id": "switch-action",
+        "name": "Switch Action",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.2,
+        "position": [
+          960,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-Service-Token",
+                "value": "={{ $json.backend_service_token }}"
+              },
+              {
+                "name": "X-Tenant-ID",
+                "value": "={{ $json.tenant_id || '' }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ action: 'comment', user_id: $json.user_id, guild_id: $json.guild_id, content: $json.content, parent_id: $json.parent_id }) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true
+              }
+            },
+            "timeout": 30000
+          }
+        },
+        "id": "api-create-comment",
+        "name": "API Create Comment",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1200,
+          80
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comments",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "limit",
+                "value": "={{ $json.limit }}"
+              },
+              {
+                "name": "offset",
+                "value": "={{ $json.offset }}"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-Service-Token",
+                "value": "={{ $json.backend_service_token }}"
+              },
+              {
+                "name": "X-Tenant-ID",
+                "value": "={{ $json.tenant_id || '' }}"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true
+              }
+            },
+            "timeout": 30000
+          }
+        },
+        "id": "api-list-comments",
+        "name": "API List Comments",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1200,
+          220
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-Service-Token",
+                "value": "={{ $json.backend_service_token }}"
+              },
+              {
+                "name": "X-Tenant-ID",
+                "value": "={{ $json.tenant_id || '' }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ action: 'edit', user_id: $json.user_id, comment_id: $json.comment_id, content: $json.content }) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true
+              }
+            },
+            "timeout": 30000
+          }
+        },
+        "id": "api-edit-comment",
+        "name": "API Edit Comment",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1200,
+          360
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.backend_api_url }}/api/n8n/entities/{{ $json.entity_type }}/{{ $json.entity_id }}/comment",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-Service-Token",
+                "value": "={{ $json.backend_service_token }}"
+              },
+              {
+                "name": "X-Tenant-ID",
+                "value": "={{ $json.tenant_id || '' }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ action: 'delete', user_id: $json.user_id, comment_id: $json.comment_id }) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true,
+                "neverError": true
+              }
+            },
+            "timeout": 30000
+          }
+        },
+        "id": "api-delete-comment",
+        "name": "API Delete Comment",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1200,
+          500
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT CREATE COMMENT RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latency = Date.now() - startTime;\n\n// Handle API errors\nconst statusCode = input.statusCode || 200;\nconst body = input.body || input;\n\nif (statusCode >= 400 || body.error || body.detail) {\n  return {\n    success: false,\n    error: {\n      code: 'API_ERROR',\n      message: body.error?.message || body.detail || 'Failed to create comment',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    _trace: {\n      service_response: body,\n      provider: 'postgresql',\n      action: 'comment',\n      latency_ms: latency,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id\n    }\n  };\n}\n\n// Success response\nreturn {\n  success: true,\n  data: {\n    comment_id: body.comment_id || body.id,\n    entity_id: prevData.entity_id,\n    content: prevData.content,\n    user_id: prevData.user_id,\n    created_at: body.created_at || new Date().toISOString()\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  _trace: {\n    service_response: body,\n    provider: 'postgresql',\n    action: 'comment',\n    entity_type: prevData.entity_type,\n    entity_id: prevData.entity_id,\n    latency_ms: latency,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+        },
+        "id": "format-create-response",
+        "name": "Format Create Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1440,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT LIST COMMENTS RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latency = Date.now() - startTime;\n\n// Handle API errors\nconst statusCode = input.statusCode || 200;\nconst body = input.body || input;\n\nif (statusCode >= 400 || body.error || body.detail) {\n  return {\n    success: false,\n    error: {\n      code: 'API_ERROR',\n      message: body.error?.message || body.detail || 'Failed to list comments',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    _trace: {\n      service_response: body,\n      provider: 'postgresql',\n      action: 'list',\n      latency_ms: latency,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id\n    }\n  };\n}\n\n// Extract comments array\nconst comments = body.comments || body.data || (Array.isArray(body) ? body : []);\nconst total = body.total || body.count || comments.length;\n\n// Success response\nreturn {\n  success: true,\n  data: {\n    comments: comments,\n    total: total\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  _trace: {\n    service_response: { comments_count: comments.length, total: total },\n    provider: 'postgresql',\n    action: 'list',\n    entity_type: prevData.entity_type,\n    entity_id: prevData.entity_id,\n    pagination: { limit: prevData.limit, offset: prevData.offset },\n    latency_ms: latency,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+        },
+        "id": "format-list-response",
+        "name": "Format List Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1440,
+          220
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT EDIT COMMENT RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latency = Date.now() - startTime;\n\n// Handle API errors\nconst statusCode = input.statusCode || 200;\nconst body = input.body || input;\n\nif (statusCode >= 400 || body.error || body.detail) {\n  return {\n    success: false,\n    error: {\n      code: 'API_ERROR',\n      message: body.error?.message || body.detail || 'Failed to edit comment',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    _trace: {\n      service_response: body,\n      provider: 'postgresql',\n      action: 'edit',\n      latency_ms: latency,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id\n    }\n  };\n}\n\n// Success response\nreturn {\n  success: true,\n  data: {\n    comment_id: prevData.comment_id,\n    content: prevData.content,\n    updated_at: body.updated_at || new Date().toISOString()\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  _trace: {\n    service_response: body,\n    provider: 'postgresql',\n    action: 'edit',\n    entity_type: prevData.entity_type,\n    entity_id: prevData.entity_id,\n    comment_id: prevData.comment_id,\n    latency_ms: latency,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+        },
+        "id": "format-edit-response",
+        "name": "Format Edit Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1440,
+          360
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT DELETE COMMENT RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latency = Date.now() - startTime;\n\n// Handle API errors\nconst statusCode = input.statusCode || 200;\nconst body = input.body || input;\n\nif (statusCode >= 400 || body.error || body.detail) {\n  return {\n    success: false,\n    error: {\n      code: 'API_ERROR',\n      message: body.error?.message || body.detail || 'Failed to delete comment',\n      http_status: statusCode >= 400 ? statusCode : 500\n    },\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id,\n    _trace: {\n      service_response: body,\n      provider: 'postgresql',\n      action: 'delete',\n      latency_ms: latency,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id\n    }\n  };\n}\n\n// Success response\nreturn {\n  success: true,\n  data: {\n    deleted: true,\n    comment_id: prevData.comment_id\n  },\n  user_id: prevData.user_id,\n  guild_id: prevData.guild_id,\n  _trace: {\n    service_response: body,\n    provider: 'postgresql',\n    action: 'delete',\n    entity_type: prevData.entity_type,\n    entity_id: prevData.entity_id,\n    comment_id: prevData.comment_id,\n    latency_ms: latency,\n    user_id: prevData.user_id,\n    guild_id: prevData.guild_id\n  }\n};"
+        },
+        "id": "format-delete-response",
+        "name": "Format Delete Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1440,
+          500
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1680,
+          280
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Switch Action",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Respond 400",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch Action": {
+        "main": [
+          [
+            {
+              "node": "API Create Comment",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "API List Comments",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "API Edit Comment",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "API Delete Comment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "API Create Comment": {
+        "main": [
+          [
+            {
+              "node": "Format Create Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "API List Comments": {
+        "main": [
+          [
+            {
+              "node": "Format List Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "API Edit Comment": {
+        "main": [
+          [
+            {
+              "node": "Format Edit Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "API Delete Comment": {
+        "main": [
+          [
+            {
+              "node": "Format Delete Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Create Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format List Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Edit Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Delete Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

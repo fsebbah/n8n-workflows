@@ -1,0 +1,237 @@
+{
+  "name": "Torah Corpus Traites",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Corpus Traites\n\n**Endpoint:** GET /webhook/torah-corpus-traites\n\n**Query:**\n- `corpus`: Nom du corpus (ex: Bavli)\n- `seder`: Nom du seder (ex: Zeraim)\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"corpus\": \"Bavli\",\n  \"seder\": \"Zeraim\",\n  \"traites\": [\n    {\n      \"id\": \"uuid\",\n      \"name\": \"Berakhot\",\n      \"pages\": [\"2a\", \"2b\", ...],\n      \"pages_count\": 127\n    }\n  ],\n  \"count\": 1\n}\n```\n\n**Erreur 404:** Corpus ou seder non trouve",
+        "height": 450,
+        "width": 320,
+        "color": 5
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "path": "torah-corpus-traites",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ],
+      "webhookId": "torah-corpus-traites"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and validate parameters\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst corpus = query.corpus || null;\nconst seder = query.seder || null;\n\n// Validation\nconst errors = [];\nif (!corpus) errors.push('Le parametre \"corpus\" est requis');\nif (!seder) errors.push('Le parametre \"seder\" est requis');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    corpus: corpus,\n    seder: seder\n  }\n}];"
+      },
+      "id": "parse-params",
+      "name": "Parse Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        620,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/corpus/{{ encodeURIComponent($json.corpus) }}/sedarim/{{ encodeURIComponent($json.seder) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "get-traites-api",
+      "name": "Get Traites (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1060,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format API response\nconst input = $input.first().json;\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// 404 - Corpus or seder not found\nif (statusCode === 404) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 404,\n        message: data.detail?.message || data.detail || 'Corpus ou seder non trouve',\n        status: 'NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Other API error\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.detail?.message || data.message || 'Erreur API',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Success response\nreturn [{\n  json: {\n    success: true,\n    ...data\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error ? ($json.error.code || 500) : 200 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1500,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1060,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Parameters": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Traites (API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Traites (API)": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": []
+}

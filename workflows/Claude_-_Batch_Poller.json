@@ -1,11 +1,10 @@
 {
   "name": "Claude - Batch Poller",
-  "description": "V\u00e9rifie les batches Anthropic en attente et envoie les r\u00e9sultats via callback",
   "active": true,
   "nodes": [
     {
       "parameters": {
-        "content": "## Claude - Batch Poller\n\n**Trigger:** Cron toutes les 30 secondes\n\n**Description:** V\u00e9rifie les batches Anthropic en attente dans Redis.\nQuand un batch est termin\u00e9, extrait les r\u00e9sultats et les envoie au callback_url.\n\n**Flow:**\n1. R\u00e9cup\u00e8re les batches pending depuis Redis\n2. Pour chaque batch, v\u00e9rifie le statut via Anthropic API\n3. Si `ended` \u2192 r\u00e9cup\u00e8re les r\u00e9sultats\n4. Extrait les fichiers g\u00e9n\u00e9r\u00e9s\n5. **Import B2** : Si fichiers pr\u00e9sents, appelle chat.api pour stockage B2\n6. Envoie les r\u00e9sultats au callback_url (Redis stream)\n7. Supprime du stream pending\n\n**Streams Redis:**\n- `llm:batches:pending` - Batches en attente\n- `llm:batches:completed` - Historique des batches termin\u00e9s\n\n**Env requises pour B2:**\n- `CHAT_API_BASE_URL` - URL de chat.api\n- `SERVICE_TOKEN_{TENANT_ID}` - Token par tenant",
+        "content": "## Claude - Batch Poller\n\n**Trigger:** Cron toutes les 30 secondes\n\n**Description:** Vérifie les batches Anthropic en attente dans Redis.\nQuand un batch est terminé, extrait les résultats et les envoie au callback_url.\n\n**Flow:**\n1. Récupère les batches pending depuis Redis\n2. Pour chaque batch, vérifie le statut via Anthropic API\n3. Si `ended` → récupère les résultats\n4. Extrait les fichiers générés\n5. Envoie les résultats au callback_url\n6. Supprime du stream pending\n\n**Streams Redis:**\n- `llm:batches:pending` - Batches en attente\n- `llm:batches:completed` - Historique des batches terminés",
         "height": 420,
         "width": 400,
         "color": 5
@@ -225,19 +224,6 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// IMPORT FILES TO B2 VIA CHAT.API\n// Pattern C-bis: n8n → chat.api → (Anthropic GET → B2 PUT)\n// Doc: docs/guides/n8n-backblaze-documents.md §8\n// ============================================\n\nconst input = $input.first().json;\n\n// If no files or not successful, pass through unchanged\nif (!input.success || !input.has_files || !input.files?.length) {\n  return input;\n}\n\n// Get traceability keys from metadata (§8.7)\nconst metadata = input.metadata || {};\nconst tenant_id = metadata.tenant_id;\nconst user_id = metadata.user_id;\nconst message_id = metadata.message_id;\n\n// Validate required keys\nif (!tenant_id || !user_id || !message_id) {\n  console.log('[WARN] Missing traceability keys for B2 import:', { tenant_id, user_id, message_id });\n  return {\n    ...input,\n    _b2_import: {\n      status: 'skipped',\n      reason: 'missing_traceability_keys',\n      missing: { tenant_id: !tenant_id, user_id: !user_id, message_id: !message_id }\n    }\n  };\n}\n\n// Get service token for tenant (env: SERVICE_TOKEN_{TENANT_ID})\nconst serviceToken = $env[`SERVICE_TOKEN_${tenant_id}`];\nif (!serviceToken) {\n  console.log(`[WARN] No service token found for tenant: ${tenant_id}`);\n  return {\n    ...input,\n    _b2_import: {\n      status: 'skipped',\n      reason: 'no_service_token',\n      tenant_id: tenant_id\n    }\n  };\n}\n\n// API base URL\nconst apiBaseUrl = $env.CHAT_API_BASE_URL || 'http://localhost:8080';\n\n// Import each file to B2\nconst importedFiles = [];\nconst importErrors = [];\n\nfor (const file of input.files) {\n  if (!file.file_id) {\n    importErrors.push({ error: 'missing_file_id', file });\n    continue;\n  }\n  \n  try {\n    const response = await fetch(`${apiBaseUrl}/api/n8n/files/import-from-anthropic`, {\n      method: 'POST',\n      headers: {\n        'Content-Type': 'application/json',\n        'X-Service-Token': serviceToken\n      },\n      body: JSON.stringify({\n        anthropic_file_id: file.file_id,\n        user_id: user_id,\n        message_id: message_id,\n        filename: file.filename,\n        mime_type: file.mime_type\n      })\n    });\n    \n    if (!response.ok) {\n      throw new Error(`API error: ${response.status} ${response.statusText}`);\n    }\n    \n    const data = await response.json();\n    \n    importedFiles.push({\n      anthropic_file_id: file.file_id,\n      original_filename: file.filename,\n      mime_type: file.mime_type,\n      size_bytes: file.size_bytes,\n      // B2 enriched data from chat.api\n      b2_file_id: data.file_id,\n      b2_file_key: data.b2_file_key,\n      download_url: data.download_url,\n      expires_at: data.expires_at\n    });\n  } catch (error) {\n    console.log(`[ERROR] B2 import failed for file ${file.file_id}:`, error.message);\n    importErrors.push({\n      file_id: file.file_id,\n      filename: file.filename,\n      error: error.message\n    });\n    // Keep original file info with error flag\n    importedFiles.push({\n      ...file,\n      b2_import_error: error.message\n    });\n  }\n}\n\nreturn {\n  ...input,\n  files: importedFiles,\n  _b2_import: {\n    status: importErrors.length === 0 ? 'success' : (importedFiles.some(f => !f.b2_import_error) ? 'partial' : 'failed'),\n    imported_count: importedFiles.filter(f => f.b2_file_id).length,\n    total_files: input.files.length,\n    errors: importErrors.length > 0 ? importErrors : undefined\n  }\n};"
-      },
-      "id": "import-files-to-b2",
-      "name": "Import Files to B2",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2240,
-        180
-      ]
-    },
-    {
-      "parameters": {
         "method": "POST",
         "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/xadd",
         "authentication": "none",
@@ -262,7 +248,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2460,
+        2240,
         180
       ],
       "onError": "continueRegularOutput"
@@ -280,7 +266,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2680,
+        2460,
         180
       ],
       "onError": "continueRegularOutput"
@@ -315,7 +301,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2900,
+        2680,
         180
       ],
       "onError": "continueRegularOutput"
@@ -435,17 +421,6 @@
       "main": [
         [
           {
-            "node": "Import Files to B2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Import Files to B2": {
-      "main": [
-        [
-          {
             "node": "Publish to Redis",
             "type": "main",
             "index": 0
@@ -478,14 +453,478 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
-  "staticData": null,
-  "tags": [
-    "llm",
-    "anthropic",
-    "batch",
-    "poller",
-    "async"
-  ]
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-05-20T19:15:10.209Z",
+    "createdAt": "2026-05-20T19:15:10.209Z",
+    "versionId": "bf1a3304-2f14-491e-b36f-5fe328d008cf",
+    "workflowId": "w3oFOs64JZ9qjLtY",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Claude - Batch Poller\n\n**Trigger:** Cron toutes les 30 secondes\n\n**Description:** Vérifie les batches Anthropic en attente dans Redis.\nQuand un batch est terminé, extrait les résultats et les envoie au callback_url.\n\n**Flow:**\n1. Récupère les batches pending depuis Redis\n2. Pour chaque batch, vérifie le statut via Anthropic API\n3. Si `ended` → récupère les résultats\n4. Extrait les fichiers générés\n5. Envoie les résultats au callback_url\n6. Supprime du stream pending\n\n**Streams Redis:**\n- `llm:batches:pending` - Batches en attente\n- `llm:batches:completed` - Historique des batches terminés",
+          "height": 420,
+          "width": 400,
+          "color": 5
+        },
+        "id": "doc-sticky",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          40,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "seconds",
+                "secondsInterval": 30
+              }
+            ]
+          }
+        },
+        "id": "cron-trigger",
+        "name": "Every 30s",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          260,
+          340
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/batches/pending",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "get-pending-batches",
+        "name": "Get Pending Batches",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          480,
+          340
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "has-batches",
+                "leftValue": "={{ $json.count }}",
+                "rightValue": 0,
+                "operator": {
+                  "type": "number",
+                  "operation": "gt"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-has-batches",
+        "name": "Has Batches?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          700,
+          340
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Split batches into individual items for processing\nconst batches = $json.batches || [];\nreturn batches.map(batch => ({ json: batch }));"
+        },
+        "id": "split-batches",
+        "name": "Split Batches",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          920,
+          260
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.anthropic.com/v1/messages/batches/{{ $json.batch_id }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $json.api_key }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "check-batch-status",
+        "name": "Check Batch Status",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1140,
+          260
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// MERGE BATCH INFO WITH STATUS\n// Mode Redis: utilise redis_channel pour notification\n// ============================================\n\nconst statusResponse = $input.first().json;\nconst batchInfo = $('Split Batches').first().json;\n\n// Parse metadata si c'est une string JSON\nlet metadata = batchInfo.metadata;\nif (typeof metadata === 'string') {\n  try { metadata = JSON.parse(metadata); } catch(e) { metadata = {}; }\n}\n\nreturn {\n  // Original batch info from Redis\n  redis_id: batchInfo.redis_id,\n  batch_id: batchInfo.batch_id,\n  correlation_id: batchInfo.correlation_id,\n  redis_channel: batchInfo.redis_channel || metadata?.redis_channel || 'llm:results:stream',\n  api_key: batchInfo.api_key,\n  model: batchInfo.model,\n  metadata: metadata,\n  submitted_at: batchInfo.submitted_at,\n  \n  // Status from Anthropic\n  processing_status: statusResponse.processing_status,\n  request_counts: statusResponse.request_counts,\n  results_url: statusResponse.results_url,\n  ended_at: statusResponse.ended_at,\n  created_at: statusResponse.created_at,\n  expires_at: statusResponse.expires_at,\n  \n  // Error handling\n  has_error: !!statusResponse.error,\n  error: statusResponse.error\n};"
+        },
+        "id": "merge-batch-info",
+        "name": "Merge Info",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1360,
+          260
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-ended",
+                "leftValue": "={{ $json.processing_status }}",
+                "rightValue": "ended",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-ended",
+        "name": "Batch Ended?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1580,
+          260
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $json.results_url }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $json.api_key }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "get-batch-results",
+        "name": "Get Results",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1800,
+          180
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PROCESS BATCH RESULTS - Extract files and text\n// FIX: Handle data as JSON string\n// FIX: Extract files from bash_code_execution_tool_result\n// ============================================\n\nconst resultsRaw = $input.first().json;\nconst batchInfo = $('Merge Info').first().json;\n\n// Handle undefined/null input\nif (!resultsRaw) {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    redis_id: batchInfo.redis_id,\n    error: { code: 'NO_RESULTS', message: 'Results response was empty' },\n    metadata: batchInfo.metadata\n  };\n}\n\n// Parse results - handle various formats\nlet results = [];\n\n// Case 1: resultsRaw.data is a JSON string (JSONL format from Anthropic)\nif (resultsRaw.data && typeof resultsRaw.data === 'string') {\n  results = resultsRaw.data.split('\\n').filter(line => line.trim()).map(line => JSON.parse(line));\n}\n// Case 2: resultsRaw itself is a string\nelse if (typeof resultsRaw === 'string') {\n  results = resultsRaw.split('\\n').filter(line => line.trim()).map(line => JSON.parse(line));\n}\n// Case 3: resultsRaw.data is an array\nelse if (resultsRaw.data && Array.isArray(resultsRaw.data)) {\n  results = resultsRaw.data;\n}\n// Case 4: resultsRaw is an array\nelse if (Array.isArray(resultsRaw)) {\n  results = resultsRaw;\n}\n// Case 5: resultsRaw has custom_id directly (single result)\nelse if (resultsRaw.custom_id) {\n  results = [resultsRaw];\n}\n// Case 6: Fallback - wrap as array\nelse {\n  results = [resultsRaw];\n}\n\n// Ensure results is an array\nif (!Array.isArray(results)) {\n  results = [];\n}\n\n// Find our result by custom_id (correlation_id)\nconst ourResult = results.find(r => r && r.custom_id === batchInfo.correlation_id);\n\nif (!ourResult) {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: {\n      code: 'RESULT_NOT_FOUND',\n      message: `No result found for custom_id: ${batchInfo.correlation_id}. Available: ${results.map(r => r?.custom_id).join(', ')}`\n    },\n    metadata: batchInfo.metadata\n  };\n}\n\n// Check result type\nconst resultType = ourResult.result?.type;\n\nif (resultType === 'errored') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: ourResult.result.error || { code: 'BATCH_ERROR', message: 'Batch processing failed' },\n    metadata: batchInfo.metadata\n  };\n}\n\nif (resultType === 'expired') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: { code: 'BATCH_EXPIRED', message: 'Batch expired before processing' },\n    metadata: batchInfo.metadata\n  };\n}\n\nif (resultType === 'canceled') {\n  return {\n    success: false,\n    batch_id: batchInfo.batch_id,\n    correlation_id: batchInfo.correlation_id,\n    callback_url: batchInfo.callback_url,\n    redis_id: batchInfo.redis_id,\n    api_key: batchInfo.api_key,\n    error: { code: 'BATCH_CANCELED', message: 'Batch was canceled' },\n    metadata: batchInfo.metadata\n  };\n}\n\n// Extract message content\nconst message = ourResult.result?.message || {};\nconst textContent = [];\nconst fileRefs = [];\n\n// Helper to guess filename from format in metadata\nconst format = batchInfo.metadata?.format || 'docx';\nconst defaultFilename = `document.${format}`;\n\nfor (const block of (message.content || [])) {\n  if (block.type === 'text') {\n    textContent.push(block.text);\n  }\n  \n  // Legacy format: tool_result with output.file_id\n  if (block.type === 'tool_result' && block.output?.file_id) {\n    fileRefs.push({\n      file_id: block.output.file_id,\n      name: block.output.name || defaultFilename,\n      mime_type: block.output.mime_type || 'application/octet-stream',\n      size: block.output.size\n    });\n  }\n  \n  // NEW: Extract files from bash_code_execution_tool_result\n  // FIX: Structure is block.content.content (nested), not block.content directly\n  // Real structure: { type: 'bash_code_execution_tool_result', content: { type: 'bash_code_execution_result', content: [...] } }\n  if (block.type === 'bash_code_execution_tool_result') {\n    const bashContent = block.content?.content;\n    if (Array.isArray(bashContent)) {\n      for (const item of bashContent) {\n        if (item.type === 'bash_code_execution_output' && item.file_id) {\n          fileRefs.push({\n            file_id: item.file_id,\n            name: item.name || defaultFilename,\n            mime_type: item.mime_type || (format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),\n            size: item.size\n          });\n        }\n      }\n    }\n  }\n  \n  // NEW: Extract files from text_editor_code_execution_tool_result\n  if (block.type === 'text_editor_code_execution_tool_result' && block.content) {\n    if (block.content.file_id) {\n      fileRefs.push({\n        file_id: block.content.file_id,\n        name: block.content.name || defaultFilename,\n        mime_type: block.content.mime_type || 'application/octet-stream',\n        size: block.content.size\n      });\n    }\n  }\n}\n\n// Check container_result for files\nif (message.container_result?.files) {\n  for (const file of message.container_result.files) {\n    fileRefs.push({\n      file_id: file.file_id,\n      name: file.name,\n      mime_type: file.mime_type,\n      size: file.size\n    });\n  }\n}\n\n// Deduplicate files by file_id (keep first occurrence)\nconst seenFileIds = new Set();\nconst uniqueFileRefs = fileRefs.filter(f => {\n  if (seenFileIds.has(f.file_id)) return false;\n  seenFileIds.add(f.file_id);\n  return true;\n});\n\n// Build file download URLs\nconst files = uniqueFileRefs.map(f => ({\n  file_id: f.file_id,\n  filename: f.name,\n  mime_type: f.mime_type,\n  size_bytes: f.size || 0,\n  download_url: `https://api.anthropic.com/v1/files/${f.file_id}/content`\n}));\n\nreturn {\n  success: true,\n  batch_id: batchInfo.batch_id,\n  correlation_id: batchInfo.correlation_id,\n  callback_url: batchInfo.callback_url,\n  redis_id: batchInfo.redis_id,\n  api_key: batchInfo.api_key,\n  \n  // Response data for callback\n  content: [{ type: 'text', text: textContent.join('\\n') }],\n  files: files,\n  has_files: files.length > 0,\n  \n  provider: 'anthropic',\n  model: message.model || batchInfo.model,\n  usage: message.usage || { input_tokens: 0, output_tokens: 0 },\n  stop_reason: message.stop_reason || 'end_turn',\n  metadata: batchInfo.metadata,\n  \n  _trace: {\n    batch_id: batchInfo.batch_id,\n    submitted_at: batchInfo.submitted_at,\n    completed_at: new Date().toISOString(),\n    files_count: files.length\n  }\n};"
+        },
+        "id": "process-results",
+        "name": "Process Results",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2020,
+          180
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/xadd",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  stream: $json.metadata?.redis_channel || 'llm:results:stream',\n  fields: {\n    event: 'batch_completed',\n    success: String($json.success),\n    correlation_id: $json.correlation_id,\n    batch_id: $json.batch_id,\n    content: JSON.stringify($json.content || []),\n    files: JSON.stringify($json.files || []),\n    provider: $json.provider || 'anthropic',\n    model: $json.model || '',\n    usage: JSON.stringify($json.usage || {}),\n    stop_reason: $json.stop_reason || '',\n    metadata: JSON.stringify($json.metadata || {}),\n    error: JSON.stringify($json.error || null),\n    completed_at: new Date().toISOString()\n  },\n  max_len: 5000\n}) }}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "send-callback",
+        "name": "Publish to Redis",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2240,
+          180
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "DELETE",
+          "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/batches/pending/{{ $('Process Results').first().json.redis_id }}",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "remove-from-pending",
+        "name": "Remove from Pending",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2460,
+          180
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/batches/completed",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "batch_id",
+                "value": "={{ $('Process Results').first().json.batch_id }}"
+              },
+              {
+                "name": "correlation_id",
+                "value": "={{ $('Process Results').first().json.correlation_id }}"
+              },
+              {
+                "name": "status",
+                "value": "={{ $('Process Results').first().json.success ? 'completed' : 'failed' }}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "store-completed",
+        "name": "Store Completed",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2680,
+          180
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Batch still processing - nothing to do\nreturn { status: 'still_processing', batch_id: $json.batch_id };"
+        },
+        "id": "still-processing",
+        "name": "Still Processing",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1800,
+          340
+        ]
+      }
+    ],
+    "connections": {
+      "Every 30s": {
+        "main": [
+          [
+            {
+              "node": "Get Pending Batches",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Pending Batches": {
+        "main": [
+          [
+            {
+              "node": "Has Batches?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Batches?": {
+        "main": [
+          [
+            {
+              "node": "Split Batches",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Split Batches": {
+        "main": [
+          [
+            {
+              "node": "Check Batch Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Batch Status": {
+        "main": [
+          [
+            {
+              "node": "Merge Info",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge Info": {
+        "main": [
+          [
+            {
+              "node": "Batch Ended?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Batch Ended?": {
+        "main": [
+          [
+            {
+              "node": "Get Results",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Still Processing",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Results": {
+        "main": [
+          [
+            {
+              "node": "Process Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Process Results": {
+        "main": [
+          [
+            {
+              "node": "Publish to Redis",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Publish to Redis": {
+        "main": [
+          [
+            {
+              "node": "Remove from Pending",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Remove from Pending": {
+        "main": [
+          [
+            {
+              "node": "Store Completed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-05-20T19:15:10.518Z",
+        "id": 84,
+        "workflowId": "w3oFOs64JZ9qjLtY",
+        "versionId": "bf1a3304-2f14-491e-b36f-5fe328d008cf",
+        "event": "activated",
+        "userId": "af142d6e-919f-4345-b234-759caa50a7bb"
+      }
+    ]
+  }
 }

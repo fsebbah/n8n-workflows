@@ -1,0 +1,583 @@
+{
+  "name": "Torah PDF Generation",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-generate-pdf",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-pdf",
+      "name": "Generate PDF Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        256,
+        304
+      ],
+      "webhookId": "torah-generate-pdf",
+      "notes": "Payload: {book: 'Sukkah', chapter_start: '2a', chapter_end: '10b', format: 'bilingual', include_commentaries: true}"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valider et preparer les parametres PDF\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Configuration par defaut\nconst defaultConfig = {\n  format: 'bilingual',\n  page_size: 'A4',\n  include_commentaries: true,\n  include_source: true,\n  include_translation: true,\n  font_size: 12,\n  rtl_support: true,\n  max_commentaries_per_page: 5,\n  output_format: 'pdf'\n};\n\nconst config = { ...defaultConfig, ...body.config };\n\n// Validation\nconst errors = [];\nif (!body.book && !body.translation_ids) {\n  errors.push('Specify either \"book\" (e.g., \"Sukkah\") or \"translation_ids\" array');\n}\n\nconst validFormats = ['bilingual', 'source_only', 'translation_only', 'academic', 'annotated'];\nif (!validFormats.includes(config.format)) {\n  errors.push(`Invalid format. Use: ${validFormats.join(', ')}`);\n}\n\nconst result = {\n  valid: errors.length === 0,\n  errors: errors,\n  params: {\n    book: body.book || null,\n    chapter_start: body.chapter_start || '2a',\n    chapter_end: body.chapter_end || null,\n    translation_ids: body.translation_ids || [],\n    config: config,\n    job_id: `pdf_${Date.now()}`\n  }\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "validate-pdf-params",
+      "name": "Validate PDF Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-params-valid",
+      "name": "Parameters Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        704,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/14{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Generation PDF Demarree\",\n    \"description\": \"Preparation du document en cours...\",\n    \"color\": 3447003,\n    \"fields\": [\n      {\"name\": \"Job ID\", \"value\": \"`{{ $json.params.job_id }}`\", \"inline\": true},\n      {\"name\": \"Livre\", \"value\": \"{{ $json.params.book || 'Selection' }}\", \"inline\": true},\n      {\"name\": \"Format\", \"value\": \"{{ $json.params.config.format }}\", \"inline\": true},\n      {\"name\": \"Commentaires\", \"value\": \"{{ $json.params.config.include_commentaries ? 'Oui' : 'Non' }}\", \"inline\": true}\n    ],\n    \"footer\": {\"text\": \"Torah PDF Generator\"},\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-pdf-start",
+      "name": "Discord - PDF Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        912,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/translations/search?book={{ $('Validate PDF Parameters').first().json.params.book }}&status=approved&limit=100",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "fetch-translations",
+      "name": "API - Fetch Translations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1136,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparer les donnees pour la generation PDF\nconst apiResponse = $input.first().json;\nconst params = $('Validate PDF Parameters').first().json.params;\n\n// Extraire les traductions\nlet translations = [];\nif (apiResponse.items) {\n  translations = apiResponse.items;\n} else if (apiResponse.translations) {\n  translations = apiResponse.translations;\n} else if (Array.isArray(apiResponse)) {\n  translations = apiResponse;\n}\n\n// Filtrer par plage de chapitres si specifie\nif (params.chapter_start || params.chapter_end) {\n  const parseRef = (ref) => {\n    const match = (ref || '').match(/(\\d+)([ab])/i);\n    if (!match) return { num: 0, side: 'a' };\n    return { num: parseInt(match[1]), side: match[2].toLowerCase() };\n  };\n  \n  const start = params.chapter_start ? parseRef(params.chapter_start) : { num: 0, side: 'a' };\n  const end = params.chapter_end ? parseRef(params.chapter_end) : { num: 999, side: 'b' };\n  \n  translations = translations.filter(t => {\n    const ref = parseRef(t.reference || t.ref || '');\n    const startVal = start.num * 2 + (start.side === 'b' ? 1 : 0);\n    const endVal = end.num * 2 + (end.side === 'b' ? 1 : 0);\n    const refVal = ref.num * 2 + (ref.side === 'b' ? 1 : 0);\n    return refVal >= startVal && refVal <= endVal;\n  });\n}\n\n// Trier par reference\ntranslations.sort((a, b) => {\n  const refA = (a.reference || '').match(/(\\d+)([ab])/i) || [0, 0, 'a'];\n  const refB = (b.reference || '').match(/(\\d+)([ab])/i) || [0, 0, 'a'];\n  const numA = parseInt(refA[1]) * 2 + (refA[2] === 'b' ? 1 : 0);\n  const numB = parseInt(refB[1]) * 2 + (refB[2] === 'b' ? 1 : 0);\n  return numA - numB;\n});\n\nif (translations.length === 0) {\n  return [{ json: { error: 'Aucune traduction approuvee trouvee', translations_count: 0 } }];\n}\n\nreturn [{\n  json: {\n    translations_count: translations.length,\n    translation_ids: translations.map(t => t.uuid || t.id),\n    references: translations.map(t => t.reference),\n    job_id: params.job_id,\n    config: params.config,\n    book: params.book\n  }\n}];"
+      },
+      "id": "prepare-pdf-data",
+      "name": "Prepare PDF Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-translations",
+              "leftValue": "={{ $json.translations_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-data",
+      "name": "Has Translations?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1584,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/pdf/generate/complete",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"translation_ids\": {{ JSON.stringify($json.translation_ids) }},\n  \"format\": \"{{ $json.config.format }}\",\n  \"options\": {\n    \"page_size\": \"{{ $json.config.page_size }}\",\n    \"include_source\": {{ $json.config.include_source }},\n    \"include_translation\": {{ $json.config.include_translation }},\n    \"include_commentaries\": {{ $json.config.include_commentaries }},\n    \"font_size\": {{ $json.config.font_size }},\n    \"rtl_support\": {{ $json.config.rtl_support }},\n    \"max_commentaries_per_page\": {{ $json.config.max_commentaries_per_page }}\n  },\n  \"metadata\": {\n    \"title\": \"{{ $json.book || 'Torah' }} - Traduction Bilingue\",\n    \"author\": \"Torah Translation Project\",\n    \"job_id\": \"{{ $json.job_id }}\"\n  }\n}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "generate-pdf-api",
+      "name": "API - Generate PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        128
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Traiter le resultat de generation PDF (retour direct)\nconst input = $input.first().json;\nconst pdfData = $('Prepare PDF Data').first().json;\n\n// L'API retourne directement le PDF ou une erreur\nconst hasError = input.error || input.detail || input.status >= 400;\n\nconst result = {\n  success: !hasError && (input.pdf_url || input.download_url || input.file_url),\n  job_id: pdfData.job_id,\n  pdf_url: input.pdf_url || input.download_url || input.file_url || null,\n  file_size: input.file_size || input.size || null,\n  pages: input.pages || input.page_count || null,\n  translations_included: pdfData.translations_count,\n  error: input.error || input.detail || input.message || null,\n  generated_at: new Date().toISOString()\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "process-pdf-result",
+      "name": "Process PDF Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "pdf-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "pdf-success",
+      "name": "PDF Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "=Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"PDF Genere avec Succes\",\n    \"description\": \"Votre document est pret au telechargement.\",\n    \"color\": 5763719,\n    \"fields\": [\n      {\"name\": \"Job ID\", \"value\": \"`{{ $json.job_id }}`\", \"inline\": true},\n      {\"name\": \"Pages\", \"value\": \"{{ $json.pages || 'N/A' }}\", \"inline\": true},\n      {\"name\": \"Traductions\", \"value\": \"{{ $json.translations_included }}\", \"inline\": true},\n      {\"name\": \"Telechargement\", \"value\": \"[Telecharger le PDF]({{ $json.pdf_url }})\", \"inline\": false}\n    ],\n    \"footer\": {\"text\": \"Torah PDF Generator\"},\n    \"timestamp\": \"{{ $json.generated_at }}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-pdf-success",
+      "name": "Discord - PDF Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2464,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, job_id: $json.job_id, pdf_url: $json.pdf_url, pages: $json.pages, translations: $json.translations_included } }}",
+        "options": {}
+      },
+      "id": "respond-pdf-success",
+      "name": "Respond - PDF Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2672,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "=Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Erreur Generation PDF\",\n    \"description\": \"{{ $json.error || 'Erreur inconnue lors de la generation' }}\",\n    \"color\": 15548997,\n    \"fields\": [\n      {\"name\": \"Job ID\", \"value\": \"`{{ $json.job_id }}`\", \"inline\": true}\n    ],\n    \"footer\": {\"text\": \"Torah PDF Generator\"}\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-pdf-error",
+      "name": "Discord - PDF Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2464,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, job_id: $json.job_id, error: $json.error } }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "respond-pdf-error",
+      "name": "Respond - PDF Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2672,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Aucune Traduction Disponible\",\n    \"description\": \"Aucune traduction approuvee n'a ete trouvee pour les criteres specifies.\",\n    \"color\": 15105570,\n    \"footer\": {\"text\": \"Torah PDF Generator\"}\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-no-data",
+      "name": "Discord - No Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: 'No approved translations found' } }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-no-data",
+      "name": "Respond - No Data",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2016,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.DISCORD_URL_CHANNEL }}{{ $json.channel_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.DISCORD_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"Erreur de Validation PDF\",\n    \"description\": \"{{ $json.errors.join(', ') }}\",\n    \"color\": 15548997,\n    \"footer\": {\"text\": \"Torah PDF Generator\"}\n  }]\n}",
+        "options": {}
+      },
+      "id": "discord-validation-error",
+      "name": "Discord - Validation Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        912,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, errors: $json.errors } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond - Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1136,
+        432
+      ]
+    }
+  ],
+  "connections": {
+    "Generate PDF Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate PDF Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate PDF Parameters": {
+      "main": [
+        [
+          {
+            "node": "Parameters Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parameters Valid?": {
+      "main": [
+        [
+          {
+            "node": "Discord - PDF Start",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Discord - Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - PDF Start": {
+      "main": [
+        [
+          {
+            "node": "API - Fetch Translations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API - Fetch Translations": {
+      "main": [
+        [
+          {
+            "node": "Prepare PDF Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PDF Data": {
+      "main": [
+        [
+          {
+            "node": "Has Translations?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Translations?": {
+      "main": [
+        [
+          {
+            "node": "API - Generate PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Discord - No Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API - Generate PDF": {
+      "main": [
+        [
+          {
+            "node": "Process PDF Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process PDF Result": {
+      "main": [
+        [
+          {
+            "node": "PDF Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PDF Success?": {
+      "main": [
+        [
+          {
+            "node": "Discord - PDF Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Discord - PDF Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - PDF Success": {
+      "main": [
+        [
+          {
+            "node": "Respond - PDF Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - PDF Error": {
+      "main": [
+        [
+          {
+            "node": "Respond - PDF Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - No Data": {
+      "main": [
+        [
+          {
+            "node": "Respond - No Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord - Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond - Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": []
+}

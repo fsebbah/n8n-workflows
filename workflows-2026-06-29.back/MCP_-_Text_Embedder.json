@@ -1,0 +1,596 @@
+{
+  "updatedAt": "2026-03-24T21:13:31.289Z",
+  "createdAt": "2026-03-24T21:13:20.214Z",
+  "id": "GMkO8Y7N6N5bgy1Q",
+  "name": "MCP - Text Embedder",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "webhook-embedder",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "text-embedder-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "text-embedder",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Text Embedder\n// RFC-014 Extraction with Optional Context Fields\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- OPTIONAL context fields (extract for tracing, NO validation errors if missing) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Required parameters specific to this webhook ---\nconst text = body.text || ctx.text;\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key;\nconst model = body.model || ctx.model || 'text-embedding-3-small';\nconst dimensions = body.dimensions || ctx.dimensions || 1536;\n\nif (!text) {\n  errors.push('text requis (string ou array de strings)');\n}\n\nif (!openaiApiKey) {\n  errors.push('openai_api_key requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  text: text,\n  openai_api_key: openaiApiKey,\n  model: model,\n  dimensions: dimensions,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
+      }
+    },
+    {
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        460
+      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'openai',\n    model: 'text-embedding-3-small',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      }
+    },
+    {
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "openai-embeddings",
+      "name": "OpenAI Embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.model }}\",\n  \"input\": {{ Array.isArray($json.text) ? JSON.stringify($json.text) : JSON.stringify($json.text) }},\n  \"dimensions\": {{ $json.dimensions }}\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-response",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// PARSE RESPONSE - MCP Text Embedder\n// With _trace for analyzable webhooks\n// ============================================\n\nconst items = $input.all();\nconst validationData = $('Validate Input').first().json;\n\nconst results = items.map(item => {\n  const latencyMs = Date.now() - validationData.startTime;\n  \n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'OpenAI API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: validationData.model\n        },\n        user_id: validationData.user_id,\n        guild_id: validationData.guild_id,\n        user_request: validationData.user_request,\n        _trace: {\n          service_response: { error: item.json.error },\n          provider: 'openai',\n          model: validationData.model,\n          mode: 'error',\n          latency_ms: latencyMs,\n          user_id: validationData.user_id,\n          guild_id: validationData.guild_id,\n          user_request: validationData.user_request\n        }\n      }\n    };\n  }\n\n  try {\n    const data = item.json.data || [];\n    const embeddings = data.map(d => ({\n      index: d.index,\n      embedding: d.embedding,\n      dimensions: d.embedding?.length || 0\n    }));\n    \n    const responseData = {\n      embeddings: embeddings,\n      count: embeddings.length,\n      model: item.json.model,\n      dimensions: embeddings[0]?.dimensions || 0\n    };\n    \n    return {\n      json: {\n        success: true,\n        data: responseData,\n        meta: {\n          provider: 'openai',\n          model: item.json.model || validationData.model,\n          usage: item.json.usage || {}\n        },\n        user_id: validationData.user_id,\n        guild_id: validationData.guild_id,\n        user_request: validationData.user_request,\n        _trace: {\n          service_response: responseData,\n          provider: 'openai',\n          model: item.json.model || validationData.model,\n          mode: 'success',\n          latency_ms: latencyMs,\n          token_usage: item.json.usage || {},\n          user_id: validationData.user_id,\n          guild_id: validationData.guild_id,\n          user_request: validationData.user_request\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to parse embeddings response: ' + e.message,\n          status: 'PARSE_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: validationData.model\n        },\n        user_id: validationData.user_id,\n        guild_id: validationData.guild_id,\n        user_request: validationData.user_request,\n        _trace: {\n          service_response: { parse_error: e.message },\n          provider: 'openai',\n          model: validationData.model,\n          mode: 'error',\n          latency_ms: latencyMs,\n          user_id: validationData.user_id,\n          guild_id: validationData.guild_id,\n          user_request: validationData.user_request\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1340,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        -80
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 340,
+        "height": 680,
+        "content": "## MCP - Text Embedder\n\n**Endpoint:** POST /webhook/text-embedder\n\n**Description:** Genere des embeddings de texte via l'API OpenAI pour une utilisation en RAG, recherche semantique, etc.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"text\", \"openai_api_key\"],\n  \"optional\": [\"user_id\", \"guild_id\", \"user_request\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (tracing)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord (tracing)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale (tracing)\" },\n    \"text\": { \"type\": \"string|array\", \"description\": \"Texte(s) a encoder\" },\n    \"openai_api_key\": { \"type\": \"string\", \"description\": \"Cle API OpenAI\" },\n    \"model\": { \"type\": \"string\", \"description\": \"Modele (default: text-embedding-3-small)\" },\n    \"dimensions\": { \"type\": \"integer\", \"description\": \"Dimensions output (default: 1536)\" }\n  }\n}\n```\n\n**Modeles disponibles:**\n- `text-embedding-3-small` (default) - Rapide, economique\n- `text-embedding-3-large` - Haute qualite\n- `text-embedding-ada-002` - Legacy\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"embeddings\", \"dimensions\", \"count\"],\n  \"domain\": \"embedding\"\n}\n```\n\n**Note:** user_id, guild_id, user_request sont OPTIONNELS (utilises pour le tracing)."
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Parse Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "e6cf47b6-b88c-446f-a319-b8457c8379c9",
+  "activeVersionId": "e6cf47b6-b88c-446f-a319-b8457c8379c9",
+  "versionCounter": 8,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-24T21:13:20.214Z",
+      "createdAt": "2026-03-24T21:13:20.214Z",
+      "role": "workflow:owner",
+      "workflowId": "GMkO8Y7N6N5bgy1Q",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-24T21:13:20.231Z",
+    "createdAt": "2026-03-24T21:13:20.231Z",
+    "versionId": "e6cf47b6-b88c-446f-a319-b8457c8379c9",
+    "workflowId": "GMkO8Y7N6N5bgy1Q",
+    "nodes": [
+      {
+        "id": "webhook-embedder",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "text-embedder-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "text-embedder",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Text Embedder\n// RFC-014 Extraction with Optional Context Fields\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- OPTIONAL context fields (extract for tracing, NO validation errors if missing) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Required parameters specific to this webhook ---\nconst text = body.text || ctx.text;\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key;\nconst model = body.model || ctx.model || 'text-embedding-3-small';\nconst dimensions = body.dimensions || ctx.dimensions || 1536;\n\nif (!text) {\n  errors.push('text requis (string ou array de strings)');\n}\n\nif (!openaiApiKey) {\n  errors.push('openai_api_key requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  text: text,\n  openai_api_key: openaiApiKey,\n  model: model,\n  dimensions: dimensions,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
+        }
+      },
+      {
+        "id": "if-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          680,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "build-error",
+        "name": "Build Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          900,
+          460
+        ],
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'openai',\n    model: 'text-embedding-3-small',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+        }
+      },
+      {
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1120,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": "openai-embeddings",
+        "name": "OpenAI Embeddings",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          900,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/embeddings",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.openai_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"{{ $json.model }}\",\n  \"input\": {{ Array.isArray($json.text) ? JSON.stringify($json.text) : JSON.stringify($json.text) }},\n  \"dimensions\": {{ $json.dimensions }}\n}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "parse-response",
+        "name": "Parse Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1120,
+          200
+        ],
+        "parameters": {
+          "jsCode": "// ============================================\n// PARSE RESPONSE - MCP Text Embedder\n// With _trace for analyzable webhooks\n// ============================================\n\nconst items = $input.all();\nconst validationData = $('Validate Input').first().json;\n\nconst results = items.map(item => {\n  const latencyMs = Date.now() - validationData.startTime;\n  \n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'OpenAI API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: validationData.model\n        },\n        user_id: validationData.user_id,\n        guild_id: validationData.guild_id,\n        user_request: validationData.user_request,\n        _trace: {\n          service_response: { error: item.json.error },\n          provider: 'openai',\n          model: validationData.model,\n          mode: 'error',\n          latency_ms: latencyMs,\n          user_id: validationData.user_id,\n          guild_id: validationData.guild_id,\n          user_request: validationData.user_request\n        }\n      }\n    };\n  }\n\n  try {\n    const data = item.json.data || [];\n    const embeddings = data.map(d => ({\n      index: d.index,\n      embedding: d.embedding,\n      dimensions: d.embedding?.length || 0\n    }));\n    \n    const responseData = {\n      embeddings: embeddings,\n      count: embeddings.length,\n      model: item.json.model,\n      dimensions: embeddings[0]?.dimensions || 0\n    };\n    \n    return {\n      json: {\n        success: true,\n        data: responseData,\n        meta: {\n          provider: 'openai',\n          model: item.json.model || validationData.model,\n          usage: item.json.usage || {}\n        },\n        user_id: validationData.user_id,\n        guild_id: validationData.guild_id,\n        user_request: validationData.user_request,\n        _trace: {\n          service_response: responseData,\n          provider: 'openai',\n          model: item.json.model || validationData.model,\n          mode: 'success',\n          latency_ms: latencyMs,\n          token_usage: item.json.usage || {},\n          user_id: validationData.user_id,\n          guild_id: validationData.guild_id,\n          user_request: validationData.user_request\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to parse embeddings response: ' + e.message,\n          status: 'PARSE_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: validationData.model\n        },\n        user_id: validationData.user_id,\n        guild_id: validationData.guild_id,\n        user_request: validationData.user_request,\n        _trace: {\n          service_response: { parse_error: e.message },\n          provider: 'openai',\n          model: validationData.model,\n          mode: 'error',\n          latency_ms: latencyMs,\n          user_id: validationData.user_id,\n          guild_id: validationData.guild_id,\n          user_request: validationData.user_request\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1340,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -100,
+          -80
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 340,
+          "height": 680,
+          "content": "## MCP - Text Embedder\n\n**Endpoint:** POST /webhook/text-embedder\n\n**Description:** Genere des embeddings de texte via l'API OpenAI pour une utilisation en RAG, recherche semantique, etc.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"text\", \"openai_api_key\"],\n  \"optional\": [\"user_id\", \"guild_id\", \"user_request\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (tracing)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord (tracing)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale (tracing)\" },\n    \"text\": { \"type\": \"string|array\", \"description\": \"Texte(s) a encoder\" },\n    \"openai_api_key\": { \"type\": \"string\", \"description\": \"Cle API OpenAI\" },\n    \"model\": { \"type\": \"string\", \"description\": \"Modele (default: text-embedding-3-small)\" },\n    \"dimensions\": { \"type\": \"integer\", \"description\": \"Dimensions output (default: 1536)\" }\n  }\n}\n```\n\n**Modeles disponibles:**\n- `text-embedding-3-small` (default) - Rapide, economique\n- `text-embedding-3-large` - Haute qualite\n- `text-embedding-ada-002` - Legacy\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"embeddings\", \"dimensions\", \"count\"],\n  \"domain\": \"embedding\"\n}\n```\n\n**Note:** user_id, guild_id, user_request sont OPTIONNELS (utilises pour le tracing)."
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "OpenAI Embeddings",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Embeddings": {
+        "main": [
+          [
+            {
+              "node": "Parse Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

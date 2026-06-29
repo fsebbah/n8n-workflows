@@ -1,0 +1,1372 @@
+{
+  "updatedAt": "2026-03-18T15:37:32.815Z",
+  "createdAt": "2026-03-18T15:37:01.870Z",
+  "id": "4iZccP1QAoAf4K3n",
+  "name": "LLM - URL Extractor",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "llm-url-extractor-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "llm-url-extractor",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\nconst validProviders = ['openai', 'claude', 'gemini', 'mistral'];\nconst defaultModels = {\n  openai: 'gpt-4o',\n  claude: 'claude-sonnet-4-20250514',\n  gemini: 'gemini-2.5-flash',\n  mistral: 'mistral-large-latest'\n};\n\nconst urlPattern = /^https?:\\/\\/[^\\s]+$/i;\n\nif (!body.urls || !Array.isArray(body.urls) || body.urls.length === 0) {\n  errors.push('Missing required parameter: urls (array of URLs)');\n} else if (body.urls.length > 5) {\n  errors.push('Maximum 5 URLs allowed per request');\n} else {\n  for (const url of body.urls) {\n    if (typeof url !== 'string' || !urlPattern.test(url.trim())) {\n      errors.push(`Invalid URL: ${url}`);\n    }\n  }\n}\n\nconst provider = body.provider || 'claude';\n\nif (!validProviders.includes(provider)) {\n  errors.push(`Invalid provider: '${provider}'. Valid options: ${validProviders.join(', ')}`);\n}\n\nif (provider === 'openai' && !body.openai_api_key) errors.push('Missing openai_api_key');\nif (provider === 'claude' && !body.anthropic_api_key) errors.push('Missing anthropic_api_key');\nif (provider === 'gemini' && !body.google_api_key) errors.push('Missing google_api_key');\nif (provider === 'mistral' && !body.mistral_api_key) errors.push('Missing mistral_api_key');\n\nif (errors.length > 0) {\n  return [{ json: { valid: false, error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' } } }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    urls: body.urls,\n    query: body.query || 'Extract all relevant information from this content',\n    provider,\n    model: body.model || defaultModels[provider],\n    openai_api_key: body.openai_api_key,\n    anthropic_api_key: body.anthropic_api_key,\n    google_api_key: body.google_api_key,\n    mistral_api_key: body.mistral_api_key,\n    output_schema: body.output_schema || null,\n    options: { language: body.options?.language || 'fr', include_sources: body.options?.include_sources !== false },\n    callback_url: body.callback_url || null,\n    job_id: body.job_id || null,\n    start_time: Date.now()\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-validation",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "check-callback",
+      "name": "Has Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-accepted",
+      "name": "Respond 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, status: 'accepted', job_id: $json.job_id || $execution.id, urls_count: $json.urls.length } }}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "split-urls",
+      "name": "Split URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\n// Create one item per URL, carrying context\nreturn data.urls.map(url => ({\n  json: {\n    url,\n    context: {\n      ...data,\n      job_id: data.job_id || $execution.id\n    }\n  }\n}));"
+      }
+    },
+    {
+      "id": "fetch-url",
+      "name": "Fetch URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (compatible; n8n-bot/1.0)"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,*/*"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "process-fetch-result",
+      "name": "Process Fetch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const url = item.json.url || item.json.context?.url;\n  const context = item.json.context;\n  \n  // Check if fetch was successful\n  if (item.json.error || item.json.statusCode >= 400) {\n    results.push({\n      url,\n      success: false,\n      error: item.json.error?.message || `HTTP ${item.json.statusCode}`,\n      content: null\n    });\n    continue;\n  }\n  \n  // Get HTML content\n  let html = '';\n  if (typeof item.json.body === 'string') {\n    html = item.json.body;\n  } else if (item.json.data) {\n    html = typeof item.json.data === 'string' ? item.json.data : JSON.stringify(item.json.data);\n  }\n  \n  // Basic HTML to text\n  let text = html\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n  \n  if (text.length > 15000) {\n    text = text.substring(0, 15000) + '... [truncated]';\n  }\n  \n  results.push({\n    url,\n    success: text.length > 100,\n    error: text.length <= 100 ? 'Content too short or empty' : null,\n    content: text.length > 100 ? text : null\n  });\n}\n\n// Get context from first item\nconst firstContext = items[0]?.json?.context || $('Split URLs').first().json.context;\n\nreturn [{\n  json: {\n    context: firstContext,\n    fetched_urls: results,\n    successful_count: results.filter(r => r.success).length\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-content",
+      "name": "Has Content?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.successful_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "no-content-error",
+      "name": "No Content Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2220,
+        460
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "err1",
+              "name": "success",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "err2",
+              "name": "error.code",
+              "value": "NO_CONTENT",
+              "type": "string"
+            },
+            {
+              "id": "err3",
+              "name": "error.message",
+              "value": "Failed to fetch content from any URL",
+              "type": "string"
+            },
+            {
+              "id": "err4",
+              "name": "context",
+              "value": "={{ $json.context }}",
+              "type": "object"
+            },
+            {
+              "id": "err5",
+              "name": "fetched_urls",
+              "value": "={{ $json.fetched_urls }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare-llm-body",
+      "name": "Prepare LLM Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst ctx = data.context;\n\n// Build content from fetched URLs\nconst contentParts = data.fetched_urls\n  .filter(u => u.success)\n  .map(u => `=== Content from ${u.url} ===\\n${u.content}`)\n  .join('\\n\\n');\n\nlet systemPrompt = `Tu es un expert en extraction de données structurées. Analyse le contenu web fourni.\\n\\nRègles:\\n1. Extrais uniquement les informations présentes\\n2. Si une info n'est pas disponible, utilise null\\n3. Réponds en ${ctx.options.language === 'fr' ? 'français' : 'anglais'}`;\n\nif (ctx.output_schema) {\n  systemPrompt += `\\n\\nSchéma de sortie:\\n${JSON.stringify(ctx.output_schema.input_schema || ctx.output_schema, null, 2)}`;\n}\n\nconst userPrompt = `${ctx.query}\\n\\n${contentParts}`;\n\nlet llm_url, llm_headers, llm_body;\n\nswitch (ctx.provider) {\n  case 'claude':\n    llm_url = 'https://api.anthropic.com/v1/messages';\n    llm_headers = { 'x-api-key': ctx.anthropic_api_key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' };\n    llm_body = { model: ctx.model, max_tokens: 4096, messages: [{ role: 'user', content: systemPrompt + '\\n\\n' + userPrompt }] };\n    break;\n  case 'openai':\n    llm_url = 'https://api.openai.com/v1/chat/completions';\n    llm_headers = { 'Authorization': 'Bearer ' + ctx.openai_api_key, 'Content-Type': 'application/json' };\n    llm_body = { model: ctx.model, max_tokens: 4096, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] };\n    if (ctx.output_schema) llm_body.response_format = { type: 'json_object' };\n    break;\n  case 'gemini':\n    llm_url = `https://generativelanguage.googleapis.com/v1beta/models/${ctx.model}:generateContent?key=${ctx.google_api_key}`;\n    llm_headers = { 'Content-Type': 'application/json' };\n    llm_body = { contents: [{ parts: [{ text: systemPrompt + '\\n\\n' + userPrompt }] }], generationConfig: { maxOutputTokens: 4096 } };\n    break;\n  case 'mistral':\n    llm_url = 'https://api.mistral.ai/v1/chat/completions';\n    llm_headers = { 'Authorization': 'Bearer ' + ctx.mistral_api_key, 'Content-Type': 'application/json' };\n    llm_body = { model: ctx.model, max_tokens: 4096, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] };\n    if (ctx.output_schema) llm_body.response_format = { type: 'json_object' };\n    break;\n}\n\nreturn [{\n  json: {\n    ...data,\n    llm_url,\n    llm_headers,\n    llm_body: JSON.stringify(llm_body)\n  }\n}];"
+      }
+    },
+    {
+      "id": "call-llm",
+      "name": "Call LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2440,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.llm_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "=x-api-key",
+              "value": "={{ $json.llm_headers['x-api-key'] || '' }}"
+            },
+            {
+              "name": "=Authorization",
+              "value": "={{ $json.llm_headers['Authorization'] || '' }}"
+            },
+            {
+              "name": "=anthropic-version",
+              "value": "={{ $json.llm_headers['anthropic-version'] || '' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.llm_body }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Prepare LLM Body').first().json;\nconst ctx = prevData.context;\nconst processingTime = Date.now() - ctx.start_time;\n\n// Check for LLM error\nif (input.error) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'LLM_ERROR', message: input.error.message || JSON.stringify(input.error) },\n      context: ctx,\n      fetched_urls: prevData.fetched_urls,\n      processing_time_ms: processingTime\n    }\n  }];\n}\n\n// Extract text based on provider\nlet extractedText = '';\nswitch (ctx.provider) {\n  case 'claude':\n    extractedText = input.content?.[0]?.text || '';\n    break;\n  case 'openai':\n  case 'mistral':\n    extractedText = input.choices?.[0]?.message?.content || '';\n    break;\n  case 'gemini':\n    extractedText = input.candidates?.[0]?.content?.parts?.[0]?.text || '';\n    break;\n}\n\n// Parse JSON if schema provided\nlet parsedResult = extractedText;\nif (ctx.output_schema) {\n  try {\n    const jsonMatch = extractedText.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) parsedResult = JSON.parse(jsonMatch[0]);\n  } catch (e) { /* keep as text */ }\n}\n\nreturn [{\n  json: {\n    success: true,\n    data: {\n      extracted: parsedResult,\n      sources: ctx.options.include_sources ? prevData.fetched_urls.map(u => ({ url: u.url, success: u.success, error: u.error })) : undefined\n    },\n    meta: {\n      provider: ctx.provider,\n      model: ctx.model,\n      urls_fetched: prevData.fetched_urls.length,\n      urls_successful: prevData.successful_count,\n      tokens_used: input.usage?.total_tokens || (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0),\n      processing_time_ms: processingTime\n    },\n    context: ctx,\n    fetched_urls: prevData.fetched_urls\n  }\n}];"
+      }
+    },
+    {
+      "id": "has-callback-final",
+      "name": "Has Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2880,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.context.callback_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare-callback",
+      "name": "Prepare Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3100,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst ctx = data.context;\n\nconst callback = {\n  job_id: ctx.job_id,\n  success: data.success,\n  result: data.success ? data.data : null,\n  metrics: data.meta || { urls_fetched: data.fetched_urls?.length || 0 },\n  error: data.error || null\n};\n\n// HMAC signature (RFC-040)\nconst crypto = require('crypto');\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callback);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: ctx.callback_url,\n    payload,\n    signature\n  }\n}];"
+      }
+    },
+    {
+      "id": "send-callback",
+      "name": "Send Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3320,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "respond-sync",
+      "name": "Respond Sync",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        3100,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: $json.success, data: $json.data, error: $json.error, meta: $json.meta } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-error-sync",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2660,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, meta: { urls_fetched: $json.fetched_urls?.length || 0 } } }}",
+        "options": {
+          "responseCode": 500
+        }
+      }
+    },
+    {
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 600,
+        "height": 200,
+        "content": "## LLM - URL Extractor (RFC-040)\n\n**Endpoint:** POST /webhook/llm-url-extractor\n\n**Input:** urls[], query, provider, output_schema, callback_url\n\n**Providers:** claude, openai, gemini, mistral\n\n**RFC-040:** If callback_url → 202 + async callback\n\n**Note:** Uses HTTP Request nodes for fetching (not fetch())"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Has Callback?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Callback?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202": {
+      "main": [
+        [
+          {
+            "node": "Split URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split URLs": {
+      "main": [
+        [
+          {
+            "node": "Fetch URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch URL": {
+      "main": [
+        [
+          {
+            "node": "Process Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Fetch": {
+      "main": [
+        [
+          {
+            "node": "Has Content?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Content?": {
+      "main": [
+        [
+          {
+            "node": "Prepare LLM Body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Content Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Content Error": {
+      "main": [
+        [
+          {
+            "node": "Has Callback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare LLM Body": {
+      "main": [
+        [
+          {
+            "node": "Call LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LLM": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Has Callback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "df3e9204-8153-420d-a14c-231b83875573",
+  "activeVersionId": "df3e9204-8153-420d-a14c-231b83875573",
+  "versionCounter": 9,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-18T15:37:01.870Z",
+      "createdAt": "2026-03-18T15:37:01.870Z",
+      "role": "workflow:owner",
+      "workflowId": "4iZccP1QAoAf4K3n",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-18T15:37:01.901Z",
+    "createdAt": "2026-03-18T15:37:01.901Z",
+    "versionId": "df3e9204-8153-420d-a14c-231b83875573",
+    "workflowId": "4iZccP1QAoAf4K3n",
+    "nodes": [
+      {
+        "id": "webhook",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "llm-url-extractor-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "llm-url-extractor",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\nconst validProviders = ['openai', 'claude', 'gemini', 'mistral'];\nconst defaultModels = {\n  openai: 'gpt-4o',\n  claude: 'claude-sonnet-4-20250514',\n  gemini: 'gemini-2.5-flash',\n  mistral: 'mistral-large-latest'\n};\n\nconst urlPattern = /^https?:\\/\\/[^\\s]+$/i;\n\nif (!body.urls || !Array.isArray(body.urls) || body.urls.length === 0) {\n  errors.push('Missing required parameter: urls (array of URLs)');\n} else if (body.urls.length > 5) {\n  errors.push('Maximum 5 URLs allowed per request');\n} else {\n  for (const url of body.urls) {\n    if (typeof url !== 'string' || !urlPattern.test(url.trim())) {\n      errors.push(`Invalid URL: ${url}`);\n    }\n  }\n}\n\nconst provider = body.provider || 'claude';\n\nif (!validProviders.includes(provider)) {\n  errors.push(`Invalid provider: '${provider}'. Valid options: ${validProviders.join(', ')}`);\n}\n\nif (provider === 'openai' && !body.openai_api_key) errors.push('Missing openai_api_key');\nif (provider === 'claude' && !body.anthropic_api_key) errors.push('Missing anthropic_api_key');\nif (provider === 'gemini' && !body.google_api_key) errors.push('Missing google_api_key');\nif (provider === 'mistral' && !body.mistral_api_key) errors.push('Missing mistral_api_key');\n\nif (errors.length > 0) {\n  return [{ json: { valid: false, error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' } } }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    urls: body.urls,\n    query: body.query || 'Extract all relevant information from this content',\n    provider,\n    model: body.model || defaultModels[provider],\n    openai_api_key: body.openai_api_key,\n    anthropic_api_key: body.anthropic_api_key,\n    google_api_key: body.google_api_key,\n    mistral_api_key: body.mistral_api_key,\n    output_schema: body.output_schema || null,\n    options: { language: body.options?.language || 'fr', include_sources: body.options?.include_sources !== false },\n    callback_url: body.callback_url || null,\n    job_id: body.job_id || null,\n    start_time: Date.now()\n  }\n}];"
+        }
+      },
+      {
+        "id": "check-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          680,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-validation",
+        "name": "Error Response",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          900,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: $json.error } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "check-callback",
+        "name": "Has Callback?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          900,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.callback_url }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "respond-accepted",
+        "name": "Respond 202",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1120,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: true, status: 'accepted', job_id: $json.job_id || $execution.id, urls_count: $json.urls.length } }}",
+          "options": {
+            "responseCode": 202
+          }
+        }
+      },
+      {
+        "id": "split-urls",
+        "name": "Split URLs",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1340,
+          300
+        ],
+        "parameters": {
+          "jsCode": "const data = $input.first().json;\n\n// Create one item per URL, carrying context\nreturn data.urls.map(url => ({\n  json: {\n    url,\n    context: {\n      ...data,\n      job_id: data.job_id || $execution.id\n    }\n  }\n}));"
+        }
+      },
+      {
+        "id": "fetch-url",
+        "name": "Fetch URL",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1560,
+          300
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $json.url }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0 (compatible; n8n-bot/1.0)"
+              },
+              {
+                "name": "Accept",
+                "value": "text/html,application/xhtml+xml,*/*"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 15000,
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            }
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "process-fetch-result",
+        "name": "Process Fetch",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1780,
+          300
+        ],
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const url = item.json.url || item.json.context?.url;\n  const context = item.json.context;\n  \n  // Check if fetch was successful\n  if (item.json.error || item.json.statusCode >= 400) {\n    results.push({\n      url,\n      success: false,\n      error: item.json.error?.message || `HTTP ${item.json.statusCode}`,\n      content: null\n    });\n    continue;\n  }\n  \n  // Get HTML content\n  let html = '';\n  if (typeof item.json.body === 'string') {\n    html = item.json.body;\n  } else if (item.json.data) {\n    html = typeof item.json.data === 'string' ? item.json.data : JSON.stringify(item.json.data);\n  }\n  \n  // Basic HTML to text\n  let text = html\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n  \n  if (text.length > 15000) {\n    text = text.substring(0, 15000) + '... [truncated]';\n  }\n  \n  results.push({\n    url,\n    success: text.length > 100,\n    error: text.length <= 100 ? 'Content too short or empty' : null,\n    content: text.length > 100 ? text : null\n  });\n}\n\n// Get context from first item\nconst firstContext = items[0]?.json?.context || $('Split URLs').first().json.context;\n\nreturn [{\n  json: {\n    context: firstContext,\n    fetched_urls: results,\n    successful_count: results.filter(r => r.success).length\n  }\n}];"
+        }
+      },
+      {
+        "id": "check-content",
+        "name": "Has Content?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2000,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.successful_count }}",
+                "rightValue": 0,
+                "operator": {
+                  "type": "number",
+                  "operation": "gt"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "no-content-error",
+        "name": "No Content Error",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          2220,
+          460
+        ],
+        "parameters": {
+          "mode": "manual",
+          "duplicateItem": false,
+          "assignments": {
+            "assignments": [
+              {
+                "id": "err1",
+                "name": "success",
+                "value": false,
+                "type": "boolean"
+              },
+              {
+                "id": "err2",
+                "name": "error.code",
+                "value": "NO_CONTENT",
+                "type": "string"
+              },
+              {
+                "id": "err3",
+                "name": "error.message",
+                "value": "Failed to fetch content from any URL",
+                "type": "string"
+              },
+              {
+                "id": "err4",
+                "name": "context",
+                "value": "={{ $json.context }}",
+                "type": "object"
+              },
+              {
+                "id": "err5",
+                "name": "fetched_urls",
+                "value": "={{ $json.fetched_urls }}",
+                "type": "object"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "prepare-llm-body",
+        "name": "Prepare LLM Body",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2220,
+          300
+        ],
+        "parameters": {
+          "jsCode": "const data = $input.first().json;\nconst ctx = data.context;\n\n// Build content from fetched URLs\nconst contentParts = data.fetched_urls\n  .filter(u => u.success)\n  .map(u => `=== Content from ${u.url} ===\\n${u.content}`)\n  .join('\\n\\n');\n\nlet systemPrompt = `Tu es un expert en extraction de données structurées. Analyse le contenu web fourni.\\n\\nRègles:\\n1. Extrais uniquement les informations présentes\\n2. Si une info n'est pas disponible, utilise null\\n3. Réponds en ${ctx.options.language === 'fr' ? 'français' : 'anglais'}`;\n\nif (ctx.output_schema) {\n  systemPrompt += `\\n\\nSchéma de sortie:\\n${JSON.stringify(ctx.output_schema.input_schema || ctx.output_schema, null, 2)}`;\n}\n\nconst userPrompt = `${ctx.query}\\n\\n${contentParts}`;\n\nlet llm_url, llm_headers, llm_body;\n\nswitch (ctx.provider) {\n  case 'claude':\n    llm_url = 'https://api.anthropic.com/v1/messages';\n    llm_headers = { 'x-api-key': ctx.anthropic_api_key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' };\n    llm_body = { model: ctx.model, max_tokens: 4096, messages: [{ role: 'user', content: systemPrompt + '\\n\\n' + userPrompt }] };\n    break;\n  case 'openai':\n    llm_url = 'https://api.openai.com/v1/chat/completions';\n    llm_headers = { 'Authorization': 'Bearer ' + ctx.openai_api_key, 'Content-Type': 'application/json' };\n    llm_body = { model: ctx.model, max_tokens: 4096, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] };\n    if (ctx.output_schema) llm_body.response_format = { type: 'json_object' };\n    break;\n  case 'gemini':\n    llm_url = `https://generativelanguage.googleapis.com/v1beta/models/${ctx.model}:generateContent?key=${ctx.google_api_key}`;\n    llm_headers = { 'Content-Type': 'application/json' };\n    llm_body = { contents: [{ parts: [{ text: systemPrompt + '\\n\\n' + userPrompt }] }], generationConfig: { maxOutputTokens: 4096 } };\n    break;\n  case 'mistral':\n    llm_url = 'https://api.mistral.ai/v1/chat/completions';\n    llm_headers = { 'Authorization': 'Bearer ' + ctx.mistral_api_key, 'Content-Type': 'application/json' };\n    llm_body = { model: ctx.model, max_tokens: 4096, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] };\n    if (ctx.output_schema) llm_body.response_format = { type: 'json_object' };\n    break;\n}\n\nreturn [{\n  json: {\n    ...data,\n    llm_url,\n    llm_headers,\n    llm_body: JSON.stringify(llm_body)\n  }\n}];"
+        }
+      },
+      {
+        "id": "call-llm",
+        "name": "Call LLM",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2440,
+          300
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.llm_url }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "=x-api-key",
+                "value": "={{ $json.llm_headers['x-api-key'] || '' }}"
+              },
+              {
+                "name": "=Authorization",
+                "value": "={{ $json.llm_headers['Authorization'] || '' }}"
+              },
+              {
+                "name": "=anthropic-version",
+                "value": "={{ $json.llm_headers['anthropic-version'] || '' }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json.llm_body }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "format-response",
+        "name": "Format Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2660,
+          300
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst prevData = $('Prepare LLM Body').first().json;\nconst ctx = prevData.context;\nconst processingTime = Date.now() - ctx.start_time;\n\n// Check for LLM error\nif (input.error) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'LLM_ERROR', message: input.error.message || JSON.stringify(input.error) },\n      context: ctx,\n      fetched_urls: prevData.fetched_urls,\n      processing_time_ms: processingTime\n    }\n  }];\n}\n\n// Extract text based on provider\nlet extractedText = '';\nswitch (ctx.provider) {\n  case 'claude':\n    extractedText = input.content?.[0]?.text || '';\n    break;\n  case 'openai':\n  case 'mistral':\n    extractedText = input.choices?.[0]?.message?.content || '';\n    break;\n  case 'gemini':\n    extractedText = input.candidates?.[0]?.content?.parts?.[0]?.text || '';\n    break;\n}\n\n// Parse JSON if schema provided\nlet parsedResult = extractedText;\nif (ctx.output_schema) {\n  try {\n    const jsonMatch = extractedText.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) parsedResult = JSON.parse(jsonMatch[0]);\n  } catch (e) { /* keep as text */ }\n}\n\nreturn [{\n  json: {\n    success: true,\n    data: {\n      extracted: parsedResult,\n      sources: ctx.options.include_sources ? prevData.fetched_urls.map(u => ({ url: u.url, success: u.success, error: u.error })) : undefined\n    },\n    meta: {\n      provider: ctx.provider,\n      model: ctx.model,\n      urls_fetched: prevData.fetched_urls.length,\n      urls_successful: prevData.successful_count,\n      tokens_used: input.usage?.total_tokens || (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0),\n      processing_time_ms: processingTime\n    },\n    context: ctx,\n    fetched_urls: prevData.fetched_urls\n  }\n}];"
+        }
+      },
+      {
+        "id": "has-callback-final",
+        "name": "Has Callback?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2880,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.context.callback_url }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "prepare-callback",
+        "name": "Prepare Callback",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3100,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const data = $input.first().json;\nconst ctx = data.context;\n\nconst callback = {\n  job_id: ctx.job_id,\n  success: data.success,\n  result: data.success ? data.data : null,\n  metrics: data.meta || { urls_fetched: data.fetched_urls?.length || 0 },\n  error: data.error || null\n};\n\n// HMAC signature (RFC-040)\nconst crypto = require('crypto');\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callback);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: ctx.callback_url,\n    payload,\n    signature\n  }\n}];"
+        }
+      },
+      {
+        "id": "send-callback",
+        "name": "Send Callback",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3320,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.callback_url }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-N8N-Signature",
+                "value": "={{ $json.signature }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json.payload }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "respond-sync",
+        "name": "Respond Sync",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          3100,
+          400
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: $json.success, data: $json.data, error: $json.error, meta: $json.meta } }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "respond-error-sync",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          2660,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: $json.error, meta: { urls_fetched: $json.fetched_urls?.length || 0 } } }}",
+          "options": {
+            "responseCode": 500
+          }
+        }
+      },
+      {
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          60
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 600,
+          "height": 200,
+          "content": "## LLM - URL Extractor (RFC-040)\n\n**Endpoint:** POST /webhook/llm-url-extractor\n\n**Input:** urls[], query, provider, output_schema, callback_url\n\n**Providers:** claude, openai, gemini, mistral\n\n**RFC-040:** If callback_url → 202 + async callback\n\n**Note:** Uses HTTP Request nodes for fetching (not fetch())"
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Has Callback?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Callback?": {
+        "main": [
+          [
+            {
+              "node": "Prepare Callback",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Sync",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Respond 202": {
+        "main": [
+          [
+            {
+              "node": "Split URLs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Split URLs": {
+        "main": [
+          [
+            {
+              "node": "Fetch URL",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch URL": {
+        "main": [
+          [
+            {
+              "node": "Process Fetch",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Process Fetch": {
+        "main": [
+          [
+            {
+              "node": "Has Content?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Content?": {
+        "main": [
+          [
+            {
+              "node": "Prepare LLM Body",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "No Content Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "No Content Error": {
+        "main": [
+          [
+            {
+              "node": "Has Callback?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare LLM Body": {
+        "main": [
+          [
+            {
+              "node": "Call LLM",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call LLM": {
+        "main": [
+          [
+            {
+              "node": "Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Response": {
+        "main": [
+          [
+            {
+              "node": "Has Callback?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Callback": {
+        "main": [
+          [
+            {
+              "node": "Send Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

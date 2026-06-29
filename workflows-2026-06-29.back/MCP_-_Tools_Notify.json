@@ -1,0 +1,80 @@
+{
+  "id": "mcp-tools-notify-001",
+  "name": "MCP - Tools Notify",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - Tools Notify\n\n**Endpoint:** POST /webhook/mcp/tools/notify\n\n**Note:** Utilise le micro-service Redis XADD (services/redis_xadd_service.py)\nSolution pour n8n 2.0 (Execute Command supprimé)"
+      },
+      "id": "1",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mcp/tools/notify",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "2",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 200],
+      "webhookId": "mcp-tools-notify-v2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/tools/notify",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "action",
+              "value": "={{ $json.body?.action || 'workflow_updated' }}"
+            },
+            {
+              "name": "workflow_name",
+              "value": "={{ $json.body?.workflow_name || 'unknown' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "3",
+      "name": "Redis XADD Service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: $json.success, stream_id: $json.stream_id, action: $json.action || 'unknown' }) }}"
+      },
+      "id": "5",
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [600, 200]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Redis XADD Service", "type": "main", "index": 0 }]]
+    },
+    "Redis XADD Service": {
+      "main": [[{ "node": "Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

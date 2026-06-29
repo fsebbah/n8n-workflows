@@ -1,0 +1,379 @@
+{
+  "name": "Torah List",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah List API (v2)\n\n**Endpoint:**\n- GET /webhook/torah-list\n\n**Réponse:**\n```json\n{\n  \"success\": true,\n  \"items\": [\n    { \"type\": \"talmud\", \"items\": [...], \"total\": 10 },\n    { \"type\": \"text\", \"items\": [...], \"total\": 2 }\n  ],\n  \"total\": 12\n}\n```\n\n**Source (API v2):**\n- /api/talmud/traites\n- /api/projects",
+        "height": 280,
+        "width": 300,
+        "color": 4
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "path": "torah-list",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        400,
+        304
+      ],
+      "webhookId": "torah-list"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/talmud/traites",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "get-traites",
+      "name": "Get Traites",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        624,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/api/projects",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "get-projects",
+      "name": "Get Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        624,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        848,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Récupérer les données des deux appels API\nconst items = $input.all();\n\n// Trouver les données de chaque source\nlet traitesData = { traites: [], total: 0 };\nlet projectsData = { projects: [], total: 0 };\n\nfor (const item of items) {\n  const data = item.json;\n  if (data.traites) {\n    traitesData = data;\n  } else if (data.projects) {\n    projectsData = data;\n  }\n}\n\n// Traiter les traités\nconst traites = traitesData.traites || [];\nconst traitesTotal = traitesData.total || traites.length;\n\n// Traiter les projets (extraire juste les noms)\nconst projects = projectsData.projects || [];\nconst projectNames = projects.map(p => p.name);\nconst projectsTotal = projectsData.total || projects.length;\n\n// Construire la réponse unifiée\nconst response = {\n  success: true,\n  items: [\n    {\n      type: 'talmud',\n      items: traites,\n      total: traitesTotal\n    },\n    {\n      type: 'text',\n      items: projectNames,\n      total: projectsTotal\n    }\n  ],\n  total: traitesTotal + projectsTotal\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : 500 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        304
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Traites",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Traites": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Projects": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-22T16:54:31.320Z",
+    "createdAt": "2026-04-22T16:54:31.320Z",
+    "versionId": "0acc8081-607e-4adf-b9c4-c017a8fa3b77",
+    "workflowId": "KMdbJCxi4iONooEm",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Torah List API (v2)\n\n**Endpoint:**\n- GET /webhook/torah-list\n\n**Réponse:**\n```json\n{\n  \"success\": true,\n  \"items\": [\n    { \"type\": \"talmud\", \"items\": [...], \"total\": 10 },\n    { \"type\": \"text\", \"items\": [...], \"total\": 2 }\n  ],\n  \"total\": 12\n}\n```\n\n**Source (API v2):**\n- /api/talmud/traites\n- /api/projects",
+          "height": 280,
+          "width": 300,
+          "color": 4
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          64,
+          64
+        ]
+      },
+      {
+        "parameters": {
+          "path": "torah-list",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          400,
+          304
+        ],
+        "webhookId": "torah-list"
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/talmud/traites",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "get-traites",
+        "name": "Get Traites",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          624,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/projects",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "get-projects",
+        "name": "Get Projects",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          624,
+          400
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {},
+        "id": "merge-results",
+        "name": "Merge Results",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3,
+        "position": [
+          848,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Récupérer les données des deux appels API\nconst items = $input.all();\n\n// Trouver les données de chaque source\nlet traitesData = { traites: [], total: 0 };\nlet projectsData = { projects: [], total: 0 };\n\nfor (const item of items) {\n  const data = item.json;\n  if (data.traites) {\n    traitesData = data;\n  } else if (data.projects) {\n    projectsData = data;\n  }\n}\n\n// Traiter les traités\nconst traites = traitesData.traites || [];\nconst traitesTotal = traitesData.total || traites.length;\n\n// Traiter les projets (extraire juste les noms)\nconst projects = projectsData.projects || [];\nconst projectNames = projects.map(p => p.name);\nconst projectsTotal = projectsData.total || projects.length;\n\n// Construire la réponse unifiée\nconst response = {\n  success: true,\n  items: [\n    {\n      type: 'talmud',\n      items: traites,\n      total: traitesTotal\n    },\n    {\n      type: 'text',\n      items: projectNames,\n      total: projectsTotal\n    }\n  ],\n  total: traitesTotal + projectsTotal\n};\n\nreturn [{ json: response }];"
+        },
+        "id": "format-response",
+        "name": "Format Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1072,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.success ? 200 : 500 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-webhook",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1280,
+          304
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Get Traites",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Get Projects",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Traites": {
+        "main": [
+          [
+            {
+              "node": "Merge Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Projects": {
+        "main": [
+          [
+            {
+              "node": "Merge Results",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Merge Results": {
+        "main": [
+          [
+            {
+              "node": "Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": []
+  }
+}

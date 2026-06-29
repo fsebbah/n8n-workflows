@@ -1,11 +1,6 @@
 {
-  "updatedAt": "2026-02-02T19:38:38.321Z",
-  "createdAt": "2026-01-08T11:31:59.893Z",
-  "id": "B1mlPTX5z3uVFUG6",
   "name": "Stripe - Webhook Handler",
-  "description": null,
   "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
@@ -42,15 +37,15 @@
     },
     {
       "parameters": {
-        "jsCode": "  const input = $input.first().json;\n  const event = input.body;\n\n  if (!event || !event.type || !event.id) {\n    return [{ json: { success: false, error: { code: 400, message: 'Event invalide' } } }];\n  }\n\n  const handledTypes = [\n    'checkout.session.completed',\n    'invoice.paid',\n    'customer.subscription.deleted'\n  ];\n\n  if (!handledTypes.includes(event.type)) {\n    return [{ json: { success: false, error: { code: 200, message: `Event ${event.type} ignoré` } } }];\n  }\n\n  const eventData = event.data?.object || {};\n  const metadata = eventData.metadata || {};\n\n  const projectId = metadata.project_id;\n  const discordUserId = metadata.discord_user_id;\n\n  if (!projectId || !discordUserId) {\n    return [{ json: { success: false, error: { code: 400, message: 'Metadata manquantes' } } }];\n  }\n\n  // Extraire les IDs Stripe selon le type d'événement\n  let stripeSessionId = null;\n  let stripeInvoiceId = null;\n  let stripeCustomerId = eventData.customer || null;\n  let stripeSubscriptionId = eventData.subscription || null;\n  let periodEnd = null;\n  const customerEmail = eventData.customer_details?.email || eventData.customer_email || null;\n  if (event.type === 'checkout.session.completed') {\n    stripeSessionId = eventData.id;\n  }\n  else if (event.type === 'invoice.paid') {\n    stripeInvoiceId = eventData.id;\n    periodEnd = eventData.lines?.data?.[0]?.period?.end || null;\n  }\n\n  return [{\n    json: {\n      success: true,\n      project_id: projectId,\n      discord_user_id: discordUserId,\n      discord_channel_id: metadata.discord_channel_id || null,\n      discord_guild_id: metadata.discord_guild_id || null,\n      discord_username: metadata.discord_username || null,\n      customer_email: customerEmail,\n      plan_id: metadata.plan_id || null,\n      credits_per_month: metadata.credits_per_month || \"1000\",\n      event_id: event.id,\n      event_type: event.type,\n      // Nouveaux champs Stripe\n      stripe_session_id: stripeSessionId,\n      stripe_invoice_id: stripeInvoiceId,\n      stripe_customer_id: stripeCustomerId,\n      stripe_subscription_id: stripeSubscriptionId,\n      period_end: periodEnd\n    }\n  }];"
+        "jsCode": "const input = $input.first().json;\nconst event = input.body;\nconst eventData = event.data?.object || {};\n\n// Validation event\nif (!event || !event.type || !event.id) {\n  return [{ json: { success: false, error: { code: 400, message: 'Event invalide' } } }];\n}\n\nconst handledTypes = ['checkout.session.completed', 'invoice.paid', 'customer.subscription.deleted'];\n\nif (!handledTypes.includes(event.type)) {\n  return [{ json: { success: false, error: { code: 200, message: `Event ${event.type} ignoré` } } }];\n}\n\n// Extraire métadonnées selon le type\nlet metadata = {};\n\nif (event.type === 'invoice.paid') {\n  metadata = eventData.lines?.data?.[0]?.metadata || eventData.parent?.subscription_details?.metadata || {};\n} else {\n  metadata = eventData.metadata || {};\n}\n\nconst projectId = metadata.project_id;\nconst discordUserId = metadata.discord_user_id;\nconst backendApiUrl = metadata.backend_api_url;\nconst backendServiceToken = metadata.backend_service_token;\n  \n// Validations\nif (!projectId || !discordUserId) {\n  return [{ json: { success: false, error: { code: 400, message: 'Metadata manquantes: project_id ou discord_user_id' } } }];\n}\n\nif (!backendApiUrl || !backendServiceToken) {\n  return [{ json: { success: false, error: { code: 400, message: 'Backend credentials manquantes dans metadata (bot Discord doit les ajouter)' } } }];\n}\n\n// Extraire IDs Stripe\nlet stripeSessionId = null;\nlet stripeInvoiceId = null;\nlet stripeCustomerId = eventData.customer || null;\nlet stripeSubscriptionId =\n  eventData.subscription ||\n  eventData.parent?.subscription_details?.subscription ||\n  eventData.lines?.data?.[0]?.parent?.subscription_item_details?.subscription ||\n  null;\n\nlet periodEnd = null;\nconst customerEmail = eventData.customer_details?.email || eventData.customer_email || null;\n\nif (event.type === 'checkout.session.completed') {\n  stripeSessionId = eventData.id;\n} else if (event.type === 'invoice.paid') {\n  stripeInvoiceId = eventData.id;\n  periodEnd = eventData.lines?.data?.[0]?.period?.end || null;\n}\n\nreturn [{\n  json: {\n    success: true,\n    project_id: projectId,\n    discord_user_id: discordUserId,\n    backend_api_url: backendApiUrl,\n    backend_service_token: backendServiceToken,\n    discord_channel_id: metadata.discord_channel_id || null,\n    discord_guild_id: metadata.discord_guild_id || null,\n    discord_username: metadata.discord_username || null,\n    customer_email: customerEmail,\n    plan_id: metadata.plan_id || null,\n    credits_per_month: metadata.credits_per_month || \"1000\",\n    event_id: event.id,\n    event_type: event.type,\n    stripe_session_id: stripeSessionId,\n    stripe_invoice_id: stripeInvoiceId,\n    stripe_customer_id: stripeCustomerId,\n    stripe_subscription_id: stripeSubscriptionId,\n    period_end: periodEnd,\n    hosted_invoice_url: eventData.hosted_invoice_url || null,\n    invoice_pdf: eventData.invoice_pdf || null\n  }\n}];\n"
       },
       "id": "extract-data",
       "name": "Extract & Validate",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        528,
-        304
+        736,
+        288
       ]
     },
     {
@@ -82,7 +77,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        752,
+        960,
         304
       ]
     },
@@ -119,8 +114,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        960,
-        208
+        1152,
+        64
       ],
       "onError": "continueRegularOutput"
     },
@@ -130,7 +125,8 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 2
           },
           "conditions": [
             {
@@ -152,21 +148,21 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1184,
+        1392,
         208
       ]
     },
     {
       "parameters": {
-        "jsCode": "  const extractData = $('Extract & Validate').first().json;\n  const eventType = extractData.event_type;\n\n  let action = null;\n  let subscriptionStatus = null;\n  let currentPeriodEnd = null;\n\n  let payload = {\n    project_id: extractData.project_id,\n    discord_user_id: extractData.discord_user_id,\n    discord_channel_id: extractData.discord_channel_id,\n    discord_guild_id: extractData.discord_guild_id,\n    discord_username: extractData.discord_username,\n    customer_email: extractData.customer_email,\n    plan_id: extractData.plan_id\n  };\n\n  // Construire metadata Stripe\n  const metadata = {\n    stripe_session_id: extractData.stripe_session_id || null,\n    stripe_customer_id: extractData.stripe_customer_id || null,\n    stripe_subscription_id: extractData.stripe_subscription_id || null,\n    stripe_invoice_id: extractData.stripe_invoice_id || null\n  };\n\n  if (eventType === 'checkout.session.completed') {\n    const credits = parseInt(extractData.credits_per_month || '1000');\n    action = 'set';\n    payload.credits_remaining = credits;\n    payload.credits_total = credits;\n    payload.reason = 'checkout_completed';\n\n    // Nouveau: statut et période\n    subscriptionStatus = 'active';\n    const now = new Date();\n    now.setMonth(now.getMonth() + 1);\n    currentPeriodEnd = now.toISOString();\n  }\n  else if (eventType === 'invoice.paid') {\n    const credits = parseInt(extractData.credits_per_month || '1000');\n    action = 'set';\n    payload.credits_remaining = credits;\n    payload.credits_total = credits;\n    payload.reason = 'renewal';\n\n    // Nouveau: statut et période\n    subscriptionStatus = 'active';\n    if (extractData.period_end) {\n      currentPeriodEnd = new Date(extractData.period_end * 1000).toISOString();\n    } else {\n      const now = new Date();\n      now.setMonth(now.getMonth() + 1);\n      currentPeriodEnd = now.toISOString();\n    }\n  }\n  else if (eventType === 'customer.subscription.deleted') {\n    action = 'set';\n    payload.credits_remaining = 0;\n    payload.credits_total = 0;\n    payload.reason = 'subscription_deleted';\n\n    // Nouveau: statut canceled\n    subscriptionStatus = 'canceled';\n    currentPeriodEnd = new Date().toISOString();\n  }\n  else {\n    return [{ json: { action: 'skip', reason: `Event ${eventType} not handled` } }];\n  }\n\n  return [{\n    json: {\n      action,\n      ...payload,\n      subscription_status: subscriptionStatus,\n      current_period_end: currentPeriodEnd,\n      metadata: metadata\n    }\n  }];"
+        "jsCode": "  const extractData = $('Extract & Validate').first().json;\n  const eventType = extractData.event_type;\n\n  let action = null;\n  let subscriptionStatus = null;\n  let currentPeriodEnd = null;\n\n  let payload = {\n    project_id: extractData.project_id,\n    project_slug: extractData.project_id,\n    discord_user_id: extractData.discord_user_id,\n    discord_channel_id: extractData.discord_channel_id,\n    discord_guild_id: extractData.discord_guild_id,\n    discord_username: extractData.discord_username,\n    customer_email: extractData.customer_email,\n    plan_id: extractData.plan_id,\n    hostedInvoiceUrl: extractData.hosted_invoice_url || null,\n    invoicePdf: extractData.invoice_pdf || null,\n  };\n\n  // Construire metadata Stripe\n  const metadata = {\n    stripe_session_id: extractData.stripe_session_id || null,\n    stripe_customer_id: extractData.stripe_customer_id || null,\n    stripe_subscription_id: extractData.stripe_subscription_id || null,\n    stripe_invoice_id: extractData.stripe_invoice_id || null\n  };\n\n  if (eventType === 'checkout.session.completed') {\n    return [{ json: { action: 'skip', reason: 'credits driven by invoice.paid' } }];\n    /*\n    const credits = parseInt(extractData.credits_per_month || '1000');\n    action = 'upsert';\n    payload.credits_remaining = credits;\n    payload.credits_total = credits;\n    payload.reason = 'checkout_completed';\n\n    // Nouveau: statut et période\n    subscriptionStatus = 'active';\n    const now = new Date();\n    now.setMonth(now.getMonth() + 1);\n    currentPeriodEnd = now.toISOString();\n   */\n  }\n  else if (eventType === 'invoice.paid') {\n    const credits = parseInt(extractData.credits_per_month || '1000');\n    action = 'upsert';\n    payload.credits_remaining = credits;\n    payload.credits_total = credits;\n    payload.reason = 'renewal';\n\n    // Nouveau: statut et période\n    subscriptionStatus = 'active';\n    if (extractData.period_end) {\n      currentPeriodEnd = new Date(extractData.period_end * 1000).toISOString();\n    } else {\n      const now = new Date();\n      now.setMonth(now.getMonth() + 1);\n      currentPeriodEnd = now.toISOString();\n    }\n  }\n  else if (eventType === 'customer.subscription.deleted') {\n    action = 'upsert';\n    payload.credits_remaining = 0;\n    payload.credits_total = 0;\n    payload.reason = 'subscription_deleted';\n\n    // Nouveau: statut canceled\n    subscriptionStatus = 'canceled';\n    currentPeriodEnd = new Date().toISOString();\n  }\n  else {\n    return [{ json: { action: 'skip', reason: `Event ${eventType} not handled` } }];\n  }\n\n  return [{\n    json: {\n      action,\n      ...payload,\n      subscription_status: subscriptionStatus,\n      current_period_end: currentPeriodEnd,\n      metadata: metadata\n    }\n  }];"
       },
       "id": "process-event",
       "name": "Process Event",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1152,
-        -160
+        1408,
+        -192
       ]
     },
     {
@@ -206,14 +202,14 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1776,
+        1984,
         128
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $('Code in JavaScript').item.json.backend_api_url }}/api/ecommerce/webhook/account/{{ $('Process Event').item.json.action }}",
+        "url": "={{ $('Extract Backend Config').first().json.backend_api_url}}/api/ecommerce/webhook/credits/{{ $('Process Event').item.json.action }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -223,17 +219,17 @@
             },
             {
               "name": "X-Project-ID",
-              "value": "={{ $('Process Event').item.json.project_id }}"
+              "value": "={{ $('Extract Backend Config').first().json.discord_guild_id }}"
             },
             {
-              "name": "X-Service-Token",
-              "value": "={{ $('Code in JavaScript').item.json.backend_service_token }}"
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Extract Backend Config').first().json.backend_service_token }}"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "=  {{ JSON.stringify({\n    discord_user_id: $('Process Event').item.json.discord_user_id,\n    credits_remaining: $json.items.data[0].price.metadata.credits_per_month ?\n  parseInt($json.items.data[0].price.metadata.credits_per_month) : 1000,\n    credits_total: $json.items.data[0].price.metadata.credits_per_month ?\n  parseInt($json.items.data[0].price.metadata.credits_per_month) : 1000,\n    subscription_status: $('Process Event').item.json.subscription_status,\n    plan_id: $('Process Event').item.json.plan_id,\n    current_period_end: $('Process Event').item.json.current_period_end,\n    reason: $('Process Event').item.json.reason,\n    metadata: $('Process Event').item.json.metadata,\n    discord_username: $('Process Event').item.json.discord_username,\n    discord_guild_id: $('Process Event').item.json.discord_guild_id,\n    discord_channel_id: $('Process Event').item.json.discord_channel_id,\n    customer_email: $('Process Event').item.json.customer_email,\n    create_private_channel: $json.items.data[0].price.metadata.create_private_channel === 'true',\n    amount: $json.items.data[0].price.unit_amount,\n    currency: $json.items.data[0].price.currency,\n    product_id: $json.items.data[0].price.product,\n    plan_name: $json.items.data[0].price.metadata.plan_name || null\n  }) }}",
+        "jsonBody": "=  {{ JSON.stringify({\n    discord_user_id: $('Process Event').item.json.discord_user_id,\n    credits_remaining: $json.items.data[0].price.metadata.credits_per_month ?\n    parseInt($json.items.data[0].price.metadata.credits_per_month) : 1000,\n    credits_total: $json.items.data[0].price.metadata.credits_per_month ?\n    parseInt($json.items.data[0].price.metadata.credits_per_month) : 1000,\n    subscription_status: $('Process Event').item.json.subscription_status,\n    plan_id: $('Process Event').item.json.plan_id,\n    current_period_end: $('Process Event').item.json.current_period_end,\n    reason: $('Process Event').item.json.reason,\n    metadata: $('Process Event').item.json.metadata,\n    project_slug: $('Process Event').item.json.project_slug,\n    discord_username: $('Process Event').item.json.discord_username,\n    discord_guild_id: $('Process Event').item.json.discord_guild_id,\n    discord_channel_id: $('Process Event').item.json.discord_channel_id,\n    customer_email: $('Process Event').item.json.customer_email,\n    hosted_invoice_url: $('Process Event').item.json.hostedInvoiceUrl,\n    invoice_pdf: $('Process Event').item.json.invoicePdf,\n    create_private_channel: $json.items.data[0].price.metadata.create_private_channel === 'true',\n    amount: $json.items.data[0].price.unit_amount,\n    currency: $json.items.data[0].price.currency,\n    product_id: $json.items.data[0].price.product,\n    plan_name: $json.items.data[0].price.metadata.plan_name || null\n  }) }}",
         "options": {
           "response": {
             "response": {
@@ -247,7 +243,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2096,
+        2304,
         -128
       ],
       "onError": "continueRegularOutput"
@@ -265,7 +261,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        2192,
+        2400,
         240
       ]
     },
@@ -282,7 +278,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        960,
+        1168,
         432
       ]
     },
@@ -299,32 +295,9 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1408,
+        1616,
         432
       ]
-    },
-    {
-      "parameters": {
-        "url": "= https://api.stripe.com/v1/checkout/sessions/{{ $json.stripe_session_id }}?expand[]=line_items.data.price",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ stripe_key }}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        0,
-        0
-      ],
-      "id": "8d187996-cf15-4c77-9785-5b60ea418944",
-      "name": "HTTP Request"
     },
     {
       "parameters": {
@@ -343,81 +316,83 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1696,
-        -272
+        2048,
+        -288
       ],
       "id": "392a38a6-d961-445c-acd3-500e84240edb",
       "name": "Get Price Info"
     },
     {
       "parameters": {
-        "operation": "get",
-        "propertyName": "config",
-        "key": "=project:{{ $json.project_id }}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.redis",
-      "typeVersion": 1,
-      "position": [
-        1296,
-        -320
-      ],
-      "id": "d448c91d-b4ce-45bc-9a34-cacf3d3791fb",
-      "name": "Redis",
-      "credentials": {
-        "redis": {
-          "id": "2idv3VKZ91q5gOnz",
-          "name": "Redis account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "const config = JSON.parse($input.first().json.config || '{}');\n  return [{\n    json: {\n      ...$('Process Event').first().json,\n      stripe_key: config.stripe_key,\n      backend_api_url: config.backend_api_url,\n      backend_service_token: config.backend_service_token\n    }\n  }];"
+        "jsCode": "const apiResponse = $input.first().json;\nconst config = apiResponse.body || apiResponse;\n\nreturn [{\n  json: {\n    ...$('Process Event').first().json,\n    stripe_key: config.stripe_key,\n    backend_api_url: config.backend_api_url,\n    backend_service_token: config.backend_service_token\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1488,
-        -288
+        1808,
+        -256
       ],
       "id": "008a4e2b-081d-41b0-a08b-b67dd1ad79f8",
       "name": "Code in JavaScript"
     },
     {
       "parameters": {
-        "operation": "get",
-        "propertyName": "config_early",
-        "key": "=project:{{ $json.project_id }}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.redis",
-      "typeVersion": 1,
-      "position": [
-        850,
-        100
-      ],
-      "id": "redis-get-early",
-      "name": "Redis GET Early",
-      "credentials": {
-        "redis": {
-          "id": "2idv3VKZ91q5gOnz",
-          "name": "Redis account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Extract backend credentials from Redis config\nconst config = JSON.parse($input.first().json.config_early || '{}');\nconst extractData = $('Extract & Validate').first().json;\n\nreturn [{\n  json: {\n    ...extractData,\n    backend_api_url: config.backend_api_url,\n    backend_service_token: config.backend_service_token\n  }\n}];"
+        "jsCode": "// Extract backend credentials from API response\n//const apiResponse = $input.first().json;\nconst extractData = $('Extract & Validate').first().json;\n\nreturn [{\n  json: {\n    ...extractData,    \n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        900,
-        208
+        960,
+        -176
       ],
       "id": "extract-backend-config",
       "name": "Extract Backend Config"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.backend_api_url }}/api/ecommerce/stripe/admin/projects/{{ $json.project_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.backend_service_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        736,
+        -64
+      ],
+      "id": "d4244e4c-b2c7-48f1-a3dc-c26b77dbef56",
+      "name": "Get Project Config"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Extract Backend Config').first().json.backend_api_url}}/api/ecommerce/stripe/admin/projects/{{ $('Process Event').first().json.project_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Extract Backend Config').first().json.backend_service_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1584,
+        -208
+      ],
+      "id": "1cd3a96e-5119-43a0-8edb-e00e2bd64262",
+      "name": "Get Stripe Keys"
     }
   ],
   "connections": {
@@ -447,7 +422,7 @@
       "main": [
         [
           {
-            "node": "Redis GET Early",
+            "node": "Get Project Config",
             "type": "main",
             "index": 0
           }
@@ -455,17 +430,6 @@
         [
           {
             "node": "Error Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Redis GET Early": {
-      "main": [
-        [
-          {
-            "node": "Extract Backend Config",
             "type": "main",
             "index": 0
           }
@@ -516,7 +480,7 @@
       "main": [
         [
           {
-            "node": "Redis",
+            "node": "Get Stripe Keys",
             "type": "main",
             "index": 0
           }
@@ -563,17 +527,6 @@
         ]
       ]
     },
-    "Redis": {
-      "main": [
-        [
-          {
-            "node": "Code in JavaScript",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Code in JavaScript": {
       "main": [
         [
@@ -584,79 +537,41 @@
           }
         ]
       ]
+    },
+    "Get Project Config": {
+      "main": [
+        [
+          {
+            "node": "Extract Backend Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Stripe Keys": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
-  "staticData": null,
-  "meta": {
-    "templateCredsSetupCompleted": true
-  },
-  "pinData": {},
-  "versionId": "bba8a396-f645-4a3f-99cb-75d8c2f39dae",
-  "activeVersionId": "bba8a396-f645-4a3f-99cb-75d8c2f39dae",
-  "versionCounter": 194,
-  "triggerCount": 1,
-  "shared": [
-    {
-      "updatedAt": "2026-02-02T17:55:15.060Z",
-      "createdAt": "2026-02-02T17:55:15.060Z",
-      "role": "workflow:owner",
-      "workflowId": "B1mlPTX5z3uVFUG6",
-      "projectId": "U3cZjxLpPGVohw1b",
-      "project": {
-        "updatedAt": "2026-02-02T18:03:13.881Z",
-        "createdAt": "2026-02-02T17:54:12.365Z",
-        "id": "U3cZjxLpPGVohw1b",
-        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "projectRelations": [
-          {
-            "updatedAt": "2026-02-02T17:54:12.365Z",
-            "createdAt": "2026-02-02T17:54:12.365Z",
-            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
-            "projectId": "U3cZjxLpPGVohw1b",
-            "user": {
-              "updatedAt": "2026-04-09T12:42:54.002Z",
-              "createdAt": "2026-02-02T17:54:09.643Z",
-              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
-              "email": "fsebbah@azy.solutions",
-              "firstName": "Sebbah",
-              "lastName": "fsebbah@azy.solutions",
-              "personalizationAnswers": {
-                "version": "v4",
-                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
-                "personalization_survey_n8n_version": "2.6.3"
-              },
-              "settings": {
-                "userActivated": true,
-                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
-                "userActivatedAt": 1770062456227,
-                "npsSurvey": {
-                  "waitingForResponse": true,
-                  "ignoredCount": 1,
-                  "lastShownAt": 1771441113942
-                }
-              },
-              "disabled": false,
-              "mfaEnabled": false,
-              "lastActiveAt": "2026-04-09",
-              "isPending": false
-            }
-          }
-        ]
-      }
-    }
-  ],
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-02-02T17:55:15.060Z",
-    "createdAt": "2026-02-02T17:55:15.060Z",
-    "versionId": "bba8a396-f645-4a3f-99cb-75d8c2f39dae",
-    "workflowId": "B1mlPTX5z3uVFUG6",
+    "updatedAt": "2026-06-18T13:53:19.159Z",
+    "createdAt": "2026-06-18T13:53:15.630Z",
+    "versionId": "2d5c98ed-4974-433c-a06f-82ed2f2f9765",
+    "workflowId": "PF1FifX7doIaYjzV",
     "nodes": [
       {
         "parameters": {
@@ -693,15 +608,15 @@
       },
       {
         "parameters": {
-          "jsCode": "  const input = $input.first().json;\n  const event = input.body;\n\n  if (!event || !event.type || !event.id) {\n    return [{ json: { success: false, error: { code: 400, message: 'Event invalide' } } }];\n  }\n\n  const handledTypes = [\n    'checkout.session.completed',\n    'invoice.paid',\n    'customer.subscription.deleted'\n  ];\n\n  if (!handledTypes.includes(event.type)) {\n    return [{ json: { success: false, error: { code: 200, message: `Event ${event.type} ignoré` } } }];\n  }\n\n  const eventData = event.data?.object || {};\n  const metadata = eventData.metadata || {};\n\n  const projectId = metadata.project_id;\n  const discordUserId = metadata.discord_user_id;\n\n  if (!projectId || !discordUserId) {\n    return [{ json: { success: false, error: { code: 400, message: 'Metadata manquantes' } } }];\n  }\n\n  // Extraire les IDs Stripe selon le type d'événement\n  let stripeSessionId = null;\n  let stripeInvoiceId = null;\n  let stripeCustomerId = eventData.customer || null;\n  let stripeSubscriptionId = eventData.subscription || null;\n  let periodEnd = null;\n  const customerEmail = eventData.customer_details?.email || eventData.customer_email || null;\n  if (event.type === 'checkout.session.completed') {\n    stripeSessionId = eventData.id;\n  }\n  else if (event.type === 'invoice.paid') {\n    stripeInvoiceId = eventData.id;\n    periodEnd = eventData.lines?.data?.[0]?.period?.end || null;\n  }\n\n  return [{\n    json: {\n      success: true,\n      project_id: projectId,\n      discord_user_id: discordUserId,\n      discord_channel_id: metadata.discord_channel_id || null,\n      discord_guild_id: metadata.discord_guild_id || null,\n      discord_username: metadata.discord_username || null,\n      customer_email: customerEmail,\n      plan_id: metadata.plan_id || null,\n      credits_per_month: metadata.credits_per_month || \"1000\",\n      event_id: event.id,\n      event_type: event.type,\n      // Nouveaux champs Stripe\n      stripe_session_id: stripeSessionId,\n      stripe_invoice_id: stripeInvoiceId,\n      stripe_customer_id: stripeCustomerId,\n      stripe_subscription_id: stripeSubscriptionId,\n      period_end: periodEnd\n    }\n  }];"
+          "jsCode": "const input = $input.first().json;\nconst event = input.body;\nconst eventData = event.data?.object || {};\n\n// Validation event\nif (!event || !event.type || !event.id) {\n  return [{ json: { success: false, error: { code: 400, message: 'Event invalide' } } }];\n}\n\nconst handledTypes = ['checkout.session.completed', 'invoice.paid', 'customer.subscription.deleted'];\n\nif (!handledTypes.includes(event.type)) {\n  return [{ json: { success: false, error: { code: 200, message: `Event ${event.type} ignoré` } } }];\n}\n\n// Extraire métadonnées selon le type\nlet metadata = {};\n\nif (event.type === 'invoice.paid') {\n  metadata = eventData.lines?.data?.[0]?.metadata || eventData.parent?.subscription_details?.metadata || {};\n} else {\n  metadata = eventData.metadata || {};\n}\n\nconst projectId = metadata.project_id;\nconst discordUserId = metadata.discord_user_id;\nconst backendApiUrl = metadata.backend_api_url;\nconst backendServiceToken = metadata.backend_service_token;\n  \n// Validations\nif (!projectId || !discordUserId) {\n  return [{ json: { success: false, error: { code: 400, message: 'Metadata manquantes: project_id ou discord_user_id' } } }];\n}\n\nif (!backendApiUrl || !backendServiceToken) {\n  return [{ json: { success: false, error: { code: 400, message: 'Backend credentials manquantes dans metadata (bot Discord doit les ajouter)' } } }];\n}\n\n// Extraire IDs Stripe\nlet stripeSessionId = null;\nlet stripeInvoiceId = null;\nlet stripeCustomerId = eventData.customer || null;\nlet stripeSubscriptionId =\n  eventData.subscription ||\n  eventData.parent?.subscription_details?.subscription ||\n  eventData.lines?.data?.[0]?.parent?.subscription_item_details?.subscription ||\n  null;\n\nlet periodEnd = null;\nconst customerEmail = eventData.customer_details?.email || eventData.customer_email || null;\n\nif (event.type === 'checkout.session.completed') {\n  stripeSessionId = eventData.id;\n} else if (event.type === 'invoice.paid') {\n  stripeInvoiceId = eventData.id;\n  periodEnd = eventData.lines?.data?.[0]?.period?.end || null;\n}\n\nreturn [{\n  json: {\n    success: true,\n    project_id: projectId,\n    discord_user_id: discordUserId,\n    backend_api_url: backendApiUrl,\n    backend_service_token: backendServiceToken,\n    discord_channel_id: metadata.discord_channel_id || null,\n    discord_guild_id: metadata.discord_guild_id || null,\n    discord_username: metadata.discord_username || null,\n    customer_email: customerEmail,\n    plan_id: metadata.plan_id || null,\n    credits_per_month: metadata.credits_per_month || \"1000\",\n    event_id: event.id,\n    event_type: event.type,\n    stripe_session_id: stripeSessionId,\n    stripe_invoice_id: stripeInvoiceId,\n    stripe_customer_id: stripeCustomerId,\n    stripe_subscription_id: stripeSubscriptionId,\n    period_end: periodEnd,\n    hosted_invoice_url: eventData.hosted_invoice_url || null,\n    invoice_pdf: eventData.invoice_pdf || null\n  }\n}];\n"
         },
         "id": "extract-data",
         "name": "Extract & Validate",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          528,
-          304
+          736,
+          288
         ]
       },
       {
@@ -733,7 +648,7 @@
         "type": "n8n-nodes-base.if",
         "typeVersion": 2.2,
         "position": [
-          752,
+          960,
           304
         ]
       },
@@ -747,6 +662,10 @@
               {
                 "name": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "name": "X-Service-Token",
+                "value": "={{ $json.backend_service_token }}"
               }
             ]
           },
@@ -766,8 +685,8 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          960,
-          208
+          1152,
+          64
         ],
         "onError": "continueRegularOutput"
       },
@@ -777,7 +696,8 @@
             "options": {
               "caseSensitive": true,
               "leftValue": "",
-              "typeValidation": "strict"
+              "typeValidation": "strict",
+              "version": 2
             },
             "conditions": [
               {
@@ -799,21 +719,21 @@
         "type": "n8n-nodes-base.if",
         "typeVersion": 2.2,
         "position": [
-          1184,
+          1392,
           208
         ]
       },
       {
         "parameters": {
-          "jsCode": "  const extractData = $('Extract & Validate').first().json;\n  const eventType = extractData.event_type;\n\n  let action = null;\n  let subscriptionStatus = null;\n  let currentPeriodEnd = null;\n\n  let payload = {\n    project_id: extractData.project_id,\n    discord_user_id: extractData.discord_user_id,\n    discord_channel_id: extractData.discord_channel_id,\n    discord_guild_id: extractData.discord_guild_id,\n    discord_username: extractData.discord_username,\n    customer_email: extractData.customer_email,\n    plan_id: extractData.plan_id\n  };\n\n  // Construire metadata Stripe\n  const metadata = {\n    stripe_session_id: extractData.stripe_session_id || null,\n    stripe_customer_id: extractData.stripe_customer_id || null,\n    stripe_subscription_id: extractData.stripe_subscription_id || null,\n    stripe_invoice_id: extractData.stripe_invoice_id || null\n  };\n\n  if (eventType === 'checkout.session.completed') {\n    const credits = parseInt(extractData.credits_per_month || '1000');\n    action = 'set';\n    payload.credits_remaining = credits;\n    payload.credits_total = credits;\n    payload.reason = 'checkout_completed';\n\n    // Nouveau: statut et période\n    subscriptionStatus = 'active';\n    const now = new Date();\n    now.setMonth(now.getMonth() + 1);\n    currentPeriodEnd = now.toISOString();\n  }\n  else if (eventType === 'invoice.paid') {\n    const credits = parseInt(extractData.credits_per_month || '1000');\n    action = 'set';\n    payload.credits_remaining = credits;\n    payload.credits_total = credits;\n    payload.reason = 'renewal';\n\n    // Nouveau: statut et période\n    subscriptionStatus = 'active';\n    if (extractData.period_end) {\n      currentPeriodEnd = new Date(extractData.period_end * 1000).toISOString();\n    } else {\n      const now = new Date();\n      now.setMonth(now.getMonth() + 1);\n      currentPeriodEnd = now.toISOString();\n    }\n  }\n  else if (eventType === 'customer.subscription.deleted') {\n    action = 'set';\n    payload.credits_remaining = 0;\n    payload.credits_total = 0;\n    payload.reason = 'subscription_deleted';\n\n    // Nouveau: statut canceled\n    subscriptionStatus = 'canceled';\n    currentPeriodEnd = new Date().toISOString();\n  }\n  else {\n    return [{ json: { action: 'skip', reason: `Event ${eventType} not handled` } }];\n  }\n\n  return [{\n    json: {\n      action,\n      ...payload,\n      subscription_status: subscriptionStatus,\n      current_period_end: currentPeriodEnd,\n      metadata: metadata\n    }\n  }];"
+          "jsCode": "  const extractData = $('Extract & Validate').first().json;\n  const eventType = extractData.event_type;\n\n  let action = null;\n  let subscriptionStatus = null;\n  let currentPeriodEnd = null;\n\n  let payload = {\n    project_id: extractData.project_id,\n    project_slug: extractData.project_id,\n    discord_user_id: extractData.discord_user_id,\n    discord_channel_id: extractData.discord_channel_id,\n    discord_guild_id: extractData.discord_guild_id,\n    discord_username: extractData.discord_username,\n    customer_email: extractData.customer_email,\n    plan_id: extractData.plan_id,\n    hostedInvoiceUrl: extractData.hosted_invoice_url || null,\n    invoicePdf: extractData.invoice_pdf || null,\n  };\n\n  // Construire metadata Stripe\n  const metadata = {\n    stripe_session_id: extractData.stripe_session_id || null,\n    stripe_customer_id: extractData.stripe_customer_id || null,\n    stripe_subscription_id: extractData.stripe_subscription_id || null,\n    stripe_invoice_id: extractData.stripe_invoice_id || null\n  };\n\n  if (eventType === 'checkout.session.completed') {\n    return [{ json: { action: 'skip', reason: 'credits driven by invoice.paid' } }];\n    /*\n    const credits = parseInt(extractData.credits_per_month || '1000');\n    action = 'upsert';\n    payload.credits_remaining = credits;\n    payload.credits_total = credits;\n    payload.reason = 'checkout_completed';\n\n    // Nouveau: statut et période\n    subscriptionStatus = 'active';\n    const now = new Date();\n    now.setMonth(now.getMonth() + 1);\n    currentPeriodEnd = now.toISOString();\n   */\n  }\n  else if (eventType === 'invoice.paid') {\n    const credits = parseInt(extractData.credits_per_month || '1000');\n    action = 'upsert';\n    payload.credits_remaining = credits;\n    payload.credits_total = credits;\n    payload.reason = 'renewal';\n\n    // Nouveau: statut et période\n    subscriptionStatus = 'active';\n    if (extractData.period_end) {\n      currentPeriodEnd = new Date(extractData.period_end * 1000).toISOString();\n    } else {\n      const now = new Date();\n      now.setMonth(now.getMonth() + 1);\n      currentPeriodEnd = now.toISOString();\n    }\n  }\n  else if (eventType === 'customer.subscription.deleted') {\n    action = 'upsert';\n    payload.credits_remaining = 0;\n    payload.credits_total = 0;\n    payload.reason = 'subscription_deleted';\n\n    // Nouveau: statut canceled\n    subscriptionStatus = 'canceled';\n    currentPeriodEnd = new Date().toISOString();\n  }\n  else {\n    return [{ json: { action: 'skip', reason: `Event ${eventType} not handled` } }];\n  }\n\n  return [{\n    json: {\n      action,\n      ...payload,\n      subscription_status: subscriptionStatus,\n      current_period_end: currentPeriodEnd,\n      metadata: metadata\n    }\n  }];"
         },
         "id": "process-event",
         "name": "Process Event",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          1152,
-          -160
+          1408,
+          -192
         ]
       },
       {
@@ -853,14 +773,14 @@
         "type": "n8n-nodes-base.if",
         "typeVersion": 2.2,
         "position": [
-          1776,
+          1984,
           128
         ]
       },
       {
         "parameters": {
           "method": "POST",
-          "url": "={{ $('Code in JavaScript').item.json.backend_api_url }}/api/ecommerce/webhook/account/{{ $('Process Event').item.json.action }}",
+          "url": "={{ $('Extract Backend Config').first().json.backend_api_url}}/api/ecommerce/webhook/credits/{{ $('Process Event').item.json.action }}",
           "sendHeaders": true,
           "headerParameters": {
             "parameters": [
@@ -870,13 +790,17 @@
               },
               {
                 "name": "X-Project-ID",
-                "value": "={{ $('Process Event').item.json.project_id }}"
+                "value": "={{ $('Extract Backend Config').first().json.discord_guild_id }}"
+              },
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $('Extract Backend Config').first().json.backend_service_token }}"
               }
             ]
           },
           "sendBody": true,
           "specifyBody": "json",
-          "jsonBody": "=  {{ JSON.stringify({\n    discord_user_id: $('Process Event').item.json.discord_user_id,\n    credits_remaining: $json.items.data[0].price.metadata.credits_per_month ?\n  parseInt($json.items.data[0].price.metadata.credits_per_month) : 1000,\n    credits_total: $json.items.data[0].price.metadata.credits_per_month ?\n  parseInt($json.items.data[0].price.metadata.credits_per_month) : 1000,\n    subscription_status: $('Process Event').item.json.subscription_status,\n    plan_id: $('Process Event').item.json.plan_id,\n    current_period_end: $('Process Event').item.json.current_period_end,\n    reason: $('Process Event').item.json.reason,\n    metadata: $('Process Event').item.json.metadata,\n    discord_username: $('Process Event').item.json.discord_username,\n    discord_guild_id: $('Process Event').item.json.discord_guild_id,\n    discord_channel_id: $('Process Event').item.json.discord_channel_id,\n    customer_email: $('Process Event').item.json.customer_email,\n    create_private_channel: $json.items.data[0].price.metadata.create_private_channel === 'true',\n    amount: $json.items.data[0].price.unit_amount,\n    currency: $json.items.data[0].price.currency,\n    product_id: $json.items.data[0].price.product,\n    plan_name: $json.items.data[0].price.metadata.plan_name || null\n  }) }}",
+          "jsonBody": "=  {{ JSON.stringify({\n    discord_user_id: $('Process Event').item.json.discord_user_id,\n    credits_remaining: $json.items.data[0].price.metadata.credits_per_month ?\n    parseInt($json.items.data[0].price.metadata.credits_per_month) : 1000,\n    credits_total: $json.items.data[0].price.metadata.credits_per_month ?\n    parseInt($json.items.data[0].price.metadata.credits_per_month) : 1000,\n    subscription_status: $('Process Event').item.json.subscription_status,\n    plan_id: $('Process Event').item.json.plan_id,\n    current_period_end: $('Process Event').item.json.current_period_end,\n    reason: $('Process Event').item.json.reason,\n    metadata: $('Process Event').item.json.metadata,\n    project_slug: $('Process Event').item.json.project_slug,\n    discord_username: $('Process Event').item.json.discord_username,\n    discord_guild_id: $('Process Event').item.json.discord_guild_id,\n    discord_channel_id: $('Process Event').item.json.discord_channel_id,\n    customer_email: $('Process Event').item.json.customer_email,\n    hosted_invoice_url: $('Process Event').item.json.hostedInvoiceUrl,\n    invoice_pdf: $('Process Event').item.json.invoicePdf,\n    create_private_channel: $json.items.data[0].price.metadata.create_private_channel === 'true',\n    amount: $json.items.data[0].price.unit_amount,\n    currency: $json.items.data[0].price.currency,\n    product_id: $json.items.data[0].price.product,\n    plan_name: $json.items.data[0].price.metadata.plan_name || null\n  }) }}",
           "options": {
             "response": {
               "response": {
@@ -890,7 +814,7 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          2096,
+          2304,
           -128
         ],
         "onError": "continueRegularOutput"
@@ -908,7 +832,7 @@
         "type": "n8n-nodes-base.respondToWebhook",
         "typeVersion": 1.1,
         "position": [
-          2192,
+          2400,
           240
         ]
       },
@@ -925,7 +849,7 @@
         "type": "n8n-nodes-base.respondToWebhook",
         "typeVersion": 1.1,
         "position": [
-          960,
+          1168,
           432
         ]
       },
@@ -942,32 +866,9 @@
         "type": "n8n-nodes-base.respondToWebhook",
         "typeVersion": 1.1,
         "position": [
-          1408,
+          1616,
           432
         ]
-      },
-      {
-        "parameters": {
-          "url": "= https://api.stripe.com/v1/checkout/sessions/{{ $json.stripe_session_id }}?expand[]=line_items.data.price",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "=Bearer {{ stripe_key }}"
-              }
-            ]
-          },
-          "options": {}
-        },
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.3,
-        "position": [
-          0,
-          0
-        ],
-        "id": "8d187996-cf15-4c77-9785-5b60ea418944",
-        "name": "HTTP Request"
       },
       {
         "parameters": {
@@ -986,46 +887,83 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.3,
         "position": [
-          1696,
-          -272
+          2048,
+          -288
         ],
         "id": "392a38a6-d961-445c-acd3-500e84240edb",
         "name": "Get Price Info"
       },
       {
         "parameters": {
-          "operation": "get",
-          "propertyName": "config",
-          "key": "=project:{{ $json.project_id }}",
-          "options": {}
-        },
-        "type": "n8n-nodes-base.redis",
-        "typeVersion": 1,
-        "position": [
-          1296,
-          -320
-        ],
-        "id": "d448c91d-b4ce-45bc-9a34-cacf3d3791fb",
-        "name": "Redis",
-        "credentials": {
-          "redis": {
-            "id": "2idv3VKZ91q5gOnz",
-            "name": "Redis account"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "jsCode": "const config = JSON.parse($input.first().json.config || '{}');\n  return [{\n    json: {\n      ...$('Process Event').first().json,\n      stripe_key: config.stripe_key,\n      backend_api_url: config.backend_api_url,\n      backend_service_token: config.backend_service_token\n    }\n  }];"
+          "jsCode": "const apiResponse = $input.first().json;\nconst config = apiResponse.body || apiResponse;\n\nreturn [{\n  json: {\n    ...$('Process Event').first().json,\n    stripe_key: config.stripe_key,\n    backend_api_url: config.backend_api_url,\n    backend_service_token: config.backend_service_token\n  }\n}];"
         },
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          1488,
-          -288
+          1808,
+          -256
         ],
         "id": "008a4e2b-081d-41b0-a08b-b67dd1ad79f8",
         "name": "Code in JavaScript"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Extract backend credentials from API response\n//const apiResponse = $input.first().json;\nconst extractData = $('Extract & Validate').first().json;\n\nreturn [{\n  json: {\n    ...extractData,    \n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          960,
+          -176
+        ],
+        "id": "extract-backend-config",
+        "name": "Extract Backend Config"
+      },
+      {
+        "parameters": {
+          "url": "={{ $json.backend_api_url }}/api/ecommerce/stripe/admin/projects/{{ $json.project_id }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.backend_service_token }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          736,
+          -64
+        ],
+        "id": "d4244e4c-b2c7-48f1-a3dc-c26b77dbef56",
+        "name": "Get Project Config"
+      },
+      {
+        "parameters": {
+          "url": "={{ $('Extract Backend Config').first().json.backend_api_url}}/api/ecommerce/stripe/admin/projects/{{ $('Process Event').first().json.project_id }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $('Extract Backend Config').first().json.backend_service_token }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1584,
+          -208
+        ],
+        "id": "1cd3a96e-5119-43a0-8edb-e00e2bd64262",
+        "name": "Get Stripe Keys"
       }
     ],
     "connections": {
@@ -1055,7 +993,7 @@
         "main": [
           [
             {
-              "node": "Verify Signature",
+              "node": "Get Project Config",
               "type": "main",
               "index": 0
             }
@@ -1063,6 +1001,17 @@
           [
             {
               "node": "Error Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Backend Config": {
+        "main": [
+          [
+            {
+              "node": "Verify Signature",
               "type": "main",
               "index": 0
             }
@@ -1102,7 +1051,7 @@
         "main": [
           [
             {
-              "node": "Redis",
+              "node": "Get Stripe Keys",
               "type": "main",
               "index": 0
             }
@@ -1149,17 +1098,6 @@
           ]
         ]
       },
-      "Redis": {
-        "main": [
-          [
-            {
-              "node": "Code in JavaScript",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
       "Code in JavaScript": {
         "main": [
           [
@@ -1170,10 +1108,43 @@
             }
           ]
         ]
+      },
+      "Get Project Config": {
+        "main": [
+          [
+            {
+              "node": "Extract Backend Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Stripe Keys": {
+        "main": [
+          [
+            {
+              "node": "Code in JavaScript",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
-    "authors": "import",
-    "name": null,
-    "description": null
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": "Version 2d5c98ed",
+    "description": "",
+    "autosaved": true,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-06-18T13:53:19.147Z",
+        "id": 151,
+        "workflowId": "PF1FifX7doIaYjzV",
+        "versionId": "2d5c98ed-4974-433c-a06f-82ed2f2f9765",
+        "event": "activated",
+        "userId": "af142d6e-919f-4345-b234-759caa50a7bb"
+      }
+    ]
   }
 }

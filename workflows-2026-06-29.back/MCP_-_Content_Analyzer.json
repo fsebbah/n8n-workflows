@@ -1,0 +1,619 @@
+{
+  "updatedAt": "2026-03-24T20:03:02.918Z",
+  "createdAt": "2026-03-24T11:55:57.072Z",
+  "id": "RmD172M71Rx9nUvy",
+  "name": "MCP - Content Analyzer",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - Content Analyzer\n\n**Endpoint:** POST /webhook/content-analyzer\n\n**Description:** Analyse le contenu image/document et retourne un plan de pipeline pour azy.mcp PipelineExecutor.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"user_id\", \"guild_id\", \"user_request\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (credits, quotas)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale (contextualise l'analyse)\" },\n    \"image_url\": { \"type\": \"string\", \"description\": \"URL de l'image a analyser\" },\n    \"image_data\": { \"type\": \"string\", \"description\": \"Image en base64 (alternative a image_url)\" },\n    \"domain\": { \"type\": \"string\", \"description\": \"Domaine de l'analyse (general, recipes, etc.)\", \"default\": \"general\" },\n    \"available_tools\": { \"type\": \"array\", \"description\": \"Liste des outils disponibles pour le pipeline\", \"items\": { \"type\": \"string\" } }\n  }\n}\n```\n\n**Note:** API keys fournies par le systeme.\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": true,\n  \"accepts_media\": true,\n  \"output_fields\": [\"analysis\", \"pipeline\", \"confidence\"],\n  \"domain\": \"orchestration\"\n}\n```",
+        "height": 580,
+        "width": 340,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "content-analyzer",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "content-analyzer"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Content Analyzer\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required context fields ---\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst userRequest = body.user_request || ctx.user_request;\n\nif (!userId) {\n  errors.push('user_id requis');\n}\nif (!guildId) {\n  errors.push('guild_id requis');\n}\nif (!userRequest) {\n  errors.push('user_request requis');\n}\n\n// --- Specific webhook parameters ---\nconst imageUrl = body.image_url || ctx.image_url || null;\nconst imageData = body.image_data || ctx.image_data || null;\nconst domain = body.domain || ctx.domain || 'general';\nconst availableTools = body.available_tools || ctx.available_tools || [];\n\n// Must have either image_url or image_data\nif (!imageUrl && !imageData) {\n  errors.push('image_url ou image_data (base64) requis');\n}\n\n// available_tools should be an array\nif (!Array.isArray(availableTools) || availableTools.length === 0) {\n  errors.push('available_tools (array non vide) requis');\n}\n\n// --- API Keys passed from MCP Server ---\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai || '';\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\n// Determine image source\nlet imageSource = 'url';\nlet imageContent = imageUrl;\nif (imageData && !imageUrl) {\n  imageSource = 'base64';\n  imageContent = imageData;\n}\n\nreturn {\n  valid: true,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  image_url: imageUrl,\n  image_data: imageData,\n  image_source: imageSource,\n  domain: domain,\n  available_tools: availableTools,\n  openaiApiKey: openaiApiKey,\n  startTime: Date.now()\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openaiApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  const tools = data.available_tools.join(', ');\n  const domain = data.domain;\n  const userRequest = data.user_request;\n  \n  const systemPrompt = `Tu es un analyseur de contenu intelligent. Tu analyses une image et une requete utilisateur pour determiner:\n1. Le type de contenu (content_type)\n2. S'il y a du texte visible (has_text)\n3. Le type de texte si present (text_type)\n4. Les elements detectes (detected_items)\n5. La langue detectee (language)\n6. Un pipeline d'actions a executer\n\nDomaine: ${domain}\nOutils disponibles: ${tools}\n\nREGLES IMPORTANTES:\n- Reponds UNIQUEMENT en JSON valide\n- content_type: \"food_photo\" | \"handwritten_recipe\" | \"printed_recipe\" | \"document_pdf\" | \"screenshot\" | \"unknown\"\n- text_type: \"handwritten\" | \"printed\" | \"mixed\" | \"none\"\n- on_fail: \"abort\" | \"skip\" | \"fallback\"\n- Chaque step du pipeline doit utiliser un outil de la liste available_tools\n- Utilise \"$step_N.field\" pour referencer le resultat d'un step precedent\n\nFormat de reponse:\n{\n  \"analysis\": {\n    \"content_type\": \"...\",\n    \"has_text\": true/false,\n    \"text_type\": \"...\",\n    \"detected_items\": [\"item1\", \"item2\"],\n    \"language\": \"fr\" | \"en\" | null\n  },\n  \"pipeline\": [\n    { \"step\": 1, \"tool\": \"tool.name\", \"on_fail\": \"abort\", \"reason\": \"explication\" },\n    { \"step\": 2, \"tool\": \"autre.tool\", \"input\": \"$step_1.result\", \"on_fail\": \"skip\", \"reason\": \"explication\" }\n  ],\n  \"confidence\": 0.0-1.0\n}`;\n\n  const userPrompt = `**Demande utilisateur:** \"${userRequest}\"\n\nAnalyse cette image et determine le meilleur pipeline d'actions.`;\n\n  // Build messages with image\n  const imageContent = data.image_source === 'url' \n    ? { type: 'image_url', image_url: { url: data.image_url } }\n    : { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${data.image_data}` } };\n\n  return JSON.stringify({\n    model: 'gpt-4o',\n    max_tokens: 1000,\n    temperature: 0.2,\n    messages: [\n      { role: 'system', content: systemPrompt },\n      { role: 'user', content: [\n        { type: 'text', text: userPrompt },\n        imageContent\n      ]}\n    ]\n  });\n})() }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "call-vision-llm",
+      "name": "Vision LLM (OpenAI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PARSE LLM RESPONSE - Content Analyzer\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\n// --- Context fields for traceability ---\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\nconst statusCode = input.statusCode || 200;\n\n// Initialize trace with llm_response format\nconst _trace = {\n  llm_response: null,\n  service_response: null,\n  provider: 'openai',\n  model: 'gpt-4o',\n  tokens: { input: 0, output: 0 },\n  latency_ms: 0,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\n// Handle API error\nif (statusCode >= 400 || input.error) {\n  const errorMsg = input.body?.error?.message || input.error?.message || 'Vision LLM API error';\n  _trace.llm_response = `Error: ${errorMsg}`;\n  _trace.service_response = input.body || input;\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'LLM_ERROR',\n        message: errorMsg,\n        http_status: statusCode\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n// Extract response\nconst body = input.body || input;\nconst content = body.choices?.[0]?.message?.content || '';\nconst usage = body.usage || {};\n\n// Populate trace with LLM response\n_trace.llm_response = content;\n_trace.service_response = body;\n_trace.tokens = {\n  input: usage.prompt_tokens || 0,\n  output: usage.completion_tokens || 0\n};\n\n// Parse JSON from response\nlet parsed;\ntry {\n  // Handle markdown code blocks\n  let jsonStr = content;\n  const codeBlockMatch = content.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (codeBlockMatch) {\n    jsonStr = codeBlockMatch[1].trim();\n  } else {\n    const rawMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (rawMatch) jsonStr = rawMatch[0];\n  }\n  \n  parsed = JSON.parse(jsonStr);\n} catch (e) {\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'PARSE_ERROR',\n        message: 'Failed to parse LLM response: ' + e.message,\n        http_status: 500\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n// Validate parsed response structure\nconst analysis = parsed.analysis || {};\nconst pipeline = parsed.pipeline || [];\nconst confidence = typeof parsed.confidence === 'number' ? Math.min(1, Math.max(0, parsed.confidence)) : 0.5;\n\n// Validate pipeline tools against available_tools\nconst availableTools = prevData.available_tools || [];\nconst invalidTools = pipeline.filter(step => !availableTools.includes(step.tool)).map(step => step.tool);\n\n// Normalize analysis fields\nconst normalizedAnalysis = {\n  content_type: analysis.content_type || 'unknown',\n  has_text: Boolean(analysis.has_text),\n  text_type: analysis.text_type || 'none',\n  detected_items: Array.isArray(analysis.detected_items) ? analysis.detected_items : [],\n  language: analysis.language || null\n};\n\n// Normalize pipeline\nconst normalizedPipeline = pipeline.map((step, idx) => ({\n  step: step.step || idx + 1,\n  tool: step.tool,\n  input: step.input || null,\n  on_fail: ['abort', 'skip', 'fallback'].includes(step.on_fail) ? step.on_fail : 'abort',\n  reason: step.reason || null\n}));\n\n_trace.latency_ms = Date.now() - startTime;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      analysis: normalizedAnalysis,\n      pipeline: normalizedPipeline,\n      confidence: confidence\n    },\n    meta: {\n      domain: prevData.domain,\n      available_tools: prevData.available_tools,\n      image_source: prevData.image_source,\n      invalid_tools: invalidTools.length > 0 ? invalidTools : undefined,\n      processing_time_ms: Date.now() - startTime\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: _trace\n  }\n};"
+      },
+      "id": "parse-response",
+      "name": "Parse LLM Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1420,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Vision LLM (OpenAI)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision LLM (OpenAI)": {
+      "main": [
+        [
+          {
+            "node": "Parse LLM Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse LLM Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "bd4853c8-e482-4a4e-bc38-9198159409bf",
+  "activeVersionId": "bd4853c8-e482-4a4e-bc38-9198159409bf",
+  "versionCounter": 14,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-24T11:55:57.072Z",
+      "createdAt": "2026-03-24T11:55:57.072Z",
+      "role": "workflow:owner",
+      "workflowId": "RmD172M71Rx9nUvy",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-24T20:02:56.200Z",
+    "createdAt": "2026-03-24T20:02:56.200Z",
+    "versionId": "bd4853c8-e482-4a4e-bc38-9198159409bf",
+    "workflowId": "RmD172M71Rx9nUvy",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## MCP - Content Analyzer\n\n**Endpoint:** POST /webhook/content-analyzer\n\n**Description:** Analyse le contenu image/document et retourne un plan de pipeline pour azy.mcp PipelineExecutor.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"user_id\", \"guild_id\", \"user_request\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (credits, quotas)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale (contextualise l'analyse)\" },\n    \"image_url\": { \"type\": \"string\", \"description\": \"URL de l'image a analyser\" },\n    \"image_data\": { \"type\": \"string\", \"description\": \"Image en base64 (alternative a image_url)\" },\n    \"domain\": { \"type\": \"string\", \"description\": \"Domaine de l'analyse (general, recipes, etc.)\", \"default\": \"general\" },\n    \"available_tools\": { \"type\": \"array\", \"description\": \"Liste des outils disponibles pour le pipeline\", \"items\": { \"type\": \"string\" } }\n  }\n}\n```\n\n**Note:** API keys fournies par le systeme.\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": true,\n  \"accepts_media\": true,\n  \"output_fields\": [\"analysis\", \"pipeline\", \"confidence\"],\n  \"domain\": \"orchestration\"\n}\n```",
+          "height": 580,
+          "width": 340,
+          "color": 6
+        },
+        "id": "doc-sticky",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -100,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "content-analyzer",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "content-analyzer"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT - Content Analyzer\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required context fields ---\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst userRequest = body.user_request || ctx.user_request;\n\nif (!userId) {\n  errors.push('user_id requis');\n}\nif (!guildId) {\n  errors.push('guild_id requis');\n}\nif (!userRequest) {\n  errors.push('user_request requis');\n}\n\n// --- Specific webhook parameters ---\nconst imageUrl = body.image_url || ctx.image_url || null;\nconst imageData = body.image_data || ctx.image_data || null;\nconst domain = body.domain || ctx.domain || 'general';\nconst availableTools = body.available_tools || ctx.available_tools || [];\n\n// Must have either image_url or image_data\nif (!imageUrl && !imageData) {\n  errors.push('image_url ou image_data (base64) requis');\n}\n\n// available_tools should be an array\nif (!Array.isArray(availableTools) || availableTools.length === 0) {\n  errors.push('available_tools (array non vide) requis');\n}\n\n// --- API Keys passed from MCP Server ---\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai || '';\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\n// Determine image source\nlet imageSource = 'url';\nlet imageContent = imageUrl;\nif (imageData && !imageUrl) {\n  imageSource = 'base64';\n  imageContent = imageData;\n}\n\nreturn {\n  valid: true,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  image_url: imageUrl,\n  image_data: imageData,\n  image_source: imageSource,\n  domain: domain,\n  available_tools: availableTools,\n  openaiApiKey: openaiApiKey,\n  startTime: Date.now()\n};"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          680,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+        },
+        "id": "build-error",
+        "name": "Build Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          900,
+          480
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1120,
+          480
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/chat/completions",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.openaiApiKey }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ (() => {\n  const data = $json;\n  const tools = data.available_tools.join(', ');\n  const domain = data.domain;\n  const userRequest = data.user_request;\n  \n  const systemPrompt = `Tu es un analyseur de contenu intelligent. Tu analyses une image et une requete utilisateur pour determiner:\n1. Le type de contenu (content_type)\n2. S'il y a du texte visible (has_text)\n3. Le type de texte si present (text_type)\n4. Les elements detectes (detected_items)\n5. La langue detectee (language)\n6. Un pipeline d'actions a executer\n\nDomaine: ${domain}\nOutils disponibles: ${tools}\n\nREGLES IMPORTANTES:\n- Reponds UNIQUEMENT en JSON valide\n- content_type: \"food_photo\" | \"handwritten_recipe\" | \"printed_recipe\" | \"document_pdf\" | \"screenshot\" | \"unknown\"\n- text_type: \"handwritten\" | \"printed\" | \"mixed\" | \"none\"\n- on_fail: \"abort\" | \"skip\" | \"fallback\"\n- Chaque step du pipeline doit utiliser un outil de la liste available_tools\n- Utilise \"$step_N.field\" pour referencer le resultat d'un step precedent\n\nFormat de reponse:\n{\n  \"analysis\": {\n    \"content_type\": \"...\",\n    \"has_text\": true/false,\n    \"text_type\": \"...\",\n    \"detected_items\": [\"item1\", \"item2\"],\n    \"language\": \"fr\" | \"en\" | null\n  },\n  \"pipeline\": [\n    { \"step\": 1, \"tool\": \"tool.name\", \"on_fail\": \"abort\", \"reason\": \"explication\" },\n    { \"step\": 2, \"tool\": \"autre.tool\", \"input\": \"$step_1.result\", \"on_fail\": \"skip\", \"reason\": \"explication\" }\n  ],\n  \"confidence\": 0.0-1.0\n}`;\n\n  const userPrompt = `**Demande utilisateur:** \"${userRequest}\"\n\nAnalyse cette image et determine le meilleur pipeline d'actions.`;\n\n  // Build messages with image\n  const imageContent = data.image_source === 'url' \n    ? { type: 'image_url', image_url: { url: data.image_url } }\n    : { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${data.image_data}` } };\n\n  return JSON.stringify({\n    model: 'gpt-4o',\n    max_tokens: 1000,\n    temperature: 0.2,\n    messages: [\n      { role: 'system', content: systemPrompt },\n      { role: 'user', content: [\n        { type: 'text', text: userPrompt },\n        imageContent\n      ]}\n    ]\n  });\n})() }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "call-vision-llm",
+        "name": "Vision LLM (OpenAI)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          940,
+          200
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PARSE LLM RESPONSE - Content Analyzer\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\n// --- Context fields for traceability ---\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\nconst statusCode = input.statusCode || 200;\n\n// Initialize trace with llm_response format\nconst _trace = {\n  llm_response: null,\n  service_response: null,\n  provider: 'openai',\n  model: 'gpt-4o',\n  tokens: { input: 0, output: 0 },\n  latency_ms: 0,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\n// Handle API error\nif (statusCode >= 400 || input.error) {\n  const errorMsg = input.body?.error?.message || input.error?.message || 'Vision LLM API error';\n  _trace.llm_response = `Error: ${errorMsg}`;\n  _trace.service_response = input.body || input;\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'LLM_ERROR',\n        message: errorMsg,\n        http_status: statusCode\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n// Extract response\nconst body = input.body || input;\nconst content = body.choices?.[0]?.message?.content || '';\nconst usage = body.usage || {};\n\n// Populate trace with LLM response\n_trace.llm_response = content;\n_trace.service_response = body;\n_trace.tokens = {\n  input: usage.prompt_tokens || 0,\n  output: usage.completion_tokens || 0\n};\n\n// Parse JSON from response\nlet parsed;\ntry {\n  // Handle markdown code blocks\n  let jsonStr = content;\n  const codeBlockMatch = content.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (codeBlockMatch) {\n    jsonStr = codeBlockMatch[1].trim();\n  } else {\n    const rawMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (rawMatch) jsonStr = rawMatch[0];\n  }\n  \n  parsed = JSON.parse(jsonStr);\n} catch (e) {\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'PARSE_ERROR',\n        message: 'Failed to parse LLM response: ' + e.message,\n        http_status: 500\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n// Validate parsed response structure\nconst analysis = parsed.analysis || {};\nconst pipeline = parsed.pipeline || [];\nconst confidence = typeof parsed.confidence === 'number' ? Math.min(1, Math.max(0, parsed.confidence)) : 0.5;\n\n// Validate pipeline tools against available_tools\nconst availableTools = prevData.available_tools || [];\nconst invalidTools = pipeline.filter(step => !availableTools.includes(step.tool)).map(step => step.tool);\n\n// Normalize analysis fields\nconst normalizedAnalysis = {\n  content_type: analysis.content_type || 'unknown',\n  has_text: Boolean(analysis.has_text),\n  text_type: analysis.text_type || 'none',\n  detected_items: Array.isArray(analysis.detected_items) ? analysis.detected_items : [],\n  language: analysis.language || null\n};\n\n// Normalize pipeline\nconst normalizedPipeline = pipeline.map((step, idx) => ({\n  step: step.step || idx + 1,\n  tool: step.tool,\n  input: step.input || null,\n  on_fail: ['abort', 'skip', 'fallback'].includes(step.on_fail) ? step.on_fail : 'abort',\n  reason: step.reason || null\n}));\n\n_trace.latency_ms = Date.now() - startTime;\n\nreturn {\n  json: {\n    success: true,\n    data: {\n      analysis: normalizedAnalysis,\n      pipeline: normalizedPipeline,\n      confidence: confidence\n    },\n    meta: {\n      domain: prevData.domain,\n      available_tools: prevData.available_tools,\n      image_source: prevData.image_source,\n      invalid_tools: invalidTools.length > 0 ? invalidTools : undefined,\n      processing_time_ms: Date.now() - startTime\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: _trace\n  }\n};"
+        },
+        "id": "parse-response",
+        "name": "Parse LLM Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1180,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1420,
+          200
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Vision LLM (OpenAI)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vision LLM (OpenAI)": {
+        "main": [
+          [
+            {
+              "node": "Parse LLM Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse LLM Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

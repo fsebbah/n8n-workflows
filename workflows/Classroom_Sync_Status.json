@@ -1,5 +1,6 @@
 {
   "name": "Classroom Sync Status",
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -12,7 +13,10 @@
       "name": "Webhook Status",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [260, 300],
+      "position": [
+        260,
+        300
+      ],
       "webhookId": "classroom-sync-status"
     },
     {
@@ -24,7 +28,10 @@
       "name": "Get Task Status",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300],
+      "position": [
+        480,
+        300
+      ],
       "notes": "M7 - RFC-089 §5.5.1 - Endpoint de polling"
     },
     {
@@ -39,7 +46,10 @@
       "name": "Respond Status",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [700, 300]
+      "position": [
+        700,
+        300
+      ]
     }
   ],
   "connections": {
@@ -66,19 +76,103 @@
       ]
     }
   },
-  "pinData": {},
   "settings": {
     "executionOrder": "v1"
   },
-  "staticData": null,
-  "tags": [
-    "MCP",
-    "Google Classroom",
-    "RFC-089",
-    "Async",
-    "Status"
-  ],
-  "triggerCount": 0,
-  "updatedAt": "2026-05-15T00:00:00.000Z",
-  "versionId": "1"
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-05-17T15:45:38.477Z",
+    "createdAt": "2026-05-17T15:45:38.477Z",
+    "versionId": "0cf478f5-874f-41e2-86ba-add098786ed5",
+    "workflowId": "AkBydwInUwleDap3",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "GET",
+          "path": "classroom-sync-status",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-status-001",
+        "name": "Webhook Status",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          260,
+          300
+        ],
+        "webhookId": "classroom-sync-status"
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// M7 - Get Task Status (RFC-089 §5.5.1)\n// Endpoint de polling pour les opérations async\n\nconst input = $input.first().json;\nconst query = input.query || {};\nconst taskId = query.task_id;\n\nif (!taskId) {\n  return [{\n    json: {\n      error: true,\n      response: {\n        success: false,\n        error: {\n          code: 'missing_task_id',\n          message: 'Query parameter task_id is required'\n        }\n      },\n      httpCode: 400\n    }\n  }];\n}\n\n// Récupérer le status depuis staticData\nconst staticData = $getWorkflowStaticData('global');\nconst tasks = staticData.asyncTasks || {};\nconst task = tasks[taskId];\n\nif (!task) {\n  return [{\n    json: {\n      error: true,\n      response: {\n        success: false,\n        error: {\n          code: 'task_not_found',\n          message: `Task ${taskId} not found or expired`\n        }\n      },\n      httpCode: 404\n    }\n  }];\n}\n\n// Vérifier si le task a expiré\nif (task.expiresAt && Date.now() > task.expiresAt) {\n  delete tasks[taskId];\n  staticData.asyncTasks = tasks;\n  \n  return [{\n    json: {\n      error: true,\n      response: {\n        success: false,\n        error: {\n          code: 'task_expired',\n          message: `Task ${taskId} has expired`\n        }\n      },\n      httpCode: 410\n    }\n  }];\n}\n\n// Construire la réponse de status\nconst response = {\n  task_id: taskId,\n  status: task.status,\n  created_at: task.createdAt\n};\n\nif (task.status === 'processing' || task.status === 'pending') {\n  response.progress = task.progress || null;\n  response.message = 'Operation in progress';\n}\n\nif (task.status === 'completed') {\n  response.completed_at = task.completedAt;\n  response.result = task.result;\n}\n\nif (task.status === 'error') {\n  response.error = task.error;\n}\n\nreturn [{\n  json: {\n    error: false,\n    response: {\n      success: true,\n      ...response\n    },\n    httpCode: 200\n  }\n}];"
+        },
+        "id": "get-task-status-001",
+        "name": "Get Task Status",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          480,
+          300
+        ],
+        "notes": "M7 - RFC-089 §5.5.1 - Endpoint de polling"
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json.response) }}",
+          "options": {
+            "responseCode": "={{ $json.httpCode }}"
+          }
+        },
+        "id": "respond-status-001",
+        "name": "Respond Status",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          700,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Status": {
+        "main": [
+          [
+            {
+              "node": "Get Task Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Task Status": {
+        "main": [
+          [
+            {
+              "node": "Respond Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-05-17T15:45:51.449Z",
+        "id": 55,
+        "workflowId": "AkBydwInUwleDap3",
+        "versionId": "0cf478f5-874f-41e2-86ba-add098786ed5",
+        "event": "activated",
+        "userId": "af142d6e-919f-4345-b234-759caa50a7bb"
+      }
+    ]
+  }
 }

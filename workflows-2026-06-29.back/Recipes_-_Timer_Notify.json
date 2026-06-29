@@ -1,0 +1,622 @@
+{
+  "updatedAt": "2026-02-02T19:30:32.086Z",
+  "createdAt": "2026-01-07T11:15:26.143Z",
+  "id": "N1AppZjcKgxKIsSy",
+  "name": "Recipes - Timer Notify",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "recipes-timer-notify-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recipes-timer-notify",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\nif (!body.discord_user_id) {\n  errors.push('Missing required parameter: discord_user_id');\n}\n\nif (!body.label) {\n  errors.push('Missing required parameter: label');\n}\n\n// Bot token from request or environment\nconst botToken = body.discord_bot_token || process.env.DISCORD_BOT_TOKEN;\nif (!botToken) {\n  errors.push('Missing discord_bot_token (pass in request or set DISCORD_BOT_TOKEN env var)');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    discord_user_id: body.discord_user_id,\n    discord_bot_token: botToken,\n    timer_id: body.timer_id,\n    recipe_id: body.recipe_id,\n    recipe_title: body.recipe_title || '',\n    label: body.label,\n    duration_minutes: body.duration_minutes || 0,\n    created_at: body.created_at,\n    expired_at: new Date().toISOString()\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-validation",
+      "name": "Error: Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'timer-notify' } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "create-dm-channel",
+      "name": "Create DM Channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/v10/users/@me/channels",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bot {{ $json.discord_bot_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient_id\": \"{{ $json.discord_user_id }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "send-dm-message",
+      "name": "Send DM Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://discord.com/api/v10/channels/{{ $json.id }}/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bot {{ $('Validate Input').first().json.discord_bot_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"\\u23f0 Timer termine !\",\n    \"description\": \"{{ $('Validate Input').first().json.label }}\",\n    \"color\": 16744576,\n    \"fields\": [\n      {\n        \"name\": \"Recette\",\n        \"value\": \"{{ $('Validate Input').first().json.recipe_title || 'Non specifiee' }}\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"Duree\",\n        \"value\": \"{{ $('Validate Input').first().json.duration_minutes }} minutes\",\n        \"inline\": true\n      }\n    ],\n    \"footer\": {\n      \"text\": \"Plugin Recipes\"\n    },\n    \"timestamp\": \"{{ $('Validate Input').first().json.expired_at }}\"\n  }]\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst dmChannel = $('Create DM Channel').first().json;\n\ntry {\n  // Check for Discord API errors\n  if (input.code || input.message) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: input.code || 500,\n          message: input.message || 'Discord DM failed',\n          status: 'DISCORD_ERROR'\n        },\n        meta: { provider: 'discord' }\n      }\n    }];\n  }\n\n  if (dmChannel.code || dmChannel.message) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: dmChannel.code || 500,\n          message: 'Failed to create DM channel: ' + (dmChannel.message || 'Unknown error'),\n          status: 'DISCORD_DM_ERROR'\n        },\n        meta: { provider: 'discord' }\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      success: true,\n      data: {\n        notification_sent: true,\n        delivery_method: 'dm',\n        timer_id: prevData.timer_id,\n        discord_user_id: prevData.discord_user_id,\n        dm_channel_id: dmChannel.id,\n        message_id: input.id,\n        label: prevData.label,\n        sent_at: new Date().toISOString()\n      },\n      meta: {\n        provider: 'discord'\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to process notification: ' + e.message,\n        status: 'PROCESS_ERROR'\n      },\n      meta: { provider: 'discord' }\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1620,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        80
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 600,
+        "height": 180,
+        "content": "## Recipes - Timer Notify (DM)\n\n**Endpoint:** POST /webhook/recipes-timer-notify\n\n**Called by:** Celery when timer expires\n\n**Flow:** Create DM Channel -> Send Message to DM\n\n**Parameters:**\n- `discord_user_id` (required): User to DM\n- `discord_bot_token` (optional): Bot token (or set DISCORD_BOT_TOKEN env var)\n- `label` (required): Timer message\n- `recipe_id`, `recipe_title`, `duration_minutes` (optional): Context"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Create DM Channel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create DM Channel": {
+      "main": [
+        [
+          {
+            "node": "Send DM Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send DM Message": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "e21a7ab5-37ff-43dd-86c5-9e0025678fa4",
+  "activeVersionId": "e21a7ab5-37ff-43dd-86c5-9e0025678fa4",
+  "versionCounter": 104,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-02-02T17:55:15.060Z",
+      "createdAt": "2026-02-02T17:55:15.060Z",
+      "role": "workflow:owner",
+      "workflowId": "N1AppZjcKgxKIsSy",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "e21a7ab5-37ff-43dd-86c5-9e0025678fa4",
+    "workflowId": "N1AppZjcKgxKIsSy",
+    "nodes": [
+      {
+        "id": "webhook",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "recipes-timer-notify-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "recipes-timer-notify",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\nif (!body.discord_user_id) {\n  errors.push('Missing required parameter: discord_user_id');\n}\n\nif (!body.label) {\n  errors.push('Missing required parameter: label');\n}\n\n// Bot token from request or environment\nconst botToken = body.discord_bot_token || process.env.DISCORD_BOT_TOKEN;\nif (!botToken) {\n  errors.push('Missing discord_bot_token (pass in request or set DISCORD_BOT_TOKEN env var)');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    discord_user_id: body.discord_user_id,\n    discord_bot_token: botToken,\n    timer_id: body.timer_id,\n    recipe_id: body.recipe_id,\n    recipe_title: body.recipe_title || '',\n    label: body.label,\n    duration_minutes: body.duration_minutes || 0,\n    created_at: body.created_at,\n    expired_at: new Date().toISOString()\n  }\n}];"
+        }
+      },
+      {
+        "id": "check-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          680,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-validation",
+        "name": "Error: Validation",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          900,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'timer-notify' } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "create-dm-channel",
+        "name": "Create DM Channel",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          900,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://discord.com/api/v10/users/@me/channels",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bot {{ $json.discord_bot_token }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"recipient_id\": \"{{ $json.discord_user_id }}\"\n}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "send-dm-message",
+        "name": "Send DM Message",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1140,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "=https://discord.com/api/v10/channels/{{ $json.id }}/messages",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bot {{ $('Validate Input').first().json.discord_bot_token }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"\\u23f0 Timer termine !\",\n    \"description\": \"{{ $('Validate Input').first().json.label }}\",\n    \"color\": 16744576,\n    \"fields\": [\n      {\n        \"name\": \"Recette\",\n        \"value\": \"{{ $('Validate Input').first().json.recipe_title || 'Non specifiee' }}\",\n        \"inline\": true\n      },\n      {\n        \"name\": \"Duree\",\n        \"value\": \"{{ $('Validate Input').first().json.duration_minutes }} minutes\",\n        \"inline\": true\n      }\n    ],\n    \"footer\": {\n      \"text\": \"Plugin Recipes\"\n    },\n    \"timestamp\": \"{{ $('Validate Input').first().json.expired_at }}\"\n  }]\n}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "format-output",
+        "name": "Format Output",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1380,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst dmChannel = $('Create DM Channel').first().json;\n\ntry {\n  // Check for Discord API errors\n  if (input.code || input.message) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: input.code || 500,\n          message: input.message || 'Discord DM failed',\n          status: 'DISCORD_ERROR'\n        },\n        meta: { provider: 'discord' }\n      }\n    }];\n  }\n\n  if (dmChannel.code || dmChannel.message) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: dmChannel.code || 500,\n          message: 'Failed to create DM channel: ' + (dmChannel.message || 'Unknown error'),\n          status: 'DISCORD_DM_ERROR'\n        },\n        meta: { provider: 'discord' }\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      success: true,\n      data: {\n        notification_sent: true,\n        delivery_method: 'dm',\n        timer_id: prevData.timer_id,\n        discord_user_id: prevData.discord_user_id,\n        dm_channel_id: dmChannel.id,\n        message_id: input.id,\n        label: prevData.label,\n        sent_at: new Date().toISOString()\n      },\n      meta: {\n        provider: 'discord'\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Failed to process notification: ' + e.message,\n        status: 'PROCESS_ERROR'\n      },\n      meta: { provider: 'discord' }\n    }\n  }];\n}"
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1620,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          80
+        ],
+        "parameters": {
+          "color": 4,
+          "width": 600,
+          "height": 180,
+          "content": "## Recipes - Timer Notify (DM)\n\n**Endpoint:** POST /webhook/recipes-timer-notify\n\n**Called by:** Celery when timer expires\n\n**Flow:** Create DM Channel -> Send Message to DM\n\n**Parameters:**\n- `discord_user_id` (required): User to DM\n- `discord_bot_token` (optional): Bot token (or set DISCORD_BOT_TOKEN env var)\n- `label` (required): Timer message\n- `recipe_id`, `recipe_title`, `duration_minutes` (optional): Context"
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Create DM Channel",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: Validation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create DM Channel": {
+        "main": [
+          [
+            {
+              "node": "Send DM Message",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send DM Message": {
+        "main": [
+          [
+            {
+              "node": "Format Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

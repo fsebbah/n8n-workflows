@@ -231,8 +231,247 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
-  "staticData": null,
-  "tags": []
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-26T17:03:13.875Z",
+    "createdAt": "2026-04-26T17:03:13.875Z",
+    "versionId": "dd19974c-e9b3-4a41-9d49-79dcb12706eb",
+    "workflowId": "H7L2yC0Wy74Lxq17",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Torah Get Page Translations\n\n**Endpoint:** GET /webhook/torah-get-page-translations\n\n**Query Parameters:**\n- `traite`: Nom du traité (ex: Berakhot)\n- `page`: Numéro de page (ex: 2a)\n\n**Response:**\n```json\n{\n  \"traite\": \"Berakhot\",\n  \"page\": \"2a\",\n  \"reference\": \"Berakhot 2a\",\n  \"segments_count\": 14,\n  \"translated_count\": 14,\n  \"segments\": [\n    {\n      \"index\": 0,\n      \"hebrew_text\": \"מֵאֵימָתַי קוֹרִין...\",\n      \"translation\": {\n        \"translated_text\": \"À partir de quand lit-on...\",\n        \"provider\": \"claude+openai\",\n        \"model\": \"claude-sonnet-4+gpt-4o\"\n      },\n      \"has_translation\": true\n    }\n  ]\n}\n```",
+          "height": 450,
+          "width": 320,
+          "color": 5
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          64,
+          64
+        ]
+      },
+      {
+        "parameters": {
+          "path": "torah-get-page-translations",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          400,
+          304
+        ],
+        "webhookId": "torah-get-page-translations"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Extraire et valider les paramètres (API v2)\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst traite = query.traite || null;\nconst page = query.page || null;\nconst includeTranslations = query.include_translations === \"true\" || query.include_translations === true;\nconst targetLanguage = query.target_language || \"fr\";\nconst corpus = query.corpus || null;  // API v2: corpus parameter for disambiguation\n\n// Validation\nconst errors = [];\nif (!traite) errors.push('Le paramètre \"traite\" est requis');\nif (!page) errors.push('Le paramètre \"page\" est requis');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    traite: traite,\n    page: page,\n    includeTranslations: includeTranslations,\n    targetLanguage: targetLanguage,\n    corpus: corpus  // API v2: pass corpus for disambiguation\n  }\n}];"
+        },
+        "id": "parse-params",
+        "name": "Parse Parameters",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          624,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          848,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/talmud/page/{{ encodeURIComponent($json.traite) }}/{{ encodeURIComponent($json.page) }}/segments{{ (() => { let params = []; params.push('target_language=' + $json.targetLanguage); if ($json.includeTranslations) { params.push('include_translations=true'); } if ($json.corpus) { params.push('corpus=' + encodeURIComponent($json.corpus)); } return '?' + params.join('&'); })() }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 30000
+          }
+        },
+        "id": "get-page-api",
+        "name": "Get Page (API)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1072,
+          208
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Formater la réponse de l'API (API v2)\nconst input = $input.first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// API v2: Handle AmbiguousReferenceError (400 with error_type)\nif (statusCode === 400 && data.error_type === 'AmbiguousReferenceError') {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: data.message || 'Référence ambiguë - veuillez spécifier le corpus',\n        status: 'AMBIGUOUS_REFERENCE',\n        error_type: 'AmbiguousReferenceError',\n        options: data.options || []  // Available corpus options\n      }\n    }\n  }];\n}\n\n// Erreur API\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.error?.message || data.message || 'Page non trouvée',\n        status: 'PAGE_NOT_FOUND'\n      }\n    }\n  }];\n}\n\n// Retourner la réponse avec success flag\nreturn [{\n  json: {\n    success: true,\n    ...data\n  }\n}];"
+        },
+        "id": "format-response",
+        "name": "Format Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1280,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.error ? ($json.error.code || 500) : 200 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1504,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.code || 400 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1072,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Parse Parameters",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Parameters": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Get Page (API)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Page (API)": {
+        "main": [
+          [
+            {
+              "node": "Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": []
+  }
 }

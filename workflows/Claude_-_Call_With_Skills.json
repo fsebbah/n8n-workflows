@@ -1,6 +1,5 @@
 {
   "name": "Claude - Call With Skills",
-  "description": "Anthropic Skills API avec Batch Processing - génération asynchrone de documents",
   "active": true,
   "nodes": [
     {
@@ -14,7 +13,10 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [40, 40]
+      "position": [
+        40,
+        40
+      ]
     },
     {
       "parameters": {
@@ -27,7 +29,10 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [260, 340],
+      "position": [
+        260,
+        340
+      ],
       "webhookId": "claude-call-with-skills-webhook"
     },
     {
@@ -38,7 +43,10 @@
       "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 340]
+      "position": [
+        480,
+        340
+      ]
     },
     {
       "parameters": {
@@ -67,7 +75,10 @@
       "name": "Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [700, 340]
+      "position": [
+        700,
+        340
+      ]
     },
     {
       "parameters": {
@@ -77,7 +88,10 @@
       "name": "Build Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [920, 520]
+      "position": [
+        920,
+        520
+      ]
     },
     {
       "parameters": {
@@ -99,7 +113,10 @@
       "name": "Respond Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1140, 520]
+      "position": [
+        1140,
+        520
+      ]
     },
     {
       "parameters": {
@@ -138,7 +155,10 @@
       "name": "Create Batch",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [920, 240],
+      "position": [
+        920,
+        240
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -149,7 +169,10 @@
       "name": "Prepare Batch Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1140, 240]
+      "position": [
+        1140,
+        240
+      ]
     },
     {
       "parameters": {
@@ -178,7 +201,10 @@
       "name": "Batch Created?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1360, 240]
+      "position": [
+        1360,
+        240
+      ]
     },
     {
       "parameters": {
@@ -195,7 +221,10 @@
       "name": "Store in Redis",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1580, 160],
+      "position": [
+        1580,
+        160
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -206,7 +235,10 @@
       "name": "Build Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1800, 160]
+      "position": [
+        1800,
+        160
+      ]
     },
     {
       "parameters": {
@@ -228,7 +260,10 @@
       "name": "Respond 202",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [2020, 160]
+      "position": [
+        2020,
+        160
+      ]
     },
     {
       "parameters": {
@@ -238,7 +273,10 @@
       "name": "Batch Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1580, 320]
+      "position": [
+        1580,
+        320
+      ]
     },
     {
       "parameters": {
@@ -260,7 +298,10 @@
       "name": "Respond Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1800, 320]
+      "position": [
+        1800,
+        320
+      ]
     }
   ],
   "connections": {
@@ -394,6 +435,454 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": true
   },
-  "staticData": null,
-  "tags": ["llm", "anthropic", "skills", "batch", "async"]
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-05-27T13:39:44.769Z",
+    "createdAt": "2026-05-27T13:39:44.769Z",
+    "versionId": "90c5de82-4cd8-47e6-bd84-47cf6df360ce",
+    "workflowId": "Lj1IShrkenZq2udA",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Claude - Call With Skills (Batch Mode + Redis)\n\n**Endpoint:** POST /webhook/claude-call-with-skills\n\n**Description:** Appel Claude avec Skills API via Batch Processing.\nRésultats publiés sur Redis Stream (même pattern que MCP Tools Notify).\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"api_key\", \"messages\", \"container\"],\n  \"properties\": {\n    \"api_key\": { \"type\": \"string\" },\n    \"model\": { \"type\": \"string\", \"default\": \"claude-sonnet-4-20250514\" },\n    \"messages\": { \"type\": \"array\" },\n    \"container\": { \"skills\": [{ \"type\": \"anthropic\", \"skill_id\": \"docx\" }] },\n    \"redis_channel\": { \"type\": \"string\", \"default\": \"llm:results:{correlation_id}\" },\n    \"correlation_id\": { \"type\": \"string\", \"description\": \"ID unique\" },\n    \"metadata\": { \"type\": \"object\", \"description\": \"Transmis dans le résultat Redis\" }\n  }\n}\n```\n\n**Réponse (202):**\n```json\n{\n  \"status\": \"processing\",\n  \"batch_id\": \"msgbatch_xxx\",\n  \"correlation_id\": \"...\",\n  \"redis_channel\": \"llm:results:xxx\"\n}\n```\n\n**Résultat (sur Redis Stream):**\nLe Batch Poller publie sur le redis_channel quand terminé.\nFormat: event=batch_completed, success, files, content, etc.\n\n**Note:** Batch API = 50% moins cher, pas de timeout",
+          "height": 700,
+          "width": 480,
+          "color": 3
+        },
+        "id": "doc-sticky",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          40,
+          40
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "claude-call-with-skills",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-skills",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          260,
+          340
+        ],
+        "webhookId": "claude-call-with-skills-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT - Claude Call With Skills (Batch Mode)\n// Mode Redis: résultats publiés sur Redis Stream\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: api_key ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string') {\n  errors.push('api_key requis (Anthropic key)');\n}\n\n// --- redis_channel: channel Redis pour recevoir les résultats ---\n// Si non fourni, utilise le correlation_id comme channel\nconst correlationId = body.correlation_id || ctx.correlation_id || `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;\nconst redisChannel = body.redis_channel || ctx.redis_channel || `llm:results:${correlationId}`;\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model || 'claude-sonnet-4-20250514';\n\n// --- REQUIRED: messages ---\nconst messages = body.messages || ctx.messages;\nif (!messages || !Array.isArray(messages) || messages.length === 0) {\n  errors.push('messages requis');\n}\n\n// --- REQUIRED: container with skills ---\nconst container = body.container || ctx.container;\nif (!container || !container.skills || container.skills.length === 0) {\n  errors.push('container.skills requis (ex: [{ type: \"anthropic\", skill_id: \"docx\" }])');\n}\n\n// --- Skills API requires specific betas ---\nconst SKILLS_BETAS = ['code-execution-2025-08-25', 'skills-2025-10-02'];\nconst betas = body.betas || ctx.betas || SKILLS_BETAS;\n\nconst system = body.system || ctx.system || null;\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 16000);\n\n// --- Skills API requires code_execution tool ---\nlet tools = body.tools || ctx.tools || [];\nconst hasCodeExecution = tools.some(t => t.type === 'code_execution_20250825' || t.name === 'code_execution');\nif (!hasCodeExecution) {\n  tools = [{ type: 'code_execution_20250825', name: 'code_execution' }, ...tools];\n}\n\n// --- 3 clés de traçabilité B2 (§8.7) ---\n// Acceptées au top-level OU dans metadata, top-level prioritaire\nconst tenant_id = body.tenant_id || ctx.tenant_id || body.metadata?.tenant_id;\nconst user_id = body.user_id || ctx.user_id || body.metadata?.user_id;\nconst message_id = body.message_id || ctx.message_id || body.metadata?.message_id;\n\n// --- metadata: inclut redis_channel + 3 clés traçabilité pour le poller ---\nconst metadata = {\n  ...(body.metadata || ctx.metadata || {}),\n  redis_channel: redisChannel,\n  // Copier les 3 clés dans metadata pour B2 import (Batch Poller §8.7)\n  ...(tenant_id && { tenant_id }),\n  ...(user_id && { user_id }),\n  ...(message_id && { message_id })\n};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    correlation_id: correlationId,\n    metadata: metadata\n  };\n}\n\nreturn {\n  valid: true,\n  api_key: apiKey.trim(),\n  model: model,\n  betas: betas,\n  system: system,\n  messages: messages,\n  max_tokens: maxTokens,\n  container: container,\n  tools: tools,\n  redis_channel: redisChannel,\n  correlation_id: correlationId,\n  metadata: metadata,\n  submitted_at: new Date().toISOString()\n};"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          480,
+          340
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          700,
+          340
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\n\nreturn {\n  success: false,\n  status: 'error',\n  correlation_id: input.correlation_id,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  metadata: input.metadata\n};"
+        },
+        "id": "build-error",
+        "name": "Build Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          920,
+          520
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1140,
+          520
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages/batches",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $json.api_key }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "anthropic-beta",
+                "value": "={{ $json.betas.join(',') }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ (() => {\n  const data = $json;\n  \n  // Build the batch request with a single message request\n  const messageParams = {\n    model: data.model,\n    max_tokens: data.max_tokens,\n    messages: data.messages,\n    container: data.container,\n    tools: data.tools\n  };\n  if (data.system) messageParams.system = data.system;\n  \n  const batchRequest = {\n    requests: [\n      {\n        custom_id: data.correlation_id,\n        params: messageParams\n      }\n    ]\n  };\n  \n  return JSON.stringify(batchRequest);\n})() }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "http-create-batch",
+        "name": "Create Batch",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          920,
+          240
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PREPARE BATCH DATA FOR REDIS STORAGE\n// Mode Redis: stocke redis_channel pour notification\n// ============================================\n\nconst batchResponse = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\n// Check for batch creation error\nif (batchResponse.error || !batchResponse.id) {\n  return {\n    success: false,\n    status: 'error',\n    correlation_id: prevData.correlation_id,\n    error: {\n      code: batchResponse.error?.type || 'BATCH_CREATE_ERROR',\n      message: batchResponse.error?.message || 'Failed to create batch',\n      http_status: 500\n    },\n    metadata: prevData.metadata\n  };\n}\n\n// Prepare data for Redis storage\nreturn {\n  success: true,\n  batch_id: batchResponse.id,\n  processing_status: batchResponse.processing_status,\n  correlation_id: prevData.correlation_id,\n  redis_channel: prevData.redis_channel,\n  api_key: prevData.api_key,\n  model: prevData.model,\n  metadata: prevData.metadata,\n  submitted_at: prevData.submitted_at,\n  expires_at: batchResponse.expires_at,\n  // For Redis XADD - pending batches stream\n  redis_data: {\n    batch_id: batchResponse.id,\n    correlation_id: prevData.correlation_id,\n    redis_channel: prevData.redis_channel,\n    api_key: prevData.api_key,\n    model: prevData.model,\n    status: 'pending',\n    submitted_at: prevData.submitted_at,\n    metadata: JSON.stringify(prevData.metadata)\n  }\n};"
+        },
+        "id": "prepare-batch-data",
+        "name": "Prepare Batch Data",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1140,
+          240
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-success",
+                "leftValue": "={{ $json.success }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-batch-success",
+        "name": "Batch Created?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1360,
+          240
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/xadd",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({\n  stream: 'llm:batches:pending',\n  fields: $json.redis_data,\n  max_len: 10000\n}) }}",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "store-in-redis",
+        "name": "Store in Redis",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1580,
+          160
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD SUCCESS RESPONSE (202 Accepted)\n// Mode Redis: indique le channel où écouter\n// ============================================\n\nconst batchData = $('Prepare Batch Data').first().json;\nconst redisResponse = $input.first().json;\n\nreturn {\n  success: true,\n  status: 'processing',\n  batch_id: batchData.batch_id,\n  correlation_id: batchData.correlation_id,\n  redis_channel: batchData.redis_channel,\n  message: 'Batch submitted. Results will be published to redis_channel when ready.',\n  expires_at: batchData.expires_at,\n  redis_stream_id: redisResponse.stream_id || null,\n  metadata: batchData.metadata\n};"
+        },
+        "id": "build-success-response",
+        "name": "Build Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1800,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 202,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond 202",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2020,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Batch creation failed - return error\nconst data = $json;\nreturn {\n  success: false,\n  status: 'error',\n  correlation_id: data.correlation_id,\n  error: data.error,\n  metadata: data.metadata\n};"
+        },
+        "id": "batch-error",
+        "name": "Batch Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1580,
+          320
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.error?.http_status || 500 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-batch-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1800,
+          320
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Create Batch",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Batch": {
+        "main": [
+          [
+            {
+              "node": "Prepare Batch Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Batch Data": {
+        "main": [
+          [
+            {
+              "node": "Batch Created?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Batch Created?": {
+        "main": [
+          [
+            {
+              "node": "Store in Redis",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Batch Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Store in Redis": {
+        "main": [
+          [
+            {
+              "node": "Build Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Response": {
+        "main": [
+          [
+            {
+              "node": "Respond 202",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Batch Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-05-27T13:39:45.107Z",
+        "id": 86,
+        "workflowId": "Lj1IShrkenZq2udA",
+        "versionId": "90c5de82-4cd8-47e6-bd84-47cf6df360ce",
+        "event": "activated",
+        "userId": "af142d6e-919f-4345-b234-759caa50a7bb"
+      }
+    ]
+  }
 }

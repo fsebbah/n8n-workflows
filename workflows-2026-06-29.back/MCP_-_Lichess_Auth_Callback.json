@@ -1,0 +1,1122 @@
+{
+  "updatedAt": "2026-03-12T16:08:44.838Z",
+  "createdAt": "2026-03-12T16:08:44.530Z",
+  "id": "xWQ7GvTnaM6k4FQH",
+  "name": "MCP - Lichess Auth Callback",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lichess-auth-callback",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "lichess-auth-callback-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\nconst code = body.code;\nconst state = body.state;\nconst code_verifier = body.code_verifier;\nconst error = body.error;\nconst error_description = body.error_description;\n\n// Check for OAuth error from Lichess\nif (error) {\n  return {\n    json: {\n      valid: false,\n      error: { \n        code: 400, \n        message: `Lichess OAuth error: ${error}`, \n        description: error_description,\n        status: 'OAUTH_ERROR' \n      }\n    }\n  };\n}\n\n// Validation\nconst errors = [];\nif (!code) errors.push('code manquant');\nif (!state) errors.push('state manquant');\nif (!code_verifier) errors.push('code_verifier manquant');\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  };\n}\n\n// Decode state to get tenant_id and user_id\nlet stateData;\ntry {\n  stateData = JSON.parse(Buffer.from(state, 'base64url').toString());\n} catch (e) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: 'state invalide (décodage échoué)', status: 'BAD_REQUEST' }\n    }\n  };\n}\n\nif (!stateData.tenant_id || !stateData.user_id) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: 'state invalide (tenant_id ou user_id manquant)', status: 'BAD_REQUEST' }\n    }\n  };\n}\n\n// Check state freshness (10 min max)\nconst stateAge = Date.now() - stateData.ts;\nif (stateAge > 600000) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: 'state expiré (> 10 minutes)', status: 'STATE_EXPIRED' }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    code,\n    state,\n    code_verifier,\n    tenant_id: stateData.tenant_id,\n    user_id: stateData.user_id\n  }\n};"
+      },
+      "id": "validate-callback",
+      "name": "Validate Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lichess.org/api/token",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "authorization_code"
+            },
+            {
+              "name": "code",
+              "value": "={{ $json.code }}"
+            },
+            {
+              "name": "code_verifier",
+              "value": "={{ $json.code_verifier }}"
+            },
+            {
+              "name": "redirect_uri",
+              "value": "={{ $env.LICHESS_REDIRECT_URI }}"
+            },
+            {
+              "name": "client_id",
+              "value": "={{ $env.LICHESS_CLIENT_ID }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "exchange-token",
+      "name": "Exchange Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const callbackData = $('Validate Callback').first().json;\nconst tokenResult = $input.first().json;\n\nif (tokenResult.statusCode >= 400) {\n  return {\n    json: {\n      valid: false,\n      error: { \n        code: tokenResult.statusCode, \n        message: 'Lichess token exchange failed', \n        details: tokenResult.body \n      }\n    }\n  };\n}\n\nconst tokens = tokenResult.body;\n\n// Calculate expiry\nconst expiresAt = new Date(Date.now() + (tokens.expires_in * 1000)).toISOString();\n\nreturn {\n  json: {\n    valid: true,\n    tenant_id: callbackData.tenant_id,\n    user_id: callbackData.user_id,\n    access_token: tokens.access_token,\n    refresh_token: tokens.refresh_token || null,\n    token_type: tokens.token_type,\n    expires_in: tokens.expires_in,\n    expires_at: expiresAt,\n    scope: tokens.scope\n  }\n};"
+      },
+      "id": "parse-token",
+      "name": "Parse Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-token-valid",
+      "name": "Token Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-token-error",
+      "name": "Respond Token Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://lichess.org/api/account",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.access_token }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "get-lichess-account",
+      "name": "Get Lichess Account",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_API_URL || 'https://api.azy.solutions' }}/api/n8n/oauth/store",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.N8N_API_KEY }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $('Parse Token').first().json.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ user_id: $('Parse Token').first().json.user_id, provider: 'lichess', access_token: $('Parse Token').first().json.access_token, refresh_token: $('Parse Token').first().json.refresh_token, expires_at: $('Parse Token').first().json.expires_at, scope: $('Parse Token').first().json.scope, provider_user_id: $json.body?.username || $json.body?.id }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "store-tokens",
+      "name": "Store Tokens",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_API_URL || 'https://api.azy.solutions' }}/api/n8n/progress/lichess",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.N8N_API_KEY }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $('Parse Token').first().json.tenant_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ user_id: $('Parse Token').first().json.user_id, lichess_username: $('Get Lichess Account').first().json.body?.username || $('Get Lichess Account').first().json.body?.id }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "update-progress",
+      "name": "Link Lichess in Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const tokenData = $('Parse Token').first().json;\nconst accountData = $('Get Lichess Account').first().json;\n\nconst lichessUsername = accountData.body?.username || accountData.body?.id || 'unknown';\n\nreturn {\n  json: {\n    success: true,\n    message: `Compte Lichess \"${lichessUsername}\" connecté avec succès`,\n    user_id: tokenData.user_id,\n    lichess_username: lichessUsername,\n    scope: tokenData.scope\n  }\n};"
+      },
+      "id": "build-success",
+      "name": "Build Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## MCP - Lichess Auth Callback\n\n**Endpoint:** POST /webhook/lichess-auth-callback\n\n### Input\n```json\n{\n  \"code\": \"lic_abc123...\",\n  \"state\": \"base64...\",\n  \"code_verifier\": \"xyz789...\"\n}\n```\n\nLe caller (chess plugin) doit :\n1. Recevoir le callback de Lichess (?code=...&state=...)\n2. Ajouter le code_verifier (stocké lors de auth-start)\n3. Appeler ce endpoint\n\n### Flow\n1. Valide code, state, code_verifier\n2. Décode state → tenant_id + user_id\n3. Échange code → access_token (Lichess API)\n4. Récupère profil Lichess\n5. Stocke tokens (POST /api/n8n/oauth/store)\n6. Lie lichess_username (POST /api/n8n/progress/lichess)\n\n### Output\n```json\n{\n  \"success\": true,\n  \"message\": \"Compte Lichess 'player123' connecté\",\n  \"lichess_username\": \"player123\"\n}\n```\n\n### Variables d'environnement\n- `LICHESS_CLIENT_ID`\n- `LICHESS_REDIRECT_URI`\n- `BACKEND_API_URL`\n- `N8N_API_KEY`\n\n### RFC-039 compliant",
+        "height": 580,
+        "width": 420,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        60,
+        20
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Callback": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Exchange Token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exchange Token": {
+      "main": [
+        [
+          {
+            "node": "Parse Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Token": {
+      "main": [
+        [
+          {
+            "node": "Token Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Lichess Account",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Token Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Lichess Account": {
+      "main": [
+        [
+          {
+            "node": "Store Tokens",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Tokens": {
+      "main": [
+        [
+          {
+            "node": "Link Lichess in Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Link Lichess in Progress": {
+      "main": [
+        [
+          {
+            "node": "Build Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Success Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "0bb4a304-3342-4a2e-a6bc-33053ca7102c",
+  "activeVersionId": "0bb4a304-3342-4a2e-a6bc-33053ca7102c",
+  "versionCounter": 12,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-12T16:08:44.530Z",
+      "createdAt": "2026-03-12T16:08:44.530Z",
+      "role": "workflow:owner",
+      "workflowId": "xWQ7GvTnaM6k4FQH",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-12T16:08:44.553Z",
+    "createdAt": "2026-03-12T16:08:44.553Z",
+    "versionId": "0bb4a304-3342-4a2e-a6bc-33053ca7102c",
+    "workflowId": "xWQ7GvTnaM6k4FQH",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "lichess-auth-callback",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "lichess-auth-callback-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "const body = $input.first().json.body || {};\n\nconst code = body.code;\nconst state = body.state;\nconst code_verifier = body.code_verifier;\nconst error = body.error;\nconst error_description = body.error_description;\n\n// Check for OAuth error from Lichess\nif (error) {\n  return {\n    json: {\n      valid: false,\n      error: { \n        code: 400, \n        message: `Lichess OAuth error: ${error}`, \n        description: error_description,\n        status: 'OAUTH_ERROR' \n      }\n    }\n  };\n}\n\n// Validation\nconst errors = [];\nif (!code) errors.push('code manquant');\nif (!state) errors.push('state manquant');\nif (!code_verifier) errors.push('code_verifier manquant');\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  };\n}\n\n// Decode state to get tenant_id and user_id\nlet stateData;\ntry {\n  stateData = JSON.parse(Buffer.from(state, 'base64url').toString());\n} catch (e) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: 'state invalide (décodage échoué)', status: 'BAD_REQUEST' }\n    }\n  };\n}\n\nif (!stateData.tenant_id || !stateData.user_id) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: 'state invalide (tenant_id ou user_id manquant)', status: 'BAD_REQUEST' }\n    }\n  };\n}\n\n// Check state freshness (10 min max)\nconst stateAge = Date.now() - stateData.ts;\nif (stateAge > 600000) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: 'state expiré (> 10 minutes)', status: 'STATE_EXPIRED' }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    code,\n    state,\n    code_verifier,\n    tenant_id: stateData.tenant_id,\n    user_id: stateData.user_id\n  }\n};"
+        },
+        "id": "validate-callback",
+        "name": "Validate Callback",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          680,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          900,
+          460
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://lichess.org/api/token",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "form-urlencoded",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "grant_type",
+                "value": "authorization_code"
+              },
+              {
+                "name": "code",
+                "value": "={{ $json.code }}"
+              },
+              {
+                "name": "code_verifier",
+                "value": "={{ $json.code_verifier }}"
+              },
+              {
+                "name": "redirect_uri",
+                "value": "={{ $env.LICHESS_REDIRECT_URI }}"
+              },
+              {
+                "name": "client_id",
+                "value": "={{ $env.LICHESS_CLIENT_ID }}"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 15000
+          }
+        },
+        "id": "exchange-token",
+        "name": "Exchange Token",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          900,
+          300
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const callbackData = $('Validate Callback').first().json;\nconst tokenResult = $input.first().json;\n\nif (tokenResult.statusCode >= 400) {\n  return {\n    json: {\n      valid: false,\n      error: { \n        code: tokenResult.statusCode, \n        message: 'Lichess token exchange failed', \n        details: tokenResult.body \n      }\n    }\n  };\n}\n\nconst tokens = tokenResult.body;\n\n// Calculate expiry\nconst expiresAt = new Date(Date.now() + (tokens.expires_in * 1000)).toISOString();\n\nreturn {\n  json: {\n    valid: true,\n    tenant_id: callbackData.tenant_id,\n    user_id: callbackData.user_id,\n    access_token: tokens.access_token,\n    refresh_token: tokens.refresh_token || null,\n    token_type: tokens.token_type,\n    expires_in: tokens.expires_in,\n    expires_at: expiresAt,\n    scope: tokens.scope\n  }\n};"
+        },
+        "id": "parse-token",
+        "name": "Parse Token",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1120,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-token-valid",
+        "name": "Token Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1340,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-token-error",
+        "name": "Respond Token Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1560,
+          460
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "https://lichess.org/api/account",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.access_token }}"
+              },
+              {
+                "name": "Accept",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 10000
+          }
+        },
+        "id": "get-lichess-account",
+        "name": "Get Lichess Account",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1560,
+          300
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.BACKEND_API_URL || 'https://api.azy.solutions' }}/api/n8n/oauth/store",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-API-Key",
+                "value": "={{ $env.N8N_API_KEY }}"
+              },
+              {
+                "name": "X-Tenant-ID",
+                "value": "={{ $('Parse Token').first().json.tenant_id }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ user_id: $('Parse Token').first().json.user_id, provider: 'lichess', access_token: $('Parse Token').first().json.access_token, refresh_token: $('Parse Token').first().json.refresh_token, expires_at: $('Parse Token').first().json.expires_at, scope: $('Parse Token').first().json.scope, provider_user_id: $json.body?.username || $json.body?.id }) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 10000
+          }
+        },
+        "id": "store-tokens",
+        "name": "Store Tokens",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1780,
+          300
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.BACKEND_API_URL || 'https://api.azy.solutions' }}/api/n8n/progress/lichess",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-API-Key",
+                "value": "={{ $env.N8N_API_KEY }}"
+              },
+              {
+                "name": "X-Tenant-ID",
+                "value": "={{ $('Parse Token').first().json.tenant_id }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ user_id: $('Parse Token').first().json.user_id, lichess_username: $('Get Lichess Account').first().json.body?.username || $('Get Lichess Account').first().json.body?.id }) }}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 10000
+          }
+        },
+        "id": "update-progress",
+        "name": "Link Lichess in Progress",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2000,
+          300
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const tokenData = $('Parse Token').first().json;\nconst accountData = $('Get Lichess Account').first().json;\n\nconst lichessUsername = accountData.body?.username || accountData.body?.id || 'unknown';\n\nreturn {\n  json: {\n    success: true,\n    message: `Compte Lichess \"${lichessUsername}\" connecté avec succès`,\n    user_id: tokenData.user_id,\n    lichess_username: lichessUsername,\n    scope: tokenData.scope\n  }\n};"
+        },
+        "id": "build-success",
+        "name": "Build Success Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2220,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 200,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2440,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "content": "## MCP - Lichess Auth Callback\n\n**Endpoint:** POST /webhook/lichess-auth-callback\n\n### Input\n```json\n{\n  \"code\": \"lic_abc123...\",\n  \"state\": \"base64...\",\n  \"code_verifier\": \"xyz789...\"\n}\n```\n\nLe caller (chess plugin) doit :\n1. Recevoir le callback de Lichess (?code=...&state=...)\n2. Ajouter le code_verifier (stocké lors de auth-start)\n3. Appeler ce endpoint\n\n### Flow\n1. Valide code, state, code_verifier\n2. Décode state → tenant_id + user_id\n3. Échange code → access_token (Lichess API)\n4. Récupère profil Lichess\n5. Stocke tokens (POST /api/n8n/oauth/store)\n6. Lie lichess_username (POST /api/n8n/progress/lichess)\n\n### Output\n```json\n{\n  \"success\": true,\n  \"message\": \"Compte Lichess 'player123' connecté\",\n  \"lichess_username\": \"player123\"\n}\n```\n\n### Variables d'environnement\n- `LICHESS_CLIENT_ID`\n- `LICHESS_REDIRECT_URI`\n- `BACKEND_API_URL`\n- `N8N_API_KEY`\n\n### RFC-039 compliant",
+          "height": 580,
+          "width": 420,
+          "color": 6
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          60,
+          20
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Callback": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Exchange Token",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Exchange Token": {
+        "main": [
+          [
+            {
+              "node": "Parse Token",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Token": {
+        "main": [
+          [
+            {
+              "node": "Token Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Token Valid?": {
+        "main": [
+          [
+            {
+              "node": "Get Lichess Account",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Token Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Lichess Account": {
+        "main": [
+          [
+            {
+              "node": "Store Tokens",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Store Tokens": {
+        "main": [
+          [
+            {
+              "node": "Link Lichess in Progress",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Link Lichess in Progress": {
+        "main": [
+          [
+            {
+              "node": "Build Success Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Success Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

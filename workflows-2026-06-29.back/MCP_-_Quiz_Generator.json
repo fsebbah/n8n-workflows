@@ -1,0 +1,616 @@
+{
+  "updatedAt": "2026-03-24T20:09:17.738Z",
+  "createdAt": "2025-12-18T10:03:40.706Z",
+  "id": "SUlOgPqXDRlXPkpN",
+  "name": "MCP - Quiz Generator",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - Quiz Generator\n\n**Endpoint:** POST /webhook/quiz-generator\n\n**Description:** Genere des quiz educatifs a partir de texte, sujet ou URL.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"user_id\", \"guild_id\", \"user_request\", \"data\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (credits, quotas)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale\" },\n    \"data\": { \"type\": \"string\", \"description\": \"Texte, sujet ou URL pour generer le quiz\" },\n    \"source\": { \"type\": \"string\", \"enum\": [\"text\", \"topic\", \"url\"], \"default\": \"text\" },\n    \"options\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"num_questions\": { \"type\": \"integer\", \"default\": 10 },\n        \"question_types\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"default\": [\"multiple_choice\", \"true_false\"] },\n        \"difficulty\": { \"type\": \"string\", \"enum\": [\"easy\", \"medium\", \"hard\"], \"default\": \"medium\" },\n        \"language\": { \"type\": \"string\", \"default\": \"fr\" },\n        \"include_explanations\": { \"type\": \"boolean\", \"default\": true }\n      }\n    }\n  }\n}\n```\n\n**Note:** API keys fournies par le systeme.\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"quiz\", \"questions\", \"metadata\"],\n  \"domain\": \"education\"\n}\n```",
+        "height": 680,
+        "width": 400,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "quiz-generator",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-quiz",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "quiz-generator-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Quiz Generator\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required context fields ---\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst userRequest = body.user_request || ctx.user_request;\n\nif (!userId) {\n  errors.push('user_id requis');\n}\nif (!guildId) {\n  errors.push('guild_id requis');\n}\nif (!userRequest) {\n  errors.push('user_request requis');\n}\n\n// --- Specific webhook parameters ---\nconst data = body.data || ctx.data || null;\nconst source = body.source || ctx.source || 'text';\nconst options = body.options || ctx.options || {};\n\n// Validate required data parameter\nif (!data) {\n  errors.push('data requis (texte, sujet ou URL)');\n}\n\n// Validate source enum\nif (!['text', 'topic', 'url'].includes(source)) {\n  errors.push('source doit etre text, topic ou url');\n}\n\n// Parse options with defaults\nconst numQuestions = options.num_questions || 10;\nconst questionTypes = options.question_types || ['multiple_choice', 'true_false'];\nconst difficulty = options.difficulty || 'medium';\nconst language = options.language || 'fr';\nconst includeExplanations = options.include_explanations !== false;\n\n// Validate difficulty enum\nif (!['easy', 'medium', 'hard'].includes(difficulty)) {\n  errors.push('difficulty doit etre easy, medium ou hard');\n}\n\n// --- API Keys passed from MCP Server ---\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai || '';\nconst model = body.model || ctx.model || 'gpt-4o';\n\nif (!openaiApiKey) {\n  errors.push('openai_api_key requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  data: data,\n  source: source,\n  num_questions: numQuestions,\n  question_types: questionTypes,\n  difficulty: difficulty,\n  language: language,\n  include_explanations: includeExplanations,\n  openaiApiKey: openaiApiKey,\n  model: model,\n  startTime: Date.now()\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openaiApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  const userRequest = data.user_request;\n  const source = data.source;\n  const content = data.data;\n  const numQuestions = data.num_questions;\n  const questionTypes = JSON.stringify(data.question_types);\n  const difficulty = data.difficulty;\n  const language = data.language;\n  const includeExplanations = data.include_explanations;\n  \n  const systemPrompt = `Tu es un expert en creation de quiz educatifs. Genere un quiz base sur le contenu fourni.\n\nRegles:\n1. Chaque question doit etre claire et non ambigue\n2. Les options de reponse doivent etre plausibles\n3. Les explications doivent etre pedagogiques\n4. Respecte la distribution de difficulte demandee\n5. Reponds UNIQUEMENT en JSON valide selon le schema fourni\n\nSchema JSON attendu:\n{\n  \"quiz\": {\n    \"title\": \"string\",\n    \"description\": \"string\",\n    \"questions\": [\n      {\n        \"id\": number,\n        \"type\": \"multiple_choice\" | \"true_false\" | \"fill_blank\",\n        \"question\": \"string\",\n        \"options\": [{\"id\": \"A\", \"text\": \"string\"}, ...] (pour multiple_choice),\n        \"correct_answer\": \"string\" | boolean,\n        \"explanation\": \"string\" (si include_explanations=true),\n        \"difficulty\": \"easy\" | \"medium\" | \"hard\"\n      }\n    ],\n    \"metadata\": {\n      \"total_questions\": number,\n      \"difficulty_distribution\": {\"easy\": n, \"medium\": n, \"hard\": n}\n    }\n  }\n}`;\n\n  const userPrompt = `**Demande utilisateur:** \"${userRequest}\"\n\nGenere un quiz avec les parametres suivants:\n\nSource (${source}): ${content}\n\nNombre de questions: ${numQuestions}\nTypes de questions: ${questionTypes}\nDifficulte: ${difficulty}\nLangue: ${language}\nInclure explications: ${includeExplanations ? 'oui' : 'non'}`;\n\n  return JSON.stringify({\n    model: data.model,\n    response_format: { type: 'json_object' },\n    messages: [\n      { role: 'system', content: systemPrompt },\n      { role: 'user', content: userPrompt }\n    ],\n    temperature: 0.7,\n    max_tokens: 4096\n  });\n})() }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "openai-quiz",
+      "name": "OpenAI Generate Quiz",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PARSE LLM RESPONSE - Quiz Generator\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\n// --- Context fields for traceability ---\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\nconst statusCode = input.statusCode || 200;\n\n// Initialize trace with llm_response format\nconst _trace = {\n  llm_response: null,\n  service_response: null,\n  provider: 'openai',\n  model: prevData.model || 'gpt-4o',\n  tokens: { input: 0, output: 0 },\n  latency_ms: 0,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\n// Handle API error\nif (statusCode >= 400 || input.error) {\n  const errorMsg = input.body?.error?.message || input.error?.message || 'OpenAI API error';\n  _trace.llm_response = `Error: ${errorMsg}`;\n  _trace.service_response = input.body || input;\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'LLM_ERROR',\n        message: errorMsg,\n        http_status: statusCode\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n// Extract response\nconst body = input.body || input;\nconst content = body.choices?.[0]?.message?.content || '';\nconst usage = body.usage || {};\n\n// Populate trace with LLM response\n_trace.llm_response = content;\n_trace.service_response = body;\n_trace.tokens = {\n  input: usage.prompt_tokens || 0,\n  output: usage.completion_tokens || 0\n};\n\n// Parse JSON from response\nlet parsed;\ntry {\n  // Handle markdown code blocks\n  let jsonStr = content;\n  const codeBlockMatch = content.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (codeBlockMatch) {\n    jsonStr = codeBlockMatch[1].trim();\n  } else {\n    const rawMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (rawMatch) jsonStr = rawMatch[0];\n  }\n  \n  parsed = JSON.parse(jsonStr);\n} catch (e) {\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'PARSE_ERROR',\n        message: 'Failed to parse quiz response: ' + e.message,\n        http_status: 500\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n// Extract quiz data\nconst quiz = parsed.quiz || parsed;\n\n_trace.latency_ms = Date.now() - startTime;\n\nreturn {\n  json: {\n    success: true,\n    data: quiz,\n    meta: {\n      provider: 'openai',\n      model: prevData.model || 'gpt-4o',\n      source: prevData.source,\n      difficulty: prevData.difficulty,\n      language: prevData.language,\n      tokens_used: (usage.prompt_tokens || 0) + (usage.completion_tokens || 0),\n      processing_time_ms: Date.now() - startTime\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: _trace\n  }\n};"
+      },
+      "id": "parse-response",
+      "name": "Parse LLM Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1420,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Generate Quiz",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Generate Quiz": {
+      "main": [
+        [
+          {
+            "node": "Parse LLM Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse LLM Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "e3f22067-0a4c-4e90-b67d-83ec95f26ad6",
+  "activeVersionId": "e3f22067-0a4c-4e90-b67d-83ec95f26ad6",
+  "versionCounter": 434,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-02-02T17:55:15.060Z",
+      "createdAt": "2026-02-02T17:55:15.060Z",
+      "role": "workflow:owner",
+      "workflowId": "SUlOgPqXDRlXPkpN",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-24T20:09:14.595Z",
+    "createdAt": "2026-03-24T20:09:14.595Z",
+    "versionId": "e3f22067-0a4c-4e90-b67d-83ec95f26ad6",
+    "workflowId": "SUlOgPqXDRlXPkpN",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## MCP - Quiz Generator\n\n**Endpoint:** POST /webhook/quiz-generator\n\n**Description:** Genere des quiz educatifs a partir de texte, sujet ou URL.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"user_id\", \"guild_id\", \"user_request\", \"data\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (credits, quotas)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale\" },\n    \"data\": { \"type\": \"string\", \"description\": \"Texte, sujet ou URL pour generer le quiz\" },\n    \"source\": { \"type\": \"string\", \"enum\": [\"text\", \"topic\", \"url\"], \"default\": \"text\" },\n    \"options\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"num_questions\": { \"type\": \"integer\", \"default\": 10 },\n        \"question_types\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"default\": [\"multiple_choice\", \"true_false\"] },\n        \"difficulty\": { \"type\": \"string\", \"enum\": [\"easy\", \"medium\", \"hard\"], \"default\": \"medium\" },\n        \"language\": { \"type\": \"string\", \"default\": \"fr\" },\n        \"include_explanations\": { \"type\": \"boolean\", \"default\": true }\n      }\n    }\n  }\n}\n```\n\n**Note:** API keys fournies par le systeme.\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"quiz\", \"questions\", \"metadata\"],\n  \"domain\": \"education\"\n}\n```",
+          "height": 680,
+          "width": 400,
+          "color": 6
+        },
+        "id": "doc-sticky",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -100,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "quiz-generator",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-quiz",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "quiz-generator-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT - Quiz Generator\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Required context fields ---\nconst userId = body.user_id || ctx.user_id;\nconst guildId = body.guild_id || ctx.guild_id;\nconst userRequest = body.user_request || ctx.user_request;\n\nif (!userId) {\n  errors.push('user_id requis');\n}\nif (!guildId) {\n  errors.push('guild_id requis');\n}\nif (!userRequest) {\n  errors.push('user_request requis');\n}\n\n// --- Specific webhook parameters ---\nconst data = body.data || ctx.data || null;\nconst source = body.source || ctx.source || 'text';\nconst options = body.options || ctx.options || {};\n\n// Validate required data parameter\nif (!data) {\n  errors.push('data requis (texte, sujet ou URL)');\n}\n\n// Validate source enum\nif (!['text', 'topic', 'url'].includes(source)) {\n  errors.push('source doit etre text, topic ou url');\n}\n\n// Parse options with defaults\nconst numQuestions = options.num_questions || 10;\nconst questionTypes = options.question_types || ['multiple_choice', 'true_false'];\nconst difficulty = options.difficulty || 'medium';\nconst language = options.language || 'fr';\nconst includeExplanations = options.include_explanations !== false;\n\n// Validate difficulty enum\nif (!['easy', 'medium', 'hard'].includes(difficulty)) {\n  errors.push('difficulty doit etre easy, medium ou hard');\n}\n\n// --- API Keys passed from MCP Server ---\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai || '';\nconst model = body.model || ctx.model || 'gpt-4o';\n\nif (!openaiApiKey) {\n  errors.push('openai_api_key requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  data: data,\n  source: source,\n  num_questions: numQuestions,\n  question_types: questionTypes,\n  difficulty: difficulty,\n  language: language,\n  include_explanations: includeExplanations,\n  openaiApiKey: openaiApiKey,\n  model: model,\n  startTime: Date.now()\n};"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-valid",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          680,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+        },
+        "id": "build-error",
+        "name": "Build Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          900,
+          480
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1120,
+          480
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/chat/completions",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.openaiApiKey }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ (() => {\n  const data = $json;\n  const userRequest = data.user_request;\n  const source = data.source;\n  const content = data.data;\n  const numQuestions = data.num_questions;\n  const questionTypes = JSON.stringify(data.question_types);\n  const difficulty = data.difficulty;\n  const language = data.language;\n  const includeExplanations = data.include_explanations;\n  \n  const systemPrompt = `Tu es un expert en creation de quiz educatifs. Genere un quiz base sur le contenu fourni.\n\nRegles:\n1. Chaque question doit etre claire et non ambigue\n2. Les options de reponse doivent etre plausibles\n3. Les explications doivent etre pedagogiques\n4. Respecte la distribution de difficulte demandee\n5. Reponds UNIQUEMENT en JSON valide selon le schema fourni\n\nSchema JSON attendu:\n{\n  \"quiz\": {\n    \"title\": \"string\",\n    \"description\": \"string\",\n    \"questions\": [\n      {\n        \"id\": number,\n        \"type\": \"multiple_choice\" | \"true_false\" | \"fill_blank\",\n        \"question\": \"string\",\n        \"options\": [{\"id\": \"A\", \"text\": \"string\"}, ...] (pour multiple_choice),\n        \"correct_answer\": \"string\" | boolean,\n        \"explanation\": \"string\" (si include_explanations=true),\n        \"difficulty\": \"easy\" | \"medium\" | \"hard\"\n      }\n    ],\n    \"metadata\": {\n      \"total_questions\": number,\n      \"difficulty_distribution\": {\"easy\": n, \"medium\": n, \"hard\": n}\n    }\n  }\n}`;\n\n  const userPrompt = `**Demande utilisateur:** \"${userRequest}\"\n\nGenere un quiz avec les parametres suivants:\n\nSource (${source}): ${content}\n\nNombre de questions: ${numQuestions}\nTypes de questions: ${questionTypes}\nDifficulte: ${difficulty}\nLangue: ${language}\nInclure explications: ${includeExplanations ? 'oui' : 'non'}`;\n\n  return JSON.stringify({\n    model: data.model,\n    response_format: { type: 'json_object' },\n    messages: [\n      { role: 'system', content: systemPrompt },\n      { role: 'user', content: userPrompt }\n    ],\n    temperature: 0.7,\n    max_tokens: 4096\n  });\n})() }}",
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "id": "openai-quiz",
+        "name": "OpenAI Generate Quiz",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          940,
+          200
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PARSE LLM RESPONSE - Quiz Generator\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\n// --- Context fields for traceability ---\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\nconst statusCode = input.statusCode || 200;\n\n// Initialize trace with llm_response format\nconst _trace = {\n  llm_response: null,\n  service_response: null,\n  provider: 'openai',\n  model: prevData.model || 'gpt-4o',\n  tokens: { input: 0, output: 0 },\n  latency_ms: 0,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest\n};\n\n// Handle API error\nif (statusCode >= 400 || input.error) {\n  const errorMsg = input.body?.error?.message || input.error?.message || 'OpenAI API error';\n  _trace.llm_response = `Error: ${errorMsg}`;\n  _trace.service_response = input.body || input;\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'LLM_ERROR',\n        message: errorMsg,\n        http_status: statusCode\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n// Extract response\nconst body = input.body || input;\nconst content = body.choices?.[0]?.message?.content || '';\nconst usage = body.usage || {};\n\n// Populate trace with LLM response\n_trace.llm_response = content;\n_trace.service_response = body;\n_trace.tokens = {\n  input: usage.prompt_tokens || 0,\n  output: usage.completion_tokens || 0\n};\n\n// Parse JSON from response\nlet parsed;\ntry {\n  // Handle markdown code blocks\n  let jsonStr = content;\n  const codeBlockMatch = content.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (codeBlockMatch) {\n    jsonStr = codeBlockMatch[1].trim();\n  } else {\n    const rawMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (rawMatch) jsonStr = rawMatch[0];\n  }\n  \n  parsed = JSON.parse(jsonStr);\n} catch (e) {\n  _trace.latency_ms = Date.now() - startTime;\n  \n  return {\n    json: {\n      success: false,\n      error: {\n        code: 'PARSE_ERROR',\n        message: 'Failed to parse quiz response: ' + e.message,\n        http_status: 500\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  };\n}\n\n// Extract quiz data\nconst quiz = parsed.quiz || parsed;\n\n_trace.latency_ms = Date.now() - startTime;\n\nreturn {\n  json: {\n    success: true,\n    data: quiz,\n    meta: {\n      provider: 'openai',\n      model: prevData.model || 'gpt-4o',\n      source: prevData.source,\n      difficulty: prevData.difficulty,\n      language: prevData.language,\n      tokens_used: (usage.prompt_tokens || 0) + (usage.completion_tokens || 0),\n      processing_time_ms: Date.now() - startTime\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: _trace\n  }\n};"
+        },
+        "id": "parse-response",
+        "name": "Parse LLM Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1180,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1420,
+          200
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "OpenAI Generate Quiz",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Generate Quiz": {
+        "main": [
+          [
+            {
+              "node": "Parse LLM Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse LLM Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

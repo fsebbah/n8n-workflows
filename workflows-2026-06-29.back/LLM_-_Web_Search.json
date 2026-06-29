@@ -1,0 +1,2136 @@
+{
+  "updatedAt": "2026-03-30T10:18:01.143Z",
+  "createdAt": "2026-03-30T10:17:52.072Z",
+  "id": "Q6LCMkmdzhMccH9L",
+  "name": "LLM - Web Search",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## LLM - Web Search (Multi-Provider)\n\n**Endpoint:** POST /webhook/web-search\n\n**Description:** Performs web search using multiple LLM providers with grounding.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"query\"],\n  \"properties\": {\n    \"query\": { \"type\": \"string\", \"description\": \"Search query (required)\" },\n    \"provider\": { \"type\": \"string\", \"description\": \"LLM provider: openai, openai-mini, claude, claude-haiku, anthropic, gemini, gemini-pro, mistral, mistral-premium (default: gemini)\" },\n    \"model\": { \"type\": \"string\", \"description\": \"Override model\" },\n    \"options\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"search_depth\": { \"type\": \"string\", \"description\": \"medium or deep\" },\n        \"max_results\": { \"type\": \"integer\", \"description\": \"Max search results\" },\n        \"language\": { \"type\": \"string\", \"description\": \"Output language\" },\n        \"allowed_domains\": { \"type\": \"array\", \"description\": \"Allowed domains (Claude only)\" },\n        \"blocked_domains\": { \"type\": \"array\", \"description\": \"Blocked domains\" },\n        \"include_sources\": { \"type\": \"boolean\", \"description\": \"Include sources\" }\n      }\n    },\n    \"output_schema\": { \"type\": \"object\", \"description\": \"Structured output schema\" },\n    \"messages\": { \"type\": \"array\", \"description\": \"Conversation history\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"User request context\" },\n    \"user_id\": { \"type\": \"string\", \"description\": \"User ID for tracing\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Guild ID for tracing\" },\n    \"openai_api_key\": { \"type\": \"string\", \"description\": \"OpenAI API key (required for OpenAI)\" },\n    \"anthropic_api_key\": { \"type\": \"string\", \"description\": \"Anthropic API key (required for Claude)\" },\n    \"google_api_key\": { \"type\": \"string\", \"description\": \"Google API key (required for Gemini)\" },\n    \"mistral_api_key\": { \"type\": \"string\", \"description\": \"Mistral API key (required for Mistral)\" }\n  }\n}\n```\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"content\", \"sources\", \"structured_data\"],\n  \"domain\": \"search\"\n}\n```\n\n**Notes:**\n- `allowed_domains` only works with Claude\n- Mistral search is NOT guaranteed (agent decides)\n- Gemini uses Google Search, OpenAI uses Bing, Claude/Mistral use Brave",
+        "height": 820,
+        "width": 500,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -880,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "web-search",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -768,
+        272
+      ],
+      "webhookId": "recipes-web-search-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - LLM Web Search\n// RFC-014: Support context.* with fallback to root level\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Provider configuration ---\nconst validProviders = ['openai', 'openai-mini', 'claude', 'claude-haiku', 'anthropic', 'gemini', 'gemini-pro', 'mistral', 'mistral-premium'];\nconst defaultModels = {\n  openai: 'gpt-4o-search-preview',\n  'openai-mini': 'gpt-4o-mini-search-preview',\n  claude: 'claude-sonnet-4-20250514',\n  'claude-haiku': 'claude-haiku-4-5-20251001',\n  anthropic: 'claude-sonnet-4-20250514',\n  gemini: 'gemini-2.5-flash',\n  'gemini-pro': 'gemini-2.5-pro',\n  mistral: 'mistral-medium-2505',\n  'mistral-premium': 'mistral-medium-2505'\n};\n\n// --- Required field ---\nconst query = body.query || ctx.query;\nif (!query || typeof query !== 'string' || query.trim().length === 0) {\n  errors.push('query requis (chaine non vide)');\n}\n\n// --- Provider validation ---\nconst provider = body.provider || ctx.provider || 'gemini';\nif (!validProviders.includes(provider)) {\n  errors.push(`provider invalide: '${provider}'. Options valides: ${validProviders.join(', ')}`);\n}\n\n// --- API Keys validation based on provider ---\nif (provider.startsWith('openai') && !body.openai_api_key) {\n  errors.push('openai_api_key requis pour le provider OpenAI');\n}\nif ((provider.startsWith('claude') || provider === 'anthropic') && !body.anthropic_api_key) {\n  errors.push('anthropic_api_key requis pour le provider Claude/Anthropic');\n}\nif (provider.startsWith('gemini') && !body.google_api_key) {\n  errors.push('google_api_key requis pour le provider Gemini');\n}\nif (provider.startsWith('mistral') && !body.mistral_api_key) {\n  errors.push('mistral_api_key requis pour le provider Mistral');\n}\n\n// --- OPTIONAL context fields for tracing (NO validation errors) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Options ---\nconst opts = body.options || ctx.options || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  query: (query || '').trim(),\n  provider: provider,\n  provider_type: provider === 'anthropic' ? 'claude' : provider.split('-')[0],\n  model: body.model || ctx.model || defaultModels[provider],\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  openai_api_key: body.openai_api_key,\n  anthropic_api_key: body.anthropic_api_key,\n  google_api_key: body.google_api_key,\n  mistral_api_key: body.mistral_api_key,\n  options: {\n    search_depth: opts.search_depth || 'medium',\n    max_results: opts.max_results || 3,\n    language: opts.language || 'fr',\n    allowed_domains: opts.allowed_domains || [],\n    blocked_domains: opts.blocked_domains || [],\n    include_sources: opts.include_sources !== false\n  },\n  output_schema: body.output_schema || ctx.output_schema || null,\n  allowed_context: body.allowed_context || ctx.allowed_context || null,\n  messages: body.messages || ctx.messages || null,\n  startTime: Date.now()\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -528,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              },
+              "id": "5398eee1-912a-4c2a-a32b-914b0af967a5"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -288,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        192,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-openai",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.provider_type }}",
+                    "rightValue": "openai"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "openai"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-claude",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.provider_type }}",
+                    "rightValue": "claude"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "claude"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-gemini",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.provider_type }}",
+                    "rightValue": "gemini"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "gemini"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "cond-mistral",
+                    "operator": {
+                      "name": "filter.operator.equals",
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.provider_type }}",
+                    "rightValue": "mistral"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "mistral"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "id": "switch-provider",
+      "name": "Switch Provider",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        672,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.openai_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.provider === 'openai-mini' ? 'gpt-4o-mini-search-preview' : 'gpt-4o-search-preview' }}\",\n  \"tools\": [{\"type\": \"web_search_preview\"}],\n  \"tool_choice\": {\n    \"type\": \"web_search_preview\",\n    \"search_context_size\": \"{{ $json.options.search_depth }}\"\n  },\n  \"input\": \"{{ $json.query }}\"\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "call-openai",
+      "name": "OpenAI Web Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1296,
+        -96
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.anthropic_api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.claude_body }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "call-claude",
+      "name": "Claude Web Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1296,
+        96
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.provider === 'gemini-pro' ? 'gemini-2.5-pro' : 'gemini-2.5-flash' }}:generateContent?key={{ $json.google_api_key }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"{{ $json.query }}\"\n    }]\n  }],\n  \"tools\": [{\n    \"google_search\": {}\n  }]\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "call-gemini",
+      "name": "Gemini Web Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1296,
+        272
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/agents",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.mistral_api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral-medium-2505\",\n  \"name\": \"Recipe Search Agent\",\n  \"tools\": [{\"type\": \"{{ $json.provider === 'mistral-premium' ? 'web_search_premium' : 'web_search' }}\"}]\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "call-mistral",
+      "name": "Mistral Web Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1296,
+        448
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NORMALIZE OPENAI - With _trace support\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst usage = {\n  input_tokens: input.usage?.prompt_tokens || 0,\n  output_tokens: input.usage?.completion_tokens || 0,\n  total_tokens: input.usage?.total_tokens || 0\n};\n\nfunction getDomain(url) {\n  if (!url) return '';\n  const match = url.match(/^https?:\\/\\/([^\\/]+)/);\n  return match ? match[1] : '';\n}\n\ntry {\n  let textContent = '';\n  const sources = [];\n  let structuredData = null;\n\n  // Extract text content\n  const message = input.choices?.[0]?.message;\n\n  if (message?.content) {\n    textContent = message.content;\n  }\n\n  // Extract sources (annotations)\n  const annotations = message?.annotations || [];\n  for (const ann of annotations) {\n    if (ann.type === 'url_citation') {\n      sources.push({\n        title: ann.title || 'Source',\n        url: ann.url,\n        domain: getDomain(ann.url)\n      });\n    }\n  }\n\n  // Extract structured data (tool_calls)\n  const toolCalls = message?.tool_calls || [];\n  if (toolCalls.length > 0) {\n    const call = toolCalls[0];\n    if (call.type === 'function') {\n      structuredData = {\n        tool_name: call.function.name,\n        data: JSON.parse(call.function.arguments)\n      };\n    }\n  }\n\n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content: textContent,\n      sources,\n      structured_data: structuredData,\n      search_performed: sources.length > 0,\n      has_structured_output: structuredData !== null,\n      usage,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n}"
+      },
+      "id": "normalize-openai",
+      "name": "Normalize OpenAI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1536,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NORMALIZE CLAUDE - With _trace support\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst usage = {\n  input_tokens: input.usage?.input_tokens || 0,\n  output_tokens: input.usage?.output_tokens || 0,\n  total_tokens: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0)\n};\n\nfunction getDomain(url) {\n  if (!url) return '';\n  const match = url.match(/^https?:\\/\\/([^\\/]+)/);\n  return match ? match[1] : '';\n}\n\ntry {\n  let textContent = '';\n  const sources = [];\n  let structuredData = null;\n\n  for (const block of (input.content || [])) {\n    // Extract text\n    if (block.type === 'text') {\n      textContent += block.text;\n    }\n\n    // Extract web sources\n    if (block.type === 'web_search_tool_result') {\n      for (const result of (block.content || [])) {\n        if (result.type === 'web_search_result') {\n          sources.push({\n            title: result.title || 'Source',\n            url: result.url,\n            domain: getDomain(result.url)\n          });\n        }\n      }\n    }\n\n    // Extract structured data (tool_use)\n    if (block.type === 'tool_use' && block.name !== 'web_search') {\n      structuredData = {\n        tool_name: block.name,\n        data: block.input\n      };\n    }\n  }\n\n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content: textContent,\n      sources,\n      structured_data: structuredData,\n      search_performed: sources.length > 0,\n      has_structured_output: structuredData !== null,\n      usage,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n}"
+      },
+      "id": "normalize-claude",
+      "name": "Normalize Claude",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NORMALIZE GEMINI - With _trace support\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst usage = {\n  input_tokens: input.usageMetadata?.promptTokenCount || 0,\n  output_tokens: input.usageMetadata?.candidatesTokenCount || 0,\n  total_tokens: input.usageMetadata?.totalTokenCount || 0\n};\n\nfunction getDomain(url) {\n  if (!url) return '';\n  const match = url.match(/^https?:\\/\\/([^\\/]+)/);\n  return match ? match[1] : '';\n}\n\ntry {\n  let textContent = '';\n  const sources = [];\n  let structuredData = null;\n\n  const candidate = input.candidates?.[0];\n  const parts = candidate?.content?.parts || [];\n\n  for (const part of parts) {\n    // Extract text\n    if (part.text) {\n      textContent += part.text;\n    }\n\n    // Extract structured data (functionCall)\n    if (part.functionCall && part.functionCall.name !== 'google_search') {\n      structuredData = {\n        tool_name: part.functionCall.name,\n        data: part.functionCall.args\n      };\n    }\n  }\n\n  // Extract sources (grounding metadata)\n  const grounding = candidate?.groundingMetadata;\n  const chunks = grounding?.groundingChunks || [];\n\n  for (const chunk of chunks) {\n    if (chunk.web) {\n      sources.push({\n        title: chunk.web.title || 'Source',\n        url: chunk.web.uri,\n        domain: getDomain(chunk.web.uri)\n      });\n    }\n  }\n\n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content: textContent,\n      sources,\n      structured_data: structuredData,\n      search_performed: sources.length > 0,\n      has_structured_output: structuredData !== null,\n      usage,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n}"
+      },
+      "id": "normalize-gemini",
+      "name": "Normalize Gemini",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NORMALIZE MISTRAL - With _trace support\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst usage = {\n  input_tokens: input.usage?.prompt_tokens || 0,\n  output_tokens: input.usage?.completion_tokens || 0,\n  total_tokens: input.usage?.total_tokens || 0\n};\n\nfunction getDomain(url) {\n  if (!url) return '';\n  const match = url.match(/^https?:\\/\\/([^\\/]+)/);\n  return match ? match[1] : '';\n}\n\ntry {\n  let textContent = '';\n  const sources = [];\n  let structuredData = null;\n\n  const message = input.choices?.[0]?.message;\n\n  // Extract text content\n  if (message?.content) {\n    textContent = message.content;\n  }\n\n  // Extract sources from citations\n  const citations = input.citations || [];\n  for (const cite of citations) {\n    sources.push({\n      title: cite.title || 'Source',\n      url: cite.url,\n      domain: getDomain(cite.url)\n    });\n  }\n\n  // Extract structured data (tool_calls)\n  const toolCalls = message?.tool_calls || [];\n  for (const call of toolCalls) {\n    if (call.type === 'function' && call.function.name !== 'web_search') {\n      structuredData = {\n        tool_name: call.function.name,\n        data: JSON.parse(call.function.arguments)\n      };\n      break;\n    }\n  }\n\n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content: textContent,\n      sources,\n      structured_data: structuredData,\n      search_performed: sources.length > 0,\n      has_structured_output: structuredData !== null,\n      usage,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n}"
+      },
+      "id": "normalize-mistral",
+      "name": "Normalize Mistral",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        432
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1952,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT OUTPUT - With _trace (llm_response, service_response)\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = input.startTime || prevData.startTime || Date.now();\n\nconst userId = input.user_id || prevData.user_id;\nconst guildId = input.guild_id || prevData.guild_id;\nconst userRequest = input.user_request || prevData.user_request;\nconst rawResponse = input.raw_response || null;\n\ntry {\n  if (!input.normalized) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 'NORMALIZE_ERROR',\n          message: input.error || 'Failed to normalize response',\n          http_status: 500\n        },\n        user_id: userId,\n        guild_id: guildId,\n        user_request: userRequest,\n        _trace: {\n          llm_response: null,\n          service_response: rawResponse,\n          provider: input.provider || prevData.provider,\n          model: prevData.model,\n          tokens: input.usage || { input: 0, output: 0 },\n          latency_ms: Date.now() - startTime,\n          user_id: userId,\n          guild_id: guildId,\n          user_request: userRequest\n        }\n      }\n    }];\n  }\n\n  // Build _trace object\n  const _trace = {\n    llm_response: input.content || null,\n    service_response: rawResponse,\n    provider: input.provider || prevData.provider,\n    model: prevData.model,\n    tokens: {\n      input: input.usage?.input_tokens || 0,\n      output: input.usage?.output_tokens || 0,\n      total: input.usage?.total_tokens || 0\n    },\n    latency_ms: Date.now() - startTime,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n\n  // If structured data (tool_use), return it directly\n  if (input.structured_data) {\n    return [{\n      json: {\n        success: true,\n        data: input.structured_data.data,\n        sources: input.sources || [],\n        meta: {\n          provider: input.provider || prevData.provider,\n          model: prevData.model,\n          tool_used: input.structured_data.tool_name,\n          search_performed: input.search_performed,\n          sources_count: (input.sources || []).length\n        },\n        usage: input.usage || null,\n        user_id: userId,\n        guild_id: guildId,\n        user_request: userRequest,\n        _trace: _trace\n      }\n    }];\n  }\n\n  // Otherwise, return classic text response\n  return [{\n    json: {\n      success: true,\n      data: {\n        query: prevData.query,\n        content: input.content,\n        sources: input.sources || []\n      },\n      meta: {\n        provider: input.provider || prevData.provider,\n        model: prevData.model,\n        search_performed: input.search_performed,\n        sources_count: (input.sources || []).length\n      },\n      usage: input.usage || null,\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 'FORMAT_ERROR',\n        message: 'Failed to format output: ' + e.message,\n        http_status: 500\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: {\n        llm_response: null,\n        service_response: rawResponse,\n        provider: prevData.provider,\n        model: prevData.model,\n        tokens: input.usage || { input: 0, output: 0 },\n        latency_ms: Date.now() - startTime,\n        user_id: userId,\n        guild_id: guildId,\n        user_request: userRequest\n      }\n    }\n  }];\n}"
+      },
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2048,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2224,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE CLAUDE BODY - With user_request injection\n// ============================================\n\nconst data = $input.first().json;\n\nconst tools = [\n  {\n    type: \"web_search_20250305\",\n    name: \"web_search\",\n    max_uses: data.options.max_results || 5\n  }\n];\n\n// If output schema provided, add it as tool\nif (data.output_schema) {\n  tools.push({\n    name: data.output_schema.name || \"structured_output\",\n    description: data.output_schema.description || \"Return structured data\",\n    input_schema: data.output_schema.input_schema\n  });\n}\n\n// Build the user message content\nlet userContent = data.query;\n\n// Inject user_request context if available\nif (data.user_request) {\n  userContent = `User context: ${data.user_request}\\n\\nQuery: ${data.query}`;\n}\n\n// If schema provided, add instruction to use the tool\nif (data.output_schema) {\n  userContent += `\\n\\nIMPORTANT: Tu DOIS utiliser le tool \"${data.output_schema.name || 'structured_output'}\" pour retourner ta reponse de maniere structuree.`;\n}\n\n// Use messages if provided, otherwise create from built content\nlet messages = data.messages || [{ role: \"user\", content: userContent }];\n\nconst body = {\n  model: data.model,\n  max_tokens: 8192,\n  tools: tools,\n  messages: messages\n};\n\nreturn [{\n  json: {\n    ...data,\n    claude_body: JSON.stringify(body)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        64
+      ],
+      "id": "prepare-claude-body",
+      "name": "Prepare Claude Body"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE OPENAI BODY - With user_request injection\n// ============================================\n\nconst data = $input.first().json;\n\nconst tools = [];\n\n// If output schema provided\nif (data.output_schema) {\n  tools.push({\n    type: \"function\",\n    function: {\n      name: data.output_schema.name || \"structured_output\",\n      description: data.output_schema.description || \"Return structured data\",\n      parameters: data.output_schema.input_schema\n    }\n  });\n}\n\n// Build the user message content\nlet userContent = data.query;\n\n// Inject user_request context if available\nif (data.user_request) {\n  userContent = `User context: ${data.user_request}\\n\\nQuery: ${data.query}`;\n}\n\n// If schema provided, add instruction to use the tool\nif (data.output_schema) {\n  userContent += `\\n\\nIMPORTANT: You MUST use the function \"${data.output_schema.name || 'structured_output'}\" to return your response in a structured format.`;\n}\n\n// Use messages if provided, otherwise create from built content\nlet messages = data.messages || [{ role: \"user\", content: userContent }];\n\nconst body = {\n  model: data.model,\n  max_tokens: 8192,\n  messages: messages,\n  web_search_options: {\n    search_context_size: data.options.search_depth === 'deep' ? 'high' : 'medium'\n  }\n};\n\n// Add tools only if present\nif (tools.length > 0) {\n  body.tools = tools;\n  body.tool_choice = { type: \"function\", function: { name: data.output_schema.name } };\n}\n\nreturn [{\n  json: {\n    ...data,\n    openai_body: JSON.stringify(body)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        -112
+      ],
+      "id": "prepare-openai-body",
+      "name": "Prepare OpenAI Body"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE GEMINI BODY - With user_request injection\n// ============================================\n\nconst data = $input.first().json;\n\nconst tools = [\n  { google_search: {} }  // Grounding with Google Search\n];\n\n// If output schema provided\nif (data.output_schema) {\n  tools.push({\n    function_declarations: [{\n      name: data.output_schema.name || \"structured_output\",\n      description: data.output_schema.description || \"Return structured data\",\n      parameters: data.output_schema.input_schema\n    }]\n  });\n}\n\n// Build the user message content\nlet userContent = data.query;\n\n// Inject user_request context if available\nif (data.user_request) {\n  userContent = `User context: ${data.user_request}\\n\\nQuery: ${data.query}`;\n}\n\n// If schema provided, add instruction to use the function\nif (data.output_schema) {\n  userContent += `\\n\\nIMPORTANT: You MUST use the function \"${data.output_schema.name || 'structured_output'}\" to return your response in a structured format.`;\n}\n\n// Convert messages to Gemini format (contents)\nlet contents;\nif (data.messages && data.messages.length > 0) {\n  contents = data.messages.map(m => ({\n    role: m.role === 'assistant' ? 'model' : 'user',\n    parts: [{ text: m.content }]\n  }));\n} else {\n  contents = [{\n    role: \"user\",\n    parts: [{ text: userContent }]\n  }];\n}\n\nconst body = {\n  contents: contents,\n  tools: tools,\n  generationConfig: {\n    maxOutputTokens: 8192\n  }\n};\n\n// Force tool usage if schema provided\nif (data.output_schema) {\n  body.tool_config = {\n    function_calling_config: {\n      mode: \"ANY\",\n      allowed_function_names: [data.output_schema.name]\n    }\n  };\n}\n\nreturn [{\n  json: {\n    ...data,\n    gemini_body: JSON.stringify(body)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        240
+      ],
+      "id": "prepare-gemini-body",
+      "name": "Prepare Gemini Body"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE MISTRAL BODY - With user_request injection\n// ============================================\n\nconst data = $input.first().json;\n\nconst tools = [\n  { type: \"web_search\" }  // Native Mistral web search\n];\n\n// If output schema provided\nif (data.output_schema) {\n  tools.push({\n    type: \"function\",\n    function: {\n      name: data.output_schema.name || \"structured_output\",\n      description: data.output_schema.description || \"Return structured data\",\n      parameters: data.output_schema.input_schema\n    }\n  });\n}\n\n// Build the user message content\nlet userContent = data.query;\n\n// Inject user_request context if available\nif (data.user_request) {\n  userContent = `User context: ${data.user_request}\\n\\nQuery: ${data.query}`;\n}\n\n// If schema provided, add instruction to use the function\nif (data.output_schema) {\n  userContent += `\\n\\nIMPORTANT: You MUST use the function \"${data.output_schema.name || 'structured_output'}\" to return your response in a structured format.`;\n}\n\n// Use messages if provided, otherwise create from built content\nlet messages = data.messages || [{ role: \"user\", content: userContent }];\n\nconst body = {\n  model: data.model,\n  max_tokens: 8192,\n  messages: messages,\n  tools: tools\n};\n\n// Force tool usage if schema provided\nif (data.output_schema) {\n  body.tool_choice = \"any\";\n}\n\nreturn [{\n  json: {\n    ...data,\n    mistral_body: JSON.stringify(body)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        448
+      ],
+      "id": "prepare-mistral-body",
+      "name": "Prepare Mistral Body"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CHECK CONTEXT - Prepare context validation\n// ============================================\n\nconst data = $input.first().json;\n\n// If no context to check, pass through\nif (!data.allowed_context) {\n  return [{\n    json: {\n      ...data,\n      context_check: {\n        required: false,\n        valid: true\n      }\n    }\n  }];\n}\n\nconst ctx = data.allowed_context;\n\n// Build verification prompt (generic)\nconst checkPrompt = `Tu es un moderateur de contenu. Verifie si une requete correspond au contexte autorise.\n\nCONTEXTE AUTORISE:\n${ctx.description}\n\nREQUETE:\n\"${data.query}\"\n\nREGLES:\n- Reponds UNIQUEMENT par un JSON valide\n- {\"valid\": true} si la requete est dans le contexte\n- {\"valid\": false, \"reason\": \"explication courte\"} si hors contexte\n- Sois strict mais juste\n\nJSON:`;\n\n// Use the provider's model from input\nconst llmBody = {\n  model: data.model,\n  max_tokens: 100,\n  messages: [{\n    role: \"user\",\n    content: checkPrompt\n  }]\n};\n\nreturn [{\n  json: {\n    ...data,\n    context_check: {\n      required: true,\n      prompt: checkPrompt,\n      llm_body: JSON.stringify(llmBody)\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        240
+      ],
+      "id": "check-context",
+      "name": "Check Context"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f31d05cd-38d1-4abe-9c92-79bb2ddd5eee",
+              "leftValue": "={{ $json.context_check.required }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "16a464eb-d984-4b90-86dd-39bbae2e1f42",
+              "leftValue": "",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        112,
+        -16
+      ],
+      "id": "switch-context-required",
+      "name": "Switch Context Required"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.anthropic_api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": " application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.parse($json.context_check.llm_body) }}",
+        "options": {
+          "timeout": 3000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        320,
+        -96
+      ],
+      "id": "llm-context-check",
+      "name": "LLM Context Check",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PARSE CONTEXT RESPONSE\n// ============================================\n\nconst prevData = $('Check Context').first().json;\nconst llmResponse = $input.first().json;\n\n// Check for LLM error or empty response\nif (!llmResponse || llmResponse.error || !llmResponse.content) {\n  // If LLM error, allow request (fail open)\n  return [{\n    json: {\n      ...prevData,\n      context_check: {\n        ...prevData.context_check,\n        valid: true,\n        error: llmResponse?.error?.message || 'LLM check failed, allowing request'\n      }\n    }\n  }];\n}\n\ntry {\n  // Extract text from Claude response\n  const responseText = llmResponse.content?.[0]?.text || '';\n\n  // Parse JSON from response\n  const jsonMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n\n  if (!jsonMatch) {\n    // If no valid JSON, consider valid by default\n    return [{\n      json: {\n        ...prevData,\n        context_check: {\n          ...prevData.context_check,\n          valid: true,\n          raw_response: responseText\n        }\n      }\n    }];\n  }\n\n  const parsed = JSON.parse(jsonMatch[0]);\n\n  return [{\n    json: {\n      ...prevData,\n      context_check: {\n        ...prevData.context_check,\n        valid: parsed.valid === true,\n        reason: parsed.reason || null,\n        raw_response: responseText\n      }\n    }\n  }];\n\n} catch (e) {\n  // On parsing error, allow request (fail open)\n  return [{\n    json: {\n      ...prevData,\n      context_check: {\n        ...prevData.context_check,\n        valid: true,\n        error: e.message\n      }\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        176
+      ],
+      "id": "parse-context-response",
+      "name": "Parse Context Response"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "468bc7c6-0dd6-4a25-a109-f54a13a1acf9",
+              "leftValue": "={{ $json.context_check.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        528,
+        96
+      ],
+      "id": "switch-context-valid",
+      "name": "Switch Context Valid"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// CONTEXT ERROR RESPONSE - With _trace\n// ============================================\n\nconst data = $input.first().json;\nconst ctx = data.allowed_context;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 'CONTEXT_VIOLATION',\n      message: data.context_check.reason || 'Cette requete ne correspond pas au contexte autorise',\n      http_status: 403,\n      details: {\n        query: data.query,\n        allowed_context: ctx.description,\n        suggestion: ctx.suggestion || `Ce bot est dedie a: ${ctx.description}`\n      }\n    },\n    user_id: data.user_id,\n    guild_id: data.guild_id,\n    user_request: data.user_request,\n    _trace: {\n      llm_response: null,\n      service_response: { context_check: data.context_check },\n      provider: data.provider,\n      model: data.model,\n      tokens: { input: 0, output: 0 },\n      latency_ms: Date.now() - (data.startTime || Date.now()),\n      user_id: data.user_id,\n      guild_id: data.guild_id,\n      user_request: data.user_request\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        352
+      ],
+      "id": "context-error-response",
+      "name": "Context Error Response"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 403,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-context-error",
+      "name": "Respond Context Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        864,
+        352
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Check Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Provider": {
+      "main": [
+        [
+          {
+            "node": "Prepare OpenAI Body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Claude Body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Gemini Body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Mistral Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Web Search": {
+      "main": [
+        [
+          {
+            "node": "Normalize OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Web Search": {
+      "main": [
+        [
+          {
+            "node": "Normalize Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Web Search": {
+      "main": [
+        [
+          {
+            "node": "Normalize Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Web Search": {
+      "main": [
+        [
+          {
+            "node": "Normalize Mistral",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Claude": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Normalize Gemini": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Normalize Mistral": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Claude Body": {
+      "main": [
+        [
+          {
+            "node": "Claude Web Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare OpenAI Body": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Web Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Gemini Body": {
+      "main": [
+        [
+          {
+            "node": "Gemini Web Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Mistral Body": {
+      "main": [
+        [
+          {
+            "node": "Mistral Web Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Context": {
+      "main": [
+        [
+          {
+            "node": "Switch Context Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Context Required": {
+      "main": [
+        [
+          {
+            "node": "LLM Context Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Switch Provider",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Context Check": {
+      "main": [
+        [
+          {
+            "node": "Parse Context Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Context Response": {
+      "main": [
+        [
+          {
+            "node": "Switch Context Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Context Valid": {
+      "main": [
+        [
+          {
+            "node": "Switch Provider",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Context Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Context Error Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Context Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "d9a2ee0e-c51f-4cb3-9ce7-9058e9aa5d2a",
+  "activeVersionId": "d9a2ee0e-c51f-4cb3-9ce7-9058e9aa5d2a",
+  "versionCounter": 6,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-30T10:17:52.072Z",
+      "createdAt": "2026-03-30T10:17:52.072Z",
+      "role": "workflow:owner",
+      "workflowId": "Q6LCMkmdzhMccH9L",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-30T10:17:52.100Z",
+    "createdAt": "2026-03-30T10:17:52.100Z",
+    "versionId": "d9a2ee0e-c51f-4cb3-9ce7-9058e9aa5d2a",
+    "workflowId": "Q6LCMkmdzhMccH9L",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## LLM - Web Search (Multi-Provider)\n\n**Endpoint:** POST /webhook/web-search\n\n**Description:** Performs web search using multiple LLM providers with grounding.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"query\"],\n  \"properties\": {\n    \"query\": { \"type\": \"string\", \"description\": \"Search query (required)\" },\n    \"provider\": { \"type\": \"string\", \"description\": \"LLM provider: openai, openai-mini, claude, claude-haiku, anthropic, gemini, gemini-pro, mistral, mistral-premium (default: gemini)\" },\n    \"model\": { \"type\": \"string\", \"description\": \"Override model\" },\n    \"options\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"search_depth\": { \"type\": \"string\", \"description\": \"medium or deep\" },\n        \"max_results\": { \"type\": \"integer\", \"description\": \"Max search results\" },\n        \"language\": { \"type\": \"string\", \"description\": \"Output language\" },\n        \"allowed_domains\": { \"type\": \"array\", \"description\": \"Allowed domains (Claude only)\" },\n        \"blocked_domains\": { \"type\": \"array\", \"description\": \"Blocked domains\" },\n        \"include_sources\": { \"type\": \"boolean\", \"description\": \"Include sources\" }\n      }\n    },\n    \"output_schema\": { \"type\": \"object\", \"description\": \"Structured output schema\" },\n    \"messages\": { \"type\": \"array\", \"description\": \"Conversation history\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"User request context\" },\n    \"user_id\": { \"type\": \"string\", \"description\": \"User ID for tracing\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"Guild ID for tracing\" },\n    \"openai_api_key\": { \"type\": \"string\", \"description\": \"OpenAI API key (required for OpenAI)\" },\n    \"anthropic_api_key\": { \"type\": \"string\", \"description\": \"Anthropic API key (required for Claude)\" },\n    \"google_api_key\": { \"type\": \"string\", \"description\": \"Google API key (required for Gemini)\" },\n    \"mistral_api_key\": { \"type\": \"string\", \"description\": \"Mistral API key (required for Mistral)\" }\n  }\n}\n```\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"content\", \"sources\", \"structured_data\"],\n  \"domain\": \"search\"\n}\n```\n\n**Notes:**\n- `allowed_domains` only works with Claude\n- Mistral search is NOT guaranteed (agent decides)\n- Gemini uses Google Search, OpenAI uses Bing, Claude/Mistral use Brave",
+          "height": 820,
+          "width": 500,
+          "color": 6
+        },
+        "id": "doc-sticky",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -880,
+          -280
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "web-search",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          -768,
+          272
+        ],
+        "webhookId": "recipes-web-search-webhook"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATION INPUT - LLM Web Search\n// RFC-014: Support context.* with fallback to root level\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- Provider configuration ---\nconst validProviders = ['openai', 'openai-mini', 'claude', 'claude-haiku', 'anthropic', 'gemini', 'gemini-pro', 'mistral', 'mistral-premium'];\nconst defaultModels = {\n  openai: 'gpt-4o-search-preview',\n  'openai-mini': 'gpt-4o-mini-search-preview',\n  claude: 'claude-sonnet-4-20250514',\n  'claude-haiku': 'claude-haiku-4-5-20251001',\n  anthropic: 'claude-sonnet-4-20250514',\n  gemini: 'gemini-2.5-flash',\n  'gemini-pro': 'gemini-2.5-pro',\n  mistral: 'mistral-medium-2505',\n  'mistral-premium': 'mistral-medium-2505'\n};\n\n// --- Required field ---\nconst query = body.query || ctx.query;\nif (!query || typeof query !== 'string' || query.trim().length === 0) {\n  errors.push('query requis (chaine non vide)');\n}\n\n// --- Provider validation ---\nconst provider = body.provider || ctx.provider || 'gemini';\nif (!validProviders.includes(provider)) {\n  errors.push(`provider invalide: '${provider}'. Options valides: ${validProviders.join(', ')}`);\n}\n\n// --- API Keys validation based on provider ---\nif (provider.startsWith('openai') && !body.openai_api_key) {\n  errors.push('openai_api_key requis pour le provider OpenAI');\n}\nif ((provider.startsWith('claude') || provider === 'anthropic') && !body.anthropic_api_key) {\n  errors.push('anthropic_api_key requis pour le provider Claude/Anthropic');\n}\nif (provider.startsWith('gemini') && !body.google_api_key) {\n  errors.push('google_api_key requis pour le provider Gemini');\n}\nif (provider.startsWith('mistral') && !body.mistral_api_key) {\n  errors.push('mistral_api_key requis pour le provider Mistral');\n}\n\n// --- OPTIONAL context fields for tracing (NO validation errors) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Options ---\nconst opts = body.options || ctx.options || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  query: (query || '').trim(),\n  provider: provider,\n  provider_type: provider === 'anthropic' ? 'claude' : provider.split('-')[0],\n  model: body.model || ctx.model || defaultModels[provider],\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  openai_api_key: body.openai_api_key,\n  anthropic_api_key: body.anthropic_api_key,\n  google_api_key: body.google_api_key,\n  mistral_api_key: body.mistral_api_key,\n  options: {\n    search_depth: opts.search_depth || 'medium',\n    max_results: opts.max_results || 3,\n    language: opts.language || 'fr',\n    allowed_domains: opts.allowed_domains || [],\n    blocked_domains: opts.blocked_domains || [],\n    include_sources: opts.include_sources !== false\n  },\n  output_schema: body.output_schema || ctx.output_schema || null,\n  allowed_context: body.allowed_context || ctx.allowed_context || null,\n  messages: body.messages || ctx.messages || null,\n  startTime: Date.now()\n};"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -528,
+          272
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                },
+                "id": "5398eee1-912a-4c2a-a32b-914b0af967a5"
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -288,
+          272
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+        },
+        "id": "build-error",
+        "name": "Build Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -48,
+          480
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 400,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-error",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          192,
+          480
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "version": 2,
+                    "leftValue": "",
+                    "caseSensitive": true,
+                    "typeValidation": "strict"
+                  },
+                  "combinator": "and",
+                  "conditions": [
+                    {
+                      "id": "cond-openai",
+                      "operator": {
+                        "name": "filter.operator.equals",
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "leftValue": "={{ $json.provider_type }}",
+                      "rightValue": "openai"
+                    }
+                  ]
+                },
+                "renameOutput": true,
+                "outputKey": "openai"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "version": 2,
+                    "leftValue": "",
+                    "caseSensitive": true,
+                    "typeValidation": "strict"
+                  },
+                  "combinator": "and",
+                  "conditions": [
+                    {
+                      "id": "cond-claude",
+                      "operator": {
+                        "name": "filter.operator.equals",
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "leftValue": "={{ $json.provider_type }}",
+                      "rightValue": "claude"
+                    }
+                  ]
+                },
+                "renameOutput": true,
+                "outputKey": "claude"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "version": 2,
+                    "leftValue": "",
+                    "caseSensitive": true,
+                    "typeValidation": "strict"
+                  },
+                  "combinator": "and",
+                  "conditions": [
+                    {
+                      "id": "cond-gemini",
+                      "operator": {
+                        "name": "filter.operator.equals",
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "leftValue": "={{ $json.provider_type }}",
+                      "rightValue": "gemini"
+                    }
+                  ]
+                },
+                "renameOutput": true,
+                "outputKey": "gemini"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "version": 2,
+                    "leftValue": "",
+                    "caseSensitive": true,
+                    "typeValidation": "strict"
+                  },
+                  "combinator": "and",
+                  "conditions": [
+                    {
+                      "id": "cond-mistral",
+                      "operator": {
+                        "name": "filter.operator.equals",
+                        "type": "string",
+                        "operation": "equals"
+                      },
+                      "leftValue": "={{ $json.provider_type }}",
+                      "rightValue": "mistral"
+                    }
+                  ]
+                },
+                "renameOutput": true,
+                "outputKey": "mistral"
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "none"
+          }
+        },
+        "id": "switch-provider",
+        "name": "Switch Provider",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.2,
+        "position": [
+          672,
+          -96
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/responses",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.openai_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"{{ $json.provider === 'openai-mini' ? 'gpt-4o-mini-search-preview' : 'gpt-4o-search-preview' }}\",\n  \"tools\": [{\"type\": \"web_search_preview\"}],\n  \"tool_choice\": {\n    \"type\": \"web_search_preview\",\n    \"search_context_size\": \"{{ $json.options.search_depth }}\"\n  },\n  \"input\": \"{{ $json.query }}\"\n}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "call-openai",
+        "name": "OpenAI Web Search",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1296,
+          -96
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $json.anthropic_api_key }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json.claude_body }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "call-claude",
+        "name": "Claude Web Search",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1296,
+          96
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.provider === 'gemini-pro' ? 'gemini-2.5-pro' : 'gemini-2.5-flash' }}:generateContent?key={{ $json.google_api_key }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"{{ $json.query }}\"\n    }]\n  }],\n  \"tools\": [{\n    \"google_search\": {}\n  }]\n}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "call-gemini",
+        "name": "Gemini Web Search",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1296,
+          272
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.mistral.ai/v1/agents",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.mistral_api_key }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"mistral-medium-2505\",\n  \"name\": \"Recipe Search Agent\",\n  \"tools\": [{\"type\": \"{{ $json.provider === 'mistral-premium' ? 'web_search_premium' : 'web_search' }}\"}]\n}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "call-mistral",
+        "name": "Mistral Web Search",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1296,
+          448
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// NORMALIZE OPENAI - With _trace support\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst usage = {\n  input_tokens: input.usage?.prompt_tokens || 0,\n  output_tokens: input.usage?.completion_tokens || 0,\n  total_tokens: input.usage?.total_tokens || 0\n};\n\nfunction getDomain(url) {\n  if (!url) return '';\n  const match = url.match(/^https?:\\/\\/([^\\/]+)/);\n  return match ? match[1] : '';\n}\n\ntry {\n  let textContent = '';\n  const sources = [];\n  let structuredData = null;\n\n  // Extract text content\n  const message = input.choices?.[0]?.message;\n\n  if (message?.content) {\n    textContent = message.content;\n  }\n\n  // Extract sources (annotations)\n  const annotations = message?.annotations || [];\n  for (const ann of annotations) {\n    if (ann.type === 'url_citation') {\n      sources.push({\n        title: ann.title || 'Source',\n        url: ann.url,\n        domain: getDomain(ann.url)\n      });\n    }\n  }\n\n  // Extract structured data (tool_calls)\n  const toolCalls = message?.tool_calls || [];\n  if (toolCalls.length > 0) {\n    const call = toolCalls[0];\n    if (call.type === 'function') {\n      structuredData = {\n        tool_name: call.function.name,\n        data: JSON.parse(call.function.arguments)\n      };\n    }\n  }\n\n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content: textContent,\n      sources,\n      structured_data: structuredData,\n      search_performed: sources.length > 0,\n      has_structured_output: structuredData !== null,\n      usage,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n}"
+        },
+        "id": "normalize-openai",
+        "name": "Normalize OpenAI",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1536,
+          -176
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// NORMALIZE CLAUDE - With _trace support\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst usage = {\n  input_tokens: input.usage?.input_tokens || 0,\n  output_tokens: input.usage?.output_tokens || 0,\n  total_tokens: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0)\n};\n\nfunction getDomain(url) {\n  if (!url) return '';\n  const match = url.match(/^https?:\\/\\/([^\\/]+)/);\n  return match ? match[1] : '';\n}\n\ntry {\n  let textContent = '';\n  const sources = [];\n  let structuredData = null;\n\n  for (const block of (input.content || [])) {\n    // Extract text\n    if (block.type === 'text') {\n      textContent += block.text;\n    }\n\n    // Extract web sources\n    if (block.type === 'web_search_tool_result') {\n      for (const result of (block.content || [])) {\n        if (result.type === 'web_search_result') {\n          sources.push({\n            title: result.title || 'Source',\n            url: result.url,\n            domain: getDomain(result.url)\n          });\n        }\n      }\n    }\n\n    // Extract structured data (tool_use)\n    if (block.type === 'tool_use' && block.name !== 'web_search') {\n      structuredData = {\n        tool_name: block.name,\n        data: block.input\n      };\n    }\n  }\n\n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content: textContent,\n      sources,\n      structured_data: structuredData,\n      search_performed: sources.length > 0,\n      has_structured_output: structuredData !== null,\n      usage,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n}"
+        },
+        "id": "normalize-claude",
+        "name": "Normalize Claude",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1552,
+          16
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// NORMALIZE GEMINI - With _trace support\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst usage = {\n  input_tokens: input.usageMetadata?.promptTokenCount || 0,\n  output_tokens: input.usageMetadata?.candidatesTokenCount || 0,\n  total_tokens: input.usageMetadata?.totalTokenCount || 0\n};\n\nfunction getDomain(url) {\n  if (!url) return '';\n  const match = url.match(/^https?:\\/\\/([^\\/]+)/);\n  return match ? match[1] : '';\n}\n\ntry {\n  let textContent = '';\n  const sources = [];\n  let structuredData = null;\n\n  const candidate = input.candidates?.[0];\n  const parts = candidate?.content?.parts || [];\n\n  for (const part of parts) {\n    // Extract text\n    if (part.text) {\n      textContent += part.text;\n    }\n\n    // Extract structured data (functionCall)\n    if (part.functionCall && part.functionCall.name !== 'google_search') {\n      structuredData = {\n        tool_name: part.functionCall.name,\n        data: part.functionCall.args\n      };\n    }\n  }\n\n  // Extract sources (grounding metadata)\n  const grounding = candidate?.groundingMetadata;\n  const chunks = grounding?.groundingChunks || [];\n\n  for (const chunk of chunks) {\n    if (chunk.web) {\n      sources.push({\n        title: chunk.web.title || 'Source',\n        url: chunk.web.uri,\n        domain: getDomain(chunk.web.uri)\n      });\n    }\n  }\n\n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content: textContent,\n      sources,\n      structured_data: structuredData,\n      search_performed: sources.length > 0,\n      has_structured_output: structuredData !== null,\n      usage,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n}"
+        },
+        "id": "normalize-gemini",
+        "name": "Normalize Gemini",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1568,
+          224
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// NORMALIZE MISTRAL - With _trace support\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\n\nconst usage = {\n  input_tokens: input.usage?.prompt_tokens || 0,\n  output_tokens: input.usage?.completion_tokens || 0,\n  total_tokens: input.usage?.total_tokens || 0\n};\n\nfunction getDomain(url) {\n  if (!url) return '';\n  const match = url.match(/^https?:\\/\\/([^\\/]+)/);\n  return match ? match[1] : '';\n}\n\ntry {\n  let textContent = '';\n  const sources = [];\n  let structuredData = null;\n\n  const message = input.choices?.[0]?.message;\n\n  // Extract text content\n  if (message?.content) {\n    textContent = message.content;\n  }\n\n  // Extract sources from citations\n  const citations = input.citations || [];\n  for (const cite of citations) {\n    sources.push({\n      title: cite.title || 'Source',\n      url: cite.url,\n      domain: getDomain(cite.url)\n    });\n  }\n\n  // Extract structured data (tool_calls)\n  const toolCalls = message?.tool_calls || [];\n  for (const call of toolCalls) {\n    if (call.type === 'function' && call.function.name !== 'web_search') {\n      structuredData = {\n        tool_name: call.function.name,\n        data: JSON.parse(call.function.arguments)\n      };\n      break;\n    }\n  }\n\n  return [{\n    json: {\n      normalized: true,\n      provider: prevData.provider,\n      query: prevData.query,\n      content: textContent,\n      sources,\n      structured_data: structuredData,\n      search_performed: sources.length > 0,\n      has_structured_output: structuredData !== null,\n      usage,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      normalized: false,\n      provider: prevData.provider,\n      error: e.message,\n      user_id: prevData.user_id,\n      guild_id: prevData.guild_id,\n      user_request: prevData.user_request,\n      startTime: startTime,\n      raw_response: input\n    }\n  }];\n}"
+        },
+        "id": "normalize-mistral",
+        "name": "Normalize Mistral",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1568,
+          432
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "merge-results",
+        "name": "Merge Results",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3,
+        "position": [
+          1952,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FORMAT OUTPUT - With _trace (llm_response, service_response)\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = input.startTime || prevData.startTime || Date.now();\n\nconst userId = input.user_id || prevData.user_id;\nconst guildId = input.guild_id || prevData.guild_id;\nconst userRequest = input.user_request || prevData.user_request;\nconst rawResponse = input.raw_response || null;\n\ntry {\n  if (!input.normalized) {\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: 'NORMALIZE_ERROR',\n          message: input.error || 'Failed to normalize response',\n          http_status: 500\n        },\n        user_id: userId,\n        guild_id: guildId,\n        user_request: userRequest,\n        _trace: {\n          llm_response: null,\n          service_response: rawResponse,\n          provider: input.provider || prevData.provider,\n          model: prevData.model,\n          tokens: input.usage || { input: 0, output: 0 },\n          latency_ms: Date.now() - startTime,\n          user_id: userId,\n          guild_id: guildId,\n          user_request: userRequest\n        }\n      }\n    }];\n  }\n\n  // Build _trace object\n  const _trace = {\n    llm_response: input.content || null,\n    service_response: rawResponse,\n    provider: input.provider || prevData.provider,\n    model: prevData.model,\n    tokens: {\n      input: input.usage?.input_tokens || 0,\n      output: input.usage?.output_tokens || 0,\n      total: input.usage?.total_tokens || 0\n    },\n    latency_ms: Date.now() - startTime,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n\n  // If structured data (tool_use), return it directly\n  if (input.structured_data) {\n    return [{\n      json: {\n        success: true,\n        data: input.structured_data.data,\n        sources: input.sources || [],\n        meta: {\n          provider: input.provider || prevData.provider,\n          model: prevData.model,\n          tool_used: input.structured_data.tool_name,\n          search_performed: input.search_performed,\n          sources_count: (input.sources || []).length\n        },\n        usage: input.usage || null,\n        user_id: userId,\n        guild_id: guildId,\n        user_request: userRequest,\n        _trace: _trace\n      }\n    }];\n  }\n\n  // Otherwise, return classic text response\n  return [{\n    json: {\n      success: true,\n      data: {\n        query: prevData.query,\n        content: input.content,\n        sources: input.sources || []\n      },\n      meta: {\n        provider: input.provider || prevData.provider,\n        model: prevData.model,\n        search_performed: input.search_performed,\n        sources_count: (input.sources || []).length\n      },\n      usage: input.usage || null,\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: _trace\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 'FORMAT_ERROR',\n        message: 'Failed to format output: ' + e.message,\n        http_status: 500\n      },\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest,\n      _trace: {\n        llm_response: null,\n        service_response: rawResponse,\n        provider: prevData.provider,\n        model: prevData.model,\n        tokens: input.usage || { input: 0, output: 0 },\n        latency_ms: Date.now() - startTime,\n        user_id: userId,\n        guild_id: guildId,\n        user_request: userRequest\n      }\n    }\n  }];\n}"
+        },
+        "id": "format-output",
+        "name": "Format Output",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2048,
+          256
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2224,
+          160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PREPARE CLAUDE BODY - With user_request injection\n// ============================================\n\nconst data = $input.first().json;\n\nconst tools = [\n  {\n    type: \"web_search_20250305\",\n    name: \"web_search\",\n    max_uses: data.options.max_results || 5\n  }\n];\n\n// If output schema provided, add it as tool\nif (data.output_schema) {\n  tools.push({\n    name: data.output_schema.name || \"structured_output\",\n    description: data.output_schema.description || \"Return structured data\",\n    input_schema: data.output_schema.input_schema\n  });\n}\n\n// Build the user message content\nlet userContent = data.query;\n\n// Inject user_request context if available\nif (data.user_request) {\n  userContent = `User context: ${data.user_request}\\n\\nQuery: ${data.query}`;\n}\n\n// If schema provided, add instruction to use the tool\nif (data.output_schema) {\n  userContent += `\\n\\nIMPORTANT: Tu DOIS utiliser le tool \"${data.output_schema.name || 'structured_output'}\" pour retourner ta reponse de maniere structuree.`;\n}\n\n// Use messages if provided, otherwise create from built content\nlet messages = data.messages || [{ role: \"user\", content: userContent }];\n\nconst body = {\n  model: data.model,\n  max_tokens: 8192,\n  tools: tools,\n  messages: messages\n};\n\nreturn [{\n  json: {\n    ...data,\n    claude_body: JSON.stringify(body)\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1056,
+          64
+        ],
+        "id": "prepare-claude-body",
+        "name": "Prepare Claude Body"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PREPARE OPENAI BODY - With user_request injection\n// ============================================\n\nconst data = $input.first().json;\n\nconst tools = [];\n\n// If output schema provided\nif (data.output_schema) {\n  tools.push({\n    type: \"function\",\n    function: {\n      name: data.output_schema.name || \"structured_output\",\n      description: data.output_schema.description || \"Return structured data\",\n      parameters: data.output_schema.input_schema\n    }\n  });\n}\n\n// Build the user message content\nlet userContent = data.query;\n\n// Inject user_request context if available\nif (data.user_request) {\n  userContent = `User context: ${data.user_request}\\n\\nQuery: ${data.query}`;\n}\n\n// If schema provided, add instruction to use the tool\nif (data.output_schema) {\n  userContent += `\\n\\nIMPORTANT: You MUST use the function \"${data.output_schema.name || 'structured_output'}\" to return your response in a structured format.`;\n}\n\n// Use messages if provided, otherwise create from built content\nlet messages = data.messages || [{ role: \"user\", content: userContent }];\n\nconst body = {\n  model: data.model,\n  max_tokens: 8192,\n  messages: messages,\n  web_search_options: {\n    search_context_size: data.options.search_depth === 'deep' ? 'high' : 'medium'\n  }\n};\n\n// Add tools only if present\nif (tools.length > 0) {\n  body.tools = tools;\n  body.tool_choice = { type: \"function\", function: { name: data.output_schema.name } };\n}\n\nreturn [{\n  json: {\n    ...data,\n    openai_body: JSON.stringify(body)\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1056,
+          -112
+        ],
+        "id": "prepare-openai-body",
+        "name": "Prepare OpenAI Body"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PREPARE GEMINI BODY - With user_request injection\n// ============================================\n\nconst data = $input.first().json;\n\nconst tools = [\n  { google_search: {} }  // Grounding with Google Search\n];\n\n// If output schema provided\nif (data.output_schema) {\n  tools.push({\n    function_declarations: [{\n      name: data.output_schema.name || \"structured_output\",\n      description: data.output_schema.description || \"Return structured data\",\n      parameters: data.output_schema.input_schema\n    }]\n  });\n}\n\n// Build the user message content\nlet userContent = data.query;\n\n// Inject user_request context if available\nif (data.user_request) {\n  userContent = `User context: ${data.user_request}\\n\\nQuery: ${data.query}`;\n}\n\n// If schema provided, add instruction to use the function\nif (data.output_schema) {\n  userContent += `\\n\\nIMPORTANT: You MUST use the function \"${data.output_schema.name || 'structured_output'}\" to return your response in a structured format.`;\n}\n\n// Convert messages to Gemini format (contents)\nlet contents;\nif (data.messages && data.messages.length > 0) {\n  contents = data.messages.map(m => ({\n    role: m.role === 'assistant' ? 'model' : 'user',\n    parts: [{ text: m.content }]\n  }));\n} else {\n  contents = [{\n    role: \"user\",\n    parts: [{ text: userContent }]\n  }];\n}\n\nconst body = {\n  contents: contents,\n  tools: tools,\n  generationConfig: {\n    maxOutputTokens: 8192\n  }\n};\n\n// Force tool usage if schema provided\nif (data.output_schema) {\n  body.tool_config = {\n    function_calling_config: {\n      mode: \"ANY\",\n      allowed_function_names: [data.output_schema.name]\n    }\n  };\n}\n\nreturn [{\n  json: {\n    ...data,\n    gemini_body: JSON.stringify(body)\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1072,
+          240
+        ],
+        "id": "prepare-gemini-body",
+        "name": "Prepare Gemini Body"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PREPARE MISTRAL BODY - With user_request injection\n// ============================================\n\nconst data = $input.first().json;\n\nconst tools = [\n  { type: \"web_search\" }  // Native Mistral web search\n];\n\n// If output schema provided\nif (data.output_schema) {\n  tools.push({\n    type: \"function\",\n    function: {\n      name: data.output_schema.name || \"structured_output\",\n      description: data.output_schema.description || \"Return structured data\",\n      parameters: data.output_schema.input_schema\n    }\n  });\n}\n\n// Build the user message content\nlet userContent = data.query;\n\n// Inject user_request context if available\nif (data.user_request) {\n  userContent = `User context: ${data.user_request}\\n\\nQuery: ${data.query}`;\n}\n\n// If schema provided, add instruction to use the function\nif (data.output_schema) {\n  userContent += `\\n\\nIMPORTANT: You MUST use the function \"${data.output_schema.name || 'structured_output'}\" to return your response in a structured format.`;\n}\n\n// Use messages if provided, otherwise create from built content\nlet messages = data.messages || [{ role: \"user\", content: userContent }];\n\nconst body = {\n  model: data.model,\n  max_tokens: 8192,\n  messages: messages,\n  tools: tools\n};\n\n// Force tool usage if schema provided\nif (data.output_schema) {\n  body.tool_choice = \"any\";\n}\n\nreturn [{\n  json: {\n    ...data,\n    mistral_body: JSON.stringify(body)\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1072,
+          448
+        ],
+        "id": "prepare-mistral-body",
+        "name": "Prepare Mistral Body"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// CHECK CONTEXT - Prepare context validation\n// ============================================\n\nconst data = $input.first().json;\n\n// If no context to check, pass through\nif (!data.allowed_context) {\n  return [{\n    json: {\n      ...data,\n      context_check: {\n        required: false,\n        valid: true\n      }\n    }\n  }];\n}\n\nconst ctx = data.allowed_context;\n\n// Build verification prompt (generic)\nconst checkPrompt = `Tu es un moderateur de contenu. Verifie si une requete correspond au contexte autorise.\n\nCONTEXTE AUTORISE:\n${ctx.description}\n\nREQUETE:\n\"${data.query}\"\n\nREGLES:\n- Reponds UNIQUEMENT par un JSON valide\n- {\"valid\": true} si la requete est dans le contexte\n- {\"valid\": false, \"reason\": \"explication courte\"} si hors contexte\n- Sois strict mais juste\n\nJSON:`;\n\n// Use the provider's model from input\nconst llmBody = {\n  model: data.model,\n  max_tokens: 100,\n  messages: [{\n    role: \"user\",\n    content: checkPrompt\n  }]\n};\n\nreturn [{\n  json: {\n    ...data,\n    context_check: {\n      required: true,\n      prompt: checkPrompt,\n      llm_body: JSON.stringify(llmBody)\n    }\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -112,
+          240
+        ],
+        "id": "check-context",
+        "name": "Check Context"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "f31d05cd-38d1-4abe-9c92-79bb2ddd5eee",
+                "leftValue": "={{ $json.context_check.required }}",
+                "rightValue": "true",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              },
+              {
+                "id": "16a464eb-d984-4b90-86dd-39bbae2e1f42",
+                "leftValue": "",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          112,
+          -16
+        ],
+        "id": "switch-context-required",
+        "name": "Switch Context Required"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $json.anthropic_api_key }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": " application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.parse($json.context_check.llm_body) }}",
+          "options": {
+            "timeout": 3000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          320,
+          -96
+        ],
+        "id": "llm-context-check",
+        "name": "LLM Context Check",
+        "alwaysOutputData": true
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PARSE CONTEXT RESPONSE\n// ============================================\n\nconst prevData = $('Check Context').first().json;\nconst llmResponse = $input.first().json;\n\n// Check for LLM error or empty response\nif (!llmResponse || llmResponse.error || !llmResponse.content) {\n  // If LLM error, allow request (fail open)\n  return [{\n    json: {\n      ...prevData,\n      context_check: {\n        ...prevData.context_check,\n        valid: true,\n        error: llmResponse?.error?.message || 'LLM check failed, allowing request'\n      }\n    }\n  }];\n}\n\ntry {\n  // Extract text from Claude response\n  const responseText = llmResponse.content?.[0]?.text || '';\n\n  // Parse JSON from response\n  const jsonMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n\n  if (!jsonMatch) {\n    // If no valid JSON, consider valid by default\n    return [{\n      json: {\n        ...prevData,\n        context_check: {\n          ...prevData.context_check,\n          valid: true,\n          raw_response: responseText\n        }\n      }\n    }];\n  }\n\n  const parsed = JSON.parse(jsonMatch[0]);\n\n  return [{\n    json: {\n      ...prevData,\n      context_check: {\n        ...prevData.context_check,\n        valid: parsed.valid === true,\n        reason: parsed.reason || null,\n        raw_response: responseText\n      }\n    }\n  }];\n\n} catch (e) {\n  // On parsing error, allow request (fail open)\n  return [{\n    json: {\n      ...prevData,\n      context_check: {\n        ...prevData.context_check,\n        valid: true,\n        error: e.message\n      }\n    }\n  }];\n}"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          384,
+          176
+        ],
+        "id": "parse-context-response",
+        "name": "Parse Context Response"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "468bc7c6-0dd6-4a25-a109-f54a13a1acf9",
+                "leftValue": "={{ $json.context_check.valid }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          528,
+          96
+        ],
+        "id": "switch-context-valid",
+        "name": "Switch Context Valid"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// CONTEXT ERROR RESPONSE - With _trace\n// ============================================\n\nconst data = $input.first().json;\nconst ctx = data.allowed_context;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 'CONTEXT_VIOLATION',\n      message: data.context_check.reason || 'Cette requete ne correspond pas au contexte autorise',\n      http_status: 403,\n      details: {\n        query: data.query,\n        allowed_context: ctx.description,\n        suggestion: ctx.suggestion || `Ce bot est dedie a: ${ctx.description}`\n      }\n    },\n    user_id: data.user_id,\n    guild_id: data.guild_id,\n    user_request: data.user_request,\n    _trace: {\n      llm_response: null,\n      service_response: { context_check: data.context_check },\n      provider: data.provider,\n      model: data.model,\n      tokens: { input: 0, output: 0 },\n      latency_ms: Date.now() - (data.startTime || Date.now()),\n      user_id: data.user_id,\n      guild_id: data.guild_id,\n      user_request: data.user_request\n    }\n  }\n}];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          624,
+          352
+        ],
+        "id": "context-error-response",
+        "name": "Context Error Response"
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": 403,
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-context-error",
+        "name": "Respond Context Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          864,
+          352
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Check Context",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch Provider": {
+        "main": [
+          [
+            {
+              "node": "Prepare OpenAI Body",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Prepare Claude Body",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Prepare Gemini Body",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Prepare Mistral Body",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Web Search": {
+        "main": [
+          [
+            {
+              "node": "Normalize OpenAI",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Web Search": {
+        "main": [
+          [
+            {
+              "node": "Normalize Claude",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Gemini Web Search": {
+        "main": [
+          [
+            {
+              "node": "Normalize Gemini",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mistral Web Search": {
+        "main": [
+          [
+            {
+              "node": "Normalize Mistral",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize OpenAI": {
+        "main": [
+          [
+            {
+              "node": "Merge Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Claude": {
+        "main": [
+          [
+            {
+              "node": "Merge Results",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Normalize Gemini": {
+        "main": [
+          [
+            {
+              "node": "Merge Results",
+              "type": "main",
+              "index": 2
+            }
+          ]
+        ]
+      },
+      "Normalize Mistral": {
+        "main": [
+          [
+            {
+              "node": "Merge Results",
+              "type": "main",
+              "index": 3
+            }
+          ]
+        ]
+      },
+      "Merge Results": {
+        "main": [
+          [
+            {
+              "node": "Format Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Claude Body": {
+        "main": [
+          [
+            {
+              "node": "Claude Web Search",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare OpenAI Body": {
+        "main": [
+          [
+            {
+              "node": "OpenAI Web Search",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Gemini Body": {
+        "main": [
+          [
+            {
+              "node": "Gemini Web Search",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Mistral Body": {
+        "main": [
+          [
+            {
+              "node": "Mistral Web Search",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Context": {
+        "main": [
+          [
+            {
+              "node": "Switch Context Required",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch Context Required": {
+        "main": [
+          [
+            {
+              "node": "LLM Context Check",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Switch Provider",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "LLM Context Check": {
+        "main": [
+          [
+            {
+              "node": "Parse Context Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Context Response": {
+        "main": [
+          [
+            {
+              "node": "Switch Context Valid",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch Context Valid": {
+        "main": [
+          [
+            {
+              "node": "Switch Provider",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Context Error Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Context Error Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Context Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

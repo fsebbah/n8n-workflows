@@ -1,0 +1,450 @@
+{
+  "name": "GUILD - Student Verify",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "discord/student/verify",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "discord-student-verify"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/discord/webhook/student-verify",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"guild_id\": \"{{ $json.body.guild_id }}\",\n  \"email\": \"{{ $json.body.email }}\"\n}",
+        "options": {}
+      },
+      "id": "lookup-student",
+      "name": "Lookup Student (Backend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "backend-api",
+          "name": "Backend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-student-found",
+      "name": "Student Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"email_not_found\",\n  \"message\": \"Aucun eleve avec cet email\"\n}",
+        "options": {}
+      },
+      "id": "respond-not-found",
+      "name": "Respond Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [910, 450]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/discord/commands/set-permissions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"guild_id\": \"{{ $('Webhook').item.json.body.guild_id }}\",\n  \"channel_id\": \"{{ $json.group.discord_channel_id }}\",\n  \"target_id\": \"{{ $('Webhook').item.json.body.discord_user_id }}\",\n  \"target_type\": \"member\",\n  \"allow\": [\"view_channel\", \"send_messages\", \"read_message_history\"]\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "add-to-group-channel",
+      "name": "Add to Group Channel (via Backend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 150],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "backend-api",
+          "name": "Backend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-personal-enabled",
+              "leftValue": "={{ $('Lookup Student (Backend)').item.json.group.personal_channels_enabled }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-personal-channel",
+      "name": "Personal Channel Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1130, 150]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for POST /api/discord/commands/create-channel\nconst studentData = $('Lookup Student (Backend)').item.json;\nconst discordUserId = $('Webhook').item.json.body.discord_user_id;\nconst guildId = $('Webhook').item.json.body.guild_id;\n\n// Build permission_overwrites in API format\nconst permissionOverwrites = [\n  {\n    id: guildId,\n    type: 0,  // role\n    deny: \"1024\"  // VIEW_CHANNEL denied for @everyone\n  },\n  {\n    id: discordUserId,\n    type: 1,  // member\n    allow: \"68608\"  // VIEW + SEND + HISTORY for student\n  }\n];\n\n// Add profs role if configured\nif (studentData.group.profs_role_discord_id) {\n  permissionOverwrites.push({\n    id: studentData.group.profs_role_discord_id,\n    type: 0,  // role\n    allow: \"68608\"  // VIEW + SEND + HISTORY for profs\n  });\n}\n\nreturn {\n  guild_id: guildId,\n  name: studentData.group.channel_name,\n  parent_id: studentData.group.personal_channel_category_discord_id || null,\n  topic: `Channel personnel ${studentData.student.firstname} ${studentData.student.lastname}`,\n  private: true,\n  permission_overwrites: permissionOverwrites\n};"
+      },
+      "id": "prepare-personal-channel",
+      "name": "Prepare Personal Channel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 50]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/discord/commands/create-channel",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "create-personal-channel",
+      "name": "Create Personal Channel (via Backend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1570, 50],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "backend-api",
+          "name": "Backend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/discord/webhook/student-join-callback",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"student_id\": \"{{ $('Lookup Student (Backend)').item.json.student.id }}\",\n  \"discord_user_id\": \"{{ $('Webhook').item.json.body.discord_user_id }}\",\n  \"discord_channel_id\": \"{{ $json.data?.channel_id || null }}\"\n}",
+        "options": {}
+      },
+      "id": "callback-backend-with-channel",
+      "name": "Callback Backend (with channel)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 50],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "backend-api",
+          "name": "Backend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/discord/webhook/student-join-callback",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"student_id\": \"{{ $('Lookup Student (Backend)').item.json.student.id }}\",\n  \"discord_user_id\": \"{{ $('Webhook').item.json.body.discord_user_id }}\",\n  \"discord_channel_id\": null\n}",
+        "options": {}
+      },
+      "id": "callback-backend-no-channel",
+      "name": "Callback Backend (no channel)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 250],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "backend-api",
+          "name": "Backend API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const studentData = $('Lookup Student (Backend)').item.json;\n// REST endpoint returns { success: true, data: { channel_id: '...' } }\nconst createChannelResponse = $('Create Personal Channel (via Backend)')?.item?.json;\nconst personalChannelId = createChannelResponse?.data?.channel_id || null;\n\nreturn {\n  success: true,\n  student: {\n    id: studentData.student.id,\n    firstname: studentData.student.firstname,\n    lastname: studentData.student.lastname,\n    group_name: studentData.group.name\n  },\n  actions_performed: {\n    added_to_group_channel: true,\n    personal_channel_created: personalChannelId !== null,\n    personal_channel_id: personalChannelId\n  }\n};"
+      },
+      "id": "format-success-with-channel",
+      "name": "Format Success (with channel)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 50]
+    },
+    {
+      "parameters": {
+        "jsCode": "const studentData = $('Lookup Student (Backend)').item.json;\n\nreturn {\n  success: true,\n  student: {\n    id: studentData.student.id,\n    firstname: studentData.student.firstname,\n    lastname: studentData.student.lastname,\n    group_name: studentData.group.name\n  },\n  actions_performed: {\n    added_to_group_channel: true,\n    personal_channel_created: false,\n    personal_channel_id: null\n  }\n};"
+      },
+      "id": "format-success-no-channel",
+      "name": "Format Success (no channel)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 250]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2230, 150]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Lookup Student (Backend)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Student (Backend)": {
+      "main": [
+        [
+          {
+            "node": "Student Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Student Found?": {
+      "main": [
+        [
+          {
+            "node": "Add to Group Channel (via Backend)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to Group Channel (via Backend)": {
+      "main": [
+        [
+          {
+            "node": "Personal Channel Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Personal Channel Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Personal Channel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Callback Backend (no channel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Personal Channel": {
+      "main": [
+        [
+          {
+            "node": "Create Personal Channel (via Backend)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Personal Channel (via Backend)": {
+      "main": [
+        [
+          {
+            "node": "Callback Backend (with channel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Callback Backend (with channel)": {
+      "main": [
+        [
+          {
+            "node": "Format Success (with channel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Callback Backend (no channel)": {
+      "main": [
+        [
+          {
+            "node": "Format Success (no channel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success (with channel)": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success (no channel)": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "guild"
+    },
+    {
+      "name": "discord"
+    },
+    {
+      "name": "rfc-061"
+    },
+    {
+      "name": "rfc-062"
+    }
+  ]
+}

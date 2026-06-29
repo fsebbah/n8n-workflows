@@ -1,0 +1,498 @@
+{
+  "updatedAt": "2026-02-06T16:14:05.573Z",
+  "createdAt": "2026-02-06T14:29:18.357Z",
+  "id": "GYF6dfeEjEdJZLjD",
+  "name": "NOTIF - Course Expiring",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## NOTIF - Course Expiring\n\n**Trigger:** Cron every 10 seconds\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPolls Redis Stream for course.access.expiring events\nand publishes notifications to Discord.\n\n**Input Stream:** `learning:events:stream`\n**Output Stream:** `notifications:stream`",
+        "height": 280,
+        "width": 320,
+        "color": 5
+      },
+      "id": "notif-course-0000",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -208,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xRead"
+      },
+      "id": "notif-course-0001",
+      "name": "Redis xRead",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        288,
+        304
+      ],
+      "credentials": {
+        "redis": {
+          "id": "2idv3VKZ91q5gOnz",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FILTER COURSE EXPIRING EVENTS\n// ============================================\n\nconst items = $input.all();\nconst expiringEvents = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  let event = data.event || data;\n  if (typeof event === 'string') {\n    try {\n      event = JSON.parse(event);\n    } catch (e) {\n      continue;\n    }\n  }\n  \n  if (event.event === 'course.access.expiring' || event.type === 'course.access.expiring') {\n    expiringEvents.push({\n      json: {\n        event_id: data.id || `course_exp_${Date.now()}`,\n        event_type: 'course.access.expiring',\n        guild_id: event.guild_id,\n        user_id: event.data?.user_id || event.user_id,\n        discord_id: event.data?.discord_id || event.discord_id,\n        course_id: event.data?.course_id || event.course_id,\n        course_name: event.data?.course_name || event.course_name || 'Formation',\n        expires_at: event.data?.expires_at || event.expires_at,\n        days_remaining: event.data?.days_remaining || 7,\n        urgency: event.data?.urgency || 'normal',\n        timestamp: event.timestamp || new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn expiringEvents.length > 0 ? expiringEvents : [];"
+      },
+      "id": "notif-course-0002",
+      "name": "Filter Expiring Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        512,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-events",
+              "leftValue": "={{ $json.event_type }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "notif-course-0003",
+      "name": "Has Events?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE EXPIRATION EMBED\n// ============================================\n\nconst data = $input.first().json;\n\nconst urgencyConfig = {\n  critical: { color: 0xE74C3C, icon: '🚨', prefix: 'URGENT: ' },\n  high: { color: 0xE67E22, icon: '⚠️', prefix: '' },\n  normal: { color: 0xF1C40F, icon: '📅', prefix: '' }\n};\n\nconst config = urgencyConfig[data.urgency] || urgencyConfig.normal;\n\nconst embed = {\n  title: `${config.icon} ${config.prefix}Acces expire bientot`,\n  description: `Ton acces a **${data.course_name}** expire dans ${data.days_remaining} jour(s).`,\n  color: config.color,\n  fields: [\n    {\n      name: 'Formation',\n      value: data.course_name,\n      inline: true\n    },\n    {\n      name: 'Expire le',\n      value: new Date(data.expires_at).toLocaleDateString('fr-FR'),\n      inline: true\n    }\n  ],\n  footer: { text: 'Pense a renouveler ton abonnement !' },\n  timestamp: data.timestamp\n};\n\nreturn {\n  type: 'dm',\n  guild_id: data.guild_id,\n  discord_id: data.discord_id,\n  content: data.urgency === 'critical' ? `<@${data.discord_id}> 🚨` : null,\n  embed: embed,\n  notification_type: 'course_expiring',\n  urgency: data.urgency,\n  source: 'n8n:NOTIF-Course-Expiring',\n  event_id: data.event_id,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "notif-course-0004",
+      "name": "Prepare Notification Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xAdd"
+      },
+      "id": "notif-course-0005",
+      "name": "Publish to notifications:stream",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1168,
+        208
+      ],
+      "credentials": {
+        "redis": {
+          "id": "notifications-redis",
+          "name": "Redis Notifications (DB 5)"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "notif-course-0007",
+      "name": "No Events",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        944,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "notif-course-expiring",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        32,
+        304
+      ],
+      "id": "3b42797a-648d-4ed6-a434-64ab67215222",
+      "name": "Webhook",
+      "webhookId": "02d4d20e-5bec-4828-af83-98e7fb8179f7"
+    }
+  ],
+  "connections": {
+    "Redis xRead": {
+      "main": [
+        [
+          {
+            "node": "Filter Expiring Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Expiring Events": {
+      "main": [
+        [
+          {
+            "node": "Has Events?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Events?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Notification Payload": {
+      "main": [
+        [
+          {
+            "node": "Publish to notifications:stream",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Redis xRead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Every 10 Seconds": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": {},
+  "versionId": "1b5c4a4a-ce6b-4c7e-8f86-d4b617ea4d32",
+  "activeVersionId": "1b5c4a4a-ce6b-4c7e-8f86-d4b617ea4d32",
+  "versionCounter": 57,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-02-06T14:29:18.357Z",
+      "createdAt": "2026-02-06T14:29:18.357Z",
+      "role": "workflow:owner",
+      "workflowId": "GYF6dfeEjEdJZLjD",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-06T16:14:05.546Z",
+    "createdAt": "2026-02-06T16:14:05.546Z",
+    "versionId": "1b5c4a4a-ce6b-4c7e-8f86-d4b617ea4d32",
+    "workflowId": "GYF6dfeEjEdJZLjD",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## NOTIF - Course Expiring\n\n**Trigger:** Cron every 10 seconds\n\n**Source:** RFC-030 (Option B)\n\n**Description:**\nPolls Redis Stream for course.access.expiring events\nand publishes notifications to Discord.\n\n**Input Stream:** `learning:events:stream`\n**Output Stream:** `notifications:stream`",
+          "height": 280,
+          "width": 320,
+          "color": 5
+        },
+        "id": "notif-course-0000",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -208,
+          64
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "xRead"
+        },
+        "id": "notif-course-0001",
+        "name": "Redis xRead",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          288,
+          304
+        ],
+        "credentials": {
+          "redis": {
+            "id": "2idv3VKZ91q5gOnz",
+            "name": "Redis account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// FILTER COURSE EXPIRING EVENTS\n// ============================================\n\nconst items = $input.all();\nconst expiringEvents = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  let event = data.event || data;\n  if (typeof event === 'string') {\n    try {\n      event = JSON.parse(event);\n    } catch (e) {\n      continue;\n    }\n  }\n  \n  if (event.event === 'course.access.expiring' || event.type === 'course.access.expiring') {\n    expiringEvents.push({\n      json: {\n        event_id: data.id || `course_exp_${Date.now()}`,\n        event_type: 'course.access.expiring',\n        guild_id: event.guild_id,\n        user_id: event.data?.user_id || event.user_id,\n        discord_id: event.data?.discord_id || event.discord_id,\n        course_id: event.data?.course_id || event.course_id,\n        course_name: event.data?.course_name || event.course_name || 'Formation',\n        expires_at: event.data?.expires_at || event.expires_at,\n        days_remaining: event.data?.days_remaining || 7,\n        urgency: event.data?.urgency || 'normal',\n        timestamp: event.timestamp || new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn expiringEvents.length > 0 ? expiringEvents : [];"
+        },
+        "id": "notif-course-0002",
+        "name": "Filter Expiring Events",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          512,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "has-events",
+                "leftValue": "={{ $json.event_type }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "notif-course-0003",
+        "name": "Has Events?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          720,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// PREPARE EXPIRATION EMBED\n// ============================================\n\nconst data = $input.first().json;\n\nconst urgencyConfig = {\n  critical: { color: 0xE74C3C, icon: '🚨', prefix: 'URGENT: ' },\n  high: { color: 0xE67E22, icon: '⚠️', prefix: '' },\n  normal: { color: 0xF1C40F, icon: '📅', prefix: '' }\n};\n\nconst config = urgencyConfig[data.urgency] || urgencyConfig.normal;\n\nconst embed = {\n  title: `${config.icon} ${config.prefix}Acces expire bientot`,\n  description: `Ton acces a **${data.course_name}** expire dans ${data.days_remaining} jour(s).`,\n  color: config.color,\n  fields: [\n    {\n      name: 'Formation',\n      value: data.course_name,\n      inline: true\n    },\n    {\n      name: 'Expire le',\n      value: new Date(data.expires_at).toLocaleDateString('fr-FR'),\n      inline: true\n    }\n  ],\n  footer: { text: 'Pense a renouveler ton abonnement !' },\n  timestamp: data.timestamp\n};\n\nreturn {\n  type: 'dm',\n  guild_id: data.guild_id,\n  discord_id: data.discord_id,\n  content: data.urgency === 'critical' ? `<@${data.discord_id}> 🚨` : null,\n  embed: embed,\n  notification_type: 'course_expiring',\n  urgency: data.urgency,\n  source: 'n8n:NOTIF-Course-Expiring',\n  event_id: data.event_id,\n  timestamp: new Date().toISOString()\n};"
+        },
+        "id": "notif-course-0004",
+        "name": "Prepare Notification Payload",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          944,
+          208
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "xAdd"
+        },
+        "id": "notif-course-0005",
+        "name": "Publish to notifications:stream",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1168,
+          208
+        ],
+        "credentials": {
+          "redis": {
+            "id": "notifications-redis",
+            "name": "Redis Notifications (DB 5)"
+          }
+        }
+      },
+      {
+        "parameters": {},
+        "id": "notif-course-0007",
+        "name": "No Events",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          944,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "notif-course-expiring",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          32,
+          304
+        ],
+        "id": "3b42797a-648d-4ed6-a434-64ab67215222",
+        "name": "Webhook",
+        "webhookId": "02d4d20e-5bec-4828-af83-98e7fb8179f7"
+      }
+    ],
+    "connections": {
+      "Redis xRead": {
+        "main": [
+          [
+            {
+              "node": "Filter Expiring Events",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Filter Expiring Events": {
+        "main": [
+          [
+            {
+              "node": "Has Events?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Events?": {
+        "main": [
+          [
+            {
+              "node": "Prepare Notification Payload",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "No Events",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Notification Payload": {
+        "main": [
+          [
+            {
+              "node": "Publish to notifications:stream",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Redis xRead",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

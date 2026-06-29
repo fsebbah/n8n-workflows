@@ -1,0 +1,516 @@
+{
+  "name": "MCP - Text Generator",
+  "description": "Multi-provider text generation webhook (BYOT pattern) - Supports Anthropic, OpenAI, Mistral",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - Text Generator (Multi-Provider BYOT)\n\n**Endpoint:** POST /webhook/text-generator\n\n**Description:** Generation de texte multi-provider avec pattern BYOT.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"provider\", \"model\", \"api_key\", \"prompt\"],\n  \"properties\": {\n    \"provider\": { \"type\": \"string\", \"enum\": [\"anthropic\", \"openai\", \"mistral\"] },\n    \"model\": { \"type\": \"string\", \"description\": \"Model ID\" },\n    \"api_key\": { \"type\": \"string\", \"description\": \"API key (REQUIRED, no fallback)\" },\n    \"prompt\": { \"type\": \"string\", \"description\": \"Text generation prompt\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"User context\" },\n    \"system_prompt\": { \"type\": \"string\", \"description\": \"System instructions\" },\n    \"temperature\": { \"type\": \"number\", \"default\": 0.7 },\n    \"max_tokens\": { \"type\": \"integer\", \"default\": 2048 },\n    \"user_id\": { \"type\": \"string\" },\n    \"guild_id\": { \"type\": \"string\" }\n  }\n}\n```\n\n**BYOT Pattern:** api_key OBLIGATOIRE, aucun fallback env.",
+        "height": 580,
+        "width": 420,
+        "color": 6
+      },
+      "id": "doc-sticky",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [60, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "text-generator",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-textgen",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "text-generator-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - Text Generator (BYOT Multi-Provider)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: provider ---\nconst provider = (body.provider || ctx.provider || '').toLowerCase();\nconst validProviders = ['anthropic', 'openai', 'mistral'];\nif (!provider) {\n  errors.push('provider requis (anthropic, openai, mistral)');\n} else if (!validProviders.includes(provider)) {\n  errors.push(`provider invalide: ${provider} (doit etre: ${validProviders.join(', ')})`);\n}\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model;\nif (!model || typeof model !== 'string' || model.trim().length === 0) {\n  errors.push('model requis');\n}\n\n// --- REQUIRED: api_key (BYOT - NO FALLBACK) ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length === 0) {\n  errors.push('api_key requis (BYOT pattern - aucun fallback sur env)');\n}\n\n// --- REQUIRED: prompt ---\nconst prompt = body.prompt || ctx.prompt;\nif (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {\n  errors.push('prompt requis (chaine non vide)');\n}\n\n// --- Context fields for tracing ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Optional parameters ---\nconst systemPrompt = body.system_prompt || ctx.system_prompt || 'You are a helpful assistant that generates high-quality text based on user instructions.';\nconst temperature = parseFloat(body.temperature ?? ctx.temperature ?? 0.7);\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 2048);\n\n// Validate temperature\nif (isNaN(temperature) || temperature < 0 || temperature > 2) {\n  errors.push('temperature doit etre entre 0 et 2');\n}\n\n// Validate max_tokens\nif (isNaN(maxTokens) || maxTokens < 1 || maxTokens > 200000) {\n  errors.push('max_tokens doit etre entre 1 et 200000');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\n// Build user content with context\nlet userContent = prompt.trim();\nif (userRequest) {\n  userContent = `User context: ${userRequest}\\n\\n${userContent}`;\n}\n\nreturn {\n  valid: true,\n  provider: provider,\n  model: model.trim(),\n  api_key: apiKey.trim(),\n  prompt: prompt.trim(),\n  user_content: userContent,\n  system_prompt: systemPrompt,\n  temperature: temperature,\n  max_tokens: maxTokens,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+      },
+      "id": "build-error",
+      "name": "Build Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 480]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 480]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "anthropic",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "anthropic"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "openai",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "openai"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "mistral",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "mistral"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-provider",
+      "name": "Switch Provider",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  return JSON.stringify({\n    model: data.model,\n    system: data.system_prompt,\n    messages: [{ role: 'user', content: data.user_content }],\n    max_tokens: data.max_tokens,\n    temperature: data.temperature\n  });\n})() }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "http-anthropic",
+      "name": "Anthropic API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 40],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  return JSON.stringify({\n    model: data.model,\n    messages: [\n      { role: 'system', content: data.system_prompt },\n      { role: 'user', content: data.user_content }\n    ],\n    max_tokens: data.max_tokens,\n    temperature: data.temperature\n  });\n})() }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "http-openai",
+      "name": "OpenAI API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  return JSON.stringify({\n    model: data.model,\n    messages: [\n      { role: 'system', content: data.system_prompt },\n      { role: 'user', content: data.user_content }\n    ],\n    max_tokens: data.max_tokens,\n    temperature: data.temperature\n  });\n})() }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "http-mistral",
+      "name": "Mistral API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 360],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT ANTHROPIC RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\n\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\n// Handle error response\nif (input.error) {\n  return {\n    success: false,\n    error: {\n      code: input.error.type || 'ANTHROPIC_ERROR',\n      message: input.error.message || 'Anthropic API error',\n      http_status: 500\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: {\n      llm_response: null,\n      service_response: input,\n      provider: 'anthropic',\n      model: prevData.model,\n      tokens: { input: 0, output: 0 },\n      latency_ms: latencyMs,\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest\n    }\n  };\n}\n\nconst text = input.content?.[0]?.text || '';\nconst stopReason = input.stop_reason || 'end_turn';\nconst modelUsed = input.model || prevData.model;\n\nreturn {\n  success: true,\n  data: {\n    text: text,\n    model: modelUsed,\n    finish_reason: stopReason\n  },\n  meta: {\n    provider: 'anthropic',\n    model: modelUsed,\n    usage: {\n      prompt_tokens: input.usage?.input_tokens || 0,\n      completion_tokens: input.usage?.output_tokens || 0,\n      total_tokens: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0)\n    }\n  },\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  _trace: {\n    llm_response: text,\n    service_response: input,\n    provider: 'anthropic',\n    model: modelUsed,\n    tokens: {\n      input: input.usage?.input_tokens || 0,\n      output: input.usage?.output_tokens || 0\n    },\n    latency_ms: latencyMs,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  }\n};"
+      },
+      "id": "format-anthropic",
+      "name": "Format Anthropic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 40]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT OPENAI RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\n\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\n// Handle error response\nif (input.error) {\n  return {\n    success: false,\n    error: {\n      code: input.error.code || 'OPENAI_ERROR',\n      message: input.error.message || 'OpenAI API error',\n      http_status: 500\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: {\n      llm_response: null,\n      service_response: input,\n      provider: 'openai',\n      model: prevData.model,\n      tokens: { input: 0, output: 0 },\n      latency_ms: latencyMs,\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest\n    }\n  };\n}\n\nconst text = input.choices?.[0]?.message?.content || '';\nconst finishReason = input.choices?.[0]?.finish_reason || 'stop';\nconst modelUsed = input.model || prevData.model;\n\nreturn {\n  success: true,\n  data: {\n    text: text,\n    model: modelUsed,\n    finish_reason: finishReason\n  },\n  meta: {\n    provider: 'openai',\n    model: modelUsed,\n    usage: {\n      prompt_tokens: input.usage?.prompt_tokens || 0,\n      completion_tokens: input.usage?.completion_tokens || 0,\n      total_tokens: input.usage?.total_tokens || 0\n    }\n  },\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  _trace: {\n    llm_response: text,\n    service_response: input,\n    provider: 'openai',\n    model: modelUsed,\n    tokens: {\n      input: input.usage?.prompt_tokens || 0,\n      output: input.usage?.completion_tokens || 0\n    },\n    latency_ms: latencyMs,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  }\n};"
+      },
+      "id": "format-openai",
+      "name": "Format OpenAI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT MISTRAL RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\n\nconst userId = prevData.user_id;\nconst guildId = prevData.guild_id;\nconst userRequest = prevData.user_request;\n\n// Handle error response\nif (input.error || input.message) {\n  return {\n    success: false,\n    error: {\n      code: 'MISTRAL_ERROR',\n      message: input.message || input.error?.message || 'Mistral API error',\n      http_status: 500\n    },\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest,\n    _trace: {\n      llm_response: null,\n      service_response: input,\n      provider: 'mistral',\n      model: prevData.model,\n      tokens: { input: 0, output: 0 },\n      latency_ms: latencyMs,\n      user_id: userId,\n      guild_id: guildId,\n      user_request: userRequest\n    }\n  };\n}\n\nconst text = input.choices?.[0]?.message?.content || '';\nconst finishReason = input.choices?.[0]?.finish_reason || 'stop';\nconst modelUsed = input.model || prevData.model;\n\nreturn {\n  success: true,\n  data: {\n    text: text,\n    model: modelUsed,\n    finish_reason: finishReason\n  },\n  meta: {\n    provider: 'mistral',\n    model: modelUsed,\n    usage: {\n      prompt_tokens: input.usage?.prompt_tokens || 0,\n      completion_tokens: input.usage?.completion_tokens || 0,\n      total_tokens: input.usage?.total_tokens || 0\n    }\n  },\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  _trace: {\n    llm_response: text,\n    service_response: input,\n    provider: 'mistral',\n    model: modelUsed,\n    tokens: {\n      input: input.usage?.prompt_tokens || 0,\n      output: input.usage?.completion_tokens || 0\n    },\n    latency_ms: latencyMs,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  }\n};"
+      },
+      "id": "format-mistral",
+      "name": "Format Mistral",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 360]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "merge-responses",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1600, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 500) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1840, 200]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Switch Provider",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Provider": {
+      "main": [
+        [
+          {
+            "node": "Anthropic API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "OpenAI API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mistral API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic API": {
+      "main": [
+        [
+          {
+            "node": "Format Anthropic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI API": {
+      "main": [
+        [
+          {
+            "node": "Format OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral API": {
+      "main": [
+        [
+          {
+            "node": "Format Mistral",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Anthropic": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Mistral": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "tags": ["llm", "multi-provider", "byot", "mcp"]
+}

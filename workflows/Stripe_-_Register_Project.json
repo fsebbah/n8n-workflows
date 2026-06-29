@@ -1,15 +1,10 @@
 {
-  "updatedAt": "2026-02-02T19:37:41.326Z",
-  "createdAt": "2026-01-07T19:42:00.614Z",
-  "id": "2UH1itSxHgJQhF4e",
   "name": "Stripe - Register Project",
-  "description": null,
   "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
-        "content": "## STRIPE - Register Project\n\n**Endpoint:** POST /webhook/stripe-register-project\n\n**Description:** Enregistre les secrets Stripe d'un projet dans Redis.\nAppele par le plugin au demarrage.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah\",\n  \"stripe_key\": \"sk_live_xxx\",\n  \"webhook_secret\": \"whsec_xxx\",\n  \"display_name\": \"Torah App\"\n}\n```\n\n**Redis:**\n```\nHSET project:torah stripe_key \"sk_xxx\"\nHSET project:torah webhook_secret \"whsec_xxx\"\n```\n\n**Response:**\n```json\n{\"success\": true, \"message\": \"Project registered\"}\n```",
+        "content": "## STRIPE - Register Project\n\n**Endpoint:** POST /webhook/stripe-register-project\n\n**Description:** Enregistre les secrets Stripe d'un projet via API backend.\nAppele par le plugin au demarrage.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah-fun\",\n  \"stripe_key\": \"sk_live_xxx\",\n  \"webhook_secret\": \"whsec_xxx\",\n  \"display_name\": \"Torah App\",\n  \"tenant_id\": \"815368074995040286\",\n  \"backend_api_url\": \"https://apistaging.azy.solutions\",\n  \"backend_service_token\": \"service_xxx\"\n}\n\nAPI Call: POST /api/admin/stripe/projects\n\nResponse:\n{\n  \"success\": true,\n  \"message\": \"Project registered\",\n  \"project\": { \"project_id\": \"torah-fun\", \"environment\": \"staging\" }\n}",
         "height": 420,
         "width": 340,
         "color": 5
@@ -42,7 +37,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Valider les parametres requis\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst projectId = body.project_id || null;\nconst stripeKey = body.stripe_key || null;\nconst webhookSecret = body.webhook_secret || null;\nconst displayName = body.display_name || projectId;\n\n// Backend credentials (auto-injected by chatbot-core 0.8.68+)\nconst backendApiUrl = body.backend_api_url || null;\nconst backendServiceToken = body.backend_service_token || null;\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!stripeKey) errors.push('stripe_key');\nif (!webhookSecret) errors.push('webhook_secret');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Valider le format des cles\nif (!stripeKey.startsWith('sk_')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'stripe_key doit commencer par sk_',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nif (!webhookSecret.startsWith('whsec_')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'webhook_secret doit commencer par whsec_',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    stripe_key: stripeKey,\n    webhook_secret: webhookSecret,\n    display_name: displayName,\n    backend_api_url: backendApiUrl,\n    backend_service_token: backendServiceToken,\n    redis_key: `project:${projectId}`\n  }\n}];"
+        "jsCode": "// Valider les parametres requis\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst projectId = body.project_id || null;\nconst stripeKey = body.stripe_key || null;\nconst webhookSecret = body.webhook_secret || null;\nconst displayName = body.display_name || projectId;\nconst tenantId = body.tenant_id || null;\n\n// Backend credentials (auto-injected by chatbot-core 0.8.68+)\nconst backendApiUrl = body.backend_api_url || null;\nconst backendServiceToken = body.backend_service_token || null;\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!stripeKey) errors.push('stripe_key');\nif (!webhookSecret) errors.push('webhook_secret');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Valider le format des cles\nif (!stripeKey.startsWith('sk_')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'stripe_key doit commencer par sk_',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nif (!webhookSecret.startsWith('whsec_')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'webhook_secret doit commencer par whsec_',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    stripe_key: stripeKey,\n    webhook_secret: webhookSecret,\n    display_name: displayName,\n    backend_api_url: backendApiUrl,\n    tenant_id: tenantId,\n    backend_service_token: backendServiceToken,\n    redis_key: `project:${projectId}`\n  }\n}];"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -87,29 +82,7 @@
     },
     {
       "parameters": {
-        "operation": "set",
-        "key": "={{ $json.redis_key }}",
-        "value": "={{ JSON.stringify({ stripe_key: $json.stripe_key, webhook_secret: $json.webhook_secret, display_name: $json.display_name, backend_api_url: $json.backend_api_url, backend_service_token: $json.backend_service_token, registered_at: new Date().toISOString() }) }}"
-      },
-      "id": "redis-set",
-      "name": "Redis SET",
-      "type": "n8n-nodes-base.redis",
-      "typeVersion": 1,
-      "position": [
-        1104,
-        208
-      ],
-      "credentials": {
-        "redis": {
-          "id": "2idv3VKZ91q5gOnz",
-          "name": "Redis account"
-        }
-      },
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Verifier le resultat de Redis SET\nconst redisResult = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\n// Verifier si Redis a retourne une erreur\nconst redisError = JSON.stringify(redisResult);\nif (redisError.includes('ECONNREFUSED') || redisError.includes('error')) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 503,\n        message: 'Service Redis indisponible',\n        status: 'SERVICE_UNAVAILABLE'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Project registered successfully',\n    project: {\n      project_id: inputData.project_id,\n      display_name: inputData.display_name,\n      redis_key: inputData.redis_key\n    }\n  }\n}];"
+        "jsCode": "const apiResult = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\n// Vérifier statut HTTP\nif (apiResult.statusCode && apiResult.statusCode !== 200) {\n  const errorBody = apiResult.body || {};\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: apiResult.statusCode,\n        message: errorBody.detail || 'API error',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Succès\nconst responseBody = apiResult.body || {};\nreturn [{\n  json: {\n    success: true,\n    message: 'Project registered successfully',\n    project: {\n      project_id: responseBody.project_id || inputData.project_id,\n      display_name: responseBody.display_name || inputData.display_name,\n      environment: responseBody.environment\n    }\n  }\n}];\n"
       },
       "id": "format-success",
       "name": "Format Success",
@@ -169,6 +142,37 @@
         1104,
         432
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.backend_api_url }}/api/ecommerce/stripe/admin/projects",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $json.backend_service_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ project_id: $json.project_id, stripe_key: $json.stripe_key,webhook_secret: $json.webhook_secret, display_name: $json.display_name, tenant_id:$json.tenant_id }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1088,
+        208
+      ],
+      "id": "902679a6-abc4-413b-9d72-a98c649452b6",
+      "name": "Call API Admin"
     }
   ],
   "connections": {
@@ -198,7 +202,7 @@
       "main": [
         [
           {
-            "node": "Redis SET",
+            "node": "Call API Admin",
             "type": "main",
             "index": 0
           }
@@ -206,17 +210,6 @@
         [
           {
             "node": "Respond Error",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Redis SET": {
-      "main": [
-        [
-          {
-            "node": "Format Success",
             "type": "main",
             "index": 0
           }
@@ -233,6 +226,17 @@
           }
         ]
       ]
+    },
+    "Call API Admin": {
+      "main": [
+        [
+          {
+            "node": "Format Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -240,76 +244,16 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "staticData": null,
-  "meta": null,
-  "pinData": {},
-  "versionId": "fac50a5c-bae6-4e64-97c7-46c81b51328c",
-  "activeVersionId": "fac50a5c-bae6-4e64-97c7-46c81b51328c",
-  "versionCounter": 105,
-  "triggerCount": 1,
-  "shared": [
-    {
-      "updatedAt": "2026-02-02T17:55:15.060Z",
-      "createdAt": "2026-02-02T17:55:15.060Z",
-      "role": "workflow:owner",
-      "workflowId": "2UH1itSxHgJQhF4e",
-      "projectId": "U3cZjxLpPGVohw1b",
-      "project": {
-        "updatedAt": "2026-02-02T18:03:13.881Z",
-        "createdAt": "2026-02-02T17:54:12.365Z",
-        "id": "U3cZjxLpPGVohw1b",
-        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "projectRelations": [
-          {
-            "updatedAt": "2026-02-02T17:54:12.365Z",
-            "createdAt": "2026-02-02T17:54:12.365Z",
-            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
-            "projectId": "U3cZjxLpPGVohw1b",
-            "user": {
-              "updatedAt": "2026-04-09T12:42:54.002Z",
-              "createdAt": "2026-02-02T17:54:09.643Z",
-              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
-              "email": "fsebbah@azy.solutions",
-              "firstName": "Sebbah",
-              "lastName": "fsebbah@azy.solutions",
-              "personalizationAnswers": {
-                "version": "v4",
-                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
-                "personalization_survey_n8n_version": "2.6.3"
-              },
-              "settings": {
-                "userActivated": true,
-                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
-                "userActivatedAt": 1770062456227,
-                "npsSurvey": {
-                  "waitingForResponse": true,
-                  "ignoredCount": 1,
-                  "lastShownAt": 1771441113942
-                }
-              },
-              "disabled": false,
-              "mfaEnabled": false,
-              "lastActiveAt": "2026-04-09",
-              "isPending": false
-            }
-          }
-        ]
-      }
-    }
-  ],
   "tags": [],
   "activeVersion": {
-    "updatedAt": "2026-02-02T17:55:15.060Z",
-    "createdAt": "2026-02-02T17:55:15.060Z",
-    "versionId": "fac50a5c-bae6-4e64-97c7-46c81b51328c",
-    "workflowId": "2UH1itSxHgJQhF4e",
+    "updatedAt": "2026-06-17T15:48:39.542Z",
+    "createdAt": "2026-06-17T15:48:34.180Z",
+    "versionId": "62bd3807-ca54-4325-8f4f-043db9ec55fb",
+    "workflowId": "aL5ibhL8rUe3Fxbm",
     "nodes": [
       {
         "parameters": {
-          "content": "## STRIPE - Register Project\n\n**Endpoint:** POST /webhook/stripe-register-project\n\n**Description:** Enregistre les secrets Stripe d'un projet dans Redis.\nAppele par le plugin au demarrage.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah\",\n  \"stripe_key\": \"sk_live_xxx\",\n  \"webhook_secret\": \"whsec_xxx\",\n  \"display_name\": \"Torah App\"\n}\n```\n\n**Redis:**\n```\nHSET project:torah stripe_key \"sk_xxx\"\nHSET project:torah webhook_secret \"whsec_xxx\"\n```\n\n**Response:**\n```json\n{\"success\": true, \"message\": \"Project registered\"}\n```",
+          "content": "## STRIPE - Register Project\n\n**Endpoint:** POST /webhook/stripe-register-project\n\n**Description:** Enregistre les secrets Stripe d'un projet via API backend.\nAppele par le plugin au demarrage.\n\n**Input:**\n```json\n{\n  \"project_id\": \"torah-fun\",\n  \"stripe_key\": \"sk_live_xxx\",\n  \"webhook_secret\": \"whsec_xxx\",\n  \"display_name\": \"Torah App\",\n  \"tenant_id\": \"815368074995040286\",\n  \"backend_api_url\": \"https://apistaging.azy.solutions\",\n  \"backend_service_token\": \"service_xxx\"\n}\n\nAPI Call: POST /api/admin/stripe/projects\n\nResponse:\n{\n  \"success\": true,\n  \"message\": \"Project registered\",\n  \"project\": { \"project_id\": \"torah-fun\", \"environment\": \"staging\" }\n}",
           "height": 420,
           "width": 340,
           "color": 5
@@ -342,7 +286,7 @@
       },
       {
         "parameters": {
-          "jsCode": "// Valider les parametres requis\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst projectId = body.project_id || null;\nconst stripeKey = body.stripe_key || null;\nconst webhookSecret = body.webhook_secret || null;\nconst displayName = body.display_name || projectId;\n\n// Backend credentials (auto-injected by chatbot-core 0.8.68+)\nconst backendApiUrl = body.backend_api_url || null;\nconst backendServiceToken = body.backend_service_token || null;\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!stripeKey) errors.push('stripe_key');\nif (!webhookSecret) errors.push('webhook_secret');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Valider le format des cles\nif (!stripeKey.startsWith('sk_')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'stripe_key doit commencer par sk_',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nif (!webhookSecret.startsWith('whsec_')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'webhook_secret doit commencer par whsec_',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    stripe_key: stripeKey,\n    webhook_secret: webhookSecret,\n    display_name: displayName,\n    backend_api_url: backendApiUrl,\n    backend_service_token: backendServiceToken,\n    redis_key: `project:${projectId}`\n  }\n}];"
+          "jsCode": "// Valider les parametres requis\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst projectId = body.project_id || null;\nconst stripeKey = body.stripe_key || null;\nconst webhookSecret = body.webhook_secret || null;\nconst displayName = body.display_name || projectId;\nconst tenantId = body.tenant_id || null;\n\n// Backend credentials (auto-injected by chatbot-core 0.8.68+)\nconst backendApiUrl = body.backend_api_url || null;\nconst backendServiceToken = body.backend_service_token || null;\n\nconst errors = [];\nif (!projectId) errors.push('project_id');\nif (!stripeKey) errors.push('stripe_key');\nif (!webhookSecret) errors.push('webhook_secret');\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Parametres requis manquants: ${errors.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\n// Valider le format des cles\nif (!stripeKey.startsWith('sk_')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'stripe_key doit commencer par sk_',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nif (!webhookSecret.startsWith('whsec_')) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'webhook_secret doit commencer par whsec_',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    project_id: projectId,\n    stripe_key: stripeKey,\n    webhook_secret: webhookSecret,\n    display_name: displayName,\n    backend_api_url: backendApiUrl,\n    tenant_id: tenantId,\n    backend_service_token: backendServiceToken,\n    redis_key: `project:${projectId}`\n  }\n}];"
         },
         "id": "validate-input",
         "name": "Validate Input",
@@ -387,29 +331,7 @@
       },
       {
         "parameters": {
-          "operation": "set",
-          "key": "={{ $json.redis_key }}",
-          "value": "={{ JSON.stringify({ stripe_key: $json.stripe_key, webhook_secret: $json.webhook_secret, display_name: $json.display_name, backend_api_url: $json.backend_api_url, backend_service_token: $json.backend_service_token, registered_at: new Date().toISOString() }) }}"
-        },
-        "id": "redis-set",
-        "name": "Redis SET",
-        "type": "n8n-nodes-base.redis",
-        "typeVersion": 1,
-        "position": [
-          1104,
-          208
-        ],
-        "credentials": {
-          "redis": {
-            "id": "2idv3VKZ91q5gOnz",
-            "name": "Redis account"
-          }
-        },
-        "onError": "continueRegularOutput"
-      },
-      {
-        "parameters": {
-          "jsCode": "// Verifier le resultat de Redis SET\nconst redisResult = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\n// Verifier si Redis a retourne une erreur\nconst redisError = JSON.stringify(redisResult);\nif (redisError.includes('ECONNREFUSED') || redisError.includes('error')) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 503,\n        message: 'Service Redis indisponible',\n        status: 'SERVICE_UNAVAILABLE'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Project registered successfully',\n    project: {\n      project_id: inputData.project_id,\n      display_name: inputData.display_name,\n      redis_key: inputData.redis_key\n    }\n  }\n}];"
+          "jsCode": "const apiResult = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\n// Vérifier statut HTTP\nif (apiResult.statusCode && apiResult.statusCode !== 200) {\n  const errorBody = apiResult.body || {};\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: apiResult.statusCode,\n        message: errorBody.detail || 'API error',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Succès\nconst responseBody = apiResult.body || {};\nreturn [{\n  json: {\n    success: true,\n    message: 'Project registered successfully',\n    project: {\n      project_id: responseBody.project_id || inputData.project_id,\n      display_name: responseBody.display_name || inputData.display_name,\n      environment: responseBody.environment\n    }\n  }\n}];\n"
         },
         "id": "format-success",
         "name": "Format Success",
@@ -469,6 +391,37 @@
           1104,
           432
         ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $json.backend_api_url }}/api/ecommerce/stripe/admin/projects",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Service-Token",
+                "value": "={{ $json.backend_service_token }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ project_id: $json.project_id, stripe_key: $json.stripe_key,webhook_secret: $json.webhook_secret, display_name: $json.display_name, tenant_id:$json.tenant_id }) }}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1088,
+          208
+        ],
+        "id": "902679a6-abc4-413b-9d72-a98c649452b6",
+        "name": "Call API Admin"
       }
     ],
     "connections": {
@@ -498,7 +451,7 @@
         "main": [
           [
             {
-              "node": "Redis SET",
+              "node": "Call API Admin",
               "type": "main",
               "index": 0
             }
@@ -506,17 +459,6 @@
           [
             {
               "node": "Respond Error",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Redis SET": {
-        "main": [
-          [
-            {
-              "node": "Format Success",
               "type": "main",
               "index": 0
             }
@@ -533,10 +475,32 @@
             }
           ]
         ]
+      },
+      "Call API Admin": {
+        "main": [
+          [
+            {
+              "node": "Format Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
-    "authors": "import",
-    "name": null,
-    "description": null
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": "Version 62bd3807",
+    "description": "",
+    "autosaved": true,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-06-17T15:48:39.529Z",
+        "id": 116,
+        "workflowId": "aL5ibhL8rUe3Fxbm",
+        "versionId": "62bd3807-ca54-4325-8f4f-043db9ec55fb",
+        "event": "activated",
+        "userId": "af142d6e-919f-4345-b234-759caa50a7bb"
+      }
+    ]
   }
 }

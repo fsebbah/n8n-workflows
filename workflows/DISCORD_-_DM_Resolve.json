@@ -1,14 +1,18 @@
 {
   "name": "DISCORD - DM Resolve",
+  "active": true,
   "nodes": [
     {
       "parameters": {
-        "content": "## DISCORD - DM Resolve (RFC-095)\n\n**Endpoint:** POST /webhook/discord/dm-resolve\n\n**Description:** Résout le personae pour un DM élève. Orchestre 2 appels API puis dispatch selon le statut.\n\n**Input:**\n```json\n{\n  \"guild_id\": \"string\",\n  \"user_id\": \"string\",\n  \"question\": \"string\",\n  \"specialty_id\": \"string (optionnel, pour re-resolve après clarification)\"\n}\n```\n\n**Flow:**\n1. Validate input (+ specialty_id optionnel)\n2. GET /api/n8n/tenants/resolve → tenant_id\n3. GET /api/n8n/personae/resolve-dm?specialty_id=... → ResolveDmResponse\n4. Check API response (404 = specialty_not_found)\n5. Switch sur status:\n   - resolved → dispatch chatbot-core\n   - out_of_scope → retourne decline_reason\n   - needs_clarification → retourne candidates\n\n**Output:** Dépend du statut (voir RFC-095)\n\n**RFC:** RFC-095-PERSONAE-MULTI-LEVELS (B3)\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"status\", \"personae\", \"decline_reason\", \"clarification_candidates\"],\n  \"domain\": \"discord-education\"\n}\n```"
+        "content": "## DISCORD - DM Resolve (RFC-095)\n\n**Endpoint:** POST /webhook/discord/dm-resolve\n\n**Description:** Résout le personae pour un DM élève. Orchestre 2 appels API puis dispatch selon le statut.\n\n**Input:**\n```json\n{\n  \"guild_id\": \"string\",\n  \"user_id\": \"string\",\n  \"question\": \"string\"\n}\n```\n\n**Flow:**\n1. Validate input\n2. GET /api/n8n/tenants/resolve → tenant_id\n3. GET /api/n8n/personae/resolve-dm → ResolveDmResponse\n4. Switch sur status:\n   - resolved → dispatch chatbot-core\n   - out_of_scope → retourne decline_reason\n   - needs_clarification → retourne candidates\n\n**Output:** Dépend du statut (voir RFC-095)\n\n**RFC:** RFC-095-PERSONAE-MULTI-LEVELS (B3)\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"status\", \"personae\", \"decline_reason\", \"clarification_candidates\"],\n  \"domain\": \"discord-education\"\n}\n```"
       },
       "id": "doc-1",
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
-      "position": [200, 100],
+      "position": [
+        200,
+        100
+      ],
       "typeVersion": 1
     },
     {
@@ -21,18 +25,24 @@
       "id": "webhook-1",
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
-      "position": [400, 300],
+      "position": [
+        400,
+        300
+      ],
       "typeVersion": 2,
       "webhookId": "dm-resolve"
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATE INPUT (RFC-095 DM Resolve)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst startTime = Date.now();\n\n// --- Validate required fields ---\nconst errors = [];\n\nif (!body.guild_id) errors.push('guild_id requis');\nif (!body.user_id) errors.push('user_id requis');\nif (!body.question || typeof body.question !== 'string') errors.push('question requis (string)');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: errors.join(', '),\n      http_status: 400\n    },\n    start_time: startTime\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  valid: true,\n  guild_id: body.guild_id,\n  user_id: body.user_id,\n  question: body.question.trim(),\n  specialty_id: body.specialty_id || null,  // optionnel, présent après clarification\n  start_time: startTime\n};"
+        "jsCode": "// ============================================\n// VALIDATE INPUT (RFC-095 DM Resolve)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst startTime = Date.now();\n\n// --- Validate required fields ---\nconst errors = [];\n\nif (!body.guild_id) errors.push('guild_id requis');\nif (!body.user_id) errors.push('user_id requis');\nif (!body.question || typeof body.question !== 'string') errors.push('question requis (string)');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: errors.join(', '),\n      http_status: 400\n    },\n    start_time: startTime\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  valid: true,\n  guild_id: body.guild_id,\n  user_id: body.user_id,\n  question: body.question.trim(),\n  start_time: startTime\n};"
       },
       "id": "validate-1",
       "name": "Validate Input",
       "type": "n8n-nodes-base.code",
-      "position": [600, 300],
+      "position": [
+        600,
+        300
+      ],
       "typeVersion": 2
     },
     {
@@ -61,7 +71,10 @@
       "id": "if-valid-1",
       "name": "Is Valid?",
       "type": "n8n-nodes-base.if",
-      "position": [800, 300],
+      "position": [
+        800,
+        300
+      ],
       "typeVersion": 2
     },
     {
@@ -92,7 +105,10 @@
       "id": "tenant-resolve-1",
       "name": "Resolve Tenant",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1000, 200],
+      "position": [
+        1000,
+        200
+      ],
       "typeVersion": 4.2
     },
     {
@@ -121,7 +137,10 @@
       "id": "if-tenant-1",
       "name": "Tenant Found?",
       "type": "n8n-nodes-base.if",
-      "position": [1200, 200],
+      "position": [
+        1200,
+        200
+      ],
       "typeVersion": 2
     },
     {
@@ -138,10 +157,6 @@
             {
               "name": "question",
               "value": "={{ $('Validate Input').first().json.question }}"
-            },
-            {
-              "name": "specialty_id",
-              "value": "={{ $('Validate Input').first().json.specialty_id || '' }}"
             }
           ]
         },
@@ -169,7 +184,10 @@
       "id": "resolve-dm-1",
       "name": "Resolve DM Personae",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1400, 100],
+      "position": [
+        1400,
+        100
+      ],
       "typeVersion": 4.2
     },
     {
@@ -198,7 +216,10 @@
       "id": "if-resolved-1",
       "name": "Status Resolved?",
       "type": "n8n-nodes-base.if",
-      "position": [1600, 100],
+      "position": [
+        1600,
+        100
+      ],
       "typeVersion": 2
     },
     {
@@ -227,7 +248,10 @@
       "id": "if-clarification-1",
       "name": "Needs Clarification?",
       "type": "n8n-nodes-base.if",
-      "position": [1800, 200],
+      "position": [
+        1800,
+        200
+      ],
       "typeVersion": 2
     },
     {
@@ -237,7 +261,10 @@
       "id": "build-resolved-1",
       "name": "Build Resolved Response",
       "type": "n8n-nodes-base.code",
-      "position": [1800, 0],
+      "position": [
+        1800,
+        0
+      ],
       "typeVersion": 2
     },
     {
@@ -247,7 +274,10 @@
       "id": "build-clarification-1",
       "name": "Build Clarification Response",
       "type": "n8n-nodes-base.code",
-      "position": [2000, 150],
+      "position": [
+        2000,
+        150
+      ],
       "typeVersion": 2
     },
     {
@@ -257,7 +287,10 @@
       "id": "build-out-of-scope-1",
       "name": "Build Out of Scope Response",
       "type": "n8n-nodes-base.code",
-      "position": [2000, 300],
+      "position": [
+        2000,
+        300
+      ],
       "typeVersion": 2
     },
     {
@@ -267,7 +300,10 @@
       "id": "build-validation-error-1",
       "name": "Build Validation Error",
       "type": "n8n-nodes-base.code",
-      "position": [1000, 400],
+      "position": [
+        1000,
+        400
+      ],
       "typeVersion": 2
     },
     {
@@ -277,7 +313,10 @@
       "id": "build-tenant-error-1",
       "name": "Build Tenant Error",
       "type": "n8n-nodes-base.code",
-      "position": [1400, 350],
+      "position": [
+        1400,
+        350
+      ],
       "typeVersion": 2
     },
     {
@@ -291,7 +330,10 @@
       "id": "respond-resolved-1",
       "name": "Respond Resolved",
       "type": "n8n-nodes-base.respondToWebhook",
-      "position": [2000, 0],
+      "position": [
+        2000,
+        0
+      ],
       "typeVersion": 1.1
     },
     {
@@ -305,7 +347,10 @@
       "id": "respond-clarification-1",
       "name": "Respond Clarification",
       "type": "n8n-nodes-base.respondToWebhook",
-      "position": [2200, 150],
+      "position": [
+        2200,
+        150
+      ],
       "typeVersion": 1.1
     },
     {
@@ -319,7 +364,10 @@
       "id": "respond-out-of-scope-1",
       "name": "Respond Out of Scope",
       "type": "n8n-nodes-base.respondToWebhook",
-      "position": [2200, 300],
+      "position": [
+        2200,
+        300
+      ],
       "typeVersion": 1.1
     },
     {
@@ -333,7 +381,10 @@
       "id": "respond-error-1",
       "name": "Respond Error",
       "type": "n8n-nodes-base.respondToWebhook",
-      "position": [1200, 400],
+      "position": [
+        1200,
+        400
+      ],
       "typeVersion": 1.1
     },
     {
@@ -347,60 +398,10 @@
       "id": "respond-tenant-error-1",
       "name": "Respond Tenant Error",
       "type": "n8n-nodes-base.respondToWebhook",
-      "position": [1600, 350],
-      "typeVersion": 1.1
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "dm-api-ok",
-              "leftValue": "={{ $json.statusCode }}",
-              "rightValue": 200,
-              "operator": {
-                "type": "number",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "if-dm-api-ok-1",
-      "name": "DM API OK?",
-      "type": "n8n-nodes-base.if",
-      "position": [1600, 100],
-      "typeVersion": 2
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// BUILD SPECIALTY NOT FOUND ERROR (404)\n// ============================================\n\nconst validateData = $('Validate Input').first().json;\nconst dmResponse = $('Resolve DM Personae').first().json;\n\nreturn {\n  success: false,\n  status: 'error',\n  error: {\n    code: 'SPECIALTY_NOT_FOUND',\n    message: `Specialty introuvable ou inactive: ${validateData.specialty_id}`,\n    http_status: 404,\n    details: dmResponse.body || null\n  },\n  _trace: {\n    workflow: 'DISCORD_-_DM_Resolve',\n    status: 'specialty_not_found',\n    latency_ms: Date.now() - validateData.start_time\n  }\n};"
-      },
-      "id": "build-specialty-error-1",
-      "name": "Build Specialty Error",
-      "type": "n8n-nodes-base.code",
-      "position": [1800, 450],
-      "typeVersion": 2
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {
-          "responseCode": 404
-        }
-      },
-      "id": "respond-specialty-error-1",
-      "name": "Respond Specialty Error",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "position": [2000, 450],
+      "position": [
+        1600,
+        350
+      ],
       "typeVersion": 1.1
     }
   ],
@@ -478,36 +479,7 @@
       "main": [
         [
           {
-            "node": "DM API OK?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "DM API OK?": {
-      "main": [
-        [
-          {
             "node": "Status Resolved?",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Build Specialty Error",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Specialty Error": {
-      "main": [
-        [
-          {
-            "node": "Respond Specialty Error",
             "type": "main",
             "index": 0
           }
@@ -609,5 +581,602 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "pinData": {}
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-05-28T09:04:18.102Z",
+    "createdAt": "2026-05-28T09:04:18.102Z",
+    "versionId": "b2469aa0-47b1-432a-b48e-98152ba4dca8",
+    "workflowId": "DemkmfTGFYLy3Zt3",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## DISCORD - DM Resolve (RFC-095)\n\n**Endpoint:** POST /webhook/discord/dm-resolve\n\n**Description:** Résout le personae pour un DM élève. Orchestre 2 appels API puis dispatch selon le statut.\n\n**Input:**\n```json\n{\n  \"guild_id\": \"string\",\n  \"user_id\": \"string\",\n  \"question\": \"string\"\n}\n```\n\n**Flow:**\n1. Validate input\n2. GET /api/n8n/tenants/resolve → tenant_id\n3. GET /api/n8n/personae/resolve-dm → ResolveDmResponse\n4. Switch sur status:\n   - resolved → dispatch chatbot-core\n   - out_of_scope → retourne decline_reason\n   - needs_clarification → retourne candidates\n\n**Output:** Dépend du statut (voir RFC-095)\n\n**RFC:** RFC-095-PERSONAE-MULTI-LEVELS (B3)\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"status\", \"personae\", \"decline_reason\", \"clarification_candidates\"],\n  \"domain\": \"discord-education\"\n}\n```"
+        },
+        "id": "doc-1",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "position": [
+          200,
+          100
+        ],
+        "typeVersion": 1
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "discord/dm-resolve",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-1",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "position": [
+          400,
+          300
+        ],
+        "typeVersion": 2,
+        "webhookId": "dm-resolve"
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// VALIDATE INPUT (RFC-095 DM Resolve)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst startTime = Date.now();\n\n// --- Validate required fields ---\nconst errors = [];\n\nif (!body.guild_id) errors.push('guild_id requis');\nif (!body.user_id) errors.push('user_id requis');\nif (!body.question || typeof body.question !== 'string') errors.push('question requis (string)');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    error: {\n      code: 'VALIDATION_ERROR',\n      message: errors.join(', '),\n      http_status: 400\n    },\n    start_time: startTime\n  };\n}\n\n// --- Return validated data ---\nreturn {\n  valid: true,\n  guild_id: body.guild_id,\n  user_id: body.user_id,\n  question: body.question.trim(),\n  start_time: startTime\n};"
+        },
+        "id": "validate-1",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          600,
+          300
+        ],
+        "typeVersion": 2
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "valid-check",
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-valid-1",
+        "name": "Is Valid?",
+        "type": "n8n-nodes-base.if",
+        "position": [
+          800,
+          300
+        ],
+        "typeVersion": 2
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $env.API_URL }}/api/n8n/tenants/resolve",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "guild_id",
+                "value": "={{ $('Validate Input').first().json.guild_id }}"
+              },
+              {
+                "name": "user_id",
+                "value": "={{ $('Validate Input').first().json.user_id }}"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            }
+          }
+        },
+        "id": "tenant-resolve-1",
+        "name": "Resolve Tenant",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [
+          1000,
+          200
+        ],
+        "typeVersion": 4.2
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "tenant-found",
+                "leftValue": "={{ $json.statusCode }}",
+                "rightValue": 200,
+                "operator": {
+                  "type": "number",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-tenant-1",
+        "name": "Tenant Found?",
+        "type": "n8n-nodes-base.if",
+        "position": [
+          1200,
+          200
+        ],
+        "typeVersion": 2
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $env.API_URL }}/api/n8n/personae/resolve-dm",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "user_id",
+                "value": "={{ $('Validate Input').first().json.user_id }}"
+              },
+              {
+                "name": "question",
+                "value": "={{ $('Validate Input').first().json.question }}"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Tenant-ID",
+                "value": "={{ $('Resolve Tenant').first().json.body.tenant_id }}"
+              },
+              {
+                "name": "X-Service-Token",
+                "value": "={{ $env.SERVICE_TOKEN }}"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            }
+          }
+        },
+        "id": "resolve-dm-1",
+        "name": "Resolve DM Personae",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [
+          1400,
+          100
+        ],
+        "typeVersion": 4.2
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "status-resolved",
+                "leftValue": "={{ $json.body.status }}",
+                "rightValue": "resolved",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-resolved-1",
+        "name": "Status Resolved?",
+        "type": "n8n-nodes-base.if",
+        "position": [
+          1600,
+          100
+        ],
+        "typeVersion": 2
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "status-clarification",
+                "leftValue": "={{ $json.body.status }}",
+                "rightValue": "needs_clarification",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if-clarification-1",
+        "name": "Needs Clarification?",
+        "type": "n8n-nodes-base.if",
+        "position": [
+          1800,
+          200
+        ],
+        "typeVersion": 2
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD RESOLVED RESPONSE (dispatch chatbot-core)\n// ============================================\n\nconst resolveDmResponse = $('Resolve DM Personae').first().json.body;\nconst validateData = $('Validate Input').first().json;\nconst tenantData = $('Resolve Tenant').first().json.body;\n\nconst personae = resolveDmResponse.personae || {};\n\nreturn {\n  success: true,\n  status: 'resolved',\n  guild_id: validateData.guild_id,\n  user_id: validateData.user_id,\n  question: validateData.question,\n  tenant_id: tenantData.tenant_id,\n  \n  // Personae config for chatbot-core\n  personae: {\n    expert_id: personae.expert_id,\n    specialty_id: personae.specialty_id,\n    style_id: personae.style_id,\n    system_prompt: personae.system_prompt,\n    llm_params: personae.llm_params || {},\n    rag_source_ids: personae.rag_source_ids || [],\n    notebook_ids: personae.notebook_ids || [],\n    skill_ids: personae.skill_ids || [],\n    models: personae.models || {},\n    binding_id: personae.binding_id\n  },\n  \n  // Routing metadata\n  routing: {\n    routed_specialty_id: resolveDmResponse.routed_specialty_id,\n    routing_confidence: resolveDmResponse.routing_confidence,\n    routing_method: resolveDmResponse.routing_method\n  },\n  \n  // Audience info\n  audience: resolveDmResponse.audience,\n  \n  _trace: {\n    workflow: 'DISCORD_-_DM_Resolve',\n    status: 'resolved',\n    latency_ms: Date.now() - validateData.start_time\n  }\n};"
+        },
+        "id": "build-resolved-1",
+        "name": "Build Resolved Response",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          1800,
+          0
+        ],
+        "typeVersion": 2
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD NEEDS_CLARIFICATION RESPONSE\n// ============================================\n\nconst resolveDmResponse = $('Resolve DM Personae').first().json.body;\nconst validateData = $('Validate Input').first().json;\nconst tenantData = $('Resolve Tenant').first().json.body;\n\nreturn {\n  success: true,\n  status: 'needs_clarification',\n  guild_id: validateData.guild_id,\n  user_id: validateData.user_id,\n  question: validateData.question,\n  tenant_id: tenantData.tenant_id,\n  \n  // Candidates for clarification buttons\n  clarification_candidates: resolveDmResponse.clarification_candidates || [],\n  \n  // Routing metadata\n  routing: {\n    routing_confidence: resolveDmResponse.routing_confidence,\n    routing_method: resolveDmResponse.routing_method\n  },\n  \n  _trace: {\n    workflow: 'DISCORD_-_DM_Resolve',\n    status: 'needs_clarification',\n    latency_ms: Date.now() - validateData.start_time\n  }\n};"
+        },
+        "id": "build-clarification-1",
+        "name": "Build Clarification Response",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          2000,
+          150
+        ],
+        "typeVersion": 2
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD OUT_OF_SCOPE RESPONSE\n// ============================================\n\nconst resolveDmResponse = $('Resolve DM Personae').first().json.body;\nconst validateData = $('Validate Input').first().json;\nconst tenantData = $('Resolve Tenant').first().json.body;\n\nreturn {\n  success: true,\n  status: 'out_of_scope',\n  guild_id: validateData.guild_id,\n  user_id: validateData.user_id,\n  question: validateData.question,\n  tenant_id: tenantData.tenant_id,\n  \n  // Decline reason for plugin to format message\n  decline_reason: resolveDmResponse.decline_reason,\n  \n  _trace: {\n    workflow: 'DISCORD_-_DM_Resolve',\n    status: 'out_of_scope',\n    latency_ms: Date.now() - validateData.start_time\n  }\n};"
+        },
+        "id": "build-out-of-scope-1",
+        "name": "Build Out of Scope Response",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          2000,
+          300
+        ],
+        "typeVersion": 2
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD VALIDATION ERROR RESPONSE\n// ============================================\n\nconst validateData = $('Validate Input').first().json;\n\nreturn {\n  success: false,\n  status: 'error',\n  error: validateData.error,\n  _trace: {\n    workflow: 'DISCORD_-_DM_Resolve',\n    status: 'validation_error',\n    latency_ms: Date.now() - validateData.start_time\n  }\n};"
+        },
+        "id": "build-validation-error-1",
+        "name": "Build Validation Error",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          1000,
+          400
+        ],
+        "typeVersion": 2
+      },
+      {
+        "parameters": {
+          "jsCode": "// ============================================\n// BUILD TENANT NOT FOUND ERROR\n// ============================================\n\nconst validateData = $('Validate Input').first().json;\nconst tenantResponse = $('Resolve Tenant').first().json;\n\nreturn {\n  success: false,\n  status: 'error',\n  error: {\n    code: 'TENANT_NOT_FOUND',\n    message: `Aucun tenant trouvé pour guild_id=${validateData.guild_id}`,\n    http_status: 404,\n    details: tenantResponse.body || null\n  },\n  _trace: {\n    workflow: 'DISCORD_-_DM_Resolve',\n    status: 'tenant_not_found',\n    latency_ms: Date.now() - validateData.start_time\n  }\n};"
+        },
+        "id": "build-tenant-error-1",
+        "name": "Build Tenant Error",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          1400,
+          350
+        ],
+        "typeVersion": 2
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "respond-resolved-1",
+        "name": "Respond Resolved",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "position": [
+          2000,
+          0
+        ],
+        "typeVersion": 1.1
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "respond-clarification-1",
+        "name": "Respond Clarification",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "position": [
+          2200,
+          150
+        ],
+        "typeVersion": 1.1
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "respond-out-of-scope-1",
+        "name": "Respond Out of Scope",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "position": [
+          2200,
+          300
+        ],
+        "typeVersion": 1.1
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": "={{ $json.error.http_status || 400 }}"
+          }
+        },
+        "id": "respond-error-1",
+        "name": "Respond Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "position": [
+          1200,
+          400
+        ],
+        "typeVersion": 1.1
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": 404
+          }
+        },
+        "id": "respond-tenant-error-1",
+        "name": "Respond Tenant Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "position": [
+          1600,
+          350
+        ],
+        "typeVersion": 1.1
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Is Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Valid?": {
+        "main": [
+          [
+            {
+              "node": "Resolve Tenant",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Resolve Tenant": {
+        "main": [
+          [
+            {
+              "node": "Tenant Found?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tenant Found?": {
+        "main": [
+          [
+            {
+              "node": "Resolve DM Personae",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Tenant Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Resolve DM Personae": {
+        "main": [
+          [
+            {
+              "node": "Status Resolved?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Status Resolved?": {
+        "main": [
+          [
+            {
+              "node": "Build Resolved Response",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Needs Clarification?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Needs Clarification?": {
+        "main": [
+          [
+            {
+              "node": "Build Clarification Response",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Out of Scope Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Resolved Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Resolved",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Clarification Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Clarification",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Out of Scope Response": {
+        "main": [
+          [
+            {
+              "node": "Respond Out of Scope",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Validation Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Tenant Error": {
+        "main": [
+          [
+            {
+              "node": "Respond Tenant Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-05-28T09:04:29.059Z",
+        "id": 87,
+        "workflowId": "DemkmfTGFYLy3Zt3",
+        "versionId": "b2469aa0-47b1-432a-b48e-98152ba4dca8",
+        "event": "activated",
+        "userId": "af142d6e-919f-4345-b234-759caa50a7bb"
+      }
+    ]
+  }
 }

@@ -1,0 +1,392 @@
+{
+  "updatedAt": "2026-02-02T19:21:02.529Z",
+  "createdAt": "2025-12-18T15:27:29.445Z",
+  "id": "virECiQyCyP7LFgT",
+  "name": "MCP - Email IMAP",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "webhook-email",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "email-imap-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "email-imap",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-action",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "error-no-action",
+      "name": "Error: No Action",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: action (list_folders, search, fetch_email)\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"imap\" } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "process-imap",
+      "name": "Process IMAP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body;\nconst action = body.action;\n\n// Validate action\nconst validActions = ['list_folders', 'search', 'fetch_email'];\nif (!validActions.includes(action)) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: `Unknown action: ${action}. Valid actions: ${validActions.join(', ')}`,\n        status: 'BAD_REQUEST'\n      },\n      meta: { provider: 'imap', action: action }\n    }\n  }];\n}\n\n// Check for required IMAP credentials\nconst imapHost = body.imap_host;\nconst imapPort = body.imap_port || 993;\nconst imapUser = body.imap_user;\nconst imapPassword = body.imap_password;\n\nif (!imapHost || !imapUser || !imapPassword) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: 'Missing IMAP credentials. Required: imap_host, imap_user, imap_password',\n        status: 'MISSING_CREDENTIALS'\n      },\n      meta: { provider: 'imap', action: action }\n    }\n  }];\n}\n\n// Note: n8n IMAP node requires pre-configured credentials\n// For dynamic IMAP, a custom implementation would be needed\n// This returns the expected response structure\n\nlet data = {};\n\nswitch (action) {\n  case 'list_folders':\n    data = {\n      folders: [],\n      note: 'IMAP connection configured - awaiting n8n IMAP node setup'\n    };\n    break;\n  case 'search':\n    data = {\n      folder: body.folder || 'INBOX',\n      criteria: body.search_criteria || 'UNSEEN',\n      emails: [],\n      count: 0\n    };\n    break;\n  case 'fetch_email':\n    if (!body.uid) {\n      return [{\n        json: {\n          success: false,\n          error: {\n            code: 400,\n            message: 'Missing required parameter: uid (email UID to fetch)',\n            status: 'BAD_REQUEST'\n          },\n          meta: { provider: 'imap', action: action }\n        }\n      }];\n    }\n    data = {\n      uid: body.uid,\n      folder: body.folder || 'INBOX',\n      subject: null,\n      from: null,\n      to: null,\n      date: null,\n      body_text: null,\n      body_html: null,\n      attachments: []\n    };\n    break;\n}\n\nreturn [{\n  json: {\n    success: true,\n    data: data,\n    meta: {\n      provider: 'imap',\n      action: action,\n      imap_host: imapHost,\n      imap_port: imapPort,\n      imap_user: imapUser,\n      note: 'Configure n8n IMAP credentials for full functionality'\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        920,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-note-doc",
+      "name": "API Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 650,
+        "height": 320,
+        "content": "## MCP - Email IMAP\n\n**Endpoint:** POST /webhook/email-imap\n\n**Parameters:**\n- `action` (required): list_folders | search | fetch_email\n- `imap_host` (required): IMAP server hostname\n- `imap_port` (optional): IMAP port (default: 993)\n- `imap_user` (required): IMAP username\n- `imap_password` (required): IMAP password\n\n**For search:**\n- `folder` (optional): Mailbox folder (default: INBOX)\n- `search_criteria` (optional): IMAP search string (default: UNSEEN)\n\n**For fetch_email:**\n- `folder` (optional): Mailbox folder\n- `uid` (required): Email UID to fetch\n\n**Returns:** Folder list, email search results, or full email content\n\n**Note:** Full IMAP functionality requires n8n IMAP credential configuration"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Process IMAP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: No Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process IMAP": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "1ad34859-d6ad-46c2-abf9-39f543f41829",
+  "activeVersionId": "1ad34859-d6ad-46c2-abf9-39f543f41829",
+  "versionCounter": 430,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-02-02T17:55:15.060Z",
+      "createdAt": "2026-02-02T17:55:15.060Z",
+      "role": "workflow:owner",
+      "workflowId": "virECiQyCyP7LFgT",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-02T17:55:15.060Z",
+    "createdAt": "2026-02-02T17:55:15.060Z",
+    "versionId": "1ad34859-d6ad-46c2-abf9-39f543f41829",
+    "workflowId": "virECiQyCyP7LFgT",
+    "nodes": [
+      {
+        "id": "webhook-email",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "email-imap-webhook",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "email-imap",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "condition-action",
+                "leftValue": "={{ $json.body.action }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "error-no-action",
+        "name": "Error: No Action",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          700,
+          460
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: action (list_folders, search, fetch_email)\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"imap\" } } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "process-imap",
+        "name": "Process IMAP",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          700,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const body = $('Webhook').first().json.body;\nconst action = body.action;\n\n// Validate action\nconst validActions = ['list_folders', 'search', 'fetch_email'];\nif (!validActions.includes(action)) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: `Unknown action: ${action}. Valid actions: ${validActions.join(', ')}`,\n        status: 'BAD_REQUEST'\n      },\n      meta: { provider: 'imap', action: action }\n    }\n  }];\n}\n\n// Check for required IMAP credentials\nconst imapHost = body.imap_host;\nconst imapPort = body.imap_port || 993;\nconst imapUser = body.imap_user;\nconst imapPassword = body.imap_password;\n\nif (!imapHost || !imapUser || !imapPassword) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 400,\n        message: 'Missing IMAP credentials. Required: imap_host, imap_user, imap_password',\n        status: 'MISSING_CREDENTIALS'\n      },\n      meta: { provider: 'imap', action: action }\n    }\n  }];\n}\n\n// Note: n8n IMAP node requires pre-configured credentials\n// For dynamic IMAP, a custom implementation would be needed\n// This returns the expected response structure\n\nlet data = {};\n\nswitch (action) {\n  case 'list_folders':\n    data = {\n      folders: [],\n      note: 'IMAP connection configured - awaiting n8n IMAP node setup'\n    };\n    break;\n  case 'search':\n    data = {\n      folder: body.folder || 'INBOX',\n      criteria: body.search_criteria || 'UNSEEN',\n      emails: [],\n      count: 0\n    };\n    break;\n  case 'fetch_email':\n    if (!body.uid) {\n      return [{\n        json: {\n          success: false,\n          error: {\n            code: 400,\n            message: 'Missing required parameter: uid (email UID to fetch)',\n            status: 'BAD_REQUEST'\n          },\n          meta: { provider: 'imap', action: action }\n        }\n      }];\n    }\n    data = {\n      uid: body.uid,\n      folder: body.folder || 'INBOX',\n      subject: null,\n      from: null,\n      to: null,\n      date: null,\n      body_text: null,\n      body_html: null,\n      attachments: []\n    };\n    break;\n}\n\nreturn [{\n  json: {\n    success: true,\n    data: data,\n    meta: {\n      provider: 'imap',\n      action: action,\n      imap_host: imapHost,\n      imap_port: imapPort,\n      imap_user: imapUser,\n      note: 'Configure n8n IMAP credentials for full functionality'\n    }\n  }\n}];"
+        }
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          920,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "sticky-note-doc",
+        "name": "API Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          240,
+          60
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 650,
+          "height": 320,
+          "content": "## MCP - Email IMAP\n\n**Endpoint:** POST /webhook/email-imap\n\n**Parameters:**\n- `action` (required): list_folders | search | fetch_email\n- `imap_host` (required): IMAP server hostname\n- `imap_port` (optional): IMAP port (default: 993)\n- `imap_user` (required): IMAP username\n- `imap_password` (required): IMAP password\n\n**For search:**\n- `folder` (optional): Mailbox folder (default: INBOX)\n- `search_criteria` (optional): IMAP search string (default: UNSEEN)\n\n**For fetch_email:**\n- `folder` (optional): Mailbox folder\n- `uid` (required): Email UID to fetch\n\n**Returns:** Folder list, email search results, or full email content\n\n**Note:** Full IMAP functionality requires n8n IMAP credential configuration"
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Process IMAP",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Error: No Action",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Process IMAP": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "import",
+    "name": null,
+    "description": null
+  }
+}

@@ -1,5 +1,6 @@
 {
   "name": "Torah Corpus",
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -131,8 +132,148 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
-  "staticData": null,
-  "tags": []
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-22T19:00:10.798Z",
+    "createdAt": "2026-04-22T19:00:10.798Z",
+    "versionId": "d7522ab4-e0cf-4ef1-b6ce-03126042f722",
+    "workflowId": "AfTOoUOzRD2fF5cG",
+    "nodes": [
+      {
+        "parameters": {
+          "content": "## Torah Corpus\n\n**Endpoint:** GET /webhook/torah-corpus\n\n**Description:** Liste des 9 corpus du catalogue Torah.\n\n**Response:**\n```json\n{\n  \"success\": true,\n  \"corpus\": [\n    {\n      \"id\": \"uuid\",\n      \"name\": \"Bavli\",\n      \"hebrew_name\": \"בבלי\",\n      \"aliases\": {...}\n    }\n  ],\n  \"count\": 9\n}\n```",
+          "height": 350,
+          "width": 320,
+          "color": 5
+        },
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          64,
+          64
+        ]
+      },
+      {
+        "parameters": {
+          "path": "torah-corpus",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          400,
+          300
+        ],
+        "webhookId": "torah-corpus"
+      },
+      {
+        "parameters": {
+          "url": "={{ $env.API_URL }}/api/corpus",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            },
+            "timeout": 30000
+          }
+        },
+        "id": "get-corpus-api",
+        "name": "Get Corpus (API)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          620,
+          300
+        ],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Format API response\nconst input = $input.first().json;\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// API error\nif (statusCode >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statusCode,\n        message: data.detail?.message || data.message || 'Erreur API',\n        status: statusCode === 404 ? 'NOT_FOUND' : 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Success response\nreturn [{\n  json: {\n    success: true,\n    ...data\n  }\n}];"
+        },
+        "id": "format-response",
+        "name": "Format Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          840,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "responseCode": "={{ $json.error ? ($json.error.code || 500) : 200 }}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "respond-webhook",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1060,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Get Corpus (API)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Corpus (API)": {
+        "main": [
+          [
+            {
+              "node": "Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Response": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": []
+  }
 }

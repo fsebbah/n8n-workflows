@@ -1,0 +1,836 @@
+{
+  "updatedAt": "2026-02-16T13:45:43.785Z",
+  "createdAt": "2026-02-16T13:45:37.171Z",
+  "id": "cq0AOYi20CdMvhdc",
+  "name": "TORAH - Translate Chapter",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        40,
+        100
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 400,
+        "height": 220,
+        "content": "## TORAH - Translate Chapter\n\n**Endpoint:** `POST /webhook/torah-translate-chapter`\n\n**Payload:**\n```json\n{\"source\": \"...\", \"chapter\": 3, \"anthropic_api_key\": \"sk-...\"}\n```\n\n**Optionnel:** `force: true` pour retraduire\n\n**API Backend:** `POST /api/torah/translations`"
+      }
+    },
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "torah-translate-chapter",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-translate-chapter",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nconst required = ['source', 'chapter'];\nconst missing = required.filter(field => body[field] === undefined || body[field] === null);\n\nif (missing.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required parameters: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nif (typeof body.chapter !== 'number' || body.chapter < 1) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'chapter must be a positive integer',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    source: body.source,\n    chapter: body.chapter,\n    language: body.language || 'fr',\n    force: body.force || false,\n    anthropic_api_key: body.anthropic_api_key,\n    model: body.model || 'claude-3-5-sonnet-20241022',\n    discord_user_id: body.discord_user_id || body.user_id\n  }\n};"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "get-chapter",
+      "name": "Get Chapter Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TORAH_API_URL }}/api/torah/chapters/{{ encodeURIComponent($json.source) }}/{{ $json.chapter }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "filter-untranslated",
+      "name": "Filter Untranslated Segments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const validData = $('Validate Input').first().json;\nconst chapterData = $input.first().json;\n\nif (!chapterData.segments || chapterData.segments.length === 0) {\n  return {\n    json: {\n      error: true,\n      message: 'No segments found'\n    }\n  };\n}\n\n// Filter segments that need translation\nconst toTranslate = validData.force \n  ? chapterData.segments \n  : chapterData.segments.filter(s => !s.text_translated && !s.translation);\n\nif (toTranslate.length === 0) {\n  return {\n    json: {\n      already_translated: true,\n      source: validData.source,\n      chapter: validData.chapter,\n      segments: chapterData.segments\n    }\n  };\n}\n\nreturn {\n  json: {\n    already_translated: false,\n    source: validData.source,\n    chapter: validData.chapter,\n    title: chapterData.title,\n    to_translate: toTranslate,\n    all_segments: chapterData.segments,\n    language: validData.language,\n    anthropic_api_key: validData.anthropic_api_key,\n    model: validData.model,\n    discord_user_id: validData.discord_user_id\n  }\n};"
+      }
+    },
+    {
+      "id": "check-needs-translation",
+      "name": "Needs Translation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1340,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.already_translated }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "call-claude",
+      "name": "Call Claude for Translation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $json.anthropic_api_key }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: 8192, system: 'Tu es un traducteur expert en textes hébraïques classiques (Kabbale, Talmud). Traduis fidèlement en français en préservant le sens mystique et les termes techniques. Réponds UNIQUEMENT en JSON: {\"translations\": [{\"index\": number, \"translation\": \"string\"}]}. Ne mets PAS de ```json```.', messages: [{ role: 'user', content: 'Traduis ces segments de ' + $json.source + ' (chapitre ' + $json.chapter + ') en français:\\n\\n' + $json.to_translate.map(s => 'Segment ' + s.index + ':\\n' + (s.text_hebrew || s.text)).join('\\n\\n') }] }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "parse-translations",
+      "name": "Parse Translations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const filterData = $('Filter Untranslated Segments').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  if (llmResponse.error) {\n    throw new Error(llmResponse.error.message || 'Claude API error');\n  }\n\n  const content = llmResponse.content?.[0]?.text || '';\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const parsed = JSON.parse(jsonStr);\n  const translationsMap = {};\n  parsed.translations.forEach(t => {\n    translationsMap[t.index] = t.translation;\n  });\n\n  // Merge translations with all segments\n  const mergedSegments = filterData.all_segments.map(s => ({\n    index: s.index,\n    text: s.text_hebrew || s.text,\n    translation: translationsMap[s.index] || s.text_translated || s.translation || null\n  }));\n\n  return {\n    json: {\n      success: true,\n      source: filterData.source,\n      chapter: filterData.chapter,\n      title: filterData.title,\n      segments: mergedSegments,\n      translated_count: parsed.translations.length,\n      language: filterData.language,\n      discord_user_id: filterData.discord_user_id\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      error: e.message,\n      source: filterData.source,\n      chapter: filterData.chapter\n    }\n  };\n}"
+      }
+    },
+    {
+      "id": "save-translations",
+      "name": "Save Translations to API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TORAH_API_URL }}/api/torah/translations",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ source: $json.source, chapter: $json.chapter, language: $json.language, segments: $json.segments.filter(s => s.translation).map(s => ({ index: s.index, translation: s.translation })), discord_user_id: $json.discord_user_id }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2220,
+        100
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, source: $('Parse Translations').first().json.source, chapter: $('Parse Translations').first().json.chapter, title: $('Parse Translations').first().json.title, segments: $('Parse Translations').first().json.segments, translated_count: $('Parse Translations').first().json.translated_count, total_segments: $('Parse Translations').first().json.segments.length } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-already-translated",
+      "name": "Respond Already Translated",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, source: $json.source, chapter: $json.chapter, message: 'All segments already translated', segments: $json.segments.map(s => ({ index: s.index, text: s.text_hebrew || s.text, translation: s.text_translated || s.translation })) } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $('Validate Input').first().json.error } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Chapter Content",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Chapter Content": {
+      "main": [
+        [
+          {
+            "node": "Filter Untranslated Segments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Untranslated Segments": {
+      "main": [
+        [
+          {
+            "node": "Needs Translation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Translation?": {
+      "main": [
+        [
+          {
+            "node": "Call Claude for Translation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Already Translated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude for Translation": {
+      "main": [
+        [
+          {
+            "node": "Parse Translations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Translations": {
+      "main": [
+        [
+          {
+            "node": "Save Translations to API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Translations to API": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "62c056aa-6686-4f9b-8a17-8ec87870ff51",
+  "activeVersionId": "62c056aa-6686-4f9b-8a17-8ec87870ff51",
+  "versionCounter": 48,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-02-16T13:45:37.171Z",
+      "createdAt": "2026-02-16T13:45:37.171Z",
+      "role": "workflow:owner",
+      "workflowId": "cq0AOYi20CdMvhdc",
+      "projectId": "U3cZjxLpPGVohw1b",
+      "project": {
+        "updatedAt": "2026-02-02T18:03:13.881Z",
+        "createdAt": "2026-02-02T17:54:12.365Z",
+        "id": "U3cZjxLpPGVohw1b",
+        "name": "Sebbah fsebbah@azy.solutions <fsebbah@azy.solutions>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-02T17:54:12.365Z",
+            "createdAt": "2026-02-02T17:54:12.365Z",
+            "userId": "af142d6e-919f-4345-b234-759caa50a7bb",
+            "projectId": "U3cZjxLpPGVohw1b",
+            "user": {
+              "updatedAt": "2026-04-09T12:42:54.002Z",
+              "createdAt": "2026-02-02T17:54:09.643Z",
+              "id": "af142d6e-919f-4345-b234-759caa50a7bb",
+              "email": "fsebbah@azy.solutions",
+              "firstName": "Sebbah",
+              "lastName": "fsebbah@azy.solutions",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-02-02T18:03:20.553Z",
+                "personalization_survey_n8n_version": "2.6.3"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "zFOKwZABmUlo7tg6",
+                "userActivatedAt": 1770062456227,
+                "npsSurvey": {
+                  "waitingForResponse": true,
+                  "ignoredCount": 1,
+                  "lastShownAt": 1771441113942
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-09",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-02-16T13:45:37.190Z",
+    "createdAt": "2026-02-16T13:45:37.190Z",
+    "versionId": "62c056aa-6686-4f9b-8a17-8ec87870ff51",
+    "workflowId": "cq0AOYi20CdMvhdc",
+    "nodes": [
+      {
+        "id": "sticky-doc",
+        "name": "Documentation",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          40,
+          100
+        ],
+        "parameters": {
+          "color": 6,
+          "width": 400,
+          "height": 220,
+          "content": "## TORAH - Translate Chapter\n\n**Endpoint:** `POST /webhook/torah-translate-chapter`\n\n**Payload:**\n```json\n{\"source\": \"...\", \"chapter\": 3, \"anthropic_api_key\": \"sk-...\"}\n```\n\n**Optionnel:** `force: true` pour retraduire\n\n**API Backend:** `POST /api/torah/translations`"
+        }
+      },
+      {
+        "id": "webhook",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "torah-translate-chapter",
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "torah-translate-chapter",
+          "responseMode": "responseNode",
+          "options": {}
+        }
+      },
+      {
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "jsCode": "const rawBody = $input.first().json.body || $input.first().json;\nconst body = rawBody.body || rawBody;\n\nconst required = ['source', 'chapter'];\nconst missing = required.filter(field => body[field] === undefined || body[field] === null);\n\nif (missing.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: `Missing required parameters: ${missing.join(', ')}`,\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nif (typeof body.chapter !== 'number' || body.chapter < 1) {\n  return {\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: 'chapter must be a positive integer',\n        status: 'BAD_REQUEST'\n      }\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    source: body.source,\n    chapter: body.chapter,\n    language: body.language || 'fr',\n    force: body.force || false,\n    anthropic_api_key: body.anthropic_api_key,\n    model: body.model || 'claude-3-5-sonnet-20241022',\n    discord_user_id: body.discord_user_id || body.user_id\n  }\n};"
+        }
+      },
+      {
+        "id": "check-valid",
+        "name": "Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          680,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "get-chapter",
+        "name": "Get Chapter Content",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          900,
+          200
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $env.TORAH_API_URL }}/api/torah/chapters/{{ encodeURIComponent($json.source) }}/{{ $json.chapter }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "filter-untranslated",
+        "name": "Filter Untranslated Segments",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1120,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const validData = $('Validate Input').first().json;\nconst chapterData = $input.first().json;\n\nif (!chapterData.segments || chapterData.segments.length === 0) {\n  return {\n    json: {\n      error: true,\n      message: 'No segments found'\n    }\n  };\n}\n\n// Filter segments that need translation\nconst toTranslate = validData.force \n  ? chapterData.segments \n  : chapterData.segments.filter(s => !s.text_translated && !s.translation);\n\nif (toTranslate.length === 0) {\n  return {\n    json: {\n      already_translated: true,\n      source: validData.source,\n      chapter: validData.chapter,\n      segments: chapterData.segments\n    }\n  };\n}\n\nreturn {\n  json: {\n    already_translated: false,\n    source: validData.source,\n    chapter: validData.chapter,\n    title: chapterData.title,\n    to_translate: toTranslate,\n    all_segments: chapterData.segments,\n    language: validData.language,\n    anthropic_api_key: validData.anthropic_api_key,\n    model: validData.model,\n    discord_user_id: validData.discord_user_id\n  }\n};"
+        }
+      },
+      {
+        "id": "check-needs-translation",
+        "name": "Needs Translation?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1340,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.already_translated }}",
+                "rightValue": false,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "call-claude",
+        "name": "Call Claude for Translation",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1560,
+          100
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "authentication": "none",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $json.anthropic_api_key }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: 8192, system: 'Tu es un traducteur expert en textes hébraïques classiques (Kabbale, Talmud). Traduis fidèlement en français en préservant le sens mystique et les termes techniques. Réponds UNIQUEMENT en JSON: {\"translations\": [{\"index\": number, \"translation\": \"string\"}]}. Ne mets PAS de ```json```.', messages: [{ role: 'user', content: 'Traduis ces segments de ' + $json.source + ' (chapitre ' + $json.chapter + ') en français:\\n\\n' + $json.to_translate.map(s => 'Segment ' + s.index + ':\\n' + (s.text_hebrew || s.text)).join('\\n\\n') }] }) }}",
+          "options": {
+            "timeout": 300000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "parse-translations",
+        "name": "Parse Translations",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1780,
+          100
+        ],
+        "parameters": {
+          "jsCode": "const filterData = $('Filter Untranslated Segments').first().json;\nconst llmResponse = $input.first().json;\n\ntry {\n  if (llmResponse.error) {\n    throw new Error(llmResponse.error.message || 'Claude API error');\n  }\n\n  const content = llmResponse.content?.[0]?.text || '';\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\n?([\\s\\S]*?)\\n?```/);\n  if (jsonMatch) {\n    jsonStr = jsonMatch[1];\n  }\n  \n  const parsed = JSON.parse(jsonStr);\n  const translationsMap = {};\n  parsed.translations.forEach(t => {\n    translationsMap[t.index] = t.translation;\n  });\n\n  // Merge translations with all segments\n  const mergedSegments = filterData.all_segments.map(s => ({\n    index: s.index,\n    text: s.text_hebrew || s.text,\n    translation: translationsMap[s.index] || s.text_translated || s.translation || null\n  }));\n\n  return {\n    json: {\n      success: true,\n      source: filterData.source,\n      chapter: filterData.chapter,\n      title: filterData.title,\n      segments: mergedSegments,\n      translated_count: parsed.translations.length,\n      language: filterData.language,\n      discord_user_id: filterData.discord_user_id\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      success: false,\n      error: e.message,\n      source: filterData.source,\n      chapter: filterData.chapter\n    }\n  };\n}"
+        }
+      },
+      {
+        "id": "save-translations",
+        "name": "Save Translations to API",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2000,
+          100
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.TORAH_API_URL }}/api/torah/translations",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ source: $json.source, chapter: $json.chapter, language: $json.language, segments: $json.segments.filter(s => s.translation).map(s => ({ index: s.index, translation: s.translation })), discord_user_id: $json.discord_user_id }) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "respond-success",
+        "name": "Respond Success",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2220,
+          100
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: true, source: $('Parse Translations').first().json.source, chapter: $('Parse Translations').first().json.chapter, title: $('Parse Translations').first().json.title, segments: $('Parse Translations').first().json.segments, translated_count: $('Parse Translations').first().json.translated_count, total_segments: $('Parse Translations').first().json.segments.length } }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "respond-already-translated",
+        "name": "Respond Already Translated",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1560,
+          300
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: true, source: $json.source, chapter: $json.chapter, message: 'All segments already translated', segments: $json.segments.map(s => ({ index: s.index, text: s.text_hebrew || s.text, translation: s.text_translated || s.translation })) } }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "respond-validation-error",
+        "name": "Respond Validation Error",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          900,
+          400
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { success: false, error: $('Validate Input').first().json.error } }}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Valid?": {
+        "main": [
+          [
+            {
+              "node": "Get Chapter Content",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Validation Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Chapter Content": {
+        "main": [
+          [
+            {
+              "node": "Filter Untranslated Segments",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Filter Untranslated Segments": {
+        "main": [
+          [
+            {
+              "node": "Needs Translation?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Needs Translation?": {
+        "main": [
+          [
+            {
+              "node": "Call Claude for Translation",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond Already Translated",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Claude for Translation": {
+        "main": [
+          [
+            {
+              "node": "Parse Translations",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Translations": {
+        "main": [
+          [
+            {
+              "node": "Save Translations to API",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Save Translations to API": {
+        "main": [
+          [
+            {
+              "node": "Respond Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Sebbah fsebbah@azy.solutions",
+    "name": null,
+    "description": null
+  }
+}

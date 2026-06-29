@@ -1,0 +1,378 @@
+{
+  "name": "CHANNELS---Private-Recovery",
+  "description": "Retry failed channel registrations stored in Redis (migrated from file-based ExecuteCommand)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "channel-recovery-0001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/key/n8n:pending_channels",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "channel-recovery-0002",
+      "name": "Read Pending Channels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        304
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PARSE PENDING CHANNELS FROM REDIS\n// Migrated from file-based JSONL to Redis key\n// ============================================\n\nconst response = $input.first().json;\n\n// Check if key exists and has value\nif (!response.exists || !response.value) {\n  return {\n    has_entries: false,\n    entries: [],\n    message: 'No pending channels to process'\n  };\n}\n\nconst content = response.value;\n\n// Parse JSONL (one JSON per line)\nconst lines = content.trim().split('\\n').filter(line => line.trim());\nconst entries = [];\n\nfor (const line of lines) {\n  try {\n    const entry = JSON.parse(line);\n    entries.push(entry);\n  } catch (e) {\n    // Skip invalid JSON lines\n    console.log('Invalid JSON line:', line);\n  }\n}\n\nreturn {\n  has_entries: entries.length > 0,\n  entries: entries,\n  count: entries.length\n};"
+      },
+      "id": "channel-recovery-0003",
+      "name": "Parse JSONL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-has-entries",
+              "leftValue": "={{ $json.has_entries }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "channel-recovery-0004",
+      "name": "Has Entries?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        672,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// SPLIT ENTRIES FOR PROCESSING\n// ============================================\n\nconst data = $input.first().json;\nconst entries = data.entries || [];\n\n// Return each entry as separate item for loop processing\nreturn entries.map(entry => ({ entry }));"
+      },
+      "id": "channel-recovery-0005",
+      "name": "Split Entries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL }}/api/channels/private",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.entry.project_id }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"guild_id\": {{ JSON.stringify($json.entry.guild_id) }},\n  \"discord_user_id\": {{ JSON.stringify($json.entry.user_id) }},\n  \"channel_id\": {{ JSON.stringify($json.entry.channel_id) }},\n  \"channel_type\": {{ JSON.stringify($json.entry.type) }},\n  \"channel_name\": {{ JSON.stringify($json.entry.name) }}\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "channel-recovery-0006",
+      "name": "Retry Register Channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1104,
+        208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// COLLECT RESULTS\n// ============================================\n\nconst items = $input.all();\nconst results = {\n  processed: 0,\n  success: 0,\n  failed: 0,\n  failures: []\n};\n\nfor (const item of items) {\n  results.processed++;\n  if (item.json.success) {\n    results.success++;\n  } else {\n    results.failed++;\n    results.failures.push({\n      channel_id: item.json.entry?.channel_id,\n      error: item.json.error || 'Unknown error'\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "channel-recovery-0007",
+      "name": "Collect Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-all-success",
+              "leftValue": "={{ $json.failed }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "channel-recovery-0008",
+      "name": "All Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/key/n8n:pending_channels",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "channel-recovery-0009",
+      "name": "Clear Pending Channels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        256
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// REWRITE LOG WITH FAILURES ONLY\n// ============================================\n\nconst results = $('Collect Results').first().json;\nconst originalEntries = $('Parse JSONL').first().json.entries || [];\n\n// Keep only entries that failed\nconst failedChannelIds = results.failures.map(f => f.channel_id);\nconst entriesToKeep = originalEntries.filter(e => \n  failedChannelIds.includes(e.channel_id)\n);\n\n// Convert back to JSONL\nconst newLogContent = entriesToKeep\n  .map(e => JSON.stringify(e))\n  .join('\\n');\n\nreturn {\n  new_log_content: newLogContent,\n  entries_kept: entriesToKeep.length,\n  results: results\n};"
+      },
+      "id": "channel-recovery-0010",
+      "name": "Prepare Updated Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/key/n8n:pending_channels",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.new_log_content ? JSON.stringify({ value: $json.new_log_content }) : JSON.stringify({ value: '' }) }}"
+      },
+      "id": "channel-recovery-0011",
+      "name": "Update Pending Channels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1984,
+        80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NO ENTRIES - NOTHING TO DO\n// ============================================\n\nreturn {\n  message: 'No pending channels to process',\n  processed: 0\n};"
+      },
+      "id": "channel-recovery-0012",
+      "name": "No Entries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Pending Channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Pending Channels": {
+      "main": [
+        [
+          {
+            "node": "Parse JSONL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSONL": {
+      "main": [
+        [
+          {
+            "node": "Has Entries?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Entries?": {
+      "main": [
+        [
+          {
+            "node": "No Entries",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Entries": {
+      "main": [
+        [
+          {
+            "node": "Retry Register Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Register Channel": {
+      "main": [
+        [
+          {
+            "node": "Collect Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Results": {
+      "main": [
+        [
+          {
+            "node": "All Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All Success?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Updated Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clear Pending Channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Updated Log": {
+      "main": [
+        [
+          {
+            "node": "Update Pending Channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    "channels",
+    "recovery",
+    "discord"
+  ]
+}
