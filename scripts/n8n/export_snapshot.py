@@ -112,15 +112,28 @@ def export_workflow(workflow_id):
     return None
 
 
+# Settings acceptés par le schéma d'écriture de l'API n8n (sinon le réimport
+# échoue en 400 "settings must NOT have additional properties").
+VALID_WORKFLOW_SETTINGS = {
+    'executionOrder', 'saveManualExecutions', 'saveExecutionProgress',
+    'saveDataErrorExecution', 'saveDataSuccessExecution', 'executionTimeout',
+    'errorWorkflow', 'timezone', 'callerPolicy', 'callerIds',
+}
+
+
 def clean_workflow_for_export(workflow):
     fields_to_remove = [
         'id', 'versionId', 'createdAt', 'updatedAt',
         'meta', 'triggerCount', 'staticData', 'isArchived',
-        'activeVersionId', 'versionCounter', 'description',
+        'activeVersionId', 'activeVersion', 'versionCounter', 'description',
         'pinData', 'shared', 'homeProject', 'scopes'
     ]
     for field in fields_to_remove:
         workflow.pop(field, None)
+    # Sanitize settings : ne garder que les clés acceptées en écriture
+    s = workflow.get('settings')
+    if isinstance(s, dict):
+        workflow['settings'] = {k: v for k, v in s.items() if k in VALID_WORKFLOW_SETTINGS}
     return workflow
 
 

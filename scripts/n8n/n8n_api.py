@@ -244,6 +244,29 @@ def test_webhook(path, data=None):
     except Exception as e:
         print(f"Error: {e}")
 
+# Settings acceptés par le schéma d'ÉCRITURE de l'API n8n (PUT/POST).
+# L'API GET (export) renvoie des champs en plus (availableInMCP, binaryMode, ...)
+# que l'API d'écriture REFUSE : "settings must NOT have additional properties".
+# Sans ce filtrage, le PUT échoue en 400 → fallback delete+import → perte du workflow.
+VALID_WORKFLOW_SETTINGS = {
+    'executionOrder', 'saveManualExecutions', 'saveExecutionProgress',
+    'saveDataErrorExecution', 'saveDataSuccessExecution', 'executionTimeout',
+    'errorWorkflow', 'timezone', 'callerPolicy', 'callerIds',
+}
+
+
+def _sanitize_settings(workflow_data):
+    """Retire les clés de settings non acceptées par l'API d'écriture n8n (in-place)."""
+    settings = workflow_data.get('settings')
+    if isinstance(settings, dict):
+        removed = [k for k in settings if k not in VALID_WORKFLOW_SETTINGS]
+        for k in removed:
+            settings.pop(k, None)
+        if removed:
+            print(f"   ⚙️  settings non-API retirés: {', '.join(removed)}")
+    return workflow_data
+
+
 def import_workflow(json_file, debug=False):
     """Import workflow from JSON file"""
     if not os.path.exists(json_file):
@@ -263,6 +286,7 @@ def import_workflow(json_file, debug=False):
     ]
     for prop in properties_to_remove:
         workflow_data.pop(prop, None)
+    _sanitize_settings(workflow_data)
 
     print(f"Importing workflow: {workflow_data.get('name', 'Unknown')}")
     response = api_request('POST', '/workflows', workflow_data, debug=debug)
@@ -363,6 +387,7 @@ def update_workflow(workflow_id, json_file, activate_after=True):
     ]
     for prop in properties_to_remove:
         workflow_data.pop(prop, None)
+    _sanitize_settings(workflow_data)
 
     response = api_request('PUT', f'/workflows/{workflow_id}', workflow_data, debug=True)
 
