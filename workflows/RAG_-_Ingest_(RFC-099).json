@@ -30,7 +30,22 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// HMAC VERIFICATION - RFC-099\n// ============================================\n\nconst crypto = require('crypto');\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\n// Get HMAC signature from header\nconst signatureHeader = headers['x-webhook-signature'] || headers['X-Webhook-Signature'] || '';\nconst providedSignature = signatureHeader.replace('sha256=', '');\n\n// Get secret from env\nconst secret = process.env.N8N_RAG_WEBHOOK_SECRET;\n\nif (!secret) {\n  return {\n    hmac_valid: false,\n    error: 'N8N_RAG_WEBHOOK_SECRET not configured',\n    http_code: 500\n  };\n}\n\nif (!signatureHeader) {\n  return {\n    hmac_valid: false,\n    error: 'Missing X-Webhook-Signature header',\n    http_code: 401\n  };\n}\n\n// Compute HMAC-SHA256\n// Body should be the raw JSON string\nconst bodyString = JSON.stringify(body, null, 0); // Compact JSON\nconst hmac = crypto.createHmac('sha256', secret);\nhmac.update(bodyString, 'utf8');\nconst computedSignature = hmac.digest('hex');\n\n// Timing-safe comparison\nconst isValid = crypto.timingSafeEqual(\n  Buffer.from(providedSignature, 'hex'),\n  Buffer.from(computedSignature, 'hex')\n);\n\nif (!isValid) {\n  return {\n    hmac_valid: false,\n    error: 'Invalid HMAC signature',\n    http_code: 401,\n    debug: {\n      provided: providedSignature.substring(0, 16) + '...',\n      computed: computedSignature.substring(0, 16) + '...'\n    }\n  };\n}\n\nreturn {\n  hmac_valid: true,\n  body: body,\n  headers: headers\n};"
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ JSON.stringify($json.body) }}",
+        "secret": "={{ $env.N8N_RAG_WEBHOOK_SECRET }}",
+        "encoding": "hex",
+        "dataPropertyName": "computed_signature"
+      },
+      "id": "compute-hmac",
+      "name": "Compute HMAC",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [760, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verification HMAC — signature calculee par le node Crypto 'Compute HMAC'\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\nconst computed = String(input.computed_signature || '').toLowerCase();\nconst sigHeader = headers['x-webhook-signature'] || headers['X-Webhook-Signature'] || '';\nconst provided = sigHeader.replace('sha256=', '').toLowerCase();\n\nif (!sigHeader) {\n  return { hmac_valid: false, error: 'Missing X-Webhook-Signature header', http_code: 401, body, headers };\n}\nif (!computed) {\n  return { hmac_valid: false, error: 'HMAC non calcule (verifier N8N_RAG_WEBHOOK_SECRET / acces $env)', http_code: 500, body, headers };\n}\nif (provided.length !== computed.length || provided !== computed) {\n  return { hmac_valid: false, error: 'Invalid HMAC signature', http_code: 401, body, headers };\n}\nreturn { hmac_valid: true, body, headers };"
       },
       "id": "verify-hmac",
       "name": "Verify HMAC",
@@ -294,8 +309,11 @@
     }
   ],
   "connections": {
-    "Webhook": {
+    "Compute HMAC": {
       "main": [[{"node": "Verify HMAC", "type": "main", "index": 0}]]
+    },
+    "Webhook": {
+      "main": [[{"node": "Compute HMAC", "type": "main", "index": 0}]]
     },
     "Verify HMAC": {
       "main": [[{"node": "HMAC Valid?", "type": "main", "index": 0}]]
