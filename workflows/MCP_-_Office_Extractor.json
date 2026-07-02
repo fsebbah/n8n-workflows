@@ -1,0 +1,266 @@
+{
+  "name": "MCP - Office Extractor",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## MCP - Office Extractor\n\n**Endpoint:** POST /webhook/office-extractor\n\nExtraction texte **docx / xlsx / pptx** via **Apache Tika** (http://webs.local:9998).\n\n**Input:** `{ file_url }` ou `{ b2_file_key, b2_bucket_url? }`\n**Output:** `{ success, text, char_count }`\n\n**Streaming** : le fichier est téléchargé depuis B2 puis **streamé** dans le PUT Tika (parse en mémoire). **Aucun fichier stocké sur webs.**",
+        "height": 340,
+        "width": 380,
+        "color": 4
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "office-extractor",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        320
+      ],
+      "webhookId": "office-extractor"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valide l'input et construit l'URL du fichier (B2 ou directe)\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst fileUrl = body.file_url || ctx.file_url || null;\nconst b2FileKey = body.b2_file_key || ctx.b2_file_key || null;\nconst b2BucketUrl = body.b2_bucket_url || ctx.b2_bucket_url || 'https://f005.backblazeb2.com/file/azy-storage';\n\nlet url = fileUrl;\nif (!url && b2FileKey) url = `${b2BucketUrl}/${b2FileKey}`;\n\nif (!url) {\n  return [{ json: { valid: false, error: { code: 400, message: 'file_url ou b2_file_key requis' } } }];\n}\nreturn [{ json: { valid: true, file_url: url } }];"
+      },
+      "id": "validate",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "valid-if",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        700,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        920,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.file_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "download",
+      "name": "Download File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://webs.local:9998/tika",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "text/plain"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "tika",
+      "name": "Tika Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lit le texte renvoye par Tika (text/plain) + trim (Tika prefixe des \\n)\nconst text = String(($input.first().json.data) || '').trim();\nif (!text) {\n  return [{ json: { success: false, error: { code: 'EMPTY', message: 'Tika a renvoye un contenu vide' } } }];\n}\nreturn [{ json: { success: true, text: text, char_count: text.length } }];"
+      },
+      "id": "format",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1520,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Download File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File": {
+      "main": [
+        [
+          {
+            "node": "Tika Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tika Extract": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
