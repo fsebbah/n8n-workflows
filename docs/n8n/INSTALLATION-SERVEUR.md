@@ -20,7 +20,7 @@ testé par l'éditeur).
 - ❌ `image: n8nio/n8n:latest` → interdit (dérive de version + migration sauvage
   du schéma de la base partagée — vécu : host2 en `latest` a migré la base en 2.28
   pendant que le reste du parc était en 2.20)
-- ✅ `image: docker.n8n.io/n8nio/n8n:<version épinglée>` — actuellement **2.28.7**
+- ✅ `image: docker.n8n.io/n8nio/n8n:<version épinglée>` — actuellement **2.29.7**
 
 ## 2. Prérequis communs
 
@@ -83,14 +83,14 @@ sudo systemctl enable --now docker  # …et enabled au boot (sinon rien ne survi
 git clone git@github.com:fsebbah/n8n-workflows.git && cd n8n-workflows/docker
 cp /chemin/vers/.env.local .env.local && chmod 600 .env.local   # adapter §2.2 !
 # Vérifier l'image épinglée :
-grep image: docker-compose.yml      # docker.n8n.io/n8nio/n8n:2.28.7
+grep image: docker-compose.yml      # docker.n8n.io/n8nio/n8n:2.29.7
 # Custom nodes buildés (§2.3) : adapter le volume du compose si besoin
 #   - <chemin des packages buildés>:/home/node/.n8n/nodes
 ```
 
 **Récupérer l'image sans internet** (depuis une machine du parc qui l'a) :
 ```bash
-ssh fsebb@host2.local 'docker save docker.n8n.io/n8nio/n8n:2.28.7' | docker load
+ssh fsebb@host2.local 'docker save docker.n8n.io/n8nio/n8n:2.29.7' | docker load
 ```
 
 ### 3.3 Démarrage / relance — TOUJOURS via `deploy.sh`

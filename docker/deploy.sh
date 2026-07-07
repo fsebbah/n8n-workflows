@@ -8,6 +8,12 @@ cd "$(dirname "$0")"
 
 [ -f .env.local ] || { echo "❌ .env.local manquant dans $(pwd)"; exit 1; }
 
+# Garde-fou : refuser une image non épinglée (latest = dérive de version
+# + migration sauvage du schéma partagé — incident du 2026-07-07)
+if grep -qE "image:.*n8n:(latest|\s*$)" docker-compose.yml; then
+  echo "❌ image non épinglée (latest) dans docker-compose.yml — épingler une version (ex: 2.29.7)"; exit 1
+fi
+
 if [ "${1:-}" = "--pull" ]; then
   echo "→ pull de l'image épinglée…"
   docker compose --env-file .env.local pull
