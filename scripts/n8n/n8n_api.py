@@ -421,14 +421,26 @@ def update_workflow(workflow_id, json_file, activate_after=True):
         return None
 
 def find_workflow_by_name(name):
-    """Find workflow ID by exact name"""
-    response = api_request('GET', '/workflows')
-    if response and response.status_code == 200:
+    """Find workflow ID by exact name.
+
+    Paginates through ALL workflows: the API returns max 100 per page.
+    A single GET only sees the first page — with 300+ workflows in the
+    shared DB, that silently missed existing workflows and batch-reimport
+    created duplicates (webhook 409 conflicts).
+    """
+    cursor = None
+    while True:
+        endpoint = '/workflows?limit=100' + (f'&cursor={cursor}' if cursor else '')
+        response = api_request('GET', endpoint)
+        if not response or response.status_code != 200:
+            return None
         data = response.json()
         for w in data.get('data', []):
             if w['name'] == name:
                 return w
-    return None
+        cursor = data.get('nextCursor')
+        if not cursor:
+            return None
 
 
 def get_db_connection():
@@ -904,11 +916,19 @@ def batch_reimport(list_file, workflows_dir=None, dry_run=False, delete_old=True
 
         existing = find_workflow_by_name(workflow_name)
 
+        # Anti-duplicate guard: reimport means REPLACE an existing workflow.
+        # If the name lookup finds nothing, importing anyway would create a
+        # duplicate whose webhook paths conflict (409) with the real one.
+        if not existing:
+            log(f"  ❌ No existing workflow named '{workflow_name}' — refusing to create "
+                f"(use import-workflow for a genuinely new workflow)")
+            results['skipped'].append((name, "not found — refused to create"))
+            continue
+
         if dry_run:
-            if existing:
-                log(f"  [DRY RUN] Would deactivate: {existing['name']} (ID: {existing['id']})")
-                if delete_old:
-                    log(f"  [DRY RUN] Would delete: {existing['id']}")
+            log(f"  [DRY RUN] Would deactivate: {existing['name']} (ID: {existing['id']})")
+            if delete_old:
+                log(f"  [DRY RUN] Would delete: {existing['id']}")
             log(f"  [DRY RUN] Would import: {json_file}")
             log(f"  [DRY RUN] Would activate new workflow")
             results['success'].append((name, "DRY RUN"))
@@ -916,24 +936,21 @@ def batch_reimport(list_file, workflows_dir=None, dry_run=False, delete_old=True
 
         try:
             # Step 1: Deactivate existing workflow
-            if existing:
-                log(f"  1. Found existing: {existing['name']} (ID: {existing['id']}, active: {existing.get('active')})")
-                if existing.get('active'):
-                    log(f"     Deactivating...")
-                    api_request('POST', f"/workflows/{existing['id']}/deactivate")
+            log(f"  1. Found existing: {existing['name']} (ID: {existing['id']}, active: {existing.get('active')})")
+            if existing.get('active'):
+                log(f"     Deactivating...")
+                api_request('POST', f"/workflows/{existing['id']}/deactivate")
 
-                # Step 2: Delete existing workflow (if --delete flag)
-                if delete_old:
-                    log(f"  2. Deleting: {existing['id']}")
-                    resp = api_request('DELETE', f"/workflows/{existing['id']}")
-                    if resp and resp.status_code in [200, 204]:
-                        log(f"     Deleted successfully")
-                    else:
-                        log(f"     Delete failed: {resp.text if resp else 'No response'}")
+            # Step 2: Delete existing workflow (if --delete flag)
+            if delete_old:
+                log(f"  2. Deleting: {existing['id']}")
+                resp = api_request('DELETE', f"/workflows/{existing['id']}")
+                if resp and resp.status_code in [200, 204]:
+                    log(f"     Deleted successfully")
                 else:
-                    log(f"  2. Skipping delete (--no-delete flag)")
+                    log(f"     Delete failed: {resp.text if resp else 'No response'}")
             else:
-                log(f"  1-2. No existing workflow found with name: {workflow_name}")
+                log(f"  2. Skipping delete (--no-delete flag)")
 
             # Step 3: Import new workflow
             log(f"  3. Importing: {json_file.name}")
