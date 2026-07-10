@@ -134,7 +134,8 @@ docker compose --env-file .env.local logs n8n --tail 100 | grep -c "Unrecognized
 |---|---|---|
 | **redis-xadd** | host2, Docker (`n8n-redis-xadd`) | Redis Streams en HTTP pour les workflows batch LLM (`REDIS_XADD_SERVICE_URL`) |
 | **Apache Tika** 3.3.1 | webs.local:9998, systemd natif (`tika.service`) | extraction Office/PDF natif pour le RAG (`MCP - Office Extractor`) — streaming, aucun stockage |
-| **torah.api** | host2:/storage4/torah.api, Docker (port 3031) | consommé par le workflow torah-corpus (`API_URL=http://host2.local:3031`) |
+| **torah.api** | host2:/storage4/torah.api, Docker (port 3031) | service torah (host2.local:3031) — **reste sur host2** |
+| **API backend** | **llm.local:3301 (dev)** / **llm2.local:3301 (staging)** | API applicative consommée par les workflows via `$env.API_URL` (ex. `Torah Corpus Sedarim` → `{{ $env.API_URL }}/api/corpus/…`). L'instance n8n de llm a `API_URL=http://llm2.local:3301` (staging). **llm2.local doit être dans les `extra_hosts`** (PR #388). |
 
 ## 7. Points de vigilance (tous vécus)
 
