@@ -20,19 +20,6 @@
       }
     },
     {
-      "id": "validate-input",
-      "name": "Validate Input",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        460,
-        300
-      ],
-      "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Text Embedder\n// RFC-014 Extraction with Optional Context Fields\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Support RFC-014: data in context.* with fallback to root level\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- OPTIONAL context fields (extract for tracing, NO validation errors if missing) ---\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\n// --- Required parameters specific to this webhook ---\nconst text = body.text || ctx.text;\nconst openaiApiKey = body.openai_api_key || ctx.openai_api_key;\nconst model = body.model || ctx.model || 'text-embedding-3-small';\nconst dimensions = body.dimensions || ctx.dimensions || 1536;\n\nif (!text) {\n  errors.push('text requis (string ou array de strings)');\n}\n\nif (!openaiApiKey) {\n  errors.push('openai_api_key requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    user_id: userId,\n    guild_id: guildId,\n    user_request: userRequest\n  };\n}\n\nreturn {\n  valid: true,\n  text: text,\n  openai_api_key: openaiApiKey,\n  model: model,\n  dimensions: dimensions,\n  user_id: userId,\n  guild_id: guildId,\n  user_request: userRequest,\n  startTime: Date.now()\n};"
-      }
-    },
-    {
       "id": "if-valid",
       "name": "Valid?",
       "type": "n8n-nodes-base.if",
@@ -74,7 +61,7 @@
         460
       ],
       "parameters": {
-        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'openai',\n    model: 'text-embedding-3-small',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: input.provider || 'openai',\n    model: input.model || 'unknown',\n    mode: 'error',\n    latency_ms: 0,\n    user_id: input.user_id,\n    guild_id: input.guild_id,\n    user_request: input.user_request\n  },\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  user_id: input.user_id,\n  guild_id: input.guild_id,\n  user_request: input.user_request\n};"
       }
     },
     {
@@ -100,54 +87,6 @@
             ]
           }
         }
-      }
-    },
-    {
-      "id": "openai-embeddings",
-      "name": "OpenAI Embeddings",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        900,
-        200
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.openai.com/v1/embeddings",
-        "authentication": "none",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $json.openai_api_key }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"{{ $json.model }}\",\n  \"input\": {{ Array.isArray($json.text) ? JSON.stringify($json.text) : JSON.stringify($json.text) }},\n  \"dimensions\": {{ $json.dimensions }}\n}",
-        "options": {
-          "timeout": 60000
-        }
-      },
-      "onError": "continueRegularOutput"
-    },
-    {
-      "id": "parse-response",
-      "name": "Parse Response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1120,
-        200
-      ],
-      "parameters": {
-        "jsCode": "// ============================================\n// PARSE RESPONSE - MCP Text Embedder\n// With _trace for analyzable webhooks\n// ============================================\n\nconst items = $input.all();\nconst validationData = $('Validate Input').first().json;\n\nconst results = items.map(item => {\n  const latencyMs = Date.now() - validationData.startTime;\n  \n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'OpenAI API error',\n          status: 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: validationData.model\n        },\n        user_id: validationData.user_id,\n        guild_id: validationData.guild_id,\n        user_request: validationData.user_request,\n        _trace: {\n          service_response: { error: item.json.error },\n          provider: 'openai',\n          model: validationData.model,\n          mode: 'error',\n          latency_ms: latencyMs,\n          user_id: validationData.user_id,\n          guild_id: validationData.guild_id,\n          user_request: validationData.user_request\n        }\n      }\n    };\n  }\n\n  try {\n    const data = item.json.data || [];\n    const embeddings = data.map(d => ({\n      index: d.index,\n      embedding: d.embedding,\n      dimensions: d.embedding?.length || 0\n    }));\n    \n    const responseData = {\n      embeddings: embeddings,\n      count: embeddings.length,\n      model: item.json.model,\n      dimensions: embeddings[0]?.dimensions || 0\n    };\n    \n    return {\n      json: {\n        success: true,\n        data: responseData,\n        meta: {\n          provider: 'openai',\n          model: item.json.model || validationData.model,\n          usage: item.json.usage || {}\n        },\n        user_id: validationData.user_id,\n        guild_id: validationData.guild_id,\n        user_request: validationData.user_request,\n        _trace: {\n          service_response: responseData,\n          provider: 'openai',\n          model: item.json.model || validationData.model,\n          mode: 'success',\n          latency_ms: latencyMs,\n          token_usage: item.json.usage || {},\n          user_id: validationData.user_id,\n          guild_id: validationData.guild_id,\n          user_request: validationData.user_request\n        }\n      }\n    };\n  } catch (e) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: 500,\n          message: 'Failed to parse embeddings response: ' + e.message,\n          status: 'PARSE_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          model: validationData.model\n        },\n        user_id: validationData.user_id,\n        guild_id: validationData.guild_id,\n        user_request: validationData.user_request,\n        _trace: {\n          service_response: { parse_error: e.message },\n          provider: 'openai',\n          model: validationData.model,\n          mode: 'error',\n          latency_ms: latencyMs,\n          user_id: validationData.user_id,\n          guild_id: validationData.guild_id,\n          user_request: validationData.user_request\n        }\n      }\n    };\n  }\n});\n\nreturn results;"
       }
     },
     {
@@ -180,6 +119,253 @@
         "height": 680,
         "content": "## MCP - Text Embedder\n\n**Endpoint:** POST /webhook/text-embedder\n\n**Description:** Genere des embeddings de texte via l'API OpenAI pour une utilisation en RAG, recherche semantique, etc.\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"text\", \"openai_api_key\"],\n  \"optional\": [\"user_id\", \"guild_id\", \"user_request\"],\n  \"properties\": {\n    \"user_id\": { \"type\": \"string\", \"description\": \"ID utilisateur (tracing)\" },\n    \"guild_id\": { \"type\": \"string\", \"description\": \"ID serveur Discord (tracing)\" },\n    \"user_request\": { \"type\": \"string\", \"description\": \"Requete utilisateur originale (tracing)\" },\n    \"text\": { \"type\": \"string|array\", \"description\": \"Texte(s) a encoder\" },\n    \"openai_api_key\": { \"type\": \"string\", \"description\": \"Cle API OpenAI\" },\n    \"model\": { \"type\": \"string\", \"description\": \"Modele (default: text-embedding-3-small)\" },\n    \"dimensions\": { \"type\": \"integer\", \"description\": \"Dimensions output (default: 1536)\" }\n  }\n}\n```\n\n**Modeles disponibles:**\n- `text-embedding-3-small` (default) - Rapide, economique\n- `text-embedding-3-large` - Haute qualite\n- `text-embedding-ada-002` - Legacy\n\n**Analyzable:**\n```json\n{\n  \"accepts_image\": false,\n  \"accepts_media\": false,\n  \"output_fields\": [\"embeddings\", \"dimensions\", \"count\"],\n  \"domain\": \"embedding\"\n}\n```\n\n**Note:** user_id, guild_id, user_request sont OPTIONNELS (utilises pour le tracing)."
       }
+    },
+    {
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// VALIDATION INPUT - MCP Text Embedder (multi-provider)\n// providers: openai | mistral | gemini\n// ============================================\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst userId = body.user_id || ctx.user_id || null;\nconst guildId = body.guild_id || ctx.guild_id || null;\nconst userRequest = body.user_request || ctx.user_request || null;\n\nconst errors = [];\nconst text = body.text || ctx.text;\nconst provider = (body.provider || ctx.provider || 'openai').toLowerCase();\n\nconst DEFAULT_MODEL = {\n  openai: 'text-embedding-3-small',\n  mistral: 'mistral-embed',\n  gemini: 'text-embedding-004'\n};\nconst model = body.model || ctx.model || DEFAULT_MODEL[provider];\nconst dimensions = body.dimensions || ctx.dimensions || 1536;\n\nconst apiKey = body.api_key || ctx.api_key\n  || body[provider + '_api_key'] || ctx[provider + '_api_key']\n  || body.openai_api_key || ctx.openai_api_key;\n\nconst VALID = ['openai', 'mistral', 'gemini'];\nif (!text) errors.push('text requis (string ou array de strings)');\nif (!VALID.includes(provider)) errors.push(\"provider invalide: '\" + provider + \"' (openai, mistral, gemini)\");\nif (!apiKey) errors.push('api_key requis (ou openai_api_key / mistral_api_key / gemini_api_key)');\n\nif (errors.length > 0) {\n  return { valid: false, errors: errors, provider: provider, model: model,\n    user_id: userId, guild_id: guildId, user_request: userRequest };\n}\n\nconst inputs = Array.isArray(text) ? text : [text];\n\n// precompute pour les templates des nodes HTTP\nconst gModel = model.indexOf('models/') === 0 ? model : 'models/' + model;\nconst geminiRequests = inputs.map(function (t) {\n  const r = { model: gModel, content: { parts: [{ text: t }] } };\n  if (dimensions) r.outputDimensionality = dimensions;\n  return r;\n});\n\nreturn {\n  valid: true,\n  provider: provider,\n  model: model,\n  dimensions: dimensions,\n  api_key: apiKey,\n  input_json: JSON.stringify(inputs),            // openai/mistral: \"input\": {{ input_json }}\n  gemini_model_path: gModel,                      // gemini URL\n  gemini_requests_json: JSON.stringify(geminiRequests), // gemini body\n  user_id: userId, guild_id: guildId, user_request: userRequest,\n  startTime: Date.now()\n};\n"
+      }
+    },
+    {
+      "id": "switch-provider",
+      "name": "Switch Provider",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        840,
+        300
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "openai",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "openai"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "mistral",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "mistral"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "gemini",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "gemini"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "http-openai",
+      "name": "OpenAI Embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        140
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.model }}\",\n  \"input\": {{ $json.input_json }},\n  \"dimensions\": {{ $json.dimensions }}\n}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "http-mistral",
+      "name": "Mistral Embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/embeddings",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.model }}\",\n  \"input\": {{ $json.input_json }}\n}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "http-gemini",
+      "name": "Gemini Embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        460
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/{{ $json.gemini_model_path }}:batchEmbedContents?key={{ $json.api_key }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"requests\": {{ $json.gemini_requests_json }}\n}",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "fmt-openai",
+      "name": "Format OpenAI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        140
+      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT OPENAI RESPONSE - MCP Text Embedder\n// Enveloppe de sortie IDENTIQUE quel que soit le provider.\n// ============================================\nconst j = $input.first().json || {};\nconst v = $('Validate Input').first().json;\nconst latencyMs = Date.now() - (v.startTime || Date.now());\n\nif (j.error) {\n  const e = j.error || {};\n  return {\n    success: false,\n    error: { code: e.code || 'OPENAI_ERROR', message: e.message || j.message || j.detail || 'openai API error', status: 'API_ERROR' },\n    meta: { provider: 'openai', model: v.model },\n    user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request,\n    _trace: { service_response: { error: (j.error || j.message || j.detail) }, provider: 'openai', model: v.model, mode: 'error', latency_ms: latencyMs, user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request }\n  };\n}\n\ntry {\n    const arr = j.data || [];\n    const embeddings = arr.map(function (e, i) {\n      const emb = e.embedding || [];\n      return { index: (e.index != null ? e.index : i), embedding: emb, dimensions: emb.length };\n    });\n    const usage = j.usage || {};\n    const respModel = j.model || v.model;\n  const responseData = { embeddings: embeddings, count: embeddings.length, model: respModel, dimensions: (embeddings[0] && embeddings[0].dimensions) || 0 };\n  return {\n    success: true,\n    data: responseData,\n    meta: { provider: 'openai', model: respModel, usage: usage },\n    user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request,\n    _trace: { service_response: responseData, provider: 'openai', model: respModel, mode: 'success', latency_ms: latencyMs, token_usage: usage, user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request }\n  };\n} catch (err) {\n  return {\n    success: false,\n    error: { code: 500, message: 'Failed to parse embeddings response: ' + err.message, status: 'PARSE_ERROR' },\n    meta: { provider: 'openai', model: v.model },\n    user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request,\n    _trace: { service_response: { parse_error: err.message }, provider: 'openai', model: v.model, mode: 'error', latency_ms: latencyMs, user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request }\n  };\n}\n"
+      }
+    },
+    {
+      "id": "fmt-mistral",
+      "name": "Format Mistral",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT MISTRAL RESPONSE - MCP Text Embedder\n// Enveloppe de sortie IDENTIQUE quel que soit le provider.\n// ============================================\nconst j = $input.first().json || {};\nconst v = $('Validate Input').first().json;\nconst latencyMs = Date.now() - (v.startTime || Date.now());\n\nif (j.error || j.message || j.detail) {\n  const e = j.error || {};\n  return {\n    success: false,\n    error: { code: e.code || 'MISTRAL_ERROR', message: e.message || j.message || j.detail || 'mistral API error', status: 'API_ERROR' },\n    meta: { provider: 'mistral', model: v.model },\n    user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request,\n    _trace: { service_response: { error: (j.error || j.message || j.detail) }, provider: 'mistral', model: v.model, mode: 'error', latency_ms: latencyMs, user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request }\n  };\n}\n\ntry {\n    const arr = j.data || [];\n    const embeddings = arr.map(function (e, i) {\n      const emb = e.embedding || [];\n      return { index: (e.index != null ? e.index : i), embedding: emb, dimensions: emb.length };\n    });\n    const usage = j.usage || {};\n    const respModel = j.model || v.model;\n  const responseData = { embeddings: embeddings, count: embeddings.length, model: respModel, dimensions: (embeddings[0] && embeddings[0].dimensions) || 0 };\n  return {\n    success: true,\n    data: responseData,\n    meta: { provider: 'mistral', model: respModel, usage: usage },\n    user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request,\n    _trace: { service_response: responseData, provider: 'mistral', model: respModel, mode: 'success', latency_ms: latencyMs, token_usage: usage, user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request }\n  };\n} catch (err) {\n  return {\n    success: false,\n    error: { code: 500, message: 'Failed to parse embeddings response: ' + err.message, status: 'PARSE_ERROR' },\n    meta: { provider: 'mistral', model: v.model },\n    user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request,\n    _trace: { service_response: { parse_error: err.message }, provider: 'mistral', model: v.model, mode: 'error', latency_ms: latencyMs, user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request }\n  };\n}\n"
+      }
+    },
+    {
+      "id": "fmt-gemini",
+      "name": "Format Gemini",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        460
+      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT GEMINI RESPONSE - MCP Text Embedder\n// Enveloppe de sortie IDENTIQUE quel que soit le provider.\n// ============================================\nconst j = $input.first().json || {};\nconst v = $('Validate Input').first().json;\nconst latencyMs = Date.now() - (v.startTime || Date.now());\n\nif (j.error) {\n  const e = j.error || {};\n  return {\n    success: false,\n    error: { code: e.code || 'GEMINI_ERROR', message: e.message || j.message || j.detail || 'gemini API error', status: 'API_ERROR' },\n    meta: { provider: 'gemini', model: v.model },\n    user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request,\n    _trace: { service_response: { error: (j.error || j.message || j.detail) }, provider: 'gemini', model: v.model, mode: 'error', latency_ms: latencyMs, user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request }\n  };\n}\n\ntry {\n    const arr = j.embeddings || [];\n    const embeddings = arr.map(function (e, i) {\n      const vals = (e && e.values) || [];\n      return { index: i, embedding: vals, dimensions: vals.length };\n    });\n    const usage = {};\n    const respModel = v.model;\n  const responseData = { embeddings: embeddings, count: embeddings.length, model: respModel, dimensions: (embeddings[0] && embeddings[0].dimensions) || 0 };\n  return {\n    success: true,\n    data: responseData,\n    meta: { provider: 'gemini', model: respModel, usage: usage },\n    user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request,\n    _trace: { service_response: responseData, provider: 'gemini', model: respModel, mode: 'success', latency_ms: latencyMs, token_usage: usage, user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request }\n  };\n} catch (err) {\n  return {\n    success: false,\n    error: { code: 500, message: 'Failed to parse embeddings response: ' + err.message, status: 'PARSE_ERROR' },\n    meta: { provider: 'gemini', model: v.model },\n    user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request,\n    _trace: { service_response: { parse_error: err.message }, provider: 'gemini', model: v.model, mode: 'error', latency_ms: latencyMs, user_id: v.user_id, guild_id: v.guild_id, user_request: v.user_request }\n  };\n}\n"
+      }
+    },
+    {
+      "id": "merge-providers",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1520,
+        300
+      ],
+      "parameters": {}
     }
   ],
   "connections": {
@@ -209,7 +395,7 @@
       "main": [
         [
           {
-            "node": "OpenAI Embeddings",
+            "node": "Switch Provider",
             "type": "main",
             "index": 0
           }
@@ -234,18 +420,98 @@
         ]
       ]
     },
-    "OpenAI Embeddings": {
+    "Switch Provider": {
       "main": [
         [
           {
-            "node": "Parse Response",
+            "node": "OpenAI Embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mistral Embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gemini Embeddings",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse Response": {
+    "OpenAI Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Format OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Format Mistral",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Format Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Mistral": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Format Gemini": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge": {
       "main": [
         [
           {
