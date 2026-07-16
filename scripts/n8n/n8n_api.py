@@ -1349,10 +1349,25 @@ def main():
 
         # Check if it's a file or a workflow name
         if os.path.exists(target):
-            # It's a list file
-            batch_reimport(target, dry_run=dry_run, delete_old=delete_old)
+            # It's a list file — boucle en interne, chaque entrée via UPDATE en
+            # place (PUT, préserve l'ID), même logique que le mode stem unique.
+            # (--force-new bascule chaque entrée en delete+import ; l'ancien
+            #  batch_reimport() destructif reste dispo mais n'est plus le défaut.)
+            with open(target) as fh:
+                stems = [ln.strip() for ln in fh
+                         if ln.strip() and not ln.strip().startswith('#')]
+            mode = 'DELETE + IMPORT (force-new)' if force_new else 'UPDATE IN PLACE'
+            print(f"[INFO] Liste: {len(stems)} workflow(s) — mode {mode}\n")
+            ok, failed = [], []
+            for stem in stems:
+                res = batch_reimport_single(stem, dry_run=dry_run,
+                                            delete_old=delete_old, force_new=force_new)
+                (ok if res else failed).append(stem)
+            print(f"\n{'='*60}")
+            print(f"LISTE — {len(ok)}/{len(stems)} OK"
+                  + (f", {len(failed)} échec(s): {failed}" if failed else ""))
         else:
-            # It's a single workflow name - create temp list
+            # It's a single workflow name
             batch_reimport_single(target, dry_run=dry_run, delete_old=delete_old, force_new=force_new)
     else:
         show_help()
