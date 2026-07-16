@@ -1081,6 +1081,17 @@ def batch_reimport_single(workflow_name, workflows_dir=None, dry_run=False, dele
         else:
             print(f"   No existing workflow found")
 
+    # GARDE-FOU : ne traiter comme primaire/doublon QUE les workflows de MÊME NOM.
+    # Un match par webhook path OU webhookId sur un workflow d'AUTRE nom est un faux
+    # positif (collision de webhookId) — il ne doit jamais être écrasé ni supprimé.
+    if existing_workflows:
+        same_name = [w for w in existing_workflows if w['name'] == display_name]
+        others = [w for w in existing_workflows if w['name'] != display_name]
+        if others:
+            print("   ⚠️  Ignoré (nom différent, collision webhookId — NON touché) : "
+                  + ", ".join(f"{w['name']} ({w['id']})" for w in others))
+        existing_workflows = same_name
+
     if dry_run:
         if existing_workflows and not force_new:
             print(f"[DRY RUN] Would UPDATE workflow: {existing_workflows[0]['id']} (preserves ID, no webhook issues)")
