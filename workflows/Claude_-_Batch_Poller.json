@@ -318,6 +318,19 @@
         1800,
         340
       ]
+    },
+    {
+      "id": "download-files-base64",
+      "name": "Download Files (base64)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2130,
+        340
+      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// OPTION B — Télécharge les fichiers depuis Anthropic avec l'api_key LOCAL\n// et les publie en base64 (files[].data). L'api_key ne quitte JAMAIS n8n.\n// _get_discord_file (plugin) gère déjà le champ `data` base64.\n// ============================================\nconst src = $input.first().json;\nconst apiKey = src.api_key;\nconst outFiles = [];\n\nfor (const f of (src.files || [])) {\n  if (!f.download_url) { outFiles.push(f); continue; }\n  try {\n    const response = await this.helpers.httpRequest({\n      method: 'GET',\n      url: f.download_url,\n      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },\n      encoding: 'arraybuffer',\n      returnFullResponse: true,\n    });\n    const b64 = Buffer.from(response.body).toString('base64');\n    outFiles.push({\n      file_id: f.file_id,\n      filename: f.filename,\n      mime_type: f.mime_type,\n      size_bytes: f.size_bytes || (response.body ? response.body.length : 0),\n      data: b64,                 // base64 → consommé par le plugin\n    });\n  } catch (e) {\n    // échec de téléchargement : on garde la trace, pas de data, pas de crash\n    outFiles.push({\n      file_id: f.file_id,\n      filename: f.filename,\n      mime_type: f.mime_type,\n      download_error: (e && e.message) ? e.message : String(e),\n    });\n  }\n}\n\nreturn [{ json: { ...src, files: outFiles, has_files: outFiles.length > 0 } }];\n"
+      }
     }
   ],
   "connections": {
@@ -421,7 +434,7 @@
       "main": [
         [
           {
-            "node": "Publish to Redis",
+            "node": "Download Files (base64)",
             "type": "main",
             "index": 0
           }
@@ -444,6 +457,17 @@
         [
           {
             "node": "Store Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Files (base64)": {
+      "main": [
+        [
+          {
+            "node": "Publish to Redis",
             "type": "main",
             "index": 0
           }
