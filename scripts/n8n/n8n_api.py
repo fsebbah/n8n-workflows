@@ -1081,6 +1081,17 @@ def batch_reimport_single(workflow_name, workflows_dir=None, dry_run=False, dele
         else:
             print(f"   No existing workflow found")
 
+    # GARDE-FOU : ne traiter comme primaire/doublon QUE les workflows de MÊME NOM.
+    # Un match par webhook path OU webhookId sur un workflow d'AUTRE nom est un faux
+    # positif (collision de webhookId) — il ne doit jamais être écrasé ni supprimé.
+    if existing_workflows:
+        same_name = [w for w in existing_workflows if w['name'] == display_name]
+        others = [w for w in existing_workflows if w['name'] != display_name]
+        if others:
+            print("   ⚠️  Ignoré (nom différent, collision webhookId — NON touché) : "
+                  + ", ".join(f"{w['name']} ({w['id']})" for w in others))
+        existing_workflows = same_name
+
     if dry_run:
         if existing_workflows and not force_new:
             print(f"[DRY RUN] Would UPDATE workflow: {existing_workflows[0]['id']} (preserves ID, no webhook issues)")
@@ -1349,10 +1360,25 @@ def main():
 
         # Check if it's a file or a workflow name
         if os.path.exists(target):
-            # It's a list file
-            batch_reimport(target, dry_run=dry_run, delete_old=delete_old)
+            # It's a list file — boucle en interne, chaque entrée via UPDATE en
+            # place (PUT, préserve l'ID), même logique que le mode stem unique.
+            # (--force-new bascule chaque entrée en delete+import ; l'ancien
+            #  batch_reimport() destructif reste dispo mais n'est plus le défaut.)
+            with open(target) as fh:
+                stems = [ln.strip() for ln in fh
+                         if ln.strip() and not ln.strip().startswith('#')]
+            mode = 'DELETE + IMPORT (force-new)' if force_new else 'UPDATE IN PLACE'
+            print(f"[INFO] Liste: {len(stems)} workflow(s) — mode {mode}\n")
+            ok, failed = [], []
+            for stem in stems:
+                res = batch_reimport_single(stem, dry_run=dry_run,
+                                            delete_old=delete_old, force_new=force_new)
+                (ok if res else failed).append(stem)
+            print(f"\n{'='*60}")
+            print(f"LISTE — {len(ok)}/{len(stems)} OK"
+                  + (f", {len(failed)} échec(s): {failed}" if failed else ""))
         else:
-            # It's a single workflow name - create temp list
+            # It's a single workflow name
             batch_reimport_single(target, dry_run=dry_run, delete_old=delete_old, force_new=force_new)
     else:
         show_help()
