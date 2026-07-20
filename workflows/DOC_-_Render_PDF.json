@@ -1,0 +1,235 @@
+{
+  "name": "DOC - Render PDF",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## DOC - Render PDF\n\nGénère un PDF à partir d'un **template** et de **données structurées**.\nPoint d'entrée commun à tous les clients du parc.\n\n**POST** `/webhook/render-pdf` → répond **synchronement** avec le PDF binaire.\n\n`/webhook/torah-pdf` est un **alias historique** (même traitement), conservé\npour le plugin torah. Utiliser `render-pdf` pour tout nouveau client.\n\n### Rôle : PROXY MINCE\n\nLa mise en page vit dans **gotenberg.api** (`webs.local:3100`), avec ses templates.\nn8n valide, relaie et renvoie — **aucun binaire n'est construit ici**.\n\n> Historique : la version precedente assemblait le multipart dans un node Code.\n> `helpers.httpRequest` altere les corps `Buffer` (memes octets : HTTP 200 via curl,\n> 400 via n8n), saturant un coeur 24-35 min sur les gros documents.\n\n### Entrée\n```json\n{ \"template\": \"bavli-visavis\",\n  \"data\": { ... },\n  \"filename\": \"document.pdf\" }\n```\n`template` est **requis** sur `/render-pdf`.\nSur l'alias `/torah-pdf`, il vaut `bavli-visavis` par défaut.\n\nTemplates et schémas : `GET http://webs.local:3100/templates`\n\n### Sortie\n- **200** `application/pdf` — le binaire\n- **4xx/5xx** JSON `{ success, error, error_code }`\n\n### Dépendance\n`$env.GOTENBERG_API_URL` = `http://webs.local:3100`\n\n⚠️ `GOTENBERG_URL` (port 3000) est **obsolète** : Gotenberg n'est plus exposé.\n\nCode, templates, guide d'intégration : https://github.com/fsebbah/gotenberg.api\nContexte : azy.daily#139 · n8n-workflows#394",
+        "height": 660,
+        "width": 520
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -180,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-pdf",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-torah-pdf",
+      "name": "Webhook (torah-pdf)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        360
+      ],
+      "webhookId": "torah-pdf-webhook"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "render-pdf",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-render-pdf",
+      "name": "Webhook (générique)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        160
+      ],
+      "webhookId": "render-pdf-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vérifie la configuration ET le payload AVANT tout appel réseau.\n// Objectif : qu'un oubli de configuration produise un message qui dit quoi faire,\n// et non un 404 opaque ou une URL « undefined/render/pdf ».\n\nconst base = $env.GOTENBERG_API_URL;\nif (!base || !/^https?:\\/\\//.test(base)) {\n  throw new Error(\n    \"GOTENBERG_API_URL absent ou invalide dans l'environnement n8n. \" +\n    \"Ajouter GOTENBERG_API_URL=http://webs.local:3100 dans docker/.env.local, \" +\n    \"puis ./deploy.sh — éditer .env.local sans redéployer n'a aucun effet.\"\n  );\n}\n\nconst entree = $input.first().json;\nconst body = entree.body || entree;\nconst data = body.data || null;\n\n// Route empruntée : /render-pdf exige « template », /torah-pdf a un défaut\n// historique (le contrat déjà communiqué au plugin torah ne le mentionnait pas).\nconst chemin = String(entree.webhookUrl || entree.path || '');\nconst estGenerique = /render-pdf/.test(chemin);\n\nif (!data || typeof data !== 'object' || Array.isArray(data)) {\n  throw new Error('payload invalide : un objet \"data\" est attendu');\n}\nif (!body.template && estGenerique) {\n  throw new Error(\n    'champ requis manquant : \"template\". Templates disponibles : ' +\n    'GET ' + base.replace(/\\/+$/, '') + '/templates'\n  );\n}\n// Contrôles génériques uniquement : le schéma détaillé appartient au template,\n// et c'est gotenberg.api qui le connaît. Une seule source de vérité.\n\n\n// Le contrôle de fond (schéma détaillé, présence d'hébreu) est fait par\n// gotenberg.api, qui connaît le schéma du template. On ne le duplique pas ici :\n// une seule source de vérité pour la validation.\n\nreturn [{ json: {\n  url: base.replace(/\\/+$/, '') + '/render/pdf',\n  corps: {\n    template: body.template || (estGenerique ? null : 'bavli-visavis'),\n    data,\n    filename: body.filename || `${data.massekhet}_${data.daf}.pdf`,\n  },\n  correlation_id: body.correlation_id || null,\n} }];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.corps) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "call-gotenberg-api",
+      "name": "gotenberg.api",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/pdf"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-pdf",
+      "name": "Respond PDF",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalise l'erreur pour l'appelant, en préservant le message d'origine de\n// gotenberg.api (explicite : « champ requis manquant : data.daf »...).\n// Un échec est TOUJOURS explicite : jamais de « success: true » avec un document vide.\nconst e = $input.first().json;\nconst brut = e.error?.message || e.message || e.error?.description || '';\n\nlet message = String(brut || 'erreur inconnue');\nlet code = 'PDF_GENERATION_FAILED';\nconst m = message.match(/\"error_code\"\\s*:\\s*\"([A-Z_]+)\"/);\nif (m) code = m[1];\nif (/GOTENBERG_API_URL/.test(message)) code = 'CONFIG_MISSING';\n\nreturn [{ json: { success: false, error: message.slice(0, 500), error_code: code } }];"
+      },
+      "id": "normalize-error",
+      "name": "Normalize Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 502,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        660,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "gotenberg.api",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "gotenberg.api": {
+      "main": [
+        [
+          {
+            "node": "Respond PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook (torah-pdf)": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook (générique)": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 240,
+    "saveDataSuccessExecution": "none",
+    "saveExecutionProgress": false
+  },
+  "tags": []
+}
