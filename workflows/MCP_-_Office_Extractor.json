@@ -4,9 +4,9 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## MCP - Office Extractor\n\n**Endpoint:** POST /webhook/office-extractor\n\nExtraction texte **docx / xlsx / pptx** via **Apache Tika** (http://webs.local:9998).\n\n**Input:** `{ file_url }` ou `{ b2_file_key, b2_bucket_url? }`\n**Output:** `{ success, text, char_count }`\n\n**Streaming** : le fichier est téléchargé depuis B2 puis **streamé** dans le PUT Tika (parse en mémoire). **Aucun fichier stocké sur webs.**",
-        "height": 340,
-        "width": 380,
+        "content": "## MCP - Office / Extract Text\n\nExtraction de **texte natif** via **Tika** (`webs.local:9998`), local et gratuit.\nCouvre PDF natif, Office (DOCX/XLSX/PPTX/ODT), HTML, EPUB, e-mail (.eml), CSV, archives…\n\n**POST** `/webhook/extract-text` (ou alias historique `/webhook/office-extractor`)\n\n### Entrée (aligné sur le pattern OCR)\n```json\n{ \"file_url\": \"https://…/doc.pdf\" }        // ou b2_file_key, ou file_data (base64)\n{ \"file_data\": \"<base64>\", \"mime_type\": \"application/pdf\", \"filename\": \"doc.pdf\" }\n```\n`mime_type` est **relayé sur le Content-Type de l'appel Tika** — sans lui, Tika peut\nretomber sur EmptyParser (extraction vide silencieuse). Défaut : application/octet-stream\n(Tika renifle le contenu). Le SEUL Content-Type mortel est x-www-form-urlencoded.\n\n### Sortie — détail PAR PAGE (azy.daily#123/#147)\n```json\n{ \"success\": true, \"engine\": \"tika\", \"format\": \"plain\",\n  \"text\": \"…concat…\", \"char_count\": 68230,\n  \"page_count\": 17,\n  \"pages\": [ { \"index\": 0, \"text\": \"…\", \"chars\": 3758 } ],\n  \"pages_vides\": [3, 9],          // pages < 50 car. — sans couche texte\n  \"ocr_recommande\": true,         // indice : l'appelant décide\n  \"assets\": [] }                  // V1 vide ; images embarquées en V1.1 (/unpack)\n```\n\n### Aiguillage\n- `Accept: text/html` → Tika délimite les pages PDF (`<div class=\"page\">`).\n- Formats non paginés (DOCX, HTML, e-mail) → `page_count: 1` (pas de découpage possible ;\n  ils ont de toute façon une couche texte).\n- `pages_vides` non vide → document (ou pages) sans couche texte → **OCR** (`/pdf-ocr`),\n  décision laissée à l'appelant.\n\n### Ne fait PAS d'OCR\nTesseract n'est pas sur webs. Un document image/scanné revient `text: \"\"`, `pages_vides`\nplein. C'est le comportement attendu, pas un bug.\n\nDoc : azy.daily#147 · #149",
+        "height": 620,
+        "width": 480,
         "color": 4
       },
       "id": "sticky-doc",
@@ -26,18 +26,18 @@
         "options": {}
       },
       "id": "webhook",
-      "name": "Webhook",
+      "name": "Webhook (office-extractor)",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        260,
-        320
+        -120,
+        380
       ],
       "webhookId": "office-extractor"
     },
     {
       "parameters": {
-        "jsCode": "// Valide l'input et construit l'URL du fichier (B2 ou directe)\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst fileUrl = body.file_url || ctx.file_url || null;\nconst b2FileKey = body.b2_file_key || ctx.b2_file_key || null;\nconst b2BucketUrl = body.b2_bucket_url || ctx.b2_bucket_url || 'https://f005.backblazeb2.com/file/azy-storage';\n\nlet url = fileUrl;\nif (!url && b2FileKey) url = `${b2BucketUrl}/${b2FileKey}`;\n\nif (!url) {\n  return [{ json: { valid: false, error: { code: 400, message: 'file_url ou b2_file_key requis' } } }];\n}\nreturn [{ json: { valid: true, file_url: url } }];"
+        "jsCode": "// Valide l'input et prépare l'extraction.\n// Accepte file_url / b2_file_key (téléchargement) OU file_data base64 (aligné OCR).\n// Capture mime_type + filename : mime_type sert à poser le Content-Type de l'appel Tika\n// (sans quoi Tika peut retomber sur EmptyParser → extraction vide silencieuse).\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst fileUrl = body.file_url || ctx.file_url || null;\nconst b2FileKey = body.b2_file_key || ctx.b2_file_key || null;\nconst b2BucketUrl = body.b2_bucket_url || ctx.b2_bucket_url || 'https://f005.backblazeb2.com/file/azy-storage';\n\nlet fileData = body.file_data || ctx.file_data || null;\nif (fileData && fileData.includes(',')) fileData = fileData.split(',')[1];  // retire le préfixe data:...;base64,\n\nconst mimeType = body.mime_type || ctx.mime_type || null;\nconst filename = body.filename || ctx.filename || 'document';\n\nlet url = fileUrl;\nif (!url && b2FileKey) url = `${b2BucketUrl}/${b2FileKey}`;\n\nif (!url && !fileData) {\n  return [{ json: { valid: false, error: { code: 400, message: 'file_url, b2_file_key ou file_data requis' } } }];\n}\n\nreturn [{ json: {\n  valid: true,\n  source: fileData ? 'base64' : 'url',\n  file_url: url,\n  file_data: fileData,\n  mime_type: mimeType,\n  filename,\n} }];"
       },
       "id": "validate",
       "name": "Validate Input",
@@ -52,24 +52,25 @@
       "parameters": {
         "conditions": {
           "options": {
+            "version": 2,
             "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "loose"
           },
+          "combinator": "and",
           "conditions": [
             {
-              "id": "c1",
-              "leftValue": "={{ $json.valid }}",
-              "rightValue": true,
+              "id": "cond-valid",
               "operator": {
+                "name": "filter.operator.true",
                 "type": "boolean",
-                "operation": "equals"
-              }
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": ""
             }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
+          ]
+        }
       },
       "id": "valid-if",
       "name": "Valid?",
@@ -116,8 +117,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        920,
-        220
+        900,
+        480
       ]
     },
     {
@@ -129,7 +130,11 @@
           "parameters": [
             {
               "name": "Accept",
-              "value": "text/plain"
+              "value": "text/html"
+            },
+            {
+              "name": "Content-Type",
+              "value": "={{ $('Validate Input').first().json.mime_type || 'application/octet-stream' }}"
             }
           ]
         },
@@ -151,21 +156,21 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1120,
-        220
+        1140,
+        380
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Lit le texte renvoye par Tika (text/plain) + trim (Tika prefixe des \\n)\nconst text = String(($input.first().json.data) || '').trim();\nif (!text) {\n  return [{ json: { success: false, error: { code: 'EMPTY', message: 'Tika a renvoye un contenu vide' } } }];\n}\nreturn [{ json: { success: true, text: text, char_count: text.length } }];"
+        "jsCode": "// Parse la réponse XHTML de Tika (Accept: text/html) en détail PAR PAGE.\n// Tika délimite les pages PDF par <div class=\"page\">. Les formats NON paginés\n// (DOCX, HTML, e-mail…) n'en produisent pas → traités comme une page unique.\n// Le par-page alimente l'aiguillage OCR (azy.daily#123/#147) : une page sous le\n// seuil = pas de couche texte exploitable.\nconst SEUIL = 50;   // caractères/page en deçà desquels une page est jugée sans couche texte\n\nconst raw = String(($input.first().json.data) || '');\n\nfunction stripTags(s) {\n  return s.replace(/<[^>]+>/g, ' ')\n          .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n          .replace(/&lt;/g, '<').replace(/&gt;/g, '>')\n          .replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\")\n          .replace(/\\s+/g, ' ').trim();\n}\n\n// Découpe sur le marqueur de page — robuste aux <p> imbriqués (un regex de div\n// équilibrée casserait). parts[0] = en-tête avant la 1re page, ignoré.\nconst parts = raw.split('<div class=\"page\">');\nlet pages;\nif (parts.length > 1) {\n  pages = parts.slice(1).map((chunk, i) => {\n    const text = stripTags(chunk);\n    return { index: i, text, chars: text.length };\n  });\n} else {\n  const text = stripTags(raw);\n  pages = [{ index: 0, text, chars: text.length }];\n}\n\nconst fullText = pages.map(p => p.text).filter(Boolean).join('\\n\\n');\nconst pagesVides = pages.filter(p => p.chars < SEUIL).map(p => p.index);\n\n// Aucun texte nulle part : document image/scanné, ou Content-Type mal posé (EmptyParser).\n// On ne renvoie PAS d'erreur — c'est une information exploitable, pas un échec.\nreturn [{ json: {\n  success: true,\n  engine: 'tika',\n  format: 'plain',\n  text: fullText,\n  char_count: fullText.length,\n  page_count: pages.length,\n  pages,                                   // [{index, text, chars}]\n  pages_vides: pagesVides,                 // pages sous le seuil — [] si tout va bien\n  ocr_recommande: pagesVides.length > 0,   // indice, pas verdict : l'appelant décide\n  seuil_car_page: SEUIL,\n  // Déclaré dès la V1 (rétro-compat), peuplé en V1.1 via /unpack (azy.daily#149).\n  // Vide ici : extraction texte seule. Les images embarquées viennent d'un 2ᵉ appel.\n  assets: [],\n} }];"
       },
       "id": "format",
       "name": "Format Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1320,
-        220
+        1360,
+        380
       ]
     },
     {
@@ -179,13 +184,86 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1520,
-        220
+        1580,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "extract-text",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-alias",
+      "name": "Webhook (extract-text)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -120,
+        140
+      ],
+      "webhookId": "extract-text-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-b64",
+              "operator": {
+                "name": "filter.operator.equals",
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.source }}",
+              "rightValue": "base64"
+            }
+          ]
+        }
+      },
+      "id": "has-base64",
+      "name": "Has Base64?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Chemin base64 : reconstruit le binaire sans téléchargement (aligné sur le pattern OCR).\nconst src = $input.first().json;\nconst buf = Buffer.from(src.file_data, 'base64');\nreturn [{\n  json: { mime_type: src.mime_type, filename: src.filename },\n  binary: { data: await this.helpers.prepareBinaryData(buf, src.filename, src.mime_type || 'application/octet-stream') },\n}];"
+      },
+      "id": "decode-base64",
+      "name": "Decode Base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        280
       ]
     }
   ],
   "connections": {
-    "Webhook": {
+    "Webhook (office-extractor)": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook (extract-text)": {
       "main": [
         [
           {
@@ -211,7 +289,7 @@
       "main": [
         [
           {
-            "node": "Download File",
+            "node": "Has Base64?",
             "type": "main",
             "index": 0
           }
@@ -219,6 +297,35 @@
         [
           {
             "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Base64?": {
+      "main": [
+        [
+          {
+            "node": "Decode Base64",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decode Base64": {
+      "main": [
+        [
+          {
+            "node": "Tika Extract",
             "type": "main",
             "index": 0
           }
