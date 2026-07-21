@@ -249,6 +249,56 @@
         900,
         280
       ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://webs.local:9998/unpack",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "={{ $('Validate Input').first().json.mime_type || 'application/octet-stream' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "tika-unpack",
+      "name": "Tika Unpack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        600
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// V1.1a — extrait les images embarquées depuis le ZIP de Tika /unpack.\n// Le ZIP est STORE-only (méthode 0, vérifié) → parsé à la main, sans dépendance.\n// Petits assets → base64 inline ; gros → différés en V1.1b (B2), signalés. #149\nconst SEUIL = 256 * 1024;   // < 256 Ko → base64 inline ; au-delà → B2 (V1.1b)\nconst IMG = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif',\n  bmp:'image/bmp', tif:'image/tiff', tiff:'image/tiff', webp:'image/webp',\n  svg:'image/svg+xml', emf:'image/emf', wmf:'image/wmf' };\nfunction mimeOf(name) { const e = (name.split('.').pop() || '').toLowerCase(); return IMG[e] || null; }\nfunction estBruit(name) {\n  const n = name.toLowerCase();\n  return n.startsWith('docprops/') || n.includes('thumbnail') || n.endsWith('.rels')\n      || n.endsWith('.xml') || n.startsWith('customxml/') || n.startsWith('word/theme/');\n}\nfunction parseStoredZip(buf) {\n  const files = []; let i = 0;\n  while (i + 4 <= buf.length) {\n    if (buf.readUInt32LE(i) !== 0x04034b50) break;   // fin des entrées locales\n    const method = buf.readUInt16LE(i + 8);\n    const compSize = buf.readUInt32LE(i + 18);\n    const nameLen = buf.readUInt16LE(i + 26);\n    const extraLen = buf.readUInt16LE(i + 28);\n    const ns = i + 30;\n    const name = buf.slice(ns, ns + nameLen).toString('utf8');\n    const ds = ns + nameLen + extraLen;\n    if (method === 0) files.push({ name, data: buf.slice(ds, ds + compSize) });\n    i = ds + compSize;\n  }\n  return files;\n}\n\nconst base = $('Format Response').first().json;   // text/pages/tables (branche parallèle)\n\nlet zip = null;\ntry { zip = await this.helpers.getBinaryDataBuffer(0, 'data'); } catch (e) { zip = null; }\n\nlet assets = [], totalFound = 0, truncated = false;\nif (zip && zip.length > 4 && zip.readUInt32LE(0) === 0x04034b50) {\n  for (const f of parseStoredZip(zip)) {\n    if (estBruit(f.name)) continue;\n    const mime = mimeOf(f.name);\n    if (!mime) continue;                 // V1.1a : images uniquement\n    totalFound++;\n    if (f.data.length <= SEUIL) {\n      assets.push({ name: f.name.split('/').pop(), mime_type: mime, size_bytes: f.data.length,\n        bytes_base64: f.data.toString('base64'), url: null, page_index: null });\n    } else {\n      truncated = true;                  // gros asset → V1.1b (B2)\n    }\n  }\n}\n\nreturn [{ json: { ...base,\n  assets, assets_total_found: totalFound, assets_returned: assets.length, assets_truncated: truncated,\n} }];"
+      },
+      "id": "build-assets",
+      "name": "Build Assets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        600
+      ],
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -328,6 +378,11 @@
             "node": "Tika Extract",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Tika Unpack",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -337,6 +392,11 @@
         [
           {
             "node": "Tika Extract",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Tika Unpack",
             "type": "main",
             "index": 0
           }
@@ -355,6 +415,22 @@
       ]
     },
     "Format Response": {
+      "main": [
+        []
+      ]
+    },
+    "Tika Unpack": {
+      "main": [
+        [
+          {
+            "node": "Build Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Assets": {
       "main": [
         [
           {
