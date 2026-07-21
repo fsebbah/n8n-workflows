@@ -798,6 +798,19 @@
         520
       ],
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Finalise un item APRÈS tentative de save (branche « sauvegarde »).\n// Vérifie que la vocalisation a RÉELLEMENT été persistée : un échec de save ne\n// doit PAS passer pour un succès. azy.daily#150 — 0 ligne persistée sur ~1M\n// commentaires, car l'échec était avalé (onError) et Clean Response ne regardait\n// jamais le résultat du save.\nconst item = $('Extract GPT Response').first().json;\nconst response = { ...item };\ndelete response._saveData;\n\n// $input = réponse de « Save to Cache » pour l'item courant.\n// L'API renvoie { success: true, vocalized_at } quand l'UPDATE a eu lieu.\nconst saveResult = $input.first().json;\nconst persisted = saveResult && (saveResult.success === true || !!saveResult.vocalized_at);\nif (!persisted) {\n  response.success = false;\n  response.error = {\n    code: 'SAVE_FAILED',\n    message: 'vocalisation générée mais NON persistée en base',\n    detail: (saveResult && (saveResult.message || saveResult.error || saveResult.detail)) || null\n  };\n}\nreturn [{ json: response }];"
+      },
+      "id": "finalize-saved",
+      "name": "Finalize (Saved)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2832,
+        0
+      ]
     }
   ],
   "connections": {
@@ -1023,7 +1036,7 @@
       "main": [
         [
           {
-            "node": "Clean Response",
+            "node": "Finalize (Saved)",
             "type": "main",
             "index": 0
           }
@@ -1202,6 +1215,17 @@
         [
           {
             "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize (Saved)": {
+      "main": [
+        [
+          {
+            "node": "Batch or Single?",
             "type": "main",
             "index": 0
           }
