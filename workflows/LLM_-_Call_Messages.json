@@ -37,7 +37,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - LLM Call Messages (BYOT)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: provider ---\nconst provider = (body.provider || ctx.provider || '').toLowerCase();\nconst validProviders = ['anthropic', 'openai', 'mistral'];\nif (!provider) {\n  errors.push('provider requis (anthropic, openai, mistral)');\n} else if (!validProviders.includes(provider)) {\n  errors.push(`provider invalide: ${provider} (doit etre: ${validProviders.join(', ')})`);\n}\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model;\nif (!model || typeof model !== 'string' || model.trim().length === 0) {\n  errors.push('model requis (ex: claude-haiku-4-5-20251001, gpt-4o)');\n}\n\n// --- REQUIRED: api_key (BYOT - NO FALLBACK) ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length === 0) {\n  errors.push('api_key requis (BYOT pattern - aucun fallback sur env)');\n}\n\n// --- REQUIRED: messages ---\nconst messages = body.messages || ctx.messages;\nif (!messages || !Array.isArray(messages) || messages.length === 0) {\n  errors.push('messages requis (array non vide)');\n}\n\n// --- Optional: system prompt ---\nconst system = body.system || ctx.system || null;\n\n// --- Optional: max_tokens ---\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 4096);\nif (isNaN(maxTokens) || maxTokens < 1 || maxTokens > 200000) {\n  errors.push('max_tokens doit etre entre 1 et 200000');\n}\n\n// --- Optional: temperature ---\nconst temperature = parseFloat(body.temperature ?? ctx.temperature ?? 0.7);\nif (isNaN(temperature) || temperature < 0 || temperature > 2) {\n  errors.push('temperature doit etre entre 0 et 2');\n}\n\n// --- Passthrough metadata ---\nconst metadata = body.metadata || ctx.metadata || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    metadata: metadata\n  };\n}\n\nreturn {\n  valid: true,\n  provider: provider,\n  model: model.trim(),\n  api_key: apiKey.trim(),\n  system: system,\n  messages: messages,\n  max_tokens: maxTokens,\n  temperature: temperature,\n  metadata: metadata,\n  startTime: Date.now()\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - LLM Call Messages (BYOT)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: provider ---\nconst provider = (body.provider || ctx.provider || '').toLowerCase();\nconst validProviders = ['anthropic', 'openai', 'mistral', 'google'];\nif (!provider) {\n  errors.push('provider requis (anthropic, openai, mistral, google)');\n} else if (!validProviders.includes(provider)) {\n  errors.push(`provider invalide: ${provider} (doit etre: ${validProviders.join(', ')})`);\n}\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model;\nif (!model || typeof model !== 'string' || model.trim().length === 0) {\n  errors.push('model requis (ex: claude-haiku-4-5-20251001, gpt-4o)');\n}\n\n// --- REQUIRED: api_key (BYOT - NO FALLBACK) ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length === 0) {\n  errors.push('api_key requis (BYOT pattern - aucun fallback sur env)');\n}\n\n// --- REQUIRED: messages ---\nconst messages = body.messages || ctx.messages;\nif (!messages || !Array.isArray(messages) || messages.length === 0) {\n  errors.push('messages requis (array non vide)');\n}\n\n// --- Optional: system prompt ---\nconst system = body.system || ctx.system || null;\n\n// --- Optional: max_tokens ---\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 4096);\nif (isNaN(maxTokens) || maxTokens < 1 || maxTokens > 200000) {\n  errors.push('max_tokens doit etre entre 1 et 200000');\n}\n\n// --- Optional: temperature ---\nconst temperature = parseFloat(body.temperature ?? ctx.temperature ?? 0.7);\nif (isNaN(temperature) || temperature < 0 || temperature > 2) {\n  errors.push('temperature doit etre entre 0 et 2');\n}\n\n// --- Passthrough metadata ---\nconst metadata = body.metadata || ctx.metadata || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    metadata: metadata\n  };\n}\n\nreturn {\n  valid: true,\n  provider: provider,\n  model: model.trim(),\n  api_key: apiKey.trim(),\n  system: system,\n  messages: messages,\n  max_tokens: maxTokens,\n  temperature: temperature,\n  metadata: metadata,\n  startTime: Date.now()\n};"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -187,6 +187,28 @@
               },
               "renameOutput": true,
               "outputKey": "mistral"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "google",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "google"
             }
           ]
         },
@@ -381,6 +403,53 @@
         1872,
         240
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-goog-api-key",
+              "value": "={{ $json.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  const b = { contents: data.messages, generationConfig: { maxOutputTokens: data.max_tokens, temperature: data.temperature } };\n  if (data.system) b.systemInstruction = { parts: [{ text: data.system }] };\n  return JSON.stringify(b);\n})() }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "gemini-api",
+      "name": "Gemini API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        420
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT GEMINI (google) RESPONSE\n// ============================================\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\n\nif (input.error) {\n  return {\n    success: false,\n    error: {\n      code: input.error.status || input.error.code || 'GEMINI_ERROR',\n      message: input.error.message || 'Gemini API error',\n      http_status: 500\n    },\n    metadata: prevData.metadata,\n    _trace: { llm_response: null, service_response: input, provider: 'google',\n      model: prevData.model, tokens: { input: 0, output: 0 }, latency_ms: latencyMs }\n  };\n}\n\nconst parts = (input.candidates && input.candidates[0] && input.candidates[0].content && input.candidates[0].content.parts) || [];\nconst text = parts.map(p => p.text || '').join('');\nconst finishReason = (input.candidates && input.candidates[0] && input.candidates[0].finishReason) || 'STOP';\nconst usage = input.usageMetadata || {};\nconst modelUsed = prevData.model;\n\nreturn {\n  success: true,\n  data: { text: text, model: modelUsed, finish_reason: finishReason },\n  meta: { provider: 'google', model: modelUsed,\n    usage: {\n      prompt_tokens: usage.promptTokenCount || 0,\n      completion_tokens: usage.candidatesTokenCount || 0,\n      total_tokens: usage.totalTokenCount || 0\n    } },\n  metadata: prevData.metadata,\n  _trace: { llm_response: text, service_response: input, provider: 'google',\n    model: modelUsed,\n    tokens: { input: usage.promptTokenCount || 0, output: usage.candidatesTokenCount || 0 },\n    latency_ms: latencyMs }\n};"
+      },
+      "id": "format-gemini",
+      "name": "Format Gemini",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        420
+      ]
     }
   ],
   "connections": {
@@ -454,6 +523,13 @@
         [
           {
             "node": "Mistral API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gemini API",
             "type": "main",
             "index": 0
           }
@@ -531,6 +607,28 @@
         [
           {
             "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini API": {
+      "main": [
+        [
+          {
+            "node": "Format Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Gemini": {
+      "main": [
+        [
+          {
+            "node": "Merge",
             "type": "main",
             "index": 0
           }
