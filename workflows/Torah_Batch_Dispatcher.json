@@ -1,0 +1,259 @@
+{
+  "name": "Torah Batch Dispatcher",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Batch Dispatcher\n\n**Endpoint:** POST /webhook/torah-translate-batch\n\n**Request:**\n```json\n{\n  \"items\": [\n    {\n      \"commentary_id\": 123,\n      \"segment_id\": 456,\n      \"segmentText\": \"...\",\n      \"sourceLangName\": \"hébreu\",\n      \"targetLangName\": \"français\",\n      \"traite\": \"Berakhot\",\n      \"page\": \"2a\",\n      \"metadata\": { \"commentator\": \"Rashi\" }\n    }\n  ],\n  \"api_key\": \"sk-ant-...\",\n  \"model\": \"claude-...\",\n  \"max_tokens\": 8192,\n  \"project_id\": \"torah\",\n  \"callback_channel_id\": \"...\"\n}\n```\n\n**Response (202/200):**\n```json\n{ \"job_id\": \"...\", \"batch\": true, \"count\": 2 }\n```\n\n**Flow:**\n1. Validate input (items[], api_key, model, project_id requis)\n2. Create Job côté torah.api (sans la clé Anthropic)\n3. Build Requests : N requêtes Message Batches (1/commentaire), prompt talmudique Direct, custom_id = commentary_id\n4. Submit : POST vers le soumetteur générique /webhook/claude-call-with-skills (requests[] + callback_url + metadata.multi)\n5. Répond immédiatement {job_id, batch:true, count}\n\nLe callback_url pointe vers /webhook/torah-translation-callback (Task 4), qui recevra les résultats du poller.",
+        "height": 560,
+        "width": 380,
+        "color": 6
+      },
+      "id": "sticky-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [64, 64]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-translate-batch",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [480, 304],
+      "webhookId": "torah-translate-batch"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validation des paramètres\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst items = Array.isArray(body.items) ? body.items : [];\nconst apiKey = body.api_key || '';\nconst model = body.model || '';\nconst maxTokens = body.max_tokens || 8192;\nconst projectId = body.project_id || '';\nconst callbackChannelId = body.callback_channel_id || null;\n\nconst errors = [];\nif (items.length === 0) errors.push('Le champ \"items\" (tableau non vide) est requis');\nif (!apiKey) errors.push('Le champ \"api_key\" (Anthropic) est requis');\nif (!model) errors.push('Le champ \"model\" est requis');\nif (!projectId) errors.push('Le champ \"project_id\" est requis');\nitems.forEach((it, i) => {\n  if (!it.commentary_id) errors.push('items[' + i + '].commentary_id est requis');\n  if (!it.segment_id) errors.push('items[' + i + '].segment_id est requis');\n  if (!it.segmentText) errors.push('items[' + i + '].segmentText est requis');\n});\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    items: items,\n    api_key: apiKey,\n    model: model,\n    max_tokens: maxTokens,\n    project_id: projectId,\n    callback_channel_id: callbackChannelId\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [704, 304]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-validation",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [928, 304]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ type: 'translation-batch', total: $json.items.length, input: { project_id: $json.project_id, model: $json.model, target_lang: $json.items[0] && $json.items[0].targetLangName, commentary_ids: $json.items.map(it => it.commentary_id) } }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "create-job",
+      "name": "Create Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1152, 208],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $('Validate Input').first().json;\nconst jobId = $('Create Job').first().json.job_id || $('Create Job').first().json.id;\nconst model = body.model;                     // du payload, verbatim\nconst maxTokens = body.max_tokens || 8192;    // headroom : commentaire entier non chunké\nconst requests = body.items.map(it => {\n  const commentator = it.metadata && it.metadata.commentator ? ' - ' + it.metadata.commentator : '';\n  const prompt = 'Tu es un expert en textes talmudiques. Le texte source est en ' + it.sourceLangName +\n    '. Traduis en ' + it.targetLangName + '.\\n\\nContexte: ' + it.traite + ' ' + it.page + commentator +\n    '\\n\\nTexte à traduire:\\n' + it.segmentText + '\\n\\nRéponds UNIQUEMENT avec la traduction.';\n  return { custom_id: String(it.commentary_id), params: { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] } };\n});\n// carte custom_id -> segment_id, pour la sauvegarde côté callback\nconst commentary_map = {};\nbody.items.forEach(it => { commentary_map[String(it.commentary_id)] = { segment_id: it.segment_id }; });\nreturn {\n  api_key: body.api_key,\n  callback_url: $env.N8N_WEBHOOK_URL + '/webhook/torah-translation-callback',\n  metadata: { multi: true, job_id: jobId, project_id: body.project_id,\n              target_lang: body.items[0] && body.items[0].targetLangName,\n              callback_channel_id: body.callback_channel_id, commentary_map },\n  requests\n};"
+      },
+      "id": "build-requests",
+      "name": "Build Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1376, 208]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL }}/webhook/claude-call-with-skills",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "submit",
+      "name": "Submit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 208],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobId = $('Create Job').first().json.job_id || $('Create Job').first().json.id;\nconst count = $('Build Requests').first().json.requests.length;\n\nreturn [{\n  json: {\n    job_id: jobId,\n    batch: true,\n    count: count\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1824, 208]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2048, 208]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construire la réponse d'erreur de validation\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+      },
+      "id": "build-validation-error",
+      "name": "Build Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1152, 432]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1376, 432]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          { "node": "Validate Input", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          { "node": "Input Valid?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          { "node": "Create Job", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Build Validation Error", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Create Job": {
+      "main": [
+        [
+          { "node": "Build Requests", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Requests": {
+      "main": [
+        [
+          { "node": "Submit", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Submit": {
+      "main": [
+        [
+          { "node": "Format Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          { "node": "Respond Success", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Validation Error": {
+      "main": [
+        [
+          { "node": "Respond Validation Error", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
