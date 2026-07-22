@@ -108,20 +108,39 @@ des batches à surveiller**, écrite par le dispatcher à la soumission.
 | Aucune notif de fin | DM Discord terminal (callback torah) |
 | Coût | **−50 %** (tarif batch) |
 
+## Le duo batch générique (existant, à étendre)
+
+Le pipeline batch générique **existe déjà** (chantier docs Claude) et doit rester
+réutilisable pour d'autres cas :
+
+- **Soumetteur** : `Claude_-_Call_With_Skills` (webhook `/claude-call-with-skills`) →
+  `POST /v1/messages/batches` → `POST /xadd {stream:'llm:batches:pending', fields:
+  redis_data}`. Aujourd'hui **un batch = une requête** (`requests:[{custom_id:
+  correlation_id, params}]`).
+- **Poller** : `Claude_-_Batch_Poller` → lit `llm:batches:pending` → poll statut → sur
+  `ended`, `Process Results` (garde UN résultat par `correlation_id`) → livraison.
+
+L'ajout demandé (« générique pour d'autres cas ») = **support N-requêtes**, derrière un
+flag, rétro-compatible :
+- soumetteur : accepter `body.requests[]` (N) au lieu du seul message ;
+- poller : `Process Results` renvoie **tous** les résultats quand `metadata.multi`.
+
 ## Composants à créer / modifier
 
-1. **Dispatcher** (`Torah_Router` ou nouveau `Torah_Batch_Dispatcher`) — branche N > 50 :
-   construit les N requêtes (modèle = `body.model`), soumet **un** batch, crée le job,
-   enregistre au registre pending avec `callback_url` + `metadata.multi/redis_channel/
-   job_id/commentary_map`, répond. Voie sync (N ≤ 50) inchangée.
-2. **`Claude_-_Batch_Poller`** (générique, extension minimale) — `Process Results` :
-   `if (metadata.multi)` renvoyer **tous** les résultats par `custom_id` ; sinon
-   comportement actuel. Aucune logique métier. Reste du poller inchangé.
-3. **`Torah_Batch_Callback`** (nouveau webhook `/torah-translation-callback`, squelette de
-   `TORAH---Document-Callback`) : parse par `custom_id` → `torah-save` par item → mise à
-   jour du job → **DM Discord** de fin.
-4. **Prompt batch** : réplique le prompt de `Torah_Translate_Worker` (`Claude Direct`),
-   pivot fusionné en un prompt pour les paires concernées.
+1. **`Claude_-_Call_With_Skills`** (générique, extension) — `Validate Input` accepte
+   `requests[]` ; `Create Batch` utilise `body.requests` si présent (sinon wrap 1 message
+   actuel) ; `Prepare Batch Data` pose `metadata.multi=true`. Rétro-compatible.
+2. **`Claude_-_Batch_Poller`** (générique, extension) — `Process Results` : `if
+   (metadata.multi)` renvoyer **tous** les résultats par `custom_id` ; sinon actuel.
+3. **`Torah_Batch_Dispatcher`** (nouveau, mince/métier) — branche N > 50 : construit les N
+   requêtes de trad (modèle = `body.model`, prompt talmudique), POST
+   `/claude-call-with-skills` avec `requests[]` + `callback_url=/torah-translation-callback`
+   + `metadata`, crée le job torah.api, répond. (Voie sync N ≤ 50 inchangée dans `Torah_Router`.)
+4. **`Torah_Batch_Callback`** (nouveau webhook `/torah-translation-callback`, squelette de
+   `TORAH---Document-Callback`) — parse par `custom_id` → `torah-save` par item → maj job
+   → **DM Discord** de fin.
+5. **Prompt batch** — réplique le prompt de `Torah_Translate_Worker` (`Claude Direct`),
+   pivot fusionné en un prompt (dans le dispatcher, tâche 3).
 
 ## Contrats de référence (vérifiés)
 
