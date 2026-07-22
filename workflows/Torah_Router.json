@@ -37,7 +37,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse and validate input\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\nconst CHUNK_THRESHOLD = 10000;\n\n// Generate job_id if not provided\nconst jobIdProvided = !!body.job_id;\nconst jobId = body.job_id || 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\nconst projectId = headers['x-project-id'] || body.project_id || 'default';\n\n// Determine pipeline type\nlet pipelineType = 'unknown';\nlet segments = [];\nlet needsChunking = false;\nlet totalSegments = 0;\n\nif (body.segments && Array.isArray(body.segments) && body.segments.length > 0) {\n  // Batch mode: multiple segments (commentaries)\n  pipelineType = 'batch';\n  segments = body.segments.map((s, idx) => ({\n    index: idx,\n    text: typeof s === 'string' ? s : (s.text || s.text_hebrew || s.hebrew_text),\n    segment_id: s.segment_id || null,\n    commentary_id: s.commentary_id || null,\n    source_text: typeof s === 'string' ? s : null,\n    // RFC bilingual-translations-en-pivot: EN pivot for quality\n    reference_translation: s.reference_translation || null,\n    char_count: (typeof s === 'string' ? s : (s.text || s.text_hebrew || s.hebrew_text || '')).length\n  }));\n  \n  // Les segments trop longs ne sont plus rejetés : ils seront découpés puis\n  // traduits morceau par morceau et RÉASSEMBLÉS (node « Pre-Translate Long »),\n  // car le save est keyé par commentary_id (une ligne) — azy.daily#... (chunking batch).\n  segments = segments.map(s => ({ ...s, needsChunk: s.char_count > CHUNK_THRESHOLD }));\n  totalSegments = segments.length;\n  \n} else if (body.text) {\n  // Single text mode\n  const textLength = body.text.length;\n  \n  if (textLength > CHUNK_THRESHOLD) {\n    pipelineType = 'chunk_then_translate';\n    needsChunking = true;\n    // Segments will be created by Chunk Worker\n    segments = [{ index: 0, text: body.text, segment_id: body.segment_id || null, source_text: body.text, char_count: textLength }];\n    totalSegments = 1; // Will be updated after chunking\n  } else {\n    pipelineType = 'translate_single';\n    segments = [{\n      index: 0,\n      text: body.text,\n      segment_id: body.segment_id || null,\n      source_text: body.text,\n      char_count: textLength\n    }];\n    totalSegments = 1;\n  }\n} else {\n  return [{\n    json: {\n      valid: false,\n      error: { code: 400, message: 'Either segments[] or text is required' }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    jobId: jobId,\n    jobIdProvided: jobIdProvided,\n    needsJobCreation: !jobIdProvided,\n    projectId: projectId,\n    jobType: body.job_type || 'translation',\n    pipelineType: pipelineType,\n    needsChunking: needsChunking,\n    segments: segments,\n    totalSegments: totalSegments,\n    traite: body.traite,\n    page: body.page,\n    section: body.section,\n    commentator: body.commentator,\n    sourceLanguage: body.source_language || 'he',\n    targetLanguage: body.target_language || 'fr',\n    apiKey: body.api_key,\n    openaiApiKey: body.openai_api_key,\n    context: body.context || {},\n    metadata: body.metadata || {},\n    requestId: body.request_id,\n    model: body.model || 'claude-sonnet-4-6',\n    provider: body.provider || 'anthropic',\n    chunkThreshold: CHUNK_THRESHOLD\n  }\n}];"
+        "jsCode": "// Parse and validate input\nconst input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\nconst CHUNK_THRESHOLD = 10000;\n\n// Generate job_id if not provided\nconst jobIdProvided = !!body.job_id;\nconst jobId = body.job_id || 'job_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);\nconst projectId = headers['x-project-id'] || body.project_id || 'default';\n\n// Determine pipeline type\nlet pipelineType = 'unknown';\nlet segments = [];\nlet needsChunking = false;\nlet totalSegments = 0;\n\nif (body.segments && Array.isArray(body.segments) && body.segments.length > 0) {\n  // Batch mode: multiple segments (commentaries)\n  pipelineType = 'batch';\n  segments = body.segments.map((s, idx) => ({\n    index: idx,\n    text: typeof s === 'string' ? s : (s.text || s.text_hebrew || s.hebrew_text),\n    segment_id: s.segment_id || null,\n    commentary_id: s.commentary_id || null,\n    source_text: typeof s === 'string' ? s : null,\n    // RFC bilingual-translations-en-pivot: EN pivot for quality\n    reference_translation: s.reference_translation || null,\n    char_count: (typeof s === 'string' ? s : (s.text || s.text_hebrew || s.hebrew_text || '')).length\n  }));\n  \n  // Les segments trop longs ne sont plus rejetés : ils seront découpés puis\n  // traduits morceau par morceau et RÉASSEMBLÉS (node « Pre-Translate Long »),\n  // car le save est keyé par commentary_id (une ligne) — azy.daily#... (chunking batch).\n  segments = segments.map(s => ({ ...s, needsChunk: s.char_count > CHUNK_THRESHOLD }));\n  totalSegments = segments.length;\n  \n} else if (body.text) {\n  // Single text mode\n  const textLength = body.text.length;\n  \n  if (textLength > CHUNK_THRESHOLD) {\n    pipelineType = 'chunk_then_translate';\n    needsChunking = true;\n    // Segments will be created by Chunk Worker\n    segments = [{ index: 0, text: body.text, segment_id: body.segment_id || null, source_text: body.text, char_count: textLength }];\n    totalSegments = 1; // Will be updated after chunking\n  } else {\n    pipelineType = 'translate_single';\n    segments = [{\n      index: 0,\n      text: body.text,\n      segment_id: body.segment_id || null,\n      source_text: body.text,\n      char_count: textLength\n    }];\n    totalSegments = 1;\n  }\n} else {\n  return [{\n    json: {\n      valid: false,\n      error: { code: 400, message: 'Either segments[] or text is required' }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    useBatch: (Array.isArray(segments) && segments.length > 50),\n    jobId: jobId,\n    jobIdProvided: jobIdProvided,\n    needsJobCreation: !jobIdProvided,\n    projectId: projectId,\n    jobType: body.job_type || 'translation',\n    pipelineType: pipelineType,\n    needsChunking: needsChunking,\n    segments: segments,\n    totalSegments: totalSegments,\n    traite: body.traite,\n    page: body.page,\n    section: body.section,\n    commentator: body.commentator,\n    sourceLanguage: body.source_language || 'he',\n    targetLanguage: body.target_language || 'fr',\n    apiKey: body.api_key,\n    openaiApiKey: body.openai_api_key,\n    context: body.context || {},\n    metadata: body.metadata || {},\n    requestId: body.request_id,\n    model: body.model || 'claude-sonnet-4-6',\n    provider: body.provider || 'anthropic',\n    chunkThreshold: CHUNK_THRESHOLD\n  }\n}];"
       },
       "id": "parse-input",
       "name": "Parse Input",
@@ -570,6 +570,88 @@
         2640,
         464
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.useBatch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-batch",
+      "name": "Batch?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1104,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pd = $('Parse Input').first().json;\nconst rawBody = ($('Webhook Trigger').first().json.body) || $('Webhook Trigger').first().json || {};\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\nconst sName = languageNames[pd.sourceLanguage] || pd.sourceLanguage;\nconst tName = languageNames[pd.targetLanguage] || pd.targetLanguage;\nconst items = (pd.segments || []).map(s => ({\n  commentary_id: s.commentary_id,\n  segment_id: s.segment_id,\n  segmentText: s.text,\n  sourceLangName: sName,\n  targetLangName: tName,\n  traite: pd.traite,\n  page: pd.page,\n  metadata: { commentator: pd.commentator }\n}));\nconst channelId = (pd.context && pd.context.channel_id) || (pd.metadata && pd.metadata.channel_id) || null;\nreturn { items, api_key: pd.apiKey, model: rawBody.model, project_id: pd.projectId, callback_channel_id: channelId };"
+      },
+      "id": "build-batch-payload",
+      "name": "Build Batch Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-translate-batch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "dispatch-batch",
+      "name": "Dispatch Batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1552,
+        -220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-batch",
+      "name": "Respond Batch",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1776,
+        -220
+      ]
     }
   ],
   "connections": {
@@ -599,7 +681,7 @@
       "main": [
         [
           {
-            "node": "Respond Accepted",
+            "node": "Batch?",
             "type": "main",
             "index": 0
           }
@@ -887,6 +969,46 @@
         [
           {
             "node": "Call Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch?": {
+      "main": [
+        [
+          {
+            "node": "Build Batch Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Batch Payload": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Batch": {
+      "main": [
+        [
+          {
+            "node": "Respond Batch",
             "type": "main",
             "index": 0
           }
