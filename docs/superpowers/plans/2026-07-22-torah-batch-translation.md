@@ -426,3 +426,27 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 - Seuil N > 50 → **Task 5**. Modèle du payload → **Task 3** (Build Requests). Soumission unique / N-requêtes → **Task 1 + 3**. Poller générique multi → **Task 2**. Livraison callback webhook → **Task 2 (Publish) + 4**. Save par custom_id + DM → **Task 4**. Chunking supprimé (commentaire entier) → **Task 3** (une requête/commentaire, `max_tokens 8192`). Rétro-compat docs → **Task 1 & 2** (flag `multi`). Garde-fou anti-double-enqueue → *à ajouter en Task 3 si besoin (flag Redis `torah:job:{id}:batch`)*.
 - Point ouvert assumé : le **câblage exact `results[]` → callback** (Task 2 Step 5) dépend de la forme réelle de `Publish to Redis`/du bridge — à ajuster à l'implémentation, testé en Task 2 Step 7.
+
+---
+
+## Task 1b : Soumetteur propage `callback_url` (option A)
+
+**Files:** Modify `workflows/Claude_-_Call_With_Skills.json` (`Validate Input`, `Prepare Batch Data`)
+
+Livraison auto-possédée : le poller POSTera au `callback_url`. Pour ça, le soumetteur doit le porter jusqu'au poller via `redis_data`.
+
+- `Validate Input` : lire `const callbackUrl = body.callback_url || ctx.callback_url || null;` et l'exposer dans la sortie (`callback_url: callbackUrl`), à côté de `redis_channel`/`correlation_id`.
+- `Prepare Batch Data` : ajouter `callback_url: prevData.callback_url` dans l'objet `redis_data`.
+- **Rétro-compat** : sans `body.callback_url`, `callback_url` vaut `null` → le POST conditionnel du poller ne se déclenchera pas → chemin docs (stream MCP) intact.
+- Valider hors-ligne (`scratchpad/validate_wf.py`), commit.
+
+## Task 2b : Poller — POST conditionnel au `callback_url` (option A)
+
+**Files:** Modify `workflows/Claude_-_Batch_Poller.json` (ajout de 2 nodes + connexions)
+
+- Après `Process Results` (qui renvoie déjà `callback_url: batchInfo.callback_url`), ajouter :
+  - IF **`Has Callback?`** : condition `{{ $json.callback_url }}` non vide.
+  - HTTP **`POST Callback`** : `POST {{ $json.callback_url }}`, body `{{ JSON.stringify($json) }}` (toute la sortie de Process Results : `success, multi, batch_id, results, content, metadata, _trace`), `onError: continueRegularOutput`, timeout 30000.
+- Connexions : `Process Results` garde son lien vers `Publish to Redis` (inchangé) **et** gagne un lien vers `Has Callback?` ; `Has Callback?` (true) → `POST Callback`.
+- **Générique** : rien de torah ici. **Rétro-compat** : `callback_url` absent → branche false → comportement actuel.
+- Valider hors-ligne, commit.
