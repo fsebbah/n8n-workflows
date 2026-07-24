@@ -137,7 +137,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Vérifier si le cache a retourné une vocalisation\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Cache hit si status 200 et vocalisation trouvée\nconst cacheHit = statusCode === 200 && data.found === true && data.vocalized_text;\n\nif (cacheHit) {\n  return [{\n    json: {\n      cacheHit: true,\n      vocalizedText: data.vocalized_text,\n      vocalizedBy: data.vocalized_by || 'cached',\n      vocalizedAt: data.vocalized_at,\n      // Passer les données pour la réponse\n      originalText: prevData.text,\n      sourceTextId: data.source_text_id || prevData.sourceTextId,\n      commentaryId: data.commentary_id || prevData.commentaryId,\n      context: prevData.context,\n      startTime: prevData.startTime\n    }\n  }];\n}\n\n// Cache miss - passer au LLM\nreturn [{\n  json: {\n    cacheHit: false,\n    ...prevData\n  }\n}];"
+        "jsCode": "// Vérifier si le cache a retourné une vocalisation\nconst input = $input.first().json;\nconst _vi = $('Validate Input').first().json;\nconst prevData = _vi.isBatch ? $('Process Batch Item').first().json : _vi;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode || 200;\n\n// Cache hit si status 200 et vocalisation trouvée\nconst cacheHit = statusCode === 200 && data.found === true && data.vocalized_text;\n\nif (cacheHit) {\n  return [{\n    json: {\n      cacheHit: true,\n      vocalizedText: data.vocalized_text,\n      vocalizedBy: data.vocalized_by || 'cached',\n      vocalizedAt: data.vocalized_at,\n      // Passer les données pour la réponse\n      originalText: prevData.text,\n      sourceTextId: data.source_text_id || prevData.sourceTextId,\n      commentaryId: data.commentary_id || prevData.commentaryId,\n      context: prevData.context,\n      startTime: prevData.startTime\n    }\n  }];\n}\n\n// Cache miss - passer au LLM\nreturn [{\n  json: {\n    cacheHit: false,\n    ...prevData\n  }\n}];"
       },
       "id": "check-cache-result",
       "name": "Check Cache Result",
@@ -234,7 +234,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extraire la vocalisation et préparer la sauvegarde\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst endTime = Date.now();\nconst processingTime = endTime - prevData.startTime;\n\n// Gestion fullResponse ou réponse directe\nconst data = input.body || input;\nconst statusCode = input.statusCode;\n\n// Vérifier les erreurs de connexion (n8n retourne error.code comme string)\nif (input.error && typeof input.error.code === 'string') {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 503,\n        message: `Erreur connexion OpenAI: ${input.error.message || input.error.code}`,\n        status: 'CONNECTION_ERROR'\n      }\n    }\n  }];\n}\n\n// Vérifier les erreurs HTTP (statusCode >= 400 ou data.error avec message)\nconst hasHttpError = typeof statusCode === 'number' && statusCode >= 400;\nconst hasApiError = data.error && data.error.message;\nif (hasHttpError || hasApiError) {\n  const errorMsg = data.error?.message || `Erreur HTTP ${statusCode}`;\n  const errorCode = hasHttpError ? statusCode : 500;\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: errorCode,\n        message: `Erreur API OpenAI: ${errorMsg}`,\n        status: 'OPENAI_API_ERROR'\n      }\n    }\n  }];\n}\n\n// Extraire le texte vocalisé\nlet vocalizedText = '';\nif (data.choices && data.choices[0]?.message?.content) {\n  vocalizedText = data.choices[0].message.content.trim();\n}\n\nif (!vocalizedText) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Aucune vocalisation retournée par GPT',\n        status: 'EMPTY_GPT_RESPONSE'\n      }\n    }\n  }];\n}\n\nconst usage = data.usage || {};\n\n// Construire la réponse\nconst response = {\n  success: true,\n  cached: false,\n  vocalization: {\n    original: prevData.text,\n    vocalized: vocalizedText\n  },\n  metadata: {\n    traite: prevData.context.traite || null,\n    page: prevData.context.page || null,\n    commentator: prevData.context.commentator || null,\n    segment_id: prevData.segmentId || null,\n    source_text_id: prevData.sourceTextId || null,\n    commentary_id: prevData.commentaryId || null,\n    vocalized_by: 'llm:gpt-4o',\n    model: 'gpt-4o',\n    source: 'generated',\n    processing_time_ms: processingTime,\n    tokens: {\n      prompt_tokens: usage.prompt_tokens || 0,\n      completion_tokens: usage.completion_tokens || 0\n    }\n  },\n  // Données pour sauvegarde\n  _saveData: {\n    segment_id: prevData.segmentId || null,\n    source_text_id: prevData.sourceTextId || null,\n    commentary_id: prevData.commentaryId || null,\n    vocalized_text: vocalizedText,\n    vocalized_by: 'llm:gpt-4o'\n  }\n};\n\nreturn [{ json: response }];"
+        "jsCode": "// Extraire la vocalisation et préparer la sauvegarde\nconst input = $input.first().json;\nconst _vi = $('Validate Input').first().json;\nconst prevData = _vi.isBatch ? $('Process Batch Item').first().json : _vi;\n\nconst endTime = Date.now();\nconst processingTime = endTime - prevData.startTime;\n\n// Gestion fullResponse ou réponse directe\nconst data = input.body || input;\nconst statusCode = input.statusCode;\n\n// Vérifier les erreurs de connexion (n8n retourne error.code comme string)\nif (input.error && typeof input.error.code === 'string') {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 503,\n        message: `Erreur connexion OpenAI: ${input.error.message || input.error.code}`,\n        status: 'CONNECTION_ERROR'\n      }\n    }\n  }];\n}\n\n// Vérifier les erreurs HTTP (statusCode >= 400 ou data.error avec message)\nconst hasHttpError = typeof statusCode === 'number' && statusCode >= 400;\nconst hasApiError = data.error && data.error.message;\nif (hasHttpError || hasApiError) {\n  const errorMsg = data.error?.message || `Erreur HTTP ${statusCode}`;\n  const errorCode = hasHttpError ? statusCode : 500;\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: errorCode,\n        message: `Erreur API OpenAI: ${errorMsg}`,\n        status: 'OPENAI_API_ERROR'\n      }\n    }\n  }];\n}\n\n// Extraire le texte vocalisé\nlet vocalizedText = '';\nif (data.choices && data.choices[0]?.message?.content) {\n  vocalizedText = data.choices[0].message.content.trim();\n}\n\nif (!vocalizedText) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: 500,\n        message: 'Aucune vocalisation retournée par GPT',\n        status: 'EMPTY_GPT_RESPONSE'\n      }\n    }\n  }];\n}\n\nconst usage = data.usage || {};\n\n// Construire la réponse\nconst response = {\n  success: true,\n  cached: false,\n  vocalization: {\n    original: prevData.text,\n    vocalized: vocalizedText\n  },\n  metadata: {\n    traite: prevData.context.traite || null,\n    page: prevData.context.page || null,\n    commentator: prevData.context.commentator || null,\n    segment_id: prevData.segmentId || null,\n    source_text_id: prevData.sourceTextId || null,\n    commentary_id: prevData.commentaryId || null,\n    vocalized_by: 'llm:gpt-4o',\n    model: 'gpt-4o',\n    source: 'generated',\n    processing_time_ms: processingTime,\n    tokens: {\n      prompt_tokens: usage.prompt_tokens || 0,\n      completion_tokens: usage.completion_tokens || 0\n    }\n  },\n  // Données pour sauvegarde\n  _saveData: {\n    segment_id: prevData.segmentId || null,\n    source_text_id: prevData.sourceTextId || null,\n    commentary_id: prevData.commentaryId || null,\n    vocalized_text: vocalizedText,\n    vocalized_by: 'llm:gpt-4o'\n  }\n};\n\nreturn [{ json: response }];"
       },
       "id": "extract-gpt-response",
       "name": "Extract GPT Response",
@@ -393,7 +393,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Vérifier si le commentaire a des nekudot\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode;\n\n// Si erreur de connexion (error.code est une string comme 'ERR_BAD_REQUEST')\nif (input.error && typeof input.error.code === 'string') {\n  return [{\n    json: {\n      hasNekudot: false,\n      ...prevData\n    }\n  }];\n}\n\n// Si erreur HTTP, passer à la vocalisation\nif (typeof statusCode === 'number' && statusCode >= 400) {\n  return [{\n    json: {\n      hasNekudot: false,\n      ...prevData\n    }\n  }];\n}\n\n// Vérifier si les nekudot existent\nconst nekudot = data.nekudot || {};\nconst nekudotData = nekudot[prevData.commentaryId];\n\nif (nekudotData && nekudotData.text) {\n  return [{\n    json: {\n      hasNekudot: true,\n      cachedNekudot: nekudotData.text,\n      cachedAt: nekudotData.vocalized_at,\n      originalText: prevData.text,\n      context: prevData.context,\n      startTime: prevData.startTime,\n      commentaryId: prevData.commentaryId\n    }\n  }];\n}\n\n// Pas de nekudot, passer à GPT-4o\nreturn [{\n  json: {\n    hasNekudot: false,\n    ...prevData\n  }\n}];"
+        "jsCode": "// Vérifier si le commentaire a des nekudot\nconst input = $input.first().json;\nconst _vi = $('Validate Input').first().json;\nconst prevData = _vi.isBatch ? $('Process Batch Item').first().json : _vi;\n\nconst data = input.body || input;\nconst statusCode = input.statusCode;\n\n// Si erreur de connexion (error.code est une string comme 'ERR_BAD_REQUEST')\nif (input.error && typeof input.error.code === 'string') {\n  return [{\n    json: {\n      hasNekudot: false,\n      ...prevData\n    }\n  }];\n}\n\n// Si erreur HTTP, passer à la vocalisation\nif (typeof statusCode === 'number' && statusCode >= 400) {\n  return [{\n    json: {\n      hasNekudot: false,\n      ...prevData\n    }\n  }];\n}\n\n// Vérifier si les nekudot existent\nconst nekudot = data.nekudot || {};\nconst nekudotData = nekudot[prevData.commentaryId];\n\nif (nekudotData && nekudotData.text) {\n  return [{\n    json: {\n      hasNekudot: true,\n      cachedNekudot: nekudotData.text,\n      cachedAt: nekudotData.vocalized_at,\n      originalText: prevData.text,\n      context: prevData.context,\n      startTime: prevData.startTime,\n      commentaryId: prevData.commentaryId\n    }\n  }];\n}\n\n// Pas de nekudot, passer à GPT-4o\nreturn [{\n  json: {\n    hasNekudot: false,\n    ...prevData\n  }\n}];"
       },
       "id": "check-nekudot-result",
       "name": "Commentary Has Nekudot?",
@@ -536,7 +536,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Merger tous les résultats batch\nconst allResults = $input.all().map(item => item.json);\nconst startTime = $('Validate Input').first().json.startTime;\n\nconst endTime = Date.now();\nconst processingTime = endTime - startTime;\n\n// Trier par index\nallResults.sort((a, b) => a.index - b.index);\n\n// Calculer les stats\nconst total = allResults.length;\nconst cached = allResults.filter(r => r.cached).length;\nconst generated = allResults.filter(r => !r.cached && r.success).length;\nconst errorsCount = allResults.filter(r => !r.success).length;\n\n// Nettoyer les résultats (enlever l'index interne)\nconst cleanResults = allResults.map(r => ({\n  commentary_id: r.commentary_id,\n  source_text_id: r.source_text_id,\n  vocalization: r.vocalization,\n  cached: r.cached,\n  success: r.success,\n  error: r.error\n}));\n\nreturn [{\n  json: {\n    success: errorsCount < total,  // Au moins un succès\n    results: cleanResults,\n    summary: {\n      total: total,\n      cached: cached,\n      generated: generated,\n      errors: errorsCount,\n      processing_time_ms: processingTime\n    }\n  }\n}];"
+        "jsCode": "// Merger tous les résultats batch\nconst allResults = $input.all().map(item => item.json);\nconst startTime = $('Validate Input').first().json.startTime;\n\nconst endTime = Date.now();\nconst processingTime = endTime - startTime;\n\n// Trier par index\nallResults.sort((a, b) => a.index - b.index);\n\n// Calculer les stats\nconst total = allResults.length;\nconst cached = allResults.filter(r => r.cached).length;\nconst generated = allResults.filter(r => !r.cached && r.success).length;\nconst errorsCount = allResults.filter(r => !r.success).length;\n\n// Nettoyer les résultats (enlever l'index interne)\nconst firstErr = allResults.find(r => !r.success && r.error);\nconst allFailed = errorsCount === total && total > 0;\nconst cleanResults = allResults.map(r => ({\n  commentary_id: r.commentary_id,\n  source_text_id: r.source_text_id,\n  vocalization: r.vocalization,\n  cached: r.cached,\n  success: r.success,\n  error: r.error\n}));\n\nreturn [{\n  json: {\n    success: errorsCount < total,\n    allFailed: allFailed,\n    error: firstErr ? (firstErr.error || { message: 'vocalization failed' }) : null,\n    results: cleanResults,\n    summary: {\n      total: total,\n      cached: cached,\n      generated: generated,\n      errors: errorsCount,\n      processing_time_ms: processingTime\n    }\n  }\n}];"
       },
       "id": "merge-batch-results",
       "name": "Merge Batch Results",
@@ -730,7 +730,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ status: 'completed', output: { results: $json.results, summary: $json.summary }, progress: { done: $json.summary.total, total: $json.summary.total } }) }}",
+        "jsonBody": "={{ JSON.stringify({ status: 'completed', output: { results: $json.results, summary: $json.summary }, error: ($json.summary.errors > 0 ? { message: $json.summary.errors + ' item(s) en erreur (voir output.summary)', errors_count: $json.summary.errors } : null), progress: { done: $json.summary.total, total: $json.summary.total } }) }}",
         "options": {}
       },
       "id": "complete-job",
@@ -810,6 +810,38 @@
       "position": [
         2832,
         0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.allFailed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "batch-all-failed",
+      "name": "Batch All Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3092,
+        -208
       ]
     }
   ],
@@ -1098,14 +1130,14 @@
       "main": [
         [
           {
-            "node": "Process Batch Item",
+            "node": "Merge Batch Results",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Merge Batch Results",
+            "node": "Process Batch Item",
             "type": "main",
             "index": 0
           }
@@ -1138,7 +1170,7 @@
       "main": [
         [
           {
-            "node": "Complete Job",
+            "node": "Batch All Failed?",
             "type": "main",
             "index": 0
           }
@@ -1226,6 +1258,24 @@
         [
           {
             "node": "Batch or Single?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch All Failed?": {
+      "main": [
+        [
+          {
+            "node": "Fail Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Complete Job",
             "type": "main",
             "index": 0
           }
