@@ -578,7 +578,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "={{ ($env.N8N_WEBHOOK_URL || 'http://localhost:5678') + '/webhook/torah-result-store' }}",
+        "url": "={{ ($env.N8N_WEBHOOK_URL || 'http://localhost:5678') + '/webhook/document-result-store' }}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ job_id: $json.jobId, result: { type: 'document_translation', pages: $json.pages, full_translation: $json.fullTranslation, tokens: $json.tokens, completed_at: $json.completedAt } }) }}",
@@ -586,7 +586,7 @@
           "timeout": 10000
         }
       },
-      "onError": "continueRegularOutput"
+      "onError": "continueErrorOutput"
     },
     {
       "id": "mark-complete",
@@ -808,6 +808,36 @@
         },
         "options": {}
       }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $('Finalize').first().json.jobId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'failed', error: { code: 'RESULT_STORE_FAILED', message: \"Traduction produite mais dépôt du résultat impossible — job marqué failed pour ne pas laisser croire que le texte est disponible. Ne pas facturer.\" } }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "doc-worker-mark-failed",
+      "name": "Mark Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3840,
+        420
+      ],
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -1097,6 +1127,13 @@
         [
           {
             "node": "Mark Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Failed",
             "type": "main",
             "index": 0
           }
@@ -1794,7 +1831,7 @@
         ],
         "parameters": {
           "method": "POST",
-          "url": "={{ ($env.N8N_WEBHOOK_URL || 'http://localhost:5678') + '/webhook/torah-result-store' }}",
+          "url": "={{ ($env.N8N_WEBHOOK_URL || 'http://localhost:5678') + '/webhook/document-result-store' }}",
           "sendBody": true,
           "specifyBody": "json",
           "jsonBody": "={{ JSON.stringify({ job_id: $json.jobId, result: { type: 'document_translation', pages: $json.pages, full_translation: $json.fullTranslation, tokens: $json.tokens, completed_at: $json.completedAt } }) }}",
@@ -1802,7 +1839,7 @@
             "timeout": 10000
           }
         },
-        "onError": "continueRegularOutput"
+        "onError": "continueErrorOutput"
       },
       {
         "id": "mark-complete",
@@ -2024,6 +2061,36 @@
           },
           "options": {}
         }
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $('Finalize').first().json.jobId }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ status: 'failed', error: { code: 'RESULT_STORE_FAILED', message: \"Traduction produite mais dépôt du résultat impossible — job marqué failed pour ne pas laisser croire que le texte est disponible. Ne pas facturer.\" } }) }}",
+          "options": {
+            "timeout": 5000
+          }
+        },
+        "id": "doc-worker-mark-failed",
+        "name": "Mark Failed",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3840,
+          420
+        ],
+        "onError": "continueRegularOutput"
       }
     ],
     "connections": {
@@ -2313,6 +2380,13 @@
           [
             {
               "node": "Mark Complete",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Mark Failed",
               "type": "main",
               "index": 0
             }

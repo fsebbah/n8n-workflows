@@ -1,0 +1,240 @@
+{
+  "name": "DOCUMENT - Result Store",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## DOCUMENT - Result Store\n\nDépôt volatile du résultat d'un job de traduction de document.\n\n**POST** `/webhook/document-result-store` — `{job_id, result}`\n**GET**  `/webhook/document-result-get?job_id=…`\n\n### Pourquoi Redis et non staticData\n\n`Torah Result Store` stocke dans `$getWorkflowStaticData('global')`. Trois défauts,\ninvisibles sur le flux Torah, bloquants ici :\n\n- **volume** — un segment de Talmud pèse quelques centaines d'octets, un document\n  de 35 pages ~87 Ko. n8n sérialise tout le staticData à chaque exécution ;\n- **purge paresseuse** — le nettoyage ne tourne qu'au moment d'un store ;\n- **pas d'atomicité** — lire/modifier/réécrire n'est pas atomique entre exécutions\n  parallèles, et desktop + mobile produiront du multi-utilisateur concurrent.\n\n`EXPIRE` de Redis donne un TTL réel, atomique, sans purge manuelle.\n\n### TTL : 1 h à partir du STOCKAGE\n\nDonc à partir de la fin du job, pas du dispatch — un document de 35 pages\nmangerait sinon sa fenêtre avant que le texte existe. Confirmé par desktop\n(azy.daily#194).\n\nCette fenêtre sert la **livraison fiable**, pas le stockage : desktop et mobile\npersistent en local (PdfTextStore / ObjectBox). Elle permet de re-poller après\nune coupure **sans re-dispatch, donc sans re-facturation**.\n\nRéalisation : n8n-workflows#418",
+        "height": 620,
+        "width": 420,
+        "color": 4
+      },
+      "id": "doc-rs-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-160, 0]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "document-result-store",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "doc-rs-hook-post",
+      "name": "Webhook Store",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [300, -120],
+      "webhookId": "doc-result-store"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valide AVANT d'écrire : un dépôt incomplet vaut mieux refusé qu'accepté à vide.\n// Le job passera en failed côté worker (invariant « completed ⟹ texte », #418).\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst jobId = body.job_id;\nconst result = body.result;\n\nif (!jobId || typeof jobId !== 'string') {\n  return [{ json: { valide: false, erreur: 'job_id requis (chaîne)' } }];\n}\nif (!result || typeof result !== 'object') {\n  return [{ json: { valide: false, erreur: 'result requis (objet)' } }];\n}\n\n// Le TTL court à partir d'ICI — donc de la fin du job, pas du dispatch.\nconst TTL_SECONDES = 3600;\n\nreturn [{\n  json: {\n    valide: true,\n    jobId: jobId,\n    cle: `job:document:${jobId}`,\n    ttl: TTL_SECONDES,\n    charge: JSON.stringify({\n      job_id: jobId,\n      result: result,\n      stored_at: new Date().toISOString(),\n      ttl_seconds: TTL_SECONDES\n    })\n  }\n}];"
+      },
+      "id": "doc-rs-valide",
+      "name": "Valider Dépôt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, -120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [
+            {
+              "id": "cond-valide",
+              "leftValue": "={{ $json.valide }}",
+              "rightValue": true,
+              "operator": {"type": "boolean", "operation": "equals"}
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "doc-rs-if",
+      "name": "Dépôt Valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [740, -120]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "={{ $json.cle }}",
+        "value": "={{ $json.charge }}",
+        "keyType": "string",
+        "expire": true,
+        "ttl": "={{ $json.ttl }}"
+      },
+      "id": "doc-rs-set",
+      "name": "Redis SET (TTL 1h)",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [960, -200],
+      "credentials": {
+        "redis": {"id": "2idv3VKZ91q5gOnz", "name": "Redis account"}
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, job_id: $('Valider Dépôt').first().json.jobId, stored: true, ttl_seconds: $('Valider Dépôt').first().json.ttl }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+        }
+      },
+      "id": "doc-rs-ok",
+      "name": "Répondre Stocké",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1180, -200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.erreur, error_code: 'INVALID_INPUT' }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+        }
+      },
+      "id": "doc-rs-ko",
+      "name": "Répondre Refus",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [960, -20]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "document-result-get",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "doc-rs-hook-get",
+      "name": "Webhook Get",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [300, 220],
+      "webhookId": "doc-result-get"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le job_id arrive en query. Pas de valeur par défaut : lire une clé arbitraire\n// renverrait le résultat d'un autre utilisateur.\nconst input = $input.first().json;\nconst query = input.query || {};\nconst jobId = query.job_id;\n\nif (!jobId || typeof jobId !== 'string') {\n  return [{ json: { valide: false, erreur: 'job_id requis en paramètre' } }];\n}\n\nreturn [{ json: { valide: true, jobId: jobId, cle: `job:document:${jobId}` } }];"
+      },
+      "id": "doc-rs-parse",
+      "name": "Lire Paramètres",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [
+            {
+              "id": "cond-get-valide",
+              "leftValue": "={{ $json.valide }}",
+              "rightValue": true,
+              "operator": {"type": "boolean", "operation": "equals"}
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "doc-rs-if-get",
+      "name": "Paramètre Valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [740, 220]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "={{ $json.cle }}",
+        "keyType": "string",
+        "options": {}
+      },
+      "id": "doc-rs-get",
+      "name": "Redis GET",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [960, 140],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "redis": {"id": "2idv3VKZ91q5gOnz", "name": "Redis account"}
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Distingue TROIS cas, que le consommateur doit pouvoir séparer :\n//   found:true             → le texte est là\n//   found:false, expired   → la clé a vécu puis expiré (fenêtre TTL dépassée)\n//   found:false            → jamais stockée (job échoué avant le dépôt)\n// Sans cette distinction, desktop ne peut pas décider entre « re-poller »,\n// « re-dispatcher » et « signaler une erreur ».\nconst jobId = $('Lire Paramètres').first().json.jobId;\nconst brut = $input.first().json;\n\n// Le node Redis renvoie la valeur sous la clé demandée, ou propertyName\nconst valeur = brut[`job:document:${jobId}`] ?? brut.propertyName ?? brut.value ?? null;\n\nif (!valeur) {\n  return [{\n    json: {\n      success: true,\n      found: false,\n      job_id: jobId,\n      reason: 'absent_ou_expire',\n      message: 'Aucun résultat pour ce job : jamais stocké, ou fenêtre de 1 h dépassée.'\n    }\n  }];\n}\n\nlet charge;\ntry {\n  charge = typeof valeur === 'string' ? JSON.parse(valeur) : valeur;\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      found: false,\n      job_id: jobId,\n      error: 'contenu illisible en base',\n      error_code: 'CORRUPT_PAYLOAD'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    found: true,\n    job_id: jobId,\n    stored_at: charge.stored_at,\n    result: charge.result\n  }\n}];"
+      },
+      "id": "doc-rs-format",
+      "name": "Formater Résultat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1180, 140]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success === false ? 500 : 200 }}",
+          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+        }
+      },
+      "id": "doc-rs-respond-get",
+      "name": "Répondre Résultat",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1400, 140]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.erreur, error_code: 'INVALID_INPUT' }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+        }
+      },
+      "id": "doc-rs-ko-get",
+      "name": "Répondre Refus Get",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [960, 340]
+    }
+  ],
+  "connections": {
+    "Webhook Store": {"main": [[{"node": "Valider Dépôt", "type": "main", "index": 0}]]},
+    "Valider Dépôt": {"main": [[{"node": "Dépôt Valide ?", "type": "main", "index": 0}]]},
+    "Dépôt Valide ?": {
+      "main": [
+        [{"node": "Redis SET (TTL 1h)", "type": "main", "index": 0}],
+        [{"node": "Répondre Refus", "type": "main", "index": 0}]
+      ]
+    },
+    "Redis SET (TTL 1h)": {"main": [[{"node": "Répondre Stocké", "type": "main", "index": 0}]]},
+    "Webhook Get": {"main": [[{"node": "Lire Paramètres", "type": "main", "index": 0}]]},
+    "Lire Paramètres": {"main": [[{"node": "Paramètre Valide ?", "type": "main", "index": 0}]]},
+    "Paramètre Valide ?": {
+      "main": [
+        [{"node": "Redis GET", "type": "main", "index": 0}],
+        [{"node": "Répondre Refus Get", "type": "main", "index": 0}]
+      ]
+    },
+    "Redis GET": {"main": [[{"node": "Formater Résultat", "type": "main", "index": 0}]]},
+    "Formater Résultat": {"main": [[{"node": "Répondre Résultat", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "tags": [],
+  "pinData": {}
+}

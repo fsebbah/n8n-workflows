@@ -1,0 +1,201 @@
+{
+  "name": "DOCUMENT - Job Status",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## DOCUMENT - Job Status\n\nSuivi d'un job de traduction de document, en **polling**.\n\n**GET** `/webhook/document-job-status?job_id=…`\n\n### Deux sources, une réponse\n\n- **statut et progression** : `{TORAH_API_URL}/api/v2/jobs/{id}` — écrits par le\n  worker (`Create Job`, `Update Progress`, `Mark Complete`) ;\n- **texte traduit** : `document-result-get` (Redis, TTL 1 h) — le texte ne\n  transite jamais par `/api/v2/jobs`.\n\n### Pourquoi pas de préfixe corpus\n\n`torah-job-status` porte un nom de corpus alors que sa mécanique est générale :\nil interroge `/api/v2/jobs`, tout comme `books-job-status`. Le registre de jobs\nn'a jamais été propre à la Torah. Cette façade est la version sans préfixe, pour\nles appelants qui ne traduisent pas un corpus (desktop, mobile — azy.daily#194).\n\nNe PAS partir de `LEARNING - Job Status` : son unique nœud utile lit\n`job:learning:{id}` dans Redis, une autre source. Il n'en resterait qu'un webhook\net deux respond.\n\n### Anomalie remontée, jamais masquée\n\nLe modèle Torah met `Fetch Result` en `continueRegularOutput` : un `completed`\nsans texte y passe inaperçu, sans conséquence puisque le plugin recharge la page\ndepuis la base. Ici il n'existe aucune base où retomber — un `completed` dont le\nrésultat est absent est donc signalé (`result_missing`), pour que chat.api ne\nfacture pas une traduction perdue.\n\nRéalisation : n8n-workflows#418",
+        "height": 640,
+        "width": 420,
+        "color": 4
+      },
+      "id": "doc-js-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-160, 0]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "document-job-status",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "doc-js-hook",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [300, 100],
+      "webhookId": "doc-job-status"
+    },
+    {
+      "parameters": {
+        "jsCode": "// job_id en query, sans valeur par défaut : interroger un job arbitraire\n// exposerait le travail d'un autre utilisateur.\nconst input = $input.first().json;\nconst query = input.query || {};\nconst jobId = query.job_id;\n\nif (!jobId || typeof jobId !== 'string') {\n  return [{\n    json: {\n      valide: false,\n      erreur: { code: 400, message: 'Le paramètre \"job_id\" est requis', status: 'BAD_REQUEST' }\n    }\n  }];\n}\n\nreturn [{ json: { valide: true, jobId: jobId } }];"
+      },
+      "id": "doc-js-parse",
+      "name": "Lire Paramètres",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [
+            {
+              "id": "cond-valide",
+              "leftValue": "={{ $json.valide }}",
+              "rightValue": true,
+              "operator": {"type": "boolean", "operation": "equals"}
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "doc-js-if",
+      "name": "Paramètre Valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [740, 100]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.jobId }}",
+        "options": {
+          "response": {"response": {"fullResponse": true}},
+          "timeout": 10000
+        }
+      },
+      "id": "doc-js-get-job",
+      "name": "Lire Job (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le registre /api/v2/jobs porte le statut et la progression, jamais le texte.\n// Quand le job est terminé, il faut donc aller chercher le résultat ailleurs.\nconst input = $input.first().json;\nconst jobId = $('Lire Paramètres').first().json.jobId;\n\nconst data = input.body || input;\nconst code = input.statusCode || 200;\n\nif (code >= 400 || !data || data.error) {\n  return [{\n    json: {\n      success: false,\n      job_id: jobId,\n      error: {\n        code: code,\n        message: data?.error?.message || data?.message || 'Job introuvable',\n        status: 'JOB_NOT_FOUND'\n      },\n      _chercherResultat: false\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...data,\n    job_id: data.job_id || data.id || jobId,\n    jobId: jobId,\n    _chercherResultat: data.status === 'completed'\n  }\n}];"
+      },
+      "id": "doc-js-check",
+      "name": "Examiner Statut",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1180, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [
+            {
+              "id": "cond-fetch",
+              "leftValue": "={{ $json._chercherResultat }}",
+              "rightValue": true,
+              "operator": {"type": "boolean", "operation": "equals"}
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "doc-js-if-fetch",
+      "name": "Terminé ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1400, 0]
+    },
+    {
+      "parameters": {
+        "url": "={{ ($env.N8N_WEBHOOK_URL || 'http://localhost:5678') + '/webhook/document-result-get?job_id=' + $json.jobId }}",
+        "options": {
+          "response": {"response": {"fullResponse": true}},
+          "timeout": 10000
+        }
+      },
+      "id": "doc-js-fetch",
+      "name": "Chercher Résultat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1620, -100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Assemble statut + texte. Trois issues possibles, toutes explicites :\n//\n//   completed + résultat présent  → success, le texte est là\n//   completed + résultat absent   → ANOMALIE (result_missing) : le job dit\n//                                   « terminé » mais le texte a disparu ou n'a\n//                                   jamais été déposé. Signalé, jamais masqué —\n//                                   c'est ce qui empêche chat.api de facturer\n//                                   une traduction perdue (azy.daily#194).\n//   dépôt illisible               → remonté tel quel\n//\n// Le modèle Torah masque le 2e cas (Fetch Result en continueRegularOutput) : il\n// y est sans conséquence, le plugin rechargeant la page depuis la base. Ici il\n// n'existe aucune base où retomber.\nconst statut = $('Examiner Statut').first().json;\nconst brut = $input.first().json;\nconst reponse = brut.body || brut;\nconst code = brut.statusCode || 200;\n\nconst base = {\n  job_id: statut.job_id,\n  status: statut.status,\n  progress: statut.progress || null,\n  output: statut.output || null\n};\n\nif (code >= 400 || reponse.success === false) {\n  return [{\n    json: {\n      ...base,\n      success: false,\n      result: null,\n      error: {\n        code: 502,\n        message: 'Dépôt de résultat injoignable ou illisible',\n        status: 'RESULT_STORE_ERROR'\n      }\n    }\n  }];\n}\n\nif (!reponse.found || !reponse.result) {\n  return [{\n    json: {\n      ...base,\n      success: false,\n      result: null,\n      error: {\n        code: 410,\n        message: 'Job terminé mais résultat absent : jamais déposé, ou fenêtre de 1 h dépassée. Ne pas facturer.',\n        status: 'RESULT_MISSING'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...base,\n    success: true,\n    stored_at: reponse.stored_at,\n    result: reponse.result\n  }\n}];"
+      },
+      "id": "doc-js-combine",
+      "name": "Assembler Réponse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Job non terminé : statut et progression suffisent, il n'y a rien à chercher.\nconst j = $input.first().json;\nreturn [{\n  json: {\n    success: j.success !== false,\n    job_id: j.job_id,\n    status: j.status || null,\n    progress: j.progress || null,\n    result: null,\n    error: j.error || null\n  }\n}];"
+      },
+      "id": "doc-js-pass",
+      "name": "En Cours",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1620, 120]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error ? ($json.error.code || 500) : 200 }}",
+          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+        }
+      },
+      "id": "doc-js-respond",
+      "name": "Répondre Statut",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2060, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.erreur }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+        }
+      },
+      "id": "doc-js-respond-ko",
+      "name": "Répondre Refus",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [960, 240]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {"main": [[{"node": "Lire Paramètres", "type": "main", "index": 0}]]},
+    "Lire Paramètres": {"main": [[{"node": "Paramètre Valide ?", "type": "main", "index": 0}]]},
+    "Paramètre Valide ?": {
+      "main": [
+        [{"node": "Lire Job (API)", "type": "main", "index": 0}],
+        [{"node": "Répondre Refus", "type": "main", "index": 0}]
+      ]
+    },
+    "Lire Job (API)": {"main": [[{"node": "Examiner Statut", "type": "main", "index": 0}]]},
+    "Examiner Statut": {"main": [[{"node": "Terminé ?", "type": "main", "index": 0}]]},
+    "Terminé ?": {
+      "main": [
+        [{"node": "Chercher Résultat", "type": "main", "index": 0}],
+        [{"node": "En Cours", "type": "main", "index": 0}]
+      ]
+    },
+    "Chercher Résultat": {"main": [[{"node": "Assembler Réponse", "type": "main", "index": 0}]]},
+    "Assembler Réponse": {"main": [[{"node": "Répondre Statut", "type": "main", "index": 0}]]},
+    "En Cours": {"main": [[{"node": "Répondre Statut", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "tags": [],
+  "pinData": {}
+}
