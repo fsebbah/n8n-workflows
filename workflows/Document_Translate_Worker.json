@@ -187,7 +187,7 @@
         300
       ],
       "parameters": {
-        "method": "PUT",
+        "method": "PATCH",
         "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.jobId }}",
         "sendHeaders": true,
         "headerParameters": {
@@ -390,7 +390,7 @@
         300
       ],
       "parameters": {
-        "method": "PUT",
+        "method": "PATCH",
         "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.jobId }}",
         "sendHeaders": true,
         "headerParameters": {
@@ -507,7 +507,7 @@
         400
       ],
       "parameters": {
-        "method": "PUT",
+        "method": "PATCH",
         "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.jobId }}",
         "sendHeaders": true,
         "headerParameters": {
@@ -541,7 +541,7 @@
         400
       ],
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst input = $input.first().json;\nconst jobId = input.jobId;\n\nif (!staticData.translations) staticData.translations = {};\nif (!staticData.translations[jobId]) {\n  staticData.translations[jobId] = {\n    pages: [],\n    totalTokens: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },\n    model: null,\n    startedAt: Date.now(),\n    pagesTranslated: 0,\n    pagesFailed: 0,\n    callbackUrl: input.callbackUrl,\n    hasCallback: input.hasCallback\n  };\n}\n\nconst job = staticData.translations[jobId];\n\njob.pages[input.pageIndex] = {\n  pageNumber: input.pageNumber,\n  original: input.pageContent,\n  translation: input.translation,\n  error: input.translationError\n};\n\nconst usage = input.claudeUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\njob.totalTokens.input_tokens += usage.input_tokens;\njob.totalTokens.output_tokens += usage.output_tokens;\njob.totalTokens.total_tokens += usage.total_tokens;\n\n// Le modèle réellement servi. Constant en pratique, mais lu à chaque page :\n// si un jour deux modèles cohabitent, chat.api le verra au lieu de facturer au\n// mauvais barème sans le savoir.\nif (usage.model) job.model = usage.model;\n\n// Assiette de facturation : une page en échec porte le texte source, consomme\n// zéro token, et ne doit jamais compter comme traduite.\nif (input.translationError) job.pagesFailed += 1;\nelse job.pagesTranslated += 1;\n\nconst isComplete = input.pageNumber >= input.totalPages;\n\nreturn [{ json: { ...input, isComplete: isComplete, accumulatedData: job } }];"
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\n// Les données de la page viennent d'`Extract Translation`, référencé explicitement,\n// et NON du nœud précédent dans le flux. `Update Progress` est un appel HTTP : en\n// cas d'échec, son onError continueRegularOutput remplace les données par l'objet\n// d'erreur axios, et input.jobId devient undefined — staticData serait alors indexé\n// sous « undefined » et Finalize ne retrouverait jamais le job.\n// C'est précisément ce qui se produisait quand l'API refusait le verbe employé.\nconst page = $('Extract Translation').first().json;\nconst jobId = page.jobId;\n\nif (!jobId) {\n  throw new Error('jobId absent en accumulation — la chaîne de données est rompue en amont');\n}\n\nif (!staticData.translations) staticData.translations = {};\nif (!staticData.translations[jobId]) {\n  staticData.translations[jobId] = {\n    pages: [],\n    totalTokens: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },\n    model: null,\n    startedAt: Date.now(),\n    pagesTranslated: 0,\n    pagesFailed: 0,\n    callbackUrl: page.callbackUrl,\n    hasCallback: page.hasCallback\n  };\n}\n\nconst job = staticData.translations[jobId];\n\njob.pages[page.pageIndex] = {\n  pageNumber: page.pageNumber,\n  original: page.pageContent,\n  translation: page.translation,\n  error: page.translationError\n};\n\nconst usage = page.claudeUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\njob.totalTokens.input_tokens += usage.input_tokens;\njob.totalTokens.output_tokens += usage.output_tokens;\njob.totalTokens.total_tokens += usage.total_tokens;\n\n// Le modèle réellement servi. Constant en pratique, mais lu à chaque page :\n// si un jour deux modèles cohabitent, chat.api le verra au lieu de facturer au\n// mauvais barème sans le savoir.\nif (usage.model) job.model = usage.model;\n\n// Assiette de facturation : une page en échec porte le texte source, consomme\n// zéro token, et ne doit jamais compter comme traduite.\nif (page.translationError) job.pagesFailed += 1;\nelse job.pagesTranslated += 1;\n\nconst isComplete = page.pageNumber >= page.totalPages;\n\nreturn [{ json: { ...page, isComplete: isComplete, accumulatedData: job } }];"
       }
     },
     {
@@ -598,7 +598,7 @@
         200
       ],
       "parameters": {
-        "method": "PUT",
+        "method": "PATCH",
         "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.jobId }}",
         "sendHeaders": true,
         "headerParameters": {
@@ -811,7 +811,7 @@
     },
     {
       "parameters": {
-        "method": "PUT",
+        "method": "PATCH",
         "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $('Finalize').first().json.jobId }}",
         "sendHeaders": true,
         "headerParameters": {
@@ -1440,7 +1440,7 @@
           300
         ],
         "parameters": {
-          "method": "PUT",
+          "method": "PATCH",
           "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.jobId }}",
           "sendHeaders": true,
           "headerParameters": {
@@ -1643,7 +1643,7 @@
           300
         ],
         "parameters": {
-          "method": "PUT",
+          "method": "PATCH",
           "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.jobId }}",
           "sendHeaders": true,
           "headerParameters": {
@@ -1760,7 +1760,7 @@
           400
         ],
         "parameters": {
-          "method": "PUT",
+          "method": "PATCH",
           "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.jobId }}",
           "sendHeaders": true,
           "headerParameters": {
@@ -1794,7 +1794,7 @@
           400
         ],
         "parameters": {
-          "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst input = $input.first().json;\nconst jobId = input.jobId;\n\nif (!staticData.translations) staticData.translations = {};\nif (!staticData.translations[jobId]) {\n  staticData.translations[jobId] = {\n    pages: [],\n    totalTokens: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },\n    model: null,\n    startedAt: Date.now(),\n    pagesTranslated: 0,\n    pagesFailed: 0,\n    callbackUrl: input.callbackUrl,\n    hasCallback: input.hasCallback\n  };\n}\n\nconst job = staticData.translations[jobId];\n\njob.pages[input.pageIndex] = {\n  pageNumber: input.pageNumber,\n  original: input.pageContent,\n  translation: input.translation,\n  error: input.translationError\n};\n\nconst usage = input.claudeUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\njob.totalTokens.input_tokens += usage.input_tokens;\njob.totalTokens.output_tokens += usage.output_tokens;\njob.totalTokens.total_tokens += usage.total_tokens;\n\n// Le modèle réellement servi. Constant en pratique, mais lu à chaque page :\n// si un jour deux modèles cohabitent, chat.api le verra au lieu de facturer au\n// mauvais barème sans le savoir.\nif (usage.model) job.model = usage.model;\n\n// Assiette de facturation : une page en échec porte le texte source, consomme\n// zéro token, et ne doit jamais compter comme traduite.\nif (input.translationError) job.pagesFailed += 1;\nelse job.pagesTranslated += 1;\n\nconst isComplete = input.pageNumber >= input.totalPages;\n\nreturn [{ json: { ...input, isComplete: isComplete, accumulatedData: job } }];"
+          "jsCode": "const staticData = $getWorkflowStaticData('global');\n\n// Les données de la page viennent d'`Extract Translation`, référencé explicitement,\n// et NON du nœud précédent dans le flux. `Update Progress` est un appel HTTP : en\n// cas d'échec, son onError continueRegularOutput remplace les données par l'objet\n// d'erreur axios, et input.jobId devient undefined — staticData serait alors indexé\n// sous « undefined » et Finalize ne retrouverait jamais le job.\n// C'est précisément ce qui se produisait quand l'API refusait le verbe employé.\nconst page = $('Extract Translation').first().json;\nconst jobId = page.jobId;\n\nif (!jobId) {\n  throw new Error('jobId absent en accumulation — la chaîne de données est rompue en amont');\n}\n\nif (!staticData.translations) staticData.translations = {};\nif (!staticData.translations[jobId]) {\n  staticData.translations[jobId] = {\n    pages: [],\n    totalTokens: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },\n    model: null,\n    startedAt: Date.now(),\n    pagesTranslated: 0,\n    pagesFailed: 0,\n    callbackUrl: page.callbackUrl,\n    hasCallback: page.hasCallback\n  };\n}\n\nconst job = staticData.translations[jobId];\n\njob.pages[page.pageIndex] = {\n  pageNumber: page.pageNumber,\n  original: page.pageContent,\n  translation: page.translation,\n  error: page.translationError\n};\n\nconst usage = page.claudeUsage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 };\njob.totalTokens.input_tokens += usage.input_tokens;\njob.totalTokens.output_tokens += usage.output_tokens;\njob.totalTokens.total_tokens += usage.total_tokens;\n\n// Le modèle réellement servi. Constant en pratique, mais lu à chaque page :\n// si un jour deux modèles cohabitent, chat.api le verra au lieu de facturer au\n// mauvais barème sans le savoir.\nif (usage.model) job.model = usage.model;\n\n// Assiette de facturation : une page en échec porte le texte source, consomme\n// zéro token, et ne doit jamais compter comme traduite.\nif (page.translationError) job.pagesFailed += 1;\nelse job.pagesTranslated += 1;\n\nconst isComplete = page.pageNumber >= page.totalPages;\n\nreturn [{ json: { ...page, isComplete: isComplete, accumulatedData: job } }];"
         }
       },
       {
@@ -1851,7 +1851,7 @@
           200
         ],
         "parameters": {
-          "method": "PUT",
+          "method": "PATCH",
           "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.jobId }}",
           "sendHeaders": true,
           "headerParameters": {
@@ -2064,7 +2064,7 @@
       },
       {
         "parameters": {
-          "method": "PUT",
+          "method": "PATCH",
           "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $('Finalize').first().json.jobId }}",
           "sendHeaders": true,
           "headerParameters": {
