@@ -12,7 +12,10 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-140, 0]
+      "position": [
+        -140,
+        0
+      ]
     },
     {
       "parameters": {
@@ -25,7 +28,10 @@
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [320, 100],
+      "position": [
+        320,
+        100
+      ],
       "webhookId": "torah-tanakh-parashiot-list"
     },
     {
@@ -36,13 +42,20 @@
       "name": "Lire Paramètres",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [540, 100]
+      "position": [
+        540,
+        100
+      ]
     },
     {
       "parameters": {
         "url": "={{ $env.TORAH_API_URL }}/api/torah/parashiyot{{ $json.requete }}",
         "options": {
-          "response": {"response": {"fullResponse": true}},
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
           "timeout": 15000
         }
       },
@@ -50,42 +63,100 @@
       "name": "Lister (API)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [760, 100],
+      "position": [
+        760,
+        100
+      ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// L'API répond {success, count, parashiyot[]}. On relaie tel quel en surface,\n// et on rend l'erreur exploitable : sur un livre inconnu elle renvoie 400 avec\n// la liste des cinq livres valides dans `detail` — cette liste est ce qui permet\n// à l'appelant de corriger, elle doit donc remonter jusqu'à lui.\nconst input = $input.first().json;\nconst data = input.body || input;\nconst code = input.statusCode || 200;\nconst params = $('Lire Paramètres').first().json;\n\nif (code >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: code,\n        message: data?.detail || data?.error?.message || 'Requête refusée par l\\'API',\n        status: code === 400 ? 'INVALID_BOOK' : 'API_ERROR'\n      },\n      book: params.book,\n      language: params.language\n    }\n  }];\n}\n\nconst liste = data.parashiyot || [];\n\nreturn [{\n  json: {\n    success: true,\n    count: data.count ?? liste.length,\n    book: params.book,\n    language: params.language,\n    parashiyot: liste\n  }\n}];"
+        "jsCode": "// --- Désencapsulation de l'erreur HTTP -------------------------------------\n// Avec onError: continueRegularOutput, un HTTP Request en échec ne produit PAS\n// {statusCode, body} mais l'objet d'erreur axios : statusCode est absent, et le\n// statut réel est enfoui dans le message sous la forme « 404 - {\"detail\":…} ».\n// Sans ce traitement, le code retombe sur 200, la branche succès s'exécute sur\n// un objet d'erreur, et l'appelant reçoit soit un faux succès vide, soit un 500\n// (« Invalid status code: ERR_BAD_REQUEST » — error.code d'axios n'est pas un\n// entier). Même problème et même parade que Normalize Error de DOC - Render PDF.\nfunction lireErreur(item) {\n  let brut = '';\n  for (const c of [item?.error?.message, item?.message, item?.error?.description,\n                   typeof item?.error === 'string' ? item.error : null]) {\n    if (c) { brut = String(c); break; }\n  }\n  const m = brut.match(/^\\s*(\\d{3})\\s*-\\s*/);\n  const statut = m ? parseInt(m[1], 10) : null;\n\n  let detail = null;\n  const i = brut.indexOf('{'), j = brut.lastIndexOf('}');\n  if (i >= 0 && j > i) {\n    const bloc = brut.slice(i, j + 1);\n    for (const essai of [bloc, bloc.replace(/\\\\\"/g, '\"').replace(/\\\\\\\\/g, '\\\\')]) {\n      try {\n        const o = JSON.parse(essai);\n        detail = o.detail || o?.error?.message || o.message || null;\n        break;\n      } catch (e) { /* essai suivant */ }\n    }\n  }\n  return { statut, detail, brut };\n}\n\nconst input = $input.first().json;\nconst params = $('Lire Paramètres').first().json;\n\nconst estErreur = input?.error !== undefined || input?.statusCode === undefined;\n\nif (estErreur) {\n  const e = lireErreur(input);\n  const code = e.statut || 502;\n  return [{\n    json: {\n      success: false,\n      book: params.book,\n      language: params.language,\n      error: {\n        code: code,\n        // Sur un livre inconnu l'API renvoie la liste des cinq livres valides\n        // dans `detail` : c'est elle qui permet à l'appelant de corriger.\n        message: e.detail || e.brut || \"L'API n'a pas répondu\",\n        status: code === 400 ? 'INVALID_BOOK' : 'API_ERROR'\n      }\n    }\n  }];\n}\n\nconst data = input.body || input;\nconst liste = data.parashiyot || [];\n\nreturn [{\n  json: {\n    success: true,\n    count: data.count ?? liste.length,\n    book: params.book,\n    language: params.language,\n    parashiyot: liste\n  }\n}];\n"
       },
       "id": "tpl-format",
       "name": "Formater Réponse",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [980, 100]
+      "position": [
+        980,
+        100
+      ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": "={{ $json.error ? ($json.error.code || 500) : 200 }}",
-          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+          "responseCode": "={{ ($json.error && Number.isInteger($json.error.code)) ? $json.error.code : ($json.success === false ? 502 : 200) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       },
       "id": "tpl-respond",
       "name": "Répondre",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [1200, 100]
+      "position": [
+        1200,
+        100
+      ]
     }
   ],
   "connections": {
-    "Webhook Trigger": {"main": [[{"node": "Lire Paramètres", "type": "main", "index": 0}]]},
-    "Lire Paramètres": {"main": [[{"node": "Lister (API)", "type": "main", "index": 0}]]},
-    "Lister (API)": {"main": [[{"node": "Formater Réponse", "type": "main", "index": 0}]]},
-    "Formater Réponse": {"main": [[{"node": "Répondre", "type": "main", "index": 0}]]}
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Lire Paramètres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire Paramètres": {
+      "main": [
+        [
+          {
+            "node": "Lister (API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lister (API)": {
+      "main": [
+        [
+          {
+            "node": "Formater Réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formater Réponse": {
+      "main": [
+        [
+          {
+            "node": "Répondre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": {"executionOrder": "v1"},
+  "settings": {
+    "executionOrder": "v1"
+  },
   "staticData": null,
   "tags": [],
   "pinData": {}
