@@ -604,7 +604,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const pd = $('Parse Input').first().json;\nconst rawBody = ($('Webhook Trigger').first().json.body) || $('Webhook Trigger').first().json || {};\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\nconst sName = languageNames[pd.sourceLanguage] || pd.sourceLanguage;\nconst tName = languageNames[pd.targetLanguage] || pd.targetLanguage;\nconst items = (pd.segments || []).map(s => ({\n  commentary_id: s.commentary_id,\n  segment_id: s.segment_id,\n  segmentText: s.text,\n  sourceLangName: sName,\n  targetLangName: tName,\n  traite: pd.traite,\n  page: pd.page,\n  metadata: { commentator: pd.commentator }\n}));\nconst channelId = (pd.context && pd.context.channel_id) || (pd.metadata && pd.metadata.channel_id) || null;\nreturn { items, api_key: pd.apiKey, model: rawBody.model, project_id: pd.projectId, callback_channel_id: channelId };"
+        "jsCode": "const pd = $('Parse Input').first().json;\nconst rawBody = ($('Webhook Trigger').first().json.body) || $('Webhook Trigger').first().json || {};\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\nconst sName = languageNames[pd.sourceLanguage] || pd.sourceLanguage;\nconst tName = languageNames[pd.targetLanguage] || pd.targetLanguage;\nconst items = (pd.segments || []).map(s => ({\n  commentary_id: s.commentary_id,\n  segment_id: s.segment_id,\n  segmentText: s.text,\n  sourceLangName: sName,\n  targetLangName: tName,\n  traite: pd.traite,\n  page: pd.page,\n  metadata: { commentator: pd.commentator }\n}));\nconst channelId = (pd.context && pd.context.channel_id) || (pd.metadata && pd.metadata.channel_id) || null;\n// job_type doit remonter jusqu'au dispatcher : /api/v2/jobs n'accepte qu'une\n// énumération fermée (torah_page, torah_commentary, torah_unit, …), et une\n// valeur inventée fait échouer la création du job — donc la traçabilité.\n// model : même repli que le mode direct. Sans lui, torah-translate-batch refuse\n// en 400 alors que le mode direct, lui, fonctionne — asymétrie invisible à\n// l'appelant, qui ne sait pas de quel côté du seuil de 50 il se trouve.\nreturn {\n  items,\n  job_type: pd.jobType,\n  api_key: pd.apiKey,\n  model: rawBody.model || 'claude-sonnet-4',\n  project_id: pd.projectId,\n  callback_channel_id: channelId\n};"
       },
       "id": "build-batch-payload",
       "name": "Build Batch Payload",
@@ -641,7 +641,7 @@
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 200
+          "responseCode": "={{ ($json.error || $json.success === false) ? ($json.error && Number.isInteger($json.error.code) ? $json.error.code : 502) : 200 }}"
         }
       },
       "id": "respond-batch",
