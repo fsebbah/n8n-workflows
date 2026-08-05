@@ -98,7 +98,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ type: 'translation-batch', total: $json.items.length, input: { project_id: $json.project_id, model: $json.model, target_lang: $json.items[0] && $json.items[0].targetLangName, commentary_ids: $json.items.map(it => it.commentary_id) } }) }}",
+        "jsonBody": "={{ JSON.stringify({ job_type: $json.job_type || 'torah_commentary', input: { project_id: $json.project_id, model: $json.model, total: $json.items.length, target_lang: $json.items[0] && $json.items[0].targetLangName, commentary_ids: $json.items.map(it => it.commentary_id) } }) }}",
         "options": {
           "timeout": 10000
         }
@@ -111,7 +111,7 @@
         1152,
         208
       ],
-      "onError": "continueRegularOutput"
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -149,7 +149,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const jobId = $('Create Job').first().json.job_id || $('Create Job').first().json.id;\nconst count = $('Build Requests').first().json.requests.length;\n\nreturn [{\n  json: {\n    job_id: jobId,\n    batch: true,\n    count: count\n  }\n}];"
+        "jsCode": "// Le job doit exister AVANT de soumettre : sans lui, le lot part chez Anthropic\n// et devient introuvable — travail lancé, facturé, intraçable.\n// Create Job est désormais en continueErrorOutput, donc arriver ici signifie\n// qu'il a réussi. On vérifie quand même, parce qu'un id absent produirait une\n// réponse d'apparence normale : JSON.stringify omet silencieusement les undefined.\nconst job = $('Create Job').first().json;\nconst jobId = job.job_id || job.id || null;\nconst soumission = $input.first().json || {};\nconst count = $('Build Requests').first().json.requests.length;\n\nif (!jobId) {\n  return [{ json: {\n    success: false,\n    batch: true,\n    count: count,\n    batch_id: soumission.batch_id || null,\n    error: {\n      code: 502,\n      message: 'Lot soumis mais job non créé : le suivi est impossible. Conserver le batch_id.',\n      status: 'JOB_CREATION_FAILED'\n    }\n  } }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    job_id: jobId,\n    batch: true,\n    count: count,\n    // Remontés pour que le lot reste retrouvable même si le suivi par job casse.\n    batch_id: soumission.batch_id || null,\n    redis_channel: soumission.redis_channel || null,\n    correlation_id: soumission.correlation_id || null\n  }\n}];"
       },
       "id": "format-response",
       "name": "Format Response",
@@ -222,6 +222,19 @@
         1376,
         432
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Création du job impossible : on n'a pas soumis le lot, donc rien n'est engagé.\n// Refuser franchement vaut mieux que dépenser sans pouvoir suivre.\nconst e = $input.first().json || {};\nconst brut = String(e?.error?.message || e?.message || '');\nreturn [{ json: {\n  success: false,\n  error: {\n    code: 502,\n    message: 'Création du job impossible — lot NON soumis, aucun coût engagé. ' + brut.slice(0, 200),\n    status: 'JOB_CREATION_FAILED'\n  }\n} }];"
+      },
+      "id": "batch-job-error",
+      "name": "Erreur Création Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        408
+      ]
     }
   ],
   "connections": {
@@ -273,6 +286,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Erreur Création Job",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -314,6 +334,17 @@
         [
           {
             "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erreur Création Job": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
             "type": "main",
             "index": 0
           }
