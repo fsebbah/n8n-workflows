@@ -12,7 +12,10 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-160, 0]
+      "position": [
+        -160,
+        0
+      ]
     },
     {
       "parameters": {
@@ -25,7 +28,10 @@
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [300, 100],
+      "position": [
+        300,
+        100
+      ],
       "webhookId": "doc-job-status"
     },
     {
@@ -36,18 +42,29 @@
       "name": "Lire Paramètres",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [520, 100]
+      "position": [
+        520,
+        100
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
           "conditions": [
             {
               "id": "cond-valide",
               "leftValue": "={{ $json.valide }}",
               "rightValue": true,
-              "operator": {"type": "boolean", "operation": "equals"}
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -58,13 +75,20 @@
       "name": "Paramètre Valide ?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [740, 100]
+      "position": [
+        740,
+        100
+      ]
     },
     {
       "parameters": {
         "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.jobId }}",
         "options": {
-          "response": {"response": {"fullResponse": true}},
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
           "timeout": 10000
         }
       },
@@ -72,29 +96,43 @@
       "name": "Lire Job (API)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [960, 0],
+      "position": [
+        960,
+        0
+      ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Le registre /api/v2/jobs porte le statut et la progression, jamais le texte.\n// Quand le job est terminé, il faut donc aller chercher le résultat ailleurs.\nconst input = $input.first().json;\nconst jobId = $('Lire Paramètres').first().json.jobId;\n\nconst data = input.body || input;\nconst code = input.statusCode || 200;\n\nif (code >= 400 || !data || data.error) {\n  return [{\n    json: {\n      success: false,\n      job_id: jobId,\n      error: {\n        code: code,\n        message: data?.error?.message || data?.message || 'Job introuvable',\n        status: 'JOB_NOT_FOUND'\n      },\n      _chercherResultat: false\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...data,\n    job_id: data.job_id || data.id || jobId,\n    jobId: jobId,\n    _chercherResultat: data.status === 'completed'\n  }\n}];"
+        "jsCode": "// Le registre /api/v2/jobs porte le statut et la progression, jamais le texte.\n// Quand le job est terminé, il faut donc aller chercher le résultat ailleurs.\nconst input = $input.first().json;\nconst jobId = $('Lire Paramètres').first().json.jobId;\n\n// Avec onError continueRegularOutput, un HTTP Request en échec ne produit PAS\n// {statusCode, body} : statusCode est absent, et le statut réel est enfoui dans\n// le message sous la forme « 404 - {...} ». Sans cette lecture, un job inconnu\n// ressortait en HTTP 200 avec JOB_NOT_FOUND dans le corps — MCP relaie\n// fidèlement le statut, il aurait donc relayé un succès. Même parade que #422.\nlet code = input.statusCode;\nif (code === undefined) {\n  const brut = String(input?.error?.message || input?.message || '');\n  const m = brut.match(/^\\s*(\\d{3})\\s*-\\s*/);\n  code = m ? parseInt(m[1], 10) : (input?.error ? 502 : 200);\n}\nconst data = input.body || input;\n\nif (code >= 400 || !data || data.error) {\n  return [{\n    json: {\n      success: false,\n      job_id: jobId,\n      error: {\n        code: code,\n        message: data?.error?.message || data?.message || 'Job introuvable',\n        status: 'JOB_NOT_FOUND'\n      },\n      _chercherResultat: false\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...data,\n    job_id: data.job_id || data.id || jobId,\n    jobId: jobId,\n    _chercherResultat: data.status === 'completed'\n  }\n}];"
       },
       "id": "doc-js-check",
       "name": "Examiner Statut",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1180, 0]
+      "position": [
+        1180,
+        0
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
           "conditions": [
             {
               "id": "cond-fetch",
               "leftValue": "={{ $json._chercherResultat }}",
               "rightValue": true,
-              "operator": {"type": "boolean", "operation": "equals"}
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -105,13 +143,20 @@
       "name": "Terminé ?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1400, 0]
+      "position": [
+        1400,
+        0
+      ]
     },
     {
       "parameters": {
         "url": "={{ ($env.N8N_WEBHOOK_URL || 'http://localhost:5678') + '/webhook/document-result-get?job_id=' + $json.jobId }}",
         "options": {
-          "response": {"response": {"fullResponse": true}},
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
           "timeout": 10000
         }
       },
@@ -119,7 +164,10 @@
       "name": "Chercher Résultat",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1620, -100],
+      "position": [
+        1620,
+        -100
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -130,7 +178,10 @@
       "name": "Assembler Réponse",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1840, -100]
+      "position": [
+        1840,
+        -100
+      ]
     },
     {
       "parameters": {
@@ -140,7 +191,10 @@
       "name": "En Cours",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1620, 120]
+      "position": [
+        1620,
+        120
+      ]
     },
     {
       "parameters": {
@@ -148,14 +202,24 @@
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
           "responseCode": "={{ $json.error ? ($json.error.code || 500) : 200 }}",
-          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       },
       "id": "doc-js-respond",
       "name": "Répondre Statut",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [2060, 0]
+      "position": [
+        2060,
+        0
+      ]
     },
     {
       "parameters": {
@@ -163,38 +227,144 @@
         "responseBody": "={{ JSON.stringify({ success: false, error: $json.erreur }) }}",
         "options": {
           "responseCode": 400,
-          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       },
       "id": "doc-js-respond-ko",
       "name": "Répondre Refus",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [960, 240]
+      "position": [
+        960,
+        240
+      ]
     }
   ],
   "connections": {
-    "Webhook Trigger": {"main": [[{"node": "Lire Paramètres", "type": "main", "index": 0}]]},
-    "Lire Paramètres": {"main": [[{"node": "Paramètre Valide ?", "type": "main", "index": 0}]]},
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Lire Paramètres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire Paramètres": {
+      "main": [
+        [
+          {
+            "node": "Paramètre Valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Paramètre Valide ?": {
       "main": [
-        [{"node": "Lire Job (API)", "type": "main", "index": 0}],
-        [{"node": "Répondre Refus", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Lire Job (API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Répondre Refus",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Lire Job (API)": {"main": [[{"node": "Examiner Statut", "type": "main", "index": 0}]]},
-    "Examiner Statut": {"main": [[{"node": "Terminé ?", "type": "main", "index": 0}]]},
+    "Lire Job (API)": {
+      "main": [
+        [
+          {
+            "node": "Examiner Statut",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Examiner Statut": {
+      "main": [
+        [
+          {
+            "node": "Terminé ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Terminé ?": {
       "main": [
-        [{"node": "Chercher Résultat", "type": "main", "index": 0}],
-        [{"node": "En Cours", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Chercher Résultat",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "En Cours",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Chercher Résultat": {"main": [[{"node": "Assembler Réponse", "type": "main", "index": 0}]]},
-    "Assembler Réponse": {"main": [[{"node": "Répondre Statut", "type": "main", "index": 0}]]},
-    "En Cours": {"main": [[{"node": "Répondre Statut", "type": "main", "index": 0}]]}
+    "Chercher Résultat": {
+      "main": [
+        [
+          {
+            "node": "Assembler Réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assembler Réponse": {
+      "main": [
+        [
+          {
+            "node": "Répondre Statut",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "En Cours": {
+      "main": [
+        [
+          {
+            "node": "Répondre Statut",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": {"executionOrder": "v1"},
+  "settings": {
+    "executionOrder": "v1"
+  },
   "staticData": null,
   "tags": [],
   "pinData": {}
