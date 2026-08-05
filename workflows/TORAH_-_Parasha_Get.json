@@ -1,0 +1,135 @@
+{
+  "name": "TORAH - Parasha Get",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## TORAH - Parasha Get\n\nUne parasha et ses 7 aliyot.\n\n**GET** `/webhook/torah-tanakh-parasha-get?name=Bereshit`\n\nRéponse : `name`, `hebrew_name`, `book`, `order_index`, `global_order`,\n`sefaria_ref`, `start_ref`, `end_ref`, `aliases`, et `aliyot[7]` —\nchacune avec `aliyah_index` (1..7), `start_ref`, `end_ref`.\n\n### ⚠️ Le nom est sensible à la casse\n\nL'API attend le nom **EN canonique** exactement : `Bereshit` fonctionne,\n`bereshit` renvoie 404. On ne normalise pas ici — capitaliser casserait les noms\nmulti-mots (`Lech Lecha`, `V'Zot HaBerachah`) et masquerait une faute de frappe\nderrière un résultat approximatif. Le 404 est donc enrichi d'un rappel, pour que\nl'appelant sache quoi corriger.\n\nLes noms multi-mots sont URL-encodés par ce workflow :\n`V'Zot HaBerachah` → `V%27Zot%20HaBerachah`.\n\nAPI : `GET {TORAH_API_URL}/api/torah/parashiyot/{name}`\nRéalisation : n8n-workflows#414 · contrat : azy.daily#185",
+        "height": 500,
+        "width": 400,
+        "color": 5
+      },
+      "id": "tpg-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-140, 0]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "torah-tanakh-parasha-get",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "tpg-hook",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [320, 100],
+      "webhookId": "torah-tanakh-parasha-get"
+    },
+    {
+      "parameters": {
+        "jsCode": "// `name` est le seul paramètre, et il est requis : sans lui l'URL viserait la\n// collection entière, ce qui n'est pas ce que l'appelant a demandé.\nconst input = $input.first().json;\nconst query = input.query || {};\nconst nom = (query.name || '').trim();\n\nif (!nom) {\n  return [{\n    json: {\n      valide: false,\n      erreur: {\n        code: 400,\n        message: 'Le paramètre \"name\" est requis (nom EN canonique, ex. Bereshit)',\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valide: true,\n    nom: nom,\n    // encodage nécessaire pour les noms multi-mots et les apostrophes\n    nomEncode: encodeURIComponent(nom)\n  }\n}];"
+      },
+      "id": "tpg-parse",
+      "name": "Lire Paramètres",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "conditions": [
+            {
+              "id": "cond-valide",
+              "leftValue": "={{ $json.valide }}",
+              "rightValue": true,
+              "operator": {"type": "boolean", "operation": "equals"}
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "tpg-if",
+      "name": "Nom Fourni ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [760, 100]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.TORAH_API_URL }}/api/torah/parashiyot/{{ $json.nomEncode }}",
+        "options": {
+          "response": {"response": {"fullResponse": true}},
+          "timeout": 15000
+        }
+      },
+      "id": "tpg-http",
+      "name": "Lire Parasha (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [980, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Un 404 signifie « nom inconnu » — et la cause la plus fréquente sera la casse,\n// l'API n'acceptant que le nom EN canonique. Le message le dit, sinon l'appelant\n// conclut à tort que la parasha n'existe pas.\nconst input = $input.first().json;\nconst data = input.body || input;\nconst code = input.statusCode || 200;\nconst nom = $('Lire Paramètres').first().json.nom;\n\nif (code === 404) {\n  return [{\n    json: {\n      success: false,\n      name: nom,\n      error: {\n        code: 404,\n        message: `Parasha introuvable : \"${nom}\". Le nom attendu est le nom EN canonique, sensible à la casse (ex. Bereshit, Lech Lecha, V'Zot HaBerachah). La liste complète est disponible sur torah-tanakh-parashiot-list.`,\n        status: 'PARASHA_NOT_FOUND'\n      }\n    }\n  }];\n}\n\nif (code >= 400) {\n  return [{\n    json: {\n      success: false,\n      name: nom,\n      error: {\n        code: code,\n        message: data?.detail || data?.error?.message || 'Requête refusée par l\\'API',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// L'API renvoie la parasha à la racine, aliyot embarquées.\nconst parasha = data.parasha || data;\nconst aliyot = parasha.aliyot || [];\n\nreturn [{\n  json: {\n    success: true,\n    ...parasha,\n    aliyot_count: aliyot.length\n  }\n}];"
+      },
+      "id": "tpg-format",
+      "name": "Formater Réponse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error ? ($json.error.code || 500) : 200 }}",
+          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+        }
+      },
+      "id": "tpg-respond",
+      "name": "Répondre",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1420, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.erreur }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+        }
+      },
+      "id": "tpg-respond-ko",
+      "name": "Répondre Refus",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [980, 220]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {"main": [[{"node": "Lire Paramètres", "type": "main", "index": 0}]]},
+    "Lire Paramètres": {"main": [[{"node": "Nom Fourni ?", "type": "main", "index": 0}]]},
+    "Nom Fourni ?": {
+      "main": [
+        [{"node": "Lire Parasha (API)", "type": "main", "index": 0}],
+        [{"node": "Répondre Refus", "type": "main", "index": 0}]
+      ]
+    },
+    "Lire Parasha (API)": {"main": [[{"node": "Formater Réponse", "type": "main", "index": 0}]]},
+    "Formater Réponse": {"main": [[{"node": "Répondre", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "tags": [],
+  "pinData": {}
+}
