@@ -1,0 +1,92 @@
+{
+  "name": "TORAH - Parashiot List",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## TORAH - Parashiot List\n\nLes 54 parashiot du Tanakh, triées par `global_order`.\n\n**GET** `/webhook/torah-tanakh-parashiot-list`\n\n| Paramètre | Effet |\n|---|---|\n| `book` | filtre par livre — Genesis, Exodus, Leviticus, Numbers, Deuteronomy |\n| `language` | `en` (défaut), `fr`, `he` — peuple `aliases` |\n\n### Pourquoi `torah-tanakh-*` et non `torah-*`\n\n`torah-get-page-translations` porte un nom neutre alors qu'il appelle\n`/api/talmud/…` : l'ambiguïté a déjà produit une erreur d'analyse dans\nazy.daily#185, où le plugin croyait lire du Tanakh avec un tool Talmud. Le\npréfixe dit ici quel corpus est interrogé.\n\n### Alias\n\n`?language=fr` renvoie `aliases: {\"french\": [...]}` — 28 des 54 sont réellement\nfrancisés (Noach → Noa'h, Chayei Sara → Haye Sarah), les 26 autres étant\nidentiques faute de translittération différente. `?language=he` renvoie `null` :\naucune sous-clé hébraïque en base, le nom hébreu vit dans `hebrew_name`.\n\nAPI : `GET {TORAH_API_URL}/api/torah/parashiyot`\nRéalisation : n8n-workflows#414 · contrat : azy.daily#185",
+        "height": 560,
+        "width": 400,
+        "color": 5
+      },
+      "id": "tpl-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-140, 0]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "torah-tanakh-parashiot-list",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "tpl-hook",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [320, 100],
+      "webhookId": "torah-tanakh-parashiot-list"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Les deux paramètres sont facultatifs : sans rien, on renvoie les 54.\n// La validation de `book` appartient à l'API, qui répond 400 avec la liste des\n// livres valides — la dupliquer ici créerait deux sources de vérité.\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst book = (query.book || '').trim();\nconst language = (query.language || '').trim();\n\nconst params = [];\nif (book) params.push('book=' + encodeURIComponent(book));\nif (language) params.push('language=' + encodeURIComponent(language));\n\nreturn [{\n  json: {\n    book: book || null,\n    language: language || null,\n    requete: params.length ? '?' + params.join('&') : ''\n  }\n}];"
+      },
+      "id": "tpl-parse",
+      "name": "Lire Paramètres",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 100]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.TORAH_API_URL }}/api/torah/parashiyot{{ $json.requete }}",
+        "options": {
+          "response": {"response": {"fullResponse": true}},
+          "timeout": 15000
+        }
+      },
+      "id": "tpl-http",
+      "name": "Lister (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// L'API répond {success, count, parashiyot[]}. On relaie tel quel en surface,\n// et on rend l'erreur exploitable : sur un livre inconnu elle renvoie 400 avec\n// la liste des cinq livres valides dans `detail` — cette liste est ce qui permet\n// à l'appelant de corriger, elle doit donc remonter jusqu'à lui.\nconst input = $input.first().json;\nconst data = input.body || input;\nconst code = input.statusCode || 200;\nconst params = $('Lire Paramètres').first().json;\n\nif (code >= 400) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: code,\n        message: data?.detail || data?.error?.message || 'Requête refusée par l\\'API',\n        status: code === 400 ? 'INVALID_BOOK' : 'API_ERROR'\n      },\n      book: params.book,\n      language: params.language\n    }\n  }];\n}\n\nconst liste = data.parashiyot || [];\n\nreturn [{\n  json: {\n    success: true,\n    count: data.count ?? liste.length,\n    book: params.book,\n    language: params.language,\n    parashiyot: liste\n  }\n}];"
+      },
+      "id": "tpl-format",
+      "name": "Formater Réponse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [980, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error ? ($json.error.code || 500) : 200 }}",
+          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+        }
+      },
+      "id": "tpl-respond",
+      "name": "Répondre",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1200, 100]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {"main": [[{"node": "Lire Paramètres", "type": "main", "index": 0}]]},
+    "Lire Paramètres": {"main": [[{"node": "Lister (API)", "type": "main", "index": 0}]]},
+    "Lister (API)": {"main": [[{"node": "Formater Réponse", "type": "main", "index": 0}]]},
+    "Formater Réponse": {"main": [[{"node": "Répondre", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "tags": [],
+  "pinData": {}
+}
