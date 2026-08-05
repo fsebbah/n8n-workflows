@@ -12,7 +12,10 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-140, 0]
+      "position": [
+        -140,
+        0
+      ]
     },
     {
       "parameters": {
@@ -25,7 +28,10 @@
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [320, 100],
+      "position": [
+        320,
+        100
+      ],
       "webhookId": "torah-tanakh-parasha-get"
     },
     {
@@ -36,18 +42,29 @@
       "name": "Lire Paramètres",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [540, 100]
+      "position": [
+        540,
+        100
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
           "conditions": [
             {
               "id": "cond-valide",
               "leftValue": "={{ $json.valide }}",
               "rightValue": true,
-              "operator": {"type": "boolean", "operation": "equals"}
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -58,13 +75,20 @@
       "name": "Nom Fourni ?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [760, 100]
+      "position": [
+        760,
+        100
+      ]
     },
     {
       "parameters": {
         "url": "={{ $env.TORAH_API_URL }}/api/torah/parashiyot/{{ $json.nomEncode }}",
         "options": {
-          "response": {"response": {"fullResponse": true}},
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
           "timeout": 15000
         }
       },
@@ -72,33 +96,49 @@
       "name": "Lire Parasha (API)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [980, 0],
+      "position": [
+        980,
+        0
+      ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Un 404 signifie « nom inconnu » — et la cause la plus fréquente sera la casse,\n// l'API n'acceptant que le nom EN canonique. Le message le dit, sinon l'appelant\n// conclut à tort que la parasha n'existe pas.\nconst input = $input.first().json;\nconst data = input.body || input;\nconst code = input.statusCode || 200;\nconst nom = $('Lire Paramètres').first().json.nom;\n\nif (code === 404) {\n  return [{\n    json: {\n      success: false,\n      name: nom,\n      error: {\n        code: 404,\n        message: `Parasha introuvable : \"${nom}\". Le nom attendu est le nom EN canonique, sensible à la casse (ex. Bereshit, Lech Lecha, V'Zot HaBerachah). La liste complète est disponible sur torah-tanakh-parashiot-list.`,\n        status: 'PARASHA_NOT_FOUND'\n      }\n    }\n  }];\n}\n\nif (code >= 400) {\n  return [{\n    json: {\n      success: false,\n      name: nom,\n      error: {\n        code: code,\n        message: data?.detail || data?.error?.message || 'Requête refusée par l\\'API',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// L'API renvoie la parasha à la racine, aliyot embarquées.\nconst parasha = data.parasha || data;\nconst aliyot = parasha.aliyot || [];\n\nreturn [{\n  json: {\n    success: true,\n    ...parasha,\n    aliyot_count: aliyot.length\n  }\n}];"
+        "jsCode": "// --- Désencapsulation de l'erreur HTTP -------------------------------------\n// Avec onError: continueRegularOutput, un HTTP Request en échec ne produit PAS\n// {statusCode, body} mais l'objet d'erreur axios : statusCode est absent, et le\n// statut réel est enfoui dans le message sous la forme « 404 - {\"detail\":…} ».\n// Sans ce traitement, le code retombe sur 200, la branche succès s'exécute sur\n// un objet d'erreur, et l'appelant reçoit soit un faux succès vide, soit un 500\n// (« Invalid status code: ERR_BAD_REQUEST » — error.code d'axios n'est pas un\n// entier). Même problème et même parade que Normalize Error de DOC - Render PDF.\nfunction lireErreur(item) {\n  let brut = '';\n  for (const c of [item?.error?.message, item?.message, item?.error?.description,\n                   typeof item?.error === 'string' ? item.error : null]) {\n    if (c) { brut = String(c); break; }\n  }\n  const m = brut.match(/^\\s*(\\d{3})\\s*-\\s*/);\n  const statut = m ? parseInt(m[1], 10) : null;\n\n  let detail = null;\n  const i = brut.indexOf('{'), j = brut.lastIndexOf('}');\n  if (i >= 0 && j > i) {\n    const bloc = brut.slice(i, j + 1);\n    for (const essai of [bloc, bloc.replace(/\\\\\"/g, '\"').replace(/\\\\\\\\/g, '\\\\')]) {\n      try {\n        const o = JSON.parse(essai);\n        detail = o.detail || o?.error?.message || o.message || null;\n        break;\n      } catch (e) { /* essai suivant */ }\n    }\n  }\n  return { statut, detail, brut };\n}\n\nconst input = $input.first().json;\nconst nom = $('Lire Paramètres').first().json.nom;\n\nconst estErreur = input?.error !== undefined || input?.statusCode === undefined;\n\nif (estErreur) {\n  const e = lireErreur(input);\n  const code = e.statut || 502;\n\n  if (code === 404) {\n    return [{\n      json: {\n        success: false,\n        name: nom,\n        error: {\n          code: 404,\n          message: `Parasha introuvable : \"${nom}\". Le nom attendu est le nom EN canonique, sensible à la casse (ex. Bereshit, Lech Lecha, V'Zot HaBerachah). La liste complète est disponible sur torah-tanakh-parashiot-list.`,\n          status: 'PARASHA_NOT_FOUND'\n        }\n      }\n    }];\n  }\n  return [{\n    json: {\n      success: false,\n      name: nom,\n      error: { code: code, message: e.detail || e.brut || \"L'API n'a pas répondu\", status: 'API_ERROR' }\n    }\n  }];\n}\n\nconst data = input.body || input;\nconst parasha = data.parasha || data;\nconst aliyot = parasha.aliyot || [];\n\nreturn [{ json: { success: true, ...parasha, aliyot_count: aliyot.length } }];\n"
       },
       "id": "tpg-format",
       "name": "Formater Réponse",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, 0]
+      "position": [
+        1200,
+        0
+      ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": "={{ $json.error ? ($json.error.code || 500) : 200 }}",
-          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+          "responseCode": "={{ ($json.error && Number.isInteger($json.error.code)) ? $json.error.code : ($json.success === false ? 502 : 200) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       },
       "id": "tpg-respond",
       "name": "Répondre",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [1420, 0]
+      "position": [
+        1420,
+        0
+      ]
     },
     {
       "parameters": {
@@ -106,29 +146,93 @@
         "responseBody": "={{ JSON.stringify({ success: false, error: $json.erreur }) }}",
         "options": {
           "responseCode": 400,
-          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       },
       "id": "tpg-respond-ko",
       "name": "Répondre Refus",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [980, 220]
+      "position": [
+        980,
+        220
+      ]
     }
   ],
   "connections": {
-    "Webhook Trigger": {"main": [[{"node": "Lire Paramètres", "type": "main", "index": 0}]]},
-    "Lire Paramètres": {"main": [[{"node": "Nom Fourni ?", "type": "main", "index": 0}]]},
-    "Nom Fourni ?": {
+    "Webhook Trigger": {
       "main": [
-        [{"node": "Lire Parasha (API)", "type": "main", "index": 0}],
-        [{"node": "Répondre Refus", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Lire Paramètres",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Lire Parasha (API)": {"main": [[{"node": "Formater Réponse", "type": "main", "index": 0}]]},
-    "Formater Réponse": {"main": [[{"node": "Répondre", "type": "main", "index": 0}]]}
+    "Lire Paramètres": {
+      "main": [
+        [
+          {
+            "node": "Nom Fourni ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nom Fourni ?": {
+      "main": [
+        [
+          {
+            "node": "Lire Parasha (API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Répondre Refus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire Parasha (API)": {
+      "main": [
+        [
+          {
+            "node": "Formater Réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formater Réponse": {
+      "main": [
+        [
+          {
+            "node": "Répondre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": {"executionOrder": "v1"},
+  "settings": {
+    "executionOrder": "v1"
+  },
   "staticData": null,
   "tags": [],
   "pinData": {}
