@@ -145,7 +145,7 @@
         1600,
         208
       ],
-      "onError": "continueRegularOutput"
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -265,6 +265,49 @@
         208
       ],
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $('Create Job').first().json.job_id || $('Create Job').first().json.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'failed', error: { code: 'BATCH_SUBMIT_FAILED', message: 'Soumission du lot impossible — aucune requête envoyée. ' + String($json?.error?.message || $json?.message || '').slice(0, 200) } }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "batch-submit-failed",
+      "name": "Marquer Job Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        428
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le lot n'est pas parti : le job vient d'être marqué failed, et l'appelant\n// doit le savoir tout de suite plutôt que de poller un job qui n'avancera\n// jamais. Sans cette branche, Set Processing s'exécutait quand même et le\n// job affichait « processing » alors que rien n'avait été soumis.\nconst e = $('Submit').first().json || {};\nconst brut = String(e?.error?.message || e?.message || '');\nreturn [{ json: {\n  success: false,\n  job_id: $('Create Job').first().json.job_id || $('Create Job').first().json.id || null,\n  batch: true,\n  error: {\n    code: 502,\n    message: 'Soumission du lot impossible — aucune requête envoyée, job marqué failed. ' + brut.slice(0, 200),\n    status: 'BATCH_SUBMIT_FAILED'\n  }\n} }];"
+      },
+      "id": "batch-submit-error-resp",
+      "name": "Erreur Soumission",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        428
+      ]
     }
   ],
   "connections": {
@@ -345,6 +388,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Marquer Job Failed",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -386,6 +436,28 @@
         [
           {
             "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marquer Job Failed": {
+      "main": [
+        [
+          {
+            "node": "Erreur Soumission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erreur Soumission": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
             "type": "main",
             "index": 0
           }
