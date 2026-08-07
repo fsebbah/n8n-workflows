@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## TORAH - Parasha Content\n\nLe texte d'une parasha : hébreu, traduction, référence au verset.\n\n**GET** `/webhook/torah-tanakh-parasha-content?name=Bereshit&aliyah=1`\n\n| Paramètre | Effet |\n|---|---|\n| `name` | **requis** — nom EN canonique, sensible à la casse |\n| `aliyah` | 1..7 — une aliyah. **Omis → la parasha entière** |\n| `target_language` | défaut `fr` |\n| `include_translations` | `false` pour l'hébreu seul |\n\n### Deux routes, un seul webhook\n\n`aliyah` fourni → `/aliyot/{index}/segments` (~55 ms, 34 segments pour Bereshit 1)\n`aliyah` omis → `/segments` + `aliyot_boundaries[]` (~105 ms, 146 segments)\n\nL'aliyah est le chemin recommandé par l'API pour la navigation ; le bulk sert\nl'export et fournit les bornes pour découper côté client.\n\n### Parité Talmud\n\nUn segment porte `index`, `hebrew_text`, `translation{translated_text, provider,\nmodel, target_language}` — **mêmes champs que `/api/talmud/…/segments`**, donc\naucun mapping neuf côté plugin. S'y ajoutent `chapter`, `verse`, `ref` :\nspécifiques au Tanakh, à lire seulement pour afficher la référence du verset.\n\n### ⚠️ Les traductions contiennent du markdown\n\nMesuré sur Bereshit aliyah 1 : **18 traductions sur 31** portent des marques\n`##` ou `**` — artefacts de prompt restés dans le texte stocké. Ce workflow ne\nles retire pas : nettoyer ici masquerait le défaut en base et divergerait de ce\nque renvoie l'API. À traiter au rendu, ou à la source.\n\nRéalisation : n8n-workflows#414 · contrat : azy.daily#185",
+        "content": "## TORAH - Parasha Content\n\nLe texte d'une parasha : hébreu, traduction, référence au verset.\n\n**GET** `/webhook/torah-tanakh-parasha-content?name=Bereshit&aliyah=1`\n\n| Paramètre | Effet |\n|---|---|\n| `name` | **requis** — nom EN canonique, sensible à la casse |\n| `aliyah` | 1..7 — une aliyah. **Omis → la parasha entière** |\n| `target_language` | défaut `fr` |\n| `include_translations` | `false` pour l'hébreu seul |\n| `include_commentaries` | `true` pour joindre les commentaires |\n| `commentators` | filtre — **décisif pour le poids**, voir ci-dessous |\n\n### Deux routes, un seul webhook\n\n`aliyah` fourni → `/aliyot/{index}/segments` (~55 ms, 34 segments pour Bereshit 1)\n`aliyah` omis → `/segments` + `aliyot_boundaries[]` (~105 ms, 146 segments)\n\nL'aliyah est le chemin recommandé par l'API pour la navigation ; le bulk sert\nl'export et fournit les bornes pour découper côté client.\n\n### Parité Talmud\n\nUn segment porte `index`, `hebrew_text`, `translation{translated_text, provider,\nmodel, target_language}` — **mêmes champs que `/api/talmud/…/segments`**, donc\naucun mapping neuf côté plugin. S'y ajoutent `chapter`, `verse`, `ref` :\nspécifiques au Tanakh, à lire seulement pour afficher la référence du verset.\n\n### ⚠️ Le poids dépend entièrement de `commentators`\n\nSur Bereshit aliyah 1, mesuré côté API :\n\n- sans filtre : **2 498 commentaires**, 57 commentateurs, **3,85 Mo**\n- `?commentators=Rashi` : 58 commentaires, **80 Ko**\n- `?include_commentaries=false` : **23 Ko**\n\nCe ne sont pas des paramètres de confort : sans filtre, le hot-path du\nplugin transporte près de 4 Mo par ouverture d'aliyah.\n\n### ⚠️ Les traductions contiennent du markdown\n\nMesuré sur Bereshit aliyah 1 : **18 traductions sur 31** portent des marques\n`##` ou `**` — artefacts de prompt restés dans le texte stocké. Ce workflow ne\nles retire pas : nettoyer ici masquerait le défaut en base et divergerait de ce\nque renvoie l'API. À traiter au rendu, ou à la source.\n\nRéalisation : n8n-workflows#414 · contrat : azy.daily#185",
         "height": 680,
         "width": 420,
         "color": 5
@@ -12,7 +12,10 @@
       "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-160, 0]
+      "position": [
+        -160,
+        0
+      ]
     },
     {
       "parameters": {
@@ -25,29 +28,43 @@
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [320, 100],
+      "position": [
+        320,
+        100
+      ],
       "webhookId": "torah-tanakh-parasha-content"
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst query = input.query || {};\n\nconst nom = (query.name || '').trim();\nconst aliyahBrut = (query.aliyah ?? '').toString().trim();\nconst langue = (query.target_language || 'fr').trim();\nconst avecTraductions = query.include_translations !== 'false';\n\nif (!nom) {\n  return [{ json: { valide: false, erreur: {\n    code: 400,\n    message: 'Le paramètre \"name\" est requis (nom EN canonique, ex. Bereshit)',\n    status: 'BAD_REQUEST'\n  } } }];\n}\n\n// L'aliyah est validée ICI, avant l'appel : l'API renvoie sinon un 422 dont le\n// `detail` est un TABLEAU d'objets Pydantic, illisible pour un utilisateur final.\n// Une borne connue et fixe (7 aliyot, toujours) mérite un message direct.\nlet aliyah = null;\nif (aliyahBrut !== '') {\n  const n = Number(aliyahBrut);\n  if (!Number.isInteger(n) || n < 1 || n > 7) {\n    return [{ json: { valide: false, erreur: {\n      code: 400,\n      message: `Aliyah invalide : \"${aliyahBrut}\". Une parasha compte 7 aliyot, numérotées de 1 à 7. Omettre le paramètre renvoie la parasha entière.`,\n      status: 'INVALID_ALIYAH'\n    } } }];\n  }\n  aliyah = n;\n}\n\nconst params = [];\nif (langue) params.push('target_language=' + encodeURIComponent(langue));\nif (!avecTraductions) params.push('include_translations=false');\nconst requete = params.length ? '?' + params.join('&') : '';\n\n// Une aliyah précise, ou la parasha entière.\nconst chemin = aliyah\n  ? `/api/torah/parashiyot/${encodeURIComponent(nom)}/aliyot/${aliyah}/segments`\n  : `/api/torah/parashiyot/${encodeURIComponent(nom)}/segments`;\n\nreturn [{\n  json: {\n    valide: true,\n    nom: nom,\n    aliyah: aliyah,\n    target_language: langue,\n    include_translations: avecTraductions,\n    chemin: chemin + requete\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst query = input.query || {};\n\nconst nom = (query.name || '').trim();\nconst aliyahBrut = (query.aliyah ?? '').toString().trim();\nconst langue = (query.target_language || 'fr').trim();\nconst avecTraductions = query.include_translations !== 'false';\n// Commentaires : ces deux paramètres décident du POIDS de la réponse, pas d'un\n// détail d'affichage. Sur Bereshit aliyah 1, l'API rend 3,85 Mo sans filtre\n// (2 498 commentaires, 57 commentateurs) contre 80 Ko avec ?commentators=Rashi,\n// et 23 Ko avec include_commentaries=false. Ne pas les relayer imposait le\n// payload plein au plugin, quoi qu'il demande (azy.daily#198).\nconst avecCommentaires = query.include_commentaries === 'true';\nconst commentateurs = (query.commentators || '').trim();\n\nif (!nom) {\n  return [{ json: { valide: false, erreur: {\n    code: 400,\n    message: 'Le paramètre \"name\" est requis (nom EN canonique, ex. Bereshit)',\n    status: 'BAD_REQUEST'\n  } } }];\n}\n\n// L'aliyah est validée ICI, avant l'appel : l'API renvoie sinon un 422 dont le\n// `detail` est un TABLEAU d'objets Pydantic, illisible pour un utilisateur final.\n// Une borne connue et fixe (7 aliyot, toujours) mérite un message direct.\nlet aliyah = null;\nif (aliyahBrut !== '') {\n  const n = Number(aliyahBrut);\n  if (!Number.isInteger(n) || n < 1 || n > 7) {\n    return [{ json: { valide: false, erreur: {\n      code: 400,\n      message: `Aliyah invalide : \"${aliyahBrut}\". Une parasha compte 7 aliyot, numérotées de 1 à 7. Omettre le paramètre renvoie la parasha entière.`,\n      status: 'INVALID_ALIYAH'\n    } } }];\n  }\n  aliyah = n;\n}\n\nconst params = [];\nif (langue) params.push('target_language=' + encodeURIComponent(langue));\nif (!avecTraductions) params.push('include_translations=false');\nif (avecCommentaires) params.push('include_commentaries=true');\n// La liste passe telle quelle : c'est l'API qui connaît les noms valides, et\n// dupliquer la validation ici créerait une seconde source de vérité.\nif (commentateurs) params.push('commentators=' + encodeURIComponent(commentateurs));\nconst requete = params.length ? '?' + params.join('&') : '';\n\n// Une aliyah précise, ou la parasha entière.\nconst chemin = aliyah\n  ? `/api/torah/parashiyot/${encodeURIComponent(nom)}/aliyot/${aliyah}/segments`\n  : `/api/torah/parashiyot/${encodeURIComponent(nom)}/segments`;\n\nreturn [{\n  json: {\n    valide: true,\n    nom: nom,\n    aliyah: aliyah,\n    target_language: langue,\n    include_translations: avecTraductions,\n    include_commentaries: avecCommentaires,\n    commentators: commentateurs || null,\n    chemin: chemin + requete\n  }\n}];"
       },
       "id": "tpc-parse",
       "name": "Lire Paramètres",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [540, 100]
+      "position": [
+        540,
+        100
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2},
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
           "conditions": [
             {
               "id": "cond-valide",
               "leftValue": "={{ $json.valide }}",
               "rightValue": true,
-              "operator": {"type": "boolean", "operation": "equals"}
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -58,13 +75,20 @@
       "name": "Paramètres Valides ?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [760, 100]
+      "position": [
+        760,
+        100
+      ]
     },
     {
       "parameters": {
         "url": "={{ $env.TORAH_API_URL }}{{ $json.chemin }}",
         "options": {
-          "response": {"response": {"fullResponse": true}},
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
           "timeout": 30000
         }
       },
@@ -72,7 +96,10 @@
       "name": "Lire Contenu (API)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [980, 0],
+      "position": [
+        980,
+        0
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -83,7 +110,10 @@
       "name": "Formater Réponse",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, 0]
+      "position": [
+        1200,
+        0
+      ]
     },
     {
       "parameters": {
@@ -91,14 +121,24 @@
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
           "responseCode": "={{ ($json.error && Number.isInteger($json.error.code)) ? $json.error.code : ($json.success === false ? 502 : 200) }}",
-          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       },
       "id": "tpc-respond",
       "name": "Répondre",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [1420, 0]
+      "position": [
+        1420,
+        0
+      ]
     },
     {
       "parameters": {
@@ -106,29 +146,93 @@
         "responseBody": "={{ JSON.stringify({ success: false, error: $json.erreur }) }}",
         "options": {
           "responseCode": "={{ $json.erreur.code || 400 }}",
-          "responseHeaders": {"entries": [{"name": "Content-Type", "value": "application/json"}]}
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
         }
       },
       "id": "tpc-respond-ko",
       "name": "Répondre Refus",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [980, 220]
+      "position": [
+        980,
+        220
+      ]
     }
   ],
   "connections": {
-    "Webhook Trigger": {"main": [[{"node": "Lire Paramètres", "type": "main", "index": 0}]]},
-    "Lire Paramètres": {"main": [[{"node": "Paramètres Valides ?", "type": "main", "index": 0}]]},
-    "Paramètres Valides ?": {
+    "Webhook Trigger": {
       "main": [
-        [{"node": "Lire Contenu (API)", "type": "main", "index": 0}],
-        [{"node": "Répondre Refus", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Lire Paramètres",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Lire Contenu (API)": {"main": [[{"node": "Formater Réponse", "type": "main", "index": 0}]]},
-    "Formater Réponse": {"main": [[{"node": "Répondre", "type": "main", "index": 0}]]}
+    "Lire Paramètres": {
+      "main": [
+        [
+          {
+            "node": "Paramètres Valides ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paramètres Valides ?": {
+      "main": [
+        [
+          {
+            "node": "Lire Contenu (API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Répondre Refus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire Contenu (API)": {
+      "main": [
+        [
+          {
+            "node": "Formater Réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formater Réponse": {
+      "main": [
+        [
+          {
+            "node": "Répondre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": {"executionOrder": "v1"},
+  "settings": {
+    "executionOrder": "v1"
+  },
   "staticData": null,
   "tags": [],
   "pinData": {}
