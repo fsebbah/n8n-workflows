@@ -3,9 +3,9 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Batch Callback\n\n**Endpoint:** POST /webhook/torah-translation-callback\n\n**Reçoit le résultat du poller générique (mode multi) une fois le batch terminé:**\n```json\n{\n  \"success\": true,\n  \"multi\": true,\n  \"batch_id\": \"...\",\n  \"correlation_id\": \"...\",\n  \"results\": [\n    { \"custom_id\": \"123\", \"ok\": true, \"text\": \"...\" },\n    { \"custom_id\": \"124\", \"ok\": false, \"error\": { \"code\": \"errored\" } }\n  ],\n  \"metadata\": {\n    \"job_id\": \"...\",\n    \"project_id\": \"torah\",\n    \"target_lang\": \"français\",\n    \"callback_channel_id\": \"...\",\n    \"commentary_map\": { \"123\": { \"segment_id\": 456 } }\n  }\n}\n```\n\n**Notes défensives:**\n- `metadata` et `results` peuvent arriver en JSON string (JSON.stringify côté soumetteur) → parse défensif.\n- `job_id` peut être null (Create Job fire-and-forget côté dispatcher) → on saute le PATCH job mais on notifie quand même Discord.\n\n**Flow:**\n1. Validate Input (parse défensif metadata/results)\n2. Split Results : 1 item n8n / résultat, mappe custom_id → segment_id via commentary_map\n3. Saved? (IF ok) → Save Translation (POST /api/translations/save, onError continue — un échec de save est compté, pas silencieux)\n4. Collect (merge succès + échecs) → Aggregate Results (compte ok/erreurs)\n5. Job ID Present? → Update Job (PATCH /api/v2/jobs/{job_id}), sinon skip\n6. Prepare Discord → Send Discord Notification\n7. Respond",
-        "height": 620,
-        "width": 420,
+        "content": "## Torah Batch Callback\n\n**Endpoint:** POST /webhook/torah-translation-callback\n\n**Reçoit le résultat du poller générique (mode multi) une fois le batch terminé:**\n```json\n{\n  \"success\": true,\n  \"multi\": true,\n  \"batch_id\": \"...\",\n  \"correlation_id\": \"...\",\n  \"results\": [\n    { \"custom_id\": \"123\", \"ok\": true, \"text\": \"...\" },\n    { \"custom_id\": \"124\", \"ok\": false, \"error\": { \"code\": \"errored\" } }\n  ],\n  \"metadata\": {\n    \"job_id\": \"...\",\n    \"project_id\": \"torah\",\n    \"target_lang\": \"français\",\n    \"target_language\": \"fr\",\n    \"provider\": \"anthropic\",\n    \"model\": \"claude-sonnet-4-6\",\n    \"callback_channel_id\": \"...\",\n    \"commentary_map\": { \"123\": { \"segment_id\": 456 } }\n  }\n}\n```\n\n### Sauvegarde groupée\n\n`POST /api/translations/save-batch`, par lots de 500. La version unitaire faisait\nun appel par traduction : **~350 s pour 250 items**, au-delà du timeout du nœud,\net ~58 min pour les 2 498 d'une aliyah sans filtre (azy.daily#201). En groupé,\nl'API mesure 26 ms/item amortis — ~6,5 s pour 250.\n\nLe timeout d'un nœud HTTP n8n couvre **tous** les items, pas chacun : d'où des\nlots bornés à 500 plutôt qu'un unique appel de 2 500, et 180 s de marge.\n\n`/save-batch` répond **HTTP 200 même quand des items échouent** — le verdict est\ndans `per_item_results[i]`, apparié par index. `Éclater Sauvegardes` le recolle\nsur le `rang` posé par `Split Results`.\n\n**Notes défensives:**\n- `metadata` et `results` peuvent arriver en JSON string → parse défensif.\n- `job_id` peut être null (Create Job fire-and-forget) → on saute le PATCH job\n  mais on notifie quand même Discord.\n- `Grouper Sauvegardes` émet **toujours** au moins un item : sans cette\n  sentinelle, un lot dont aucune traduction n'a abouti ne conclurait pas le job.\n- `target_language`, `provider`, `model` sont optionnels côté API : omis quand\n  inconnus plutôt que remplis d'une valeur inventée.\n\n**Flow:**\n1. Validate Input (parse défensif metadata/results)\n2. Split Results : 1 item n8n / résultat + `rang` stable, nature via commentary_map\n3. Grouper Sauvegardes : lots de 500 des traductions réussies\n4. À Sauvegarder ? → Save Batch (POST /save-batch) → Éclater Sauvegardes\n5. Aggregate Results : distingue échec de traduction et échec de sauvegarde\n6. Job ID Present? → Update Job (PATCH /api/v2/jobs/{job_id}, avec `echecs`)\n7. Prepare Discord → Send Discord Notification\n8. Respond\n\nTests : `node scripts/test/test_batch_callback.js [--en-ligne]`",
+        "height": 1180,
+        "width": 560,
         "color": 6
       },
       "id": "torah-batch-cb-sticky",
@@ -36,7 +36,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATE CALLBACK INPUT (batch multi)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// --- defensive parse: metadata may arrive as a JSON string ---\nlet md = body.metadata;\nif (typeof md === 'string') {\n  try { md = JSON.parse(md); } catch (e) { md = {}; }\n}\nmd = md || {};\n\n// --- defensive parse: results may arrive as a JSON string ---\nlet results = body.results;\nif (typeof results === 'string') {\n  try { results = JSON.parse(results); } catch (e) { results = []; }\n}\nresults = Array.isArray(results) ? results : [];\n\nconst errors = [];\nif (results.length === 0) errors.push('results');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    message: 'Missing required fields: ' + errors.join(', ')\n  };\n}\n\nreturn {\n  valid: true,\n  data: {\n    batch_id: body.batch_id || null,\n    correlation_id: body.correlation_id || null,\n    results: results,\n    metadata: md,\n    job_id: md.job_id || null,\n    project_id: md.project_id || null,\n    channel_id: md.callback_channel_id || null,\n    target_lang: md.target_lang || null,\n    commentary_map: md.commentary_map || {}\n  }\n};"
+        "jsCode": "// ============================================\n// VALIDATE CALLBACK INPUT (batch multi)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// --- defensive parse: metadata may arrive as a JSON string ---\nlet md = body.metadata;\nif (typeof md === 'string') {\n  try { md = JSON.parse(md); } catch (e) { md = {}; }\n}\nmd = md || {};\n\n// --- defensive parse: results may arrive as a JSON string ---\nlet results = body.results;\nif (typeof results === 'string') {\n  try { results = JSON.parse(results); } catch (e) { results = []; }\n}\nresults = Array.isArray(results) ? results : [];\n\nconst errors = [];\nif (results.length === 0) errors.push('results');\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    message: 'Missing required fields: ' + errors.join(', ')\n  };\n}\n\nreturn {\n  valid: true,\n  data: {\n    batch_id: body.batch_id || null,\n    correlation_id: body.correlation_id || null,\n    results: results,\n    metadata: md,\n    job_id: md.job_id || null,\n    project_id: md.project_id || null,\n    channel_id: md.callback_channel_id || null,\n    target_lang: md.target_lang || null,\n    // Provenance posee par le dispatcher : /save-batch les accepte tous trois\n    // en optionnel, mais sans eux la ligne ecrite ne dit ni sa langue ni son\n    // origine. Aucune valeur de repli inventee ici : un modele faux est pire\n    // qu'un modele absent (azy.daily#201).\n    target_language: md.target_language || null,\n    provider: md.provider || null,\n    model: md.model || null,\n    commentary_map: md.commentary_map || {}\n  }\n};"
       },
       "id": "torah-batch-cb-0002",
       "name": "Validate Input",
@@ -81,7 +81,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// SPLIT RESULTS — one n8n item per translation result\n// ============================================\n\nconst data = $input.first().json.data;\nconst map = data.commentary_map || {};\n\nreturn (data.results || []).map(r => ({ json: {\n  job_id: data.job_id,\n  project_id: data.project_id,\n  channel_id: data.channel_id,\n  // La carte dit la NATURE de l'item : le custom_id porte soit un commentary_id\n  // soit un segment_id, et un seul des deux doit ressortir — /api/translations/save\n  // refuse le couple (contrat azy.daily#201). Auparavant tout custom_id atterrissait\n  // dans commentary_id, ce qui envoyait les versets dans la mauvaise table.\n  commentary_id: (map[r.custom_id] || {}).commentary_id || null,\n  segment_id: (map[r.custom_id] || {}).segment_id || null,\n  ok: r.ok === true,\n  translated_text: r.ok ? r.text : null,\n  error: r.ok ? null : r.error\n}}));"
+        "jsCode": "// ============================================\n// SPLIT RESULTS — un item n8n par résultat de traduction\n// ============================================\n\nconst data = $input.first().json.data;\nconst map = data.commentary_map || {};\n\nreturn (data.results || []).map((r, i) => ({ json: {\n  rang: i,                         // ordre stable : sert à recoller les résultats de /save-batch\n  job_id: data.job_id,\n  project_id: data.project_id,\n  channel_id: data.channel_id,\n  // La carte dit la NATURE de l'item : le custom_id porte soit un commentary_id\n  // soit un segment_id, et un seul des deux doit ressortir — /api/translations/save\n  // refuse le couple (contrat azy.daily#201). Auparavant tout custom_id atterrissait\n  // dans commentary_id, ce qui envoyait les versets dans la mauvaise table.\n  commentary_id: (map[r.custom_id] || {}).commentary_id || null,\n  segment_id: (map[r.custom_id] || {}).segment_id || null,\n  // Provenance, transmise telle quelle à /save-batch quand elle est connue.\n  target_language: data.target_language || null,\n  provider: data.provider || null,\n  model: data.model || null,\n  ok: r.ok === true,\n  translated_text: r.ok ? r.text : null,\n  error: r.ok ? null : r.error\n}}));"
       },
       "id": "torah-batch-cb-0004",
       "name": "Split Results",
@@ -94,125 +94,7 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "check-ok",
-              "leftValue": "={{ $json.ok }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "torah-batch-cb-0005",
-      "name": "Saved?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        896,
-        208
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $env.TORAH_API_URL }}/api/translations/save",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify(Object.assign(\n  { translated_text: $json.translated_text },\n  $json.commentary_id\n    ? { commentary_id: $json.commentary_id }\n    : { segment_id: $json.segment_id }\n)) }}",
-        "options": {
-          "timeout": 15000
-        }
-      },
-      "id": "torah-batch-cb-0006",
-      "name": "Save Translation",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1120,
-        112
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "tag-job-id",
-              "name": "job_id",
-              "value": "={{ $('Split Results').item.json.job_id }}",
-              "type": "string"
-            },
-            {
-              "id": "tag-project-id",
-              "name": "project_id",
-              "value": "={{ $('Split Results').item.json.project_id }}",
-              "type": "string"
-            },
-            {
-              "id": "tag-channel-id",
-              "name": "channel_id",
-              "value": "={{ $('Split Results').item.json.channel_id }}",
-              "type": "string"
-            },
-            {
-              "id": "tag-commentary-id",
-              "name": "commentary_id",
-              "value": "={{ $('Split Results').item.json.commentary_id }}",
-              "type": "string"
-            },
-            {
-              "id": "tag-segment-id",
-              "name": "segment_id",
-              "value": "={{ $('Split Results').item.json.segment_id }}",
-              "type": "string"
-            },
-            {
-              "id": "tag-ok",
-              "name": "ok",
-              "value": "={{ $('Split Results').item.json.ok }}",
-              "type": "boolean"
-            },
-            {
-              "id": "tag-save-ok",
-              "name": "save_ok",
-              "value": "={{ $json.error ? false : true }}",
-              "type": "boolean"
-            },
-            {
-              "id": "tag-save-error",
-              "name": "save_error",
-              "value": "={{ $json.error ? ($json.error.message || JSON.stringify($json.error)) : '' }}",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "torah-batch-cb-0007",
-      "name": "Tag Save Result",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        1344,
-        112
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// AGGREGATE RESULTS — one summary item for job update + Discord\n// ============================================\n\nconst items = $input.all().map(i => i.json);\n\nlet okCount = 0;\nlet failCount = 0;\nitems.forEach(it => {\n  const translationOk = it.ok === true;\n  const saveOk = it.save_ok !== false;\n  if (translationOk && saveOk) okCount++; else failCount++;\n});\n\nconst first = items[0] || {};\n\nreturn {\n  job_id: first.job_id || null,\n  project_id: first.project_id || null,\n  channel_id: first.channel_id || null,\n  total: items.length,\n  ok_count: okCount,\n  fail_count: failCount\n};"
+        "jsCode": "// ============================================\n// AGGREGATE RESULTS — un item de synthèse pour le job et Discord\n// ============================================\n\nconst items = $input.all().map(i => i.json);\n\nlet okCount = 0;\nlet failCount = 0;\nconst echecs = [];\n\nitems.forEach(it => {\n  // save_ok vaut null quand la traduction elle-même a échoué : l'item n'a jamais\n  // été proposé à l'écriture, et le compter en échec de sauvegarde effacerait la\n  // vraie cause.\n  const traductionOk = it.ok === true;\n  const sauvegardeOk = traductionOk ? it.save_ok === true : false;\n  if (traductionOk && sauvegardeOk) {\n    okCount++;\n  } else {\n    failCount++;\n    if (echecs.length < 20) {\n      echecs.push({\n        rang: it.rang,\n        cause: traductionOk ? 'sauvegarde' : 'traduction',\n        detail: traductionOk ? it.save_error : it.error\n      });\n    }\n  }\n});\n\nconst first = items[0] || {};\n\nreturn {\n  job_id: first.job_id || null,\n  project_id: first.project_id || null,\n  channel_id: first.channel_id || null,\n  total: items.length,\n  ok_count: okCount,\n  fail_count: failCount,\n  // Vingt premiers échecs : de quoi retraiter chirurgicalement sans gonfler le job.\n  echecs: echecs\n};"
       },
       "id": "torah-batch-cb-0009",
       "name": "Aggregate Results",
@@ -261,7 +143,7 @@
         "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.job_id }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ status: 'completed', output: { ok_count: $json.ok_count, fail_count: $json.fail_count, total: $json.total } }) }}",
+        "jsonBody": "={{ JSON.stringify({ status: 'completed', output: { ok_count: $json.ok_count, fail_count: $json.fail_count, total: $json.total, echecs: $json.echecs } }) }}",
         "options": {
           "timeout": 10000
         }
@@ -427,6 +309,91 @@
         896,
         400
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// GROUPER SAUVEGARDES — un lot par appel à /api/translations/save-batch\n// ============================================\n//\n// Remplace N appels à /api/translations/save par ⌈N/500⌉ appels groupés.\n// Mesuré sur 250 items : ~350 s en unitaire (au-delà du timeout, azy.daily#201),\n// ~6,5 s en groupé.\n//\n// Pourquoi 500 et non 2 500 (le maximum accepté par l'API)\n// -------------------------------------------------------\n// Le timeout d'un nœud HTTP Request n8n couvre l'ENSEMBLE des items, pas chaque\n// appel : c'est exactement ce qui a fait échouer la version unitaire. Des lots\n// bornés gardent chaque requête autour de 13 s (26 ms/item mesurés par l'API),\n// laissent de la marge sous le timeout du nœud même dans le pire cas connu\n// (2 498 items d'une aliyah sans filtre → 5 lots), et isolent une défaillance\n// réseau sur un cinquième du travail au lieu de la totalité.\n//\n// Ce nœud émet TOUJOURS au moins un item : sans cela, un lot dont aucune\n// traduction n'a abouti court-circuiterait tout l'aval — pas de mise à jour du\n// job, pas de notification. L'item sentinelle porte aucun_envoi: true.\n\nconst TAILLE_LOT = 500;\n\nconst tous = $input.all().map(i => i.json);\nconst premier = tous[0] || {};\n\n// Seules les traductions réussies sont écrites. Les échecs sont comptés en aval.\nconst aEcrire = tous.filter(it => it.ok === true && it.translated_text);\n\nif (aEcrire.length === 0) {\n  return [{ json: {\n    aucun_envoi: true,\n    job_id: premier.job_id || null,\n    total: tous.length\n  }}];\n}\n\nconst lots = [];\nfor (let d = 0; d < aEcrire.length; d += TAILLE_LOT) {\n  const tranche = aEcrire.slice(d, d + TAILLE_LOT);\n  lots.push({ json: {\n    aucun_envoi: false,\n    lot_index: lots.length,\n    rangs: tranche.map(it => it.rang),   // recollage : /save-batch répond par index\n    items: tranche.map(it => {\n      // Exactement un identifiant, jamais les deux : l'API refuse le couple.\n      const item = it.commentary_id\n        ? { commentary_id: it.commentary_id }\n        : { segment_id: it.segment_id };\n      item.translated_text = it.translated_text;\n      // Champs optionnels : omis plutôt que remplis d'une valeur inventée.\n      if (it.target_language) item.target_language = it.target_language;\n      if (it.provider) item.provider = it.provider;\n      if (it.model) item.model = it.model;\n      return item;\n    })\n  }});\n}\n\nreturn lots;"
+      },
+      "id": "torah-batch-cb-0020",
+      "name": "Grouper Sauvegardes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-a-sauvegarder",
+              "leftValue": "={{ $json.aucun_envoi }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "torah-batch-cb-0021",
+      "name": "À Sauvegarder ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TORAH_API_URL }}/api/translations/save-batch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ items: $json.items }) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "torah-batch-cb-0022",
+      "name": "Save Batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        112
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// ÉCLATER SAUVEGARDES — recoller le sort de chaque traduction\n// ============================================\n//\n// /api/translations/save-batch répond 200 même quand des items échouent, et\n// isole le détail dans per_item_results[i] avec l'index d'entrée. On remonte\n// donc ce verdict sur chaque traduction, au lieu de conclure du seul code HTTP.\n//\n// La source de vérité reste $('Split Results') : ce nœud rend une ligne par\n// traduction reçue d'Anthropic, y compris celles jamais envoyées à l'écriture\n// (traduction en échec, ou aucun envoi du tout). L'agrégat en aval compte sur\n// ce total.\n\nconst traductions = $('Split Results').all().map(i => i.json);\n\n// Verdict par rang, alimenté par les réponses de chaque lot.\nconst verdicts = {};\n\n// Appariement par POSITION, pas par contenu : la réponse HTTP ne rapporte rien\n// du lot qui l'a produite. Le nœud HTTP émet un item de sortie par item d'entrée\n// et dans le même ordre, donc entrees[i] correspond au lot i. C'est le seul\n// point du workflow où l'ordre porte du sens — d'où le rang stable posé par\n// Split Results, qui rend le recollage vérifiable en aval.\nconst entrees = $input.all();\nconst lots = $('Grouper Sauvegardes').all();\n\nfor (let i = 0; i < entrees.length; i++) {\n  const j = entrees[i].json;\n  if (j.aucun_envoi) continue;                 // branche « rien à écrire »\n\n  // Avec onError=continueRegularOutput, un appel en échec n'émet pas\n  // {statusCode, body} : le statut réel est enfoui dans le message (« 500 - {…} »).\n  // Sans cette lecture, un lot entièrement perdu passerait pour sauvegardé.\n  let code = j.statusCode;\n  if (code === undefined) {\n    const brut = String(j?.error?.message || j?.message || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    code = m ? parseInt(m[1], 10) : ((j?.error || j?.code) ? 502 : 200);\n  }\n  const corps = j.body || {};\n\n  const rangs = ((lots[i] || {}).json || {}).rangs || [];\n\n  if (code >= 400 || !Array.isArray(corps.per_item_results)) {\n    const motif = code >= 400\n      ? ('save-batch HTTP ' + code)\n      : 'save-batch : réponse sans per_item_results';\n    rangs.forEach(r => { verdicts[r] = { save_ok: false, save_error: motif }; });\n    continue;\n  }\n\n  corps.per_item_results.forEach(res => {\n    const rang = rangs[res.index];\n    if (rang === undefined) return;\n    verdicts[rang] = res.success\n      ? { save_ok: true, save_error: null }\n      : { save_ok: false,\n          save_error: (res.error && (res.error.detail || res.error.status_code)) || 'échec sauvegarde' };\n  });\n}\n\nreturn traductions.map(t => {\n  const v = verdicts[t.rang];\n  return { json: Object.assign({}, t, {\n    // Une traduction en échec n'a jamais été proposée à l'écriture : elle ne doit\n    // pas être comptée comme un échec de sauvegarde, sinon la cause se perd.\n    save_ok: t.ok === true ? (v ? v.save_ok : false) : null,\n    save_error: t.ok === true ? (v ? v.save_error : 'jamais soumise à la sauvegarde') : null\n  })};\n});"
+      },
+      "id": "torah-batch-cb-0023",
+      "name": "Éclater Sauvegardes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        208
+      ]
     }
   ],
   "connections": {
@@ -474,47 +441,7 @@
       "main": [
         [
           {
-            "node": "Saved?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Saved?": {
-      "main": [
-        [
-          {
-            "node": "Save Translation",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Aggregate Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save Translation": {
-      "main": [
-        [
-          {
-            "node": "Tag Save Result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Tag Save Result": {
-      "main": [
-        [
-          {
-            "node": "Aggregate Results",
+            "node": "Grouper Sauvegardes",
             "type": "main",
             "index": 0
           }
@@ -628,6 +555,57 @@
         [
           {
             "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Grouper Sauvegardes": {
+      "main": [
+        [
+          {
+            "node": "À Sauvegarder ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "À Sauvegarder ?": {
+      "main": [
+        [
+          {
+            "node": "Save Batch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Éclater Sauvegardes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Batch": {
+      "main": [
+        [
+          {
+            "node": "Éclater Sauvegardes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Éclater Sauvegardes": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Results",
             "type": "main",
             "index": 0
           }
