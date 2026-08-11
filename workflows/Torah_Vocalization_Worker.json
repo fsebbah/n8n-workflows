@@ -4,9 +4,9 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Vocalization (Nekudot) v2.1\n\n**Endpoint:** POST /webhook/torah-vocalization\n\n**Required:**\n- `text`: Texte hébreu sans voyelles\n- `openai_api_key`: Clé API OpenAI\n\n**Optional:**\n- `source_text_id`: UUID du texte source\n- `commentary_id`: UUID du commentaire\n- `context`: { traite, page, commentator }\n\n**Pipeline v2.1:**\n1. Normalisation traite (UPDATE cd.traite 2026-05-01)\n2. Si commentary_id → Check has_nekudot via API\n   → Si existe → retourne vocalisation\n3. Sinon → Check Cache\n4. Si cache miss → GPT-4o\n5. Sauvegarde en BDD\n\n**v2.1 (2026-05-01):** Normalisation automatique traite (7 patterns)",
-        "height": 380,
-        "width": 320,
+        "content": "## Torah Vocalization Worker\n\n**Endpoint:** POST /webhook/torah-vocalization-worker\n\n**Requis :** `text` (hébreu sans voyelles), `openai_api_key`\n**Optionnels :** `source_text_id`, `commentary_id`, `context {traite, page, commentator}`\n\n### Textes longs : découpage, pas timeout plus large\n\nMesuré sur l'exécution 746039 (11/08) :\n\n```\ndurée ≈ 2,1 s + 13,7 ms/caractère        ~65 car/s\n513 car →  9,2 s      2 237 car → 32,8 s\n650 car → 11,5 s      5 224 car → 74 s prédites, TIMEOUT à 60 s\n```\n\nLe débit ne dépend pas de la longueur : la vocalisation réécrit le texte entier,\nchaque nekuda étant un codepoint distinct. Seuil de rupture ≈ **4 200 caractères**.\n\n`Découper Texte` tranche à 2 500 caractères sur les frontières de phrase. C'est\nlicite ici parce que la vocalisation est une opération **locale** — les nekudot\nd'un mot dépendent de son voisinage immédiat, pas du document. Une traduction ne\nsupporterait pas cette coupure.\n\nLes bornes sont des index et les tranches des slices : leur concaténation redonne\nexactement le texte d'origine, aucun séparateur ne se perd.\n\nTimeout du nœud HTTP : **240 s**, car il couvre l'ENSEMBLE des tranches d'une\nexécution et non chacune. Le cas de référence prend 84 s en trois tranches.\n\n### Trois garde-fous, absents jusqu'au 11/08\n\n`Recoller Vocalisation` fait échouer l'ensemble si :\n\n- une tranche revient avec `finish_reason ≠ stop` — **troncature silencieuse du\n  modèle**, qui partait auparavant en base en `success: true`, avec des nekudot\n  manquantes en fin de texte et aucune erreur ;\n- une tranche échoue en réseau — recoller les survivantes livrerait un texte\n  **amputé présenté comme complet** ;\n- une tranche revient vide.\n\n`max_tokens` est calculé à 2 × la longueur de la tranche (mesuré : 0,86 token de\nsortie par caractère). Il n'y en avait aucun.\n\n`retryOnFail` (2 essais) couvre les 429 et 500 passagers d'OpenAI.\n\n### Items sans identifiant\n\n`Should Save?` exige `segment_id`, `source_text_id` ou `commentary_id`. Sur\nl'exécution 746039 les 6 items en étaient dépourvus : **`Save to Cache` ne s'est\npas exécuté une seule fois**, et `canSearchCache: false` interdisait aussi la\nlecture du cache. 94 s de gpt-4o générées, renvoyées, jetées — et refacturées au\nprochain appel identique.\n\n`Clean Response` pose désormais `persisted: false` et un avertissement\n`NOT_PERSISTABLE`. Le résultat reste rendu ; il est simplement dit qu'il n'est pas\nmémorisé. Voir azy.daily#150.\n\nTests : `node scripts/test/test_vocalisation_longue.js [--en-ligne]`",
+        "height": 1240,
+        "width": 520,
         "color": 5
       },
       "id": "sticky-doc",
@@ -212,14 +212,14 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', temperature: 0.1, messages: [{ role: 'system', content: 'Tu es un expert en hébreu biblique et rabbinique. Ta tâche est d\\'ajouter les nekudot (voyelles hébraïques/signes de vocalisation) au texte hébreu fourni. Retourne UNIQUEMENT le texte vocalisé, sans explication ni commentaire.' }, { role: 'user', content: 'Ajoute les nekudot (voyelles hébraïques) à ce texte:\\n\\n' + $json.text }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', temperature: 0.1, max_tokens: Math.min(16000, Math.max(1024, Math.ceil($json.text.length * 2))), messages: [{ role: 'system', content: 'Tu es un expert en hébreu biblique et rabbinique. Ta tâche est d\\'ajouter les nekudot (voyelles hébraïques/signes de vocalisation) au texte hébreu fourni. Retourne UNIQUEMENT le texte vocalisé, sans explication ni commentaire.' }, { role: 'user', content: 'Ajoute les nekudot (voyelles hébraïques) à ce texte:\\n\\n' + $json.text }] }) }}",
         "options": {
           "response": {
             "response": {
               "fullResponse": true
             }
           },
-          "timeout": 60000
+          "timeout": 240000
         }
       },
       "id": "call-gpt-nano",
@@ -230,7 +230,10 @@
         1952,
         208
       ],
-      "onError": "continueRegularOutput"
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -309,7 +312,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Nettoyer la réponse (supprimer _saveData)\nconst prevResponse = $('Extract GPT Response').first().json;\n\n// Supprimer les données internes\nconst response = { ...prevResponse };\ndelete response._saveData;\n\nreturn [{ json: response }];"
+        "jsCode": "// Nettoyer la réponse (supprimer _saveData)\nconst prevResponse = $('Extract GPT Response').first().json;\n\n// Supprimer les données internes\nconst response = { ...prevResponse };\ndelete response._saveData;\n\n// Cette branche est aussi celle des items SANS identifiant : « Should Save? »\n// exige segment_id, source_text_id ou commentary_id. Sur l'exécution 746039,\n// les 6 items en étaient dépourvus — 94 s de gpt-4o générées puis jetées, sans\n// que rien ne le signale, et sans cache pour le prochain appel.\n// Le résultat reste rendu ; il est simplement dit qu'il n'est pas mémorisé.\nconst s = prevResponse._saveData || {};\nif (response.success !== false && !(s.segment_id || s.source_text_id || s.commentary_id)) {\n  response.persisted = false;\n  response.warning = {\n    code: 'NOT_PERSISTABLE',\n    message: 'vocalisation générée mais NON mémorisée : aucun identifiant '\n           + '(segment_id, source_text_id ou commentary_id) fourni par l\\'appelant. '\n           + 'Le prochain appel identique la regénérera et la refacturera.'\n  };\n}\n\nreturn [{ json: response }];"
       },
       "id": "clean-response",
       "name": "Clean Response",
@@ -843,6 +846,32 @@
         3092,
         -208
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// DÉCOUPER TEXTE — une tranche par appel GPT\n// ============================================\n//\n// La vocalisation est une opération LOCALE : les nekudot d'un mot dépendent de ce\n// mot et de son voisinage immédiat, jamais du document entier. Découper est donc\n// sûr ici, contrairement à une traduction où la coupure perd le contexte.\n//\n// Pourquoi c'est nécessaire (mesuré sur l'exécution 746039) :\n//\n//     durée ≈ 2,1 s + 13,7 ms/caractère       (~65 car/s, débit de génération)\n//\n//     513 car →  9,2 s        2 237 car → 32,8 s\n//     650 car → 11,5 s        5 224 car → 74 s prédites, TIMEOUT à 60 s\n//\n// Le débit ne dépend pas de la longueur : la vocalisation réécrit le texte entier,\n// chaque nekuda étant un codepoint distinct. Le seuil de rupture est à ~4 200\n// caractères. Augmenter le timeout ne ferait que déplacer le mur — et exposerait\n// à la troncature du modèle, qui n'émet aucune erreur.\n//\n// Le nœud HTTP en aval traite un item par tranche, séquentiellement. Son timeout\n// couvre l'ENSEMBLE des items d'une exécution, pas chacun : il est donc calibré\n// sur le cumul, pas sur une tranche.\n\nconst TAILLE_TRANCHE = 2500;\n\nconst item = $input.first().json;\nconst texte = item.text || '';\n\n// Découpe aux frontières de phrase. Les bornes sont des INDEX, et les tranches des\n// slices : leur concaténation redonne exactement le texte d'origine, sans qu'un\n// séparateur ne se perde en route.\nfunction bornes(t, taille) {\n  if (t.length <= taille) return [[0, t.length]];\n  // Fins de phrase, y compris le sof pasuq et le sof passuk hébreux.\n  const fins = [];\n  const re = /[.!?׃:]\\s+|\\n+/g;\n  let m;\n  while ((m = re.exec(t)) !== null) fins.push(m.index + m[0].length);\n  // Repli : frontières de mot, si le texte n'a aucune ponctuation exploitable.\n  if (fins.length === 0) {\n    const rw = /\\s+/g;\n    while ((m = rw.exec(t)) !== null) fins.push(m.index + m[0].length);\n  }\n  fins.push(t.length);\n\n  const res = [];\n  let debut = 0;\n  let derniere = 0;\n  for (const f of fins) {\n    if (f - debut > taille && derniere > debut) {\n      res.push([debut, derniere]);\n      debut = derniere;\n    }\n    derniere = f;\n  }\n  if (debut < t.length) res.push([debut, t.length]);\n  // Dernier recours : une tranche sans aucune frontière interne reste trop\n  // longue — on coupe net plutôt que de la laisser expirer.\n  const fin = [];\n  for (const [a, b] of res) {\n    if (b - a <= taille * 1.5) { fin.push([a, b]); continue; }\n    for (let x = a; x < b; x += taille) fin.push([x, Math.min(x + taille, b)]);\n  }\n  return fin;\n}\n\nconst decoupe = bornes(texte, TAILLE_TRANCHE);\nconst tranches = decoupe.map(([a, b]) => texte.slice(a, b));\n\nreturn tranches.map((t, i) => ({ json: Object.assign({}, item, {\n  text: t,\n  _tranche: i,\n  _nbTranches: tranches.length,\n  _texteComplet: texte\n})}));"
+      },
+      "id": "voc-decouper",
+      "name": "Découper Texte",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1732,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// RECOLLER VOCALISATION — N tranches → une réponse\n// ============================================\n//\n// Rend un objet de la FORME d'une réponse OpenAI, pour que « Extract GPT Response »\n// reste le seul endroit qui interprète le résultat — aucun autre nœud n'a eu à\n// changer.\n//\n// Trois garde-fous, absents jusqu'ici :\n//\n//  1. finish_reason — 0 occurrence dans le workflow avant ce correctif. Un texte\n//     tronqué par le modèle (« length ») sortait en success:true et partait en\n//     base : des nekudot manquantes en fin de texte, sans la moindre erreur.\n//  2. tranche en échec — avec onError=continueRegularOutput, un appel raté n'émet\n//     pas {statusCode, body} mais l'objet d'erreur. Recoller les tranches\n//     survivantes donnerait un texte AMPUTÉ présenté comme complet.\n//  3. réponse vide — une tranche sans contenu vaut échec, pas chaîne vide.\n//\n// Dans les trois cas on émet un corps d'erreur : « Extract GPT Response » le\n// reconnaît (data.error.message) et conclut à l'échec, donc rien n'est sauvegardé.\n\nconst entrees = $input.all();\nconst nb = entrees.length;\n\nconst morceaux = [];\nconst soucis = [];\nlet promptTokens = 0;\nlet completionTokens = 0;\n\nfor (let i = 0; i < nb; i++) {\n  const j = entrees[i].json;\n\n  // Échec de l'appel : pas de statusCode, statut réel enfoui dans le message.\n  let code = j.statusCode;\n  if (code === undefined) {\n    const brut = String(j?.error?.message || j?.message || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    code = m ? parseInt(m[1], 10) : ((j?.error || j?.code) ? 502 : 200);\n  }\n  const corps = j.body || j;\n\n  if (code >= 400 || (corps && corps.error && corps.error.message)) {\n    soucis.push(`tranche ${i + 1}/${nb} : ${corps?.error?.message || j?.error?.message || ('HTTP ' + code)}`);\n    continue;\n  }\n\n  const choix = (corps.choices || [])[0];\n  const contenu = choix?.message?.content;\n  if (!contenu || !contenu.trim()) {\n    soucis.push(`tranche ${i + 1}/${nb} : réponse vide`);\n    continue;\n  }\n  if (choix.finish_reason && choix.finish_reason !== 'stop') {\n    soucis.push(`tranche ${i + 1}/${nb} : génération interrompue (finish_reason=${choix.finish_reason}) — texte tronqué`);\n    continue;\n  }\n\n  morceaux.push(contenu.trim());\n  const u = corps.usage || {};\n  promptTokens += u.prompt_tokens || 0;\n  completionTokens += u.completion_tokens || 0;\n}\n\nif (soucis.length > 0 || morceaux.length !== nb) {\n  return [{ json: { statusCode: 200, body: { error: {\n    message: `vocalisation incomplète (${morceaux.length}/${nb} tranches) — ${soucis.join(' ; ')}`\n  }}}}];\n}\n\nreturn [{ json: { statusCode: 200, body: {\n  choices: [{ message: { content: morceaux.join(' ') }, finish_reason: 'stop' }],\n  usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },\n  _tranches: nb\n}}}];"
+      },
+      "id": "voc-recoller",
+      "name": "Recoller Vocalisation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2172,
+        208
+      ]
     }
   ],
   "connections": {
@@ -937,7 +966,7 @@
         ],
         [
           {
-            "node": "GPT-4o Vocalize",
+            "node": "Découper Texte",
             "type": "main",
             "index": 0
           }
@@ -966,7 +995,7 @@
         ],
         [
           {
-            "node": "GPT-4o Vocalize",
+            "node": "Découper Texte",
             "type": "main",
             "index": 0
           }
@@ -1006,7 +1035,7 @@
         ],
         [
           {
-            "node": "GPT-4o Vocalize",
+            "node": "Découper Texte",
             "type": "main",
             "index": 0
           }
@@ -1028,7 +1057,7 @@
       "main": [
         [
           {
-            "node": "Extract GPT Response",
+            "node": "Recoller Vocalisation",
             "type": "main",
             "index": 0
           }
@@ -1276,6 +1305,28 @@
         [
           {
             "node": "Complete Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Découper Texte": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o Vocalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recoller Vocalisation": {
+      "main": [
+        [
+          {
+            "node": "Extract GPT Response",
             "type": "main",
             "index": 0
           }
