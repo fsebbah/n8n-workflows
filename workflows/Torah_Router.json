@@ -397,7 +397,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Update progress after each segment\nconst loopItem = $('Loop Segments').first().json;\nconst current = loopItem.index + 1;\nconst total = loopItem.totalSegments;\nconst percentage = Math.round((current / total) * 100);\n\nreturn [{\n  json: {\n    jobId: loopItem.jobId,\n    current: current,\n    total: total,\n    percentage: percentage,\n    isLast: current >= total\n  }\n}];"
+        "jsCode": "// Progression ET verdict du segment courant.\n//\n// Deux branches convergent ici et une seule s'exécute par tour :\n//   Call Error Handler → torah-error rend { error_logged: true }  → échec traduction\n//   Call Save Worker   → torah-save  rend { success, translation_id, … }\n//\n// C'est la seule distinction disponible sans nœud supplémentaire, et elle est\n// portée par la réponse elle-même — pas par un ordre d'exécution.\n\nconst loopItem = $('Loop Segments').first().json;\nconst amont = $input.first().json;\n\nconst current = loopItem.index + 1;\nconst total = loopItem.totalSegments;\nconst percentage = Math.round((current / total) * 100);\n\nlet ok = true;\nlet cause = null;\nlet detail = null;\n\nif (amont && amont.error_logged === true) {\n  // Le gestionnaire d'erreurs a journalisé : la TRADUCTION a échoué.\n  ok = false;\n  cause = 'traduction';\n  detail = loopItem.longError || 'traduction en échec';\n} else {\n  // Réponse de torah-save. Avec onError=continueRegularOutput, un appel raté\n  // n'émet pas la forme attendue : l'absence de success vaut échec, jamais succès.\n  const echecSave = !amont\n    || amont.success === false\n    || (amont.error && amont.error.code)\n    || (amont.success !== true && !amont.translation_id);\n  if (echecSave) {\n    ok = false;\n    cause = 'sauvegarde';\n    detail = (amont && (amont.error?.message || amont.message)) || 'sauvegarde non confirmée';\n  }\n}\n\nreturn [{\n  json: {\n    jobId: loopItem.jobId,\n    current: current,\n    total: total,\n    percentage: percentage,\n    isLast: current >= total,\n    // Verdict du segment, relu par Consigner Résultat après le PATCH de progression.\n    resultat: {\n      index: loopItem.index,\n      segment_id: loopItem.segment_id || null,\n      commentary_id: loopItem.commentary_id || null,\n      ok: ok,\n      cause: cause,\n      detail: detail\n    }\n  }\n}];"
       },
       "id": "calc-progress",
       "name": "Calc Progress",
@@ -431,42 +431,11 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "leftValue": "={{ $('Calc Progress').first().json.isLast }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "is-last",
-      "name": "Is Last?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        3968,
-        304
-      ]
-    },
-    {
-      "parameters": {
         "method": "PATCH",
-        "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $('Calc Progress').first().json.jobId }}",
+        "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.jobId }} ",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ status: 'completed', progress: { current: $('Calc Progress').first().json.total, total: $('Calc Progress').first().json.total, percentage: 100 } }) }}",
+        "jsonBody": "={{ JSON.stringify({ status: $json.statut, output: { total: $json.total, ok_count: $json.ok_count, fail_count: $json.fail_count, echecs: $json.echecs }, error: ($json.fail_count > 0 ? { message: $json.fail_count + ' segment(s) en erreur (voir output.echecs)', errors_count: $json.fail_count } : null), progress: { current: $json.total, total: $json.total, percentage: 100 } }) }}",
         "options": {
           "timeout": 10000
         }
@@ -652,6 +621,32 @@
         1776,
         -220
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Ce que ce nœud rend est ce que la boucle ACCUMULE : splitInBatches conserve les\n// items qu'on lui renvoie et les restitue tous sur sa sortie « done ». C'est là que\n// le bilan devient calculable.\n//\n// La lecture passe par $('Calc Progress') et non $json : le nœud amont est le PATCH\n// de progression, dont la réponse HTTP a remplacé l'item.\nreturn [{ json: $('Calc Progress').first().json.resultat }];"
+      },
+      "id": "router-consigner",
+      "name": "Consigner Résultat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3968,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Sortie « done » de la boucle : $input.all() rend un item par segment traité,\n// tel que Consigner Résultat l'a renvoyé.\n//\n// Le job concluait jusqu'ici sur Is Last?, qui ne regarde que l'index : un lot dont\n// aucune traduction n'aboutissait ressortait « completed ». Observé sur\n// job_msoutt40emb72j — 2 segments, 0 traduction, statut completed.\n\nconst resultats = $input.all().map(i => i.json).filter(r => r && typeof r.index === 'number');\nresultats.sort((a, b) => a.index - b.index);\n\nconst total = resultats.length;\nconst okCount = resultats.filter(r => r.ok).length;\nconst failCount = total - okCount;\n\n// Vingt premiers échecs : de quoi retraiter sans gonfler le job.\nconst echecs = resultats.filter(r => !r.ok).slice(0, 20).map(r => ({\n  index: r.index,\n  segment_id: r.segment_id,\n  commentary_id: r.commentary_id,\n  cause: r.cause,\n  detail: r.detail\n}));\n\n// Aucun succès vaut échec du job, pas achèvement. Un succès partiel reste\n// « completed », l'appelant disposant du détail pour retraiter.\n//\n// « failed » suppose que le job soit en « processing » : /api/v2/jobs refuse la\n// transition depuis « pending » (INVALID_STATE_TRANSITION, vérifié). Set Processing\n// s'exécute sur les DEUX branches de Needs Job Creation?, donc c'est toujours le cas —\n// sauf si ce PATCH-là a lui-même échoué, auquel cas il n'y a de toute façon pas de\n// job à conclure.\nconst statut = (total > 0 && okCount === 0) ? 'failed' : 'completed';\n\nreturn [{\n  json: {\n    jobId: $('Parse Input').first().json.jobId,\n    statut: statut,\n    total: total,\n    ok_count: okCount,\n    fail_count: failCount,\n    echecs: echecs\n  }\n}];"
+      },
+      "id": "router-conclure",
+      "name": "Conclure Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4192,
+        400
+      ]
     }
   ],
   "connections": {
@@ -801,7 +796,7 @@
       "main": [
         [
           {
-            "node": "Done",
+            "node": "Conclure Job",
             "type": "main",
             "index": 0
           }
@@ -892,25 +887,7 @@
       "main": [
         [
           {
-            "node": "Is Last?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Is Last?": {
-      "main": [
-        [
-          {
-            "node": "Set Completed",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Loop Segments",
+            "node": "Consigner Résultat",
             "type": "main",
             "index": 0
           }
@@ -1009,6 +986,28 @@
         [
           {
             "node": "Respond Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consigner Résultat": {
+      "main": [
+        [
+          {
+            "node": "Loop Segments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conclure Job": {
+      "main": [
+        [
+          {
+            "node": "Set Completed",
             "type": "main",
             "index": 0
           }
