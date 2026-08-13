@@ -26,10 +26,17 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $json.backend_api_url }}/api/ecommerce/admin/guilds/cron/expire-batches",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "options": {
           "timeout": 30000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $env.BACKEND_SERVICE_TOKEN }}"
+            }
+          ]
         }
       },
       "id": "http-expire",
@@ -39,13 +46,7 @@
       "position": [
         480,
         304
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "backend-service-token",
-          "name": "Backend Service Token"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -125,6 +126,35 @@
         928,
         400
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Un cron n'a pas d'appelant : ni URL de backend, ni jeton ne peuvent venir d'un\n// corps de requête. Ils viennent donc de l'environnement de CETTE instance n8n —\n// llm porte le dev, host2 le staging.\n//\n// Ce contrôle existe pour que l'absence d'une variable se dise, au lieu de partir\n// en appel vers « undefined/api/… ». Le défaut d'origine se présentait sous une\n// tout autre forme — « Credential … does not exist » — et masquait celui-ci.\nconst url = $env.BACKEND_API_URL;\nconst jeton = $env.BACKEND_SERVICE_TOKEN;\n\nconst manquantes = [];\nif (!url || !String(url).trim()) manquantes.push('BACKEND_API_URL');\nif (!jeton || !String(jeton).trim()) manquantes.push('BACKEND_SERVICE_TOKEN');\n\nif (manquantes.length) {\n  throw new Error(\n    'Configuration incomplète sur cette instance n8n : ' + manquantes.join(', ') +\n    ' non définie(s). Ce cron appelle le backend de son propre environnement ; ' +\n    'sans ces variables il n\\'y a pas de backend à appeler.'\n  );\n}\n\nreturn [{ json: { backend_api_url: String(url).replace(/\\/+$/, '') } }];"
+      },
+      "id": "ts_expire_cron-cfg",
+      "name": "Vérifier Configuration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## GUILD - Credits Expire Cron\n\n**Déclencheur :** toutes les heures (`0 * * * *`)\n\nDemande au backend d'expirer les lots de crédits arrivés à échéance, puis\njournalise `expired_count` et `total_credits_lost`. Toute la logique est côté\nbackend ; n8n n'est que l'horloge.\n\n### Pourquoi $env et non $json.backend_api_url\n\nSur les 20 workflows qui lisent `$json.backend_api_url`, **17 sont déclenchés par\nwebhook** : leur appelant fournit l'URL, convention BYOT (#386, #413). Ce cron\nest déclenché par un `scheduleTrigger` — il n'a aucun appelant, donc aucun corps,\ndonc `backend_api_url` valait toujours `undefined`.\n\nLe message d'erreur visible était pourtant tout autre : « Credential with ID\n\"backend-service-token\" does not exist ». Le credential manquant masquait le\ndéfaut d'URL — le corriger seul aurait déplacé l'erreur vers\n`undefined/api/ecommerce/…`.\n\n### Pourquoi pas deux crons dev et staging\n\nL'environnement est une propriété de l'INSTANCE n8n, pas du workflow : llm porte\nle dev, host2 le staging. Un seul JSON, deux valeurs de `BACKEND_API_URL`.\nDupliquer le cron obligerait à maintenir deux copies et exposerait au pire\nscénario — une copie importée sur la mauvaise instance, expirant les crédits du\nmauvais backend, sans que rien ne le signale.\n\n### Jeton\n\n`X-Service-Token` en en-tête explicite depuis `$env.BACKEND_SERVICE_TOKEN`,\nconvention déjà suivie par 5 nœuds du parc (GUILD - Credits Exhausted\nNotification, Member Leave Credits, Server Sync). Pas de credential n8n : il\nfaudrait le créer à la main sur chaque instance, et c'est précisément ce qui a\nproduit 9 identifiants fantômes (#416).\n\n### Variables requises\n\n- `BACKEND_API_URL` — backend de CETTE instance\n- `BACKEND_SERVICE_TOKEN` — jeton de service du même backend\n\n`Vérifier Configuration` échoue explicitement si l'une manque, plutôt que\nd'appeler `undefined/…`.",
+        "height": 720,
+        "width": 460,
+        "color": 4
+      },
+      "id": "ts_expire_cron-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -280,
+        104
+      ]
     }
   ],
   "connections": {
@@ -132,7 +162,7 @@
       "main": [
         [
           {
-            "node": "Call Expire Endpoint",
+            "node": "Vérifier Configuration",
             "type": "main",
             "index": 0
           }
@@ -162,6 +192,17 @@
         [
           {
             "node": "Log None",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vérifier Configuration": {
+      "main": [
+        [
+          {
+            "node": "Call Expire Endpoint",
             "type": "main",
             "index": 0
           }

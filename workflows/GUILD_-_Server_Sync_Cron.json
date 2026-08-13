@@ -26,13 +26,20 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $json.backend_api_url }}/api/discord/admin/guilds/cron/refresh-stale",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "{\n  \"stale_days\": 7\n}",
         "options": {
           "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $env.BACKEND_SERVICE_TOKEN }}"
+            }
+          ]
         }
       },
       "id": "call-backend",
@@ -42,13 +49,7 @@
       "position": [
         480,
         300
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "backend-service-token",
-          "name": "Backend Service Token"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -127,6 +128,35 @@
         920,
         400
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Un cron n'a pas d'appelant : ni URL de backend, ni jeton ne peuvent venir d'un\n// corps de requête. Ils viennent donc de l'environnement de CETTE instance n8n —\n// llm porte le dev, host2 le staging.\n//\n// Ce contrôle existe pour que l'absence d'une variable se dise, au lieu de partir\n// en appel vers « undefined/api/… ». Le défaut d'origine se présentait sous une\n// tout autre forme — « Credential … does not exist » — et masquait celui-ci.\nconst url = $env.BACKEND_API_URL;\nconst jeton = $env.BACKEND_SERVICE_TOKEN;\n\nconst manquantes = [];\nif (!url || !String(url).trim()) manquantes.push('BACKEND_API_URL');\nif (!jeton || !String(jeton).trim()) manquantes.push('BACKEND_SERVICE_TOKEN');\n\nif (manquantes.length) {\n  throw new Error(\n    'Configuration incomplète sur cette instance n8n : ' + manquantes.join(', ') +\n    ' non définie(s). Ce cron appelle le backend de son propre environnement ; ' +\n    'sans ces variables il n\\'y a pas de backend à appeler.'\n  );\n}\n\nreturn [{ json: { backend_api_url: String(url).replace(/\\/+$/, '') } }];"
+      },
+      "id": "rver_sync_cron-cfg",
+      "name": "Vérifier Configuration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## GUILD - Server Sync Cron\n\n**Déclencheur :** chaque nuit à 3 h (`0 3 * * *`)\n\nDemande au backend de rafraîchir les guildes non synchronisées depuis N jours,\npuis journalise `stale_count` et `stale_days`.\n\n### Même correction que Credits Expire Cron\n\n`$json.backend_api_url` ne peut pas être résolu depuis un `scheduleTrigger`, et\nle credential `backend-service-token` n'existe pas dans n8n. URL et jeton\nviennent désormais de l'environnement de l'instance.\n\n### Variables requises\n\n- `BACKEND_API_URL` · `BACKEND_SERVICE_TOKEN` — ceux de CETTE instance\n  (llm = dev, host2 = staging)",
+        "height": 720,
+        "width": 460,
+        "color": 4
+      },
+      "id": "rver_sync_cron-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -280,
+        100
+      ]
     }
   ],
   "connections": {
@@ -134,7 +164,7 @@
       "main": [
         [
           {
-            "node": "Refresh Stale Guilds",
+            "node": "Vérifier Configuration",
             "type": "main",
             "index": 0
           }
@@ -164,6 +194,17 @@
         [
           {
             "node": "Log None",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vérifier Configuration": {
+      "main": [
+        [
+          {
+            "node": "Refresh Stale Guilds",
             "type": "main",
             "index": 0
           }

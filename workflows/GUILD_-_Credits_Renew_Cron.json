@@ -26,10 +26,17 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $json.backend_api_url }}/api/ecommerce/admin/guilds/cron/renew-due",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "options": {
           "timeout": 30000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $env.BACKEND_SERVICE_TOKEN }}"
+            }
+          ]
         }
       },
       "id": "http-renew",
@@ -39,13 +46,7 @@
       "position": [
         480,
         300
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "backend-service-token",
-          "name": "Backend Service Token"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -124,6 +125,35 @@
         920,
         400
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Un cron n'a pas d'appelant : ni URL de backend, ni jeton ne peuvent venir d'un\n// corps de requête. Ils viennent donc de l'environnement de CETTE instance n8n —\n// llm porte le dev, host2 le staging.\n//\n// Ce contrôle existe pour que l'absence d'une variable se dise, au lieu de partir\n// en appel vers « undefined/api/… ». Le défaut d'origine se présentait sous une\n// tout autre forme — « Credential … does not exist » — et masquait celui-ci.\nconst url = $env.BACKEND_API_URL;\nconst jeton = $env.BACKEND_SERVICE_TOKEN;\n\nconst manquantes = [];\nif (!url || !String(url).trim()) manquantes.push('BACKEND_API_URL');\nif (!jeton || !String(jeton).trim()) manquantes.push('BACKEND_SERVICE_TOKEN');\n\nif (manquantes.length) {\n  throw new Error(\n    'Configuration incomplète sur cette instance n8n : ' + manquantes.join(', ') +\n    ' non définie(s). Ce cron appelle le backend de son propre environnement ; ' +\n    'sans ces variables il n\\'y a pas de backend à appeler.'\n  );\n}\n\nreturn [{ json: { backend_api_url: String(url).replace(/\\/+$/, '') } }];"
+      },
+      "id": "its_renew_cron-cfg",
+      "name": "Vérifier Configuration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## GUILD - Credits Renew Cron\n\n**Déclencheur :** chaque nuit (`0 0 * * *`)\n\nDemande au backend de renouveler les crédits des guildes dont l'échéance est\natteinte, puis journalise `renewed_count` et `guilds_processed`.\n\n### Même correction que Credits Expire Cron\n\n`$json.backend_api_url` ne peut pas être résolu depuis un `scheduleTrigger` :\naucun appelant, donc aucun corps. La convention BYOT (#386, #413) ne vaut que\npour les workflows appelés par webhook — 17 des 20 concernés. Ces trois crons\navaient été convertis par erreur.\n\nLe credential `backend-service-token` n'existe pas non plus dans n8n (six\ncredentials en base, aucun nommé Backend) : le jeton passe par un en-tête\n`X-Service-Token` explicite, comme dans cinq autres nœuds du parc.\n\n### Variables requises\n\n- `BACKEND_API_URL` · `BACKEND_SERVICE_TOKEN` — ceux de CETTE instance\n  (llm = dev, host2 = staging)",
+        "height": 720,
+        "width": 460,
+        "color": 4
+      },
+      "id": "its_renew_cron-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -280,
+        100
+      ]
     }
   ],
   "connections": {
@@ -131,7 +161,7 @@
       "main": [
         [
           {
-            "node": "Call Renew Endpoint",
+            "node": "Vérifier Configuration",
             "type": "main",
             "index": 0
           }
@@ -161,6 +191,17 @@
         [
           {
             "node": "Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vérifier Configuration": {
+      "main": [
+        [
+          {
+            "node": "Call Renew Endpoint",
             "type": "main",
             "index": 0
           }
