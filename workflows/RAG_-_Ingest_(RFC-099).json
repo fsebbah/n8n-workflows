@@ -124,7 +124,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION PAYLOAD - RFC-099 §3.2\n// ============================================\n\nconst body = $('Verify HMAC').item.json.body;\nconst errors = [];\n\n// Required fields\nconst sourceId = body.source_id;\nconst tenantId = body.tenant_id;\nconst guildId = body.guild_id;\nconst botId = body.bot_id;\nconst scopeId = body.scope_id;\nconst active = body.active;\nconst fileType = body.file_type;\n\n// File source (b2_file_key OR url)\nconst b2FileKey = body.b2_file_key || null;\nconst url = body.url || null;\n\n// Optional fields\nconst extractionMethod = body.extraction_method || 'auto';\nconst title = body.title || null;\nconst lang = body.lang || null;\nconst callbackUrls = body.callback_urls || {};\nconst qdrantTarget = body.qdrant_target || {};\n\n// Volet 2 (tagging) — pass-through depuis le payload (chat.api -> MCP -> n8n)\nconst controlledVocab = body.controlled_vocab || null;\nconst authorityRole = body.authority_role || null;\nconst subjectOverride = body.subject || null;\nconst docTypeOverride = body.doc_type || null;\n\n// BYOT secrets (payload, plus de process.env dans le sandbox)\nconst openaiApiKey = body.openai_api_key || null;\nconst b2BucketUrl = body.b2_bucket_url || null;\nconst mistralApiKey = body.mistral_api_key || null;\nconst assemblyaiApiKey = body.assemblyai_api_key || null;\n\n// Validate required\nif (!sourceId) errors.push('source_id requis');\nif (!tenantId) errors.push('tenant_id requis');\nif (!scopeId) errors.push('scope_id requis');\n// guild_id/bot_id optionnels depuis le decouplage Discord (azy.daily#76)\nif (active === undefined || active === null) errors.push('active requis');\nif (!fileType) errors.push('file_type requis');\nif (!openaiApiKey) errors.push('openai_api_key requis (BYOT embeddings)');\n// PDF : mistral_api_key NON requis a priori (Tika gere le natif ; OCR seulement si scanne)\nif ((fileType || '').toLowerCase() === 'meeting' && !assemblyaiApiKey) errors.push('assemblyai_api_key requis dans le payload pour la diarisation (file_type meeting)');\n\n// File source validation\nif (!b2FileKey && !url) {\n  errors.push('b2_file_key ou url requis');\n}\n\n// Callback URLs validation\nif (!callbackUrls.progress || !callbackUrls.complete || !callbackUrls.error) {\n  errors.push('callback_urls.{progress,complete,error} requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    source_id: sourceId\n  };\n}\n\n// Qdrant config (BYOT via payload)\nconst qdrantConfig = {\n  host: qdrantTarget.host || 'host3.local',\n  port: qdrantTarget.port || 20001,\n  api_key: qdrantTarget.api_key || '',\n  collection: qdrantTarget.collection || null,\n  vector_size: qdrantTarget.vector_size || 1536\n};\n\nreturn {\n  valid: true,\n  source_id: sourceId,\n  tenant_id: tenantId,\n  guild_id: guildId,\n  bot_id: botId,\n  scope_id: scopeId,\n  controlled_vocab: controlledVocab,\n  authority_role: authorityRole,\n  subject: subjectOverride,\n  doc_type: docTypeOverride,\n  active: active,\n  file_type: fileType,\n  b2_file_key: b2FileKey,\n  url: url,\n  extraction_method: extractionMethod,\n  title: title,\n  lang: lang,\n  callback_urls: callbackUrls,\n  qdrant: qdrantConfig,\n  openai_api_key: openaiApiKey,\n  b2_bucket_url: b2BucketUrl,\n  mistral_api_key: mistralApiKey,\n  assemblyai_api_key: assemblyaiApiKey,\n  start_time: Date.now()\n};"
+        "jsCode": "// ============================================\n// VALIDATION PAYLOAD - RFC-099 §3.2\n// ============================================\n\nconst body = $('Verify HMAC').item.json.body;\nconst errors = [];\n\n// Required fields\nconst sourceId = body.source_id;\nconst tenantId = body.tenant_id;\nconst guildId = body.guild_id;\nconst botId = body.bot_id;\nconst scopeId = body.scope_id;\nconst active = body.active;\nconst fileType = body.file_type;\n\n// File source (b2_file_key OR url)\nconst b2FileKey = body.b2_file_key || null;\nconst url = body.url || null;\n\n// Optional fields\nconst extractionMethod = body.extraction_method || 'auto';\nconst title = body.title || null;\nconst lang = body.lang || null;\nconst callbackUrls = body.callback_urls || {};\n// qdrant_target n'est plus lu : MCP calcule le nom de collection depuis\n// l'embedder (azy.daily#223). chat.api peut cesser de l'envoyer quand ça l'arrange.\n\n// Cible et jeton du service qui vectorise. MCP est une infrastructure partagée,\n// pas un service par tenant : son URL suit donc la convention des autres services\n// d'infra ($env), avec surcharge possible par le payload.\nconst mcpApiUrl = body.mcp_api_url || $env.MCP_API_URL || null;\nconst serviceToken = body.service_token || null;\n\n// Embedder du corpus, poussé par chat.api depuis le rag_profile. Sans lui MCP ne\n// peut ni choisir l'espace vectoriel ni dériver la collection — et un document\n// ingéré avec le mauvais embedder est INVISIBLE au retrieval, sans erreur.\nconst embedding = {\n  provider: body.embedding_provider || null,\n  model: body.embedding_model || null,\n  dims: body.embedding_dims || null,\n  api_key: body.embedding_api_key || null\n};\n\n// Volet 2 (tagging) — pass-through depuis le payload (chat.api -> MCP -> n8n)\nconst controlledVocab = body.controlled_vocab || null;\nconst authorityRole = body.authority_role || null;\nconst subjectOverride = body.subject || null;\nconst docTypeOverride = body.doc_type || null;\n\n// BYOT secrets (payload, plus de process.env dans le sandbox)\nconst openaiApiKey = body.openai_api_key || null;\nconst b2BucketUrl = body.b2_bucket_url || null;\nconst mistralApiKey = body.mistral_api_key || null;\nconst assemblyaiApiKey = body.assemblyai_api_key || null;\n\n// Validate required\nif (!sourceId) errors.push('source_id requis');\nif (!tenantId) errors.push('tenant_id requis');\nif (!scopeId) errors.push('scope_id requis');\n// Exigés explicitement plutôt que repliés sur un défaut : une valeur inventée ici\n// écrirait dans le mauvais espace vectoriel, ce qui ne se voit qu'à l'usage — la\n// recherche ne rend rien, sans qu'aucune erreur n'ait été levée.\nif (!mcpApiUrl) errors.push('mcp_api_url (payload) ou MCP_API_URL (environnement) requis');\nif (!serviceToken) errors.push('service_token requis (BYOT, relayé en Authorization: Bearer)');\nif (!embedding.provider) errors.push('embedding_provider requis (rag_profile)');\nif (!embedding.model) errors.push('embedding_model requis (rag_profile)');\nif (!embedding.dims) errors.push('embedding_dims requis (rag_profile)');\nif (!embedding.api_key) errors.push('embedding_api_key requis (BYOT)');\n// guild_id/bot_id optionnels depuis le decouplage Discord (azy.daily#76)\nif (active === undefined || active === null) errors.push('active requis');\nif (!fileType) errors.push('file_type requis');\nif (!openaiApiKey) errors.push('openai_api_key requis (BYOT embeddings)');\n// PDF : mistral_api_key NON requis a priori (Tika gere le natif ; OCR seulement si scanne)\nif ((fileType || '').toLowerCase() === 'meeting' && !assemblyaiApiKey) errors.push('assemblyai_api_key requis dans le payload pour la diarisation (file_type meeting)');\n\n// File source validation\nif (!b2FileKey && !url) {\n  errors.push('b2_file_key ou url requis');\n}\n\n// Callback URLs validation\nif (!callbackUrls.progress || !callbackUrls.complete || !callbackUrls.error) {\n  errors.push('callback_urls.{progress,complete,error} requis');\n}\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    source_id: sourceId\n  };\n}\n\nreturn {\n  valid: true,\n  source_id: sourceId,\n  tenant_id: tenantId,\n  guild_id: guildId,\n  bot_id: botId,\n  scope_id: scopeId,\n  controlled_vocab: controlledVocab,\n  authority_role: authorityRole,\n  subject: subjectOverride,\n  doc_type: docTypeOverride,\n  active: active,\n  file_type: fileType,\n  b2_file_key: b2FileKey,\n  url: url,\n  extraction_method: extractionMethod,\n  title: title,\n  lang: lang,\n  callback_urls: callbackUrls,\n  mcp_api_url: String(mcpApiUrl).replace(/\\/+$/, ''),\n  service_token: serviceToken,\n  embedding: embedding,\n  openai_api_key: openaiApiKey,\n  b2_bucket_url: b2BucketUrl,\n  mistral_api_key: mistralApiKey,\n  assemblyai_api_key: assemblyaiApiKey,\n  start_time: Date.now()\n};"
       },
       "id": "validate-payload",
       "name": "Validate Payload",
@@ -298,21 +298,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// EMBEDDING + QDRANT UPSERT - RFC-099 §5.1 (transport: this.helpers.httpRequest)\n// ============================================\n\nconst ctx = $('Tag Content').item.json;\nconst chunks = ctx.chunks || [];\nif (chunks.length === 0) {\n  throw new Error('No chunks to embed');\n}\n\n// Cle OpenAI BYOT (payload, pas de process.env)\nconst OPENAI_API_KEY = ctx.openai_api_key;\nif (!OPENAI_API_KEY) {\n  throw new Error('openai_api_key requis dans le payload (BYOT embeddings)');\n}\n\n// STEP 1: EMBED (OpenAI text-embedding-3-small, 1536d) — batch 50\nconst BATCH_SIZE = 50;\nconst embeddings = [];\nfor (let i = 0; i < chunks.length; i += BATCH_SIZE) {\n  const batch = chunks.slice(i, i + BATCH_SIZE);\n  const resp = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://api.openai.com/v1/embeddings',\n    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },\n    body: { input: batch.map(c => c.text), model: 'text-embedding-3-small', encoding_format: 'float' },\n    json: true\n  });\n  for (const item of resp.data) embeddings.push(item.embedding);\n}\n\n// STEP 2: QDRANT — config + helper\nconst qHost = ctx.qdrant.host;\nconst qPort = ctx.qdrant.port;\nconst qKey = ctx.qdrant.api_key;\nconst collectionName = ctx.qdrant.collection || `tenant_${ctx.tenant_id}_default`;\nconst vectorSize = ctx.qdrant.vector_size || 1536;\nconst qdrantBase = `http://${qHost}:${qPort}`;\n\nconst qReq = async (method, path, bodyObj) => {\n  return await this.helpers.httpRequest({\n    method,\n    url: `${qdrantBase}${path}`,\n    headers: { 'api-key': qKey },\n    body: bodyObj || undefined,\n    json: true,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true\n  });\n};\n\n// STEP 3: CREATE COLLECTION IF NOT EXISTS\nconst exists = await qReq('GET', `/collections/${collectionName}`);\nif (exists.statusCode === 404) {\n  await qReq('PUT', `/collections/${collectionName}`, { vectors: { size: vectorSize, distance: 'Cosine' } });\n}\n\n// STEP 4: BUILD POINTS (4 IDs RFC-099 §5.1)\nconst points = chunks.map((chunk, i) => ({\n  id: `${ctx.source_id}_chunk_${chunk.index}`,\n  vector: embeddings[i],\n  payload: {\n    text: chunk.text,\n    source_id: ctx.source_id,\n    chunk_index: chunk.index,\n    title: ctx.title || ctx.source_id,\n    source_type: ctx.file_type,\n    lang: ctx.lang || 'unknown',\n    ...(ctx.tags || {}),\n    tenant_id: ctx.tenant_id,\n    scope_id: ctx.scope_id,\n    guild_id: ctx.guild_id,\n    bot_id: ctx.bot_id,\n    active: ctx.active\n  }\n}));\n\n// STEP 5: UPSERT (retry 3x, backoff 1s/2s)\nlet upsertSuccess = false;\nlet lastError = null;\nfor (let attempt = 0; attempt < 3; attempt++) {\n  try {\n    const result = await qReq('PUT', `/collections/${collectionName}/points`, { points });\n    if (result.statusCode === 200) {\n      upsertSuccess = true;\n      break;\n    }\n    lastError = `Qdrant upsert ${result.statusCode}: ${JSON.stringify(result.body)}`;\n  } catch (error) {\n    lastError = error.message;\n  }\n  if (attempt < 2) {\n    await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));\n  }\n}\nif (!upsertSuccess) {\n  throw new Error(`Qdrant upsert failed after 3 attempts: ${lastError}`);\n}\n\nreturn {\n  ...ctx,\n  embedding_success: true,\n  qdrant_success: true,\n  qdrant_collection: collectionName,\n  points_upserted: points.length,\n  duration_ms: Date.now() - ctx.start_time\n};"
-      },
-      "id": "embed-upsert",
-      "name": "Embed + Upsert Qdrant",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2940,
-        200
-      ],
-      "onError": "continueErrorOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "// ============================================\n// PREPARE CALLBACK COMPLETE\n// ============================================\n\nconst ctx = $('Embed + Upsert Qdrant').item.json;\n\nreturn {\n  url: ctx.callback_urls.complete,\n  body: {\n    success: true,\n    chunk_count: ctx.chunk_count,\n    duration_ms: ctx.duration_ms\n  },\n  tenant_id: ctx.tenant_id\n};"
+        "jsCode": "// ============================================\n// PREPARE CALLBACK COMPLETE\n// ============================================\n\n// Le nœud d'écriture Qdrant a disparu : l'indexation est faite par MCP, et\n// Vérifier Envoi est ce qui atteste qu'elle a réellement abouti.\nconst ctx = $('Vérifier Envoi').item.json;\n\nreturn {\n  url: ctx.callback_urls.complete,\n  body: {\n    success: true,\n    chunk_count: ctx.chunk_count,\n    chunks_indexed: ctx.chunks_indexed,\n    collection: ctx.qdrant_collection || null,\n    duration_ms: ctx.duration_ms\n  },\n  tenant_id: ctx.tenant_id\n};"
       },
       "id": "prepare-callback-complete",
       "name": "Prepare Callback Complete",
@@ -425,6 +411,75 @@
         3160,
         560
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PRÉPARER TRANCHES — un appel MCP par tranche (azy.daily#223)\n// ============================================\n//\n// n8n ne vectorise plus : il livre des chunks, MCP embarque et écrit. Le nœud\n// « Embed + Upsert Qdrant » qui occupait cette place appelait OpenAI en dur,\n// créait la collection, et fabriquait des identifiants de point que Qdrant refuse\n// (`src_x_chunk_0` → 400, « unsigned integer or UUID »). Aucun point n'a donc\n// jamais été écrit.\n//\n// Pourquoi des tranches\n// ---------------------\n// Une requête unique portant tous les chunks est fragile : notre découpage fait\n// 1 000 caractères, donc un document de 500 000 caractères donne ~625 chunks, soit\n// ~700 Ko à embarquer et écrire d'un seul tenant. Des tranches bornées gardent\n// chaque requête courte et isolent un échec sur une fraction du travail.\n//\n// prune_from sur la DERNIÈRE tranche seulement\n// --------------------------------------------\n// MCP écrit par uuid5(source_id, index) : une ré-ingestion écrase donc en place.\n// Les seuls points à supprimer sont les orphelins d'index supérieur, quand la\n// nouvelle version compte moins de chunks que l'ancienne.\n//\n// La purge est en QUEUE, jamais en tête. Purger d'abord aurait ouvert une fenêtre\n// où une ingestion interrompue laisse le document amputé — et servi comme complet\n// au retrieval. En queue, la source est à tout instant l'ancienne, la nouvelle, ou\n// un mélange COMPLET des deux. Une reprise ne peut pas casser un document en base.\n\nconst TAILLE_TRANCHE = 200;\n\nconst ctx = $('Tag Content').item.json;\nconst chunks = ctx.chunks || [];\nif (chunks.length === 0) {\n  throw new Error('Aucun chunk à indexer');\n}\n\nconst total = chunks.length;\nconst lots = [];\nfor (let d = 0; d < total; d += TAILLE_TRANCHE) {\n  lots.push(chunks.slice(d, d + TAILLE_TRANCHE));\n}\n\n// Le nœud HTTP traite les items séquentiellement et dans l'ordre : la tranche\n// portant prune_from part donc bien en dernier, après tous les upserts.\nreturn lots.map((lot, i) => {\n  const dernier = i === lots.length - 1;\n  const charge = {\n    source_id: ctx.source_id,\n    scope_id: ctx.scope_id,\n    tenant_id: ctx.tenant_id,\n    // Tags au niveau document : MCP les réplique sur chaque point. Les envoyer par\n    // chunk n'aurait ajouté que du volume sur le fil.\n    tags: ctx.tags || {},\n    chunks: lot.map(c => ({ index: c.index, text: c.text })),\n    embedding_provider: ctx.embedding.provider,\n    embedding_model: ctx.embedding.model,\n    embedding_dims: ctx.embedding.dims,\n    embedding_api_key: ctx.embedding.api_key\n  };\n  if (dernier) charge.prune_from = total;\n  return { json: {\n    _tranche: i,\n    _nbTranches: lots.length,\n    _taille: lot.length,\n    url: ctx.mcp_api_url + '/api/rag/chunks',\n    service_token: ctx.service_token,\n    charge: charge\n  }};\n});"
+      },
+      "id": "rag-tranches",
+      "name": "Préparer Tranches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2940,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.service_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.charge) }}",
+        "options": {
+          "timeout": 300000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "rag-envoyer",
+      "name": "Envoyer Chunks (MCP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3140,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// VÉRIFIER ENVOI — une tranche perdue vaut échec de l'ingestion\n// ============================================\n//\n// MCP répond {success, indexed, collection}. Avec onError=continueRegularOutput,\n// un appel raté n'émet PAS {statusCode, body} mais l'objet d'erreur, sans\n// statusCode : le statut réel n'existe que dans le message (« 502 - {…} »).\n// Sans cette lecture, une tranche perdue passerait pour indexée et l'ingestion\n// se conclurait en succès sur un document incomplet.\n\nconst entrees = $input.all();\nconst lots = $('Préparer Tranches').all();\nconst ctx = $('Tag Content').item.json;\n\nlet indexes = 0;\nlet collection = null;\nconst soucis = [];\n\nfor (let i = 0; i < entrees.length; i++) {\n  const j = entrees[i].json;\n  const attendu = ((lots[i] || {}).json || {})._taille || 0;\n\n  let code = j.statusCode;\n  if (code === undefined) {\n    const brut = String(j?.error?.message || j?.message || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    code = m ? parseInt(m[1], 10) : ((j?.error || j?.code) ? 502 : 200);\n  }\n  const corps = j.body || {};\n\n  if (code >= 400 || corps.success === false) {\n    soucis.push(`tranche ${i + 1}/${entrees.length} : ${corps?.error?.message || j?.error?.message || ('HTTP ' + code)}`);\n    continue;\n  }\n  const n = typeof corps.indexed === 'number' ? corps.indexed : attendu;\n  indexes += n;\n  collection = corps.collection || collection;\n}\n\nif (soucis.length > 0) {\n  throw new Error(\n    `Indexation incomplète (${indexes}/${ctx.chunk_count} chunks) — ` + soucis.join(' ; ')\n  );\n}\n\nreturn {\n  ...ctx,\n  mcp_success: true,\n  chunks_indexed: indexes,\n  qdrant_collection: collection,\n  tranches: entrees.length,\n  duration_ms: Date.now() - ctx.start_time\n};"
+      },
+      "id": "rag-verifier",
+      "name": "Vérifier Envoi",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3340,
+        200
+      ],
+      "onError": "continueErrorOutput"
     }
   ],
   "connections": {
@@ -577,24 +632,6 @@
         ]
       ]
     },
-    "Embed + Upsert Qdrant": {
-      "main": [
-        [
-          {
-            "node": "Prepare Callback Complete",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Prepare Callback Error",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Prepare Callback Complete": {
       "main": [
         [
@@ -610,7 +647,7 @@
       "main": [
         [
           {
-            "node": "Embed + Upsert Qdrant",
+            "node": "Préparer Tranches",
             "type": "main",
             "index": 0
           }
@@ -629,6 +666,46 @@
         [
           {
             "node": "Callback Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer Tranches": {
+      "main": [
+        [
+          {
+            "node": "Envoyer Chunks (MCP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer Chunks (MCP)": {
+      "main": [
+        [
+          {
+            "node": "Vérifier Envoi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vérifier Envoi": {
+      "main": [
+        [
+          {
+            "node": "Prepare Callback Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Callback Error",
             "type": "main",
             "index": 0
           }
