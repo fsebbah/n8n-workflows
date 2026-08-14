@@ -68,13 +68,14 @@ const PAYLOAD = {
   source_id: 'src_1', tenant_id: 't1', guild_id: 'g1', bot_id: 'b1', scope_id: 'sc1',
   active: true, file_type: 'pdf', url: 'https://exemple.test/doc.pdf',
   callback_urls: { progress: 'https://api/cb/pg', complete: 'https://api/cb/ok', error: 'https://api/cb/ko' },
+  mcp_api_url: 'https://mcp.test/',
   service_token: 'svc-abc',
   embedding_provider: 'mistral', embedding_model: 'mistral-embed',
   embedding_dims: 1024, embedding_api_key: 'sk-mistral',
   openai_api_key: 'sk-oai',
 };
-const valider = (p, env = { MCP_API_URL: 'https://mcp.test/' }) =>
-  exec(code('Validate Payload'), {}, { 'Verify HMAC': { body: p } }, env)[0].json;
+const valider = p =>
+  exec(code('Validate Payload'), {}, { 'Verify HMAC': { body: p } })[0].json;
 
 console.log('\n1. contrat d’entrée — ce qui manque est nommé');
 {
@@ -86,9 +87,14 @@ console.log('\n1. contrat d’entrée — ce qui manque est nommé');
   controle('openai_api_key conservé pour l’extraction', ok.openai_api_key, 'sk-oai');
   controle('plus aucune config Qdrant', 'qdrant' in ok, false);
 
-  const sansEnv = valider(PAYLOAD, {});
+  // Plusieurs serveurs MCP existent : aucun défaut d'environnement n'est possible,
+  // sinon un appelant distrait enverrait ses documents dans la mauvaise base.
+  const sansUrl = Object.assign({}, PAYLOAD); delete sansUrl.mcp_api_url;
+  const r0 = valider(sansUrl);
   controle('URL MCP absente → refus nommé',
-    (sansEnv.errors || []).some(e => /MCP_API_URL/.test(e)), true);
+    r0.valid === false && (r0.errors || []).some(e => /mcp_api_url requis dans le payload/.test(e)), true);
+  controle('aucun repli d’environnement dans le code',
+    code('Validate Payload').includes('$env.MCP_API_URL'), false);
 
   for (const [champ, motif] of [
     ['service_token', /service_token/],
