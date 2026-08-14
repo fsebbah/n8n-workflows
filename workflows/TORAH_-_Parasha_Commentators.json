@@ -1,0 +1,239 @@
+{
+  "name": "TORAH - Parasha Commentators",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## TORAH - Parasha Commentators\n\n**Endpoint :** `GET /webhook/torah-tanakh-parasha-commentators?name=<parasha>`\n\nInventaire des commentateurs d'une parasha, avec le nombre de commentaires — sans\nle texte. Proxy 1:1 de `GET {TORAH_API_URL}/api/torah/parashiyot/{name}/commentators`.\n\n### Pourquoi un endpoint dédié\n\nLe plugin affichait une liste de 5 commentateurs codée en dur (`COMMENTATORS_HOUMACH`)\nalors que Shoftim en compte 50. Obtenir l'inventaire depuis le contenu coûterait\ncher : mesuré, **l'aliyah 1 seule sans filtre pèse 884 Ko** pour 824 commentaires —\nla parasha entière avoisine 6 Mo pour en extraire 50 noms.\n\n### La clé renvoyée EST celle du filtre\n\nC'est la raison d'être de cet endpoint, plus encore que le volume.\n`commentary_details.commentator` est comparé en égalité **stricte**, sans\nnormalisation, par `?commentators=` de `torah-tanakh-parasha-content`.\n\nOr les noms courants ne sont pas les clés : la base porte `Torah Temimah on Torah`\net `Birkat Asher on Torah`, avec le suffixe Sefaria. Un menu construit sur des noms\nd'affichage produirait des sélections **qui ne rendent rien, sans erreur**.\n\nAller-retour vérifié sur 4 clés, dont 2 à suffixe (azy.daily#227).\n\n**Aucune transformation ici** : réécrire ou raccourcir un nom romprait cette\ngarantie. Le champ passe tel quel.\n\n### Réponses\n\n- **200** `{success, name, start_ref, end_ref, count, commentators[{commentator, count}]}`\n  trié par `count` décroissant, `commentator` en tie-break.\n- **200 avec `commentators: []`** — parasha connue sans commentaire, pas une erreur.\n- **404** — parasha inconnue (match strict, sensible à la casse).\n\nRéalisation : azy.daily#227",
+        "height": 760,
+        "width": 460,
+        "color": 4
+      },
+      "id": "tpc-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -180,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "torah-tanakh-parasha-commentators",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "tpc-hook",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        320,
+        100
+      ],
+      "webhookId": "torah-parasha-commentators"
+    },
+    {
+      "parameters": {
+        "jsCode": "// `name` est le seul paramètre, et il est obligatoire. Aucun défaut : servir\n// l'inventaire d'une parasha arbitraire tromperait l'appelant en silence.\n//\n// Le match est STRICT et sensible à la casse côté API (`parashiyot.name`), et les\n// alias ne sont pas résolus. On ne tente donc aucune normalisation ici : elle\n// masquerait un 404 légitime, seul signal disant à l'appelant que son nom est faux.\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst nom = (query.name || '').trim();\n\nif (!nom) {\n  return [{ json: { valide: false, erreur: {\n    code: 400,\n    message: 'Le paramètre \"name\" est requis (nom EN canonique, ex. Shoftim)',\n    status: 'BAD_REQUEST'\n  } } }];\n}\n\nreturn [{ json: { valide: true, name: nom } }];"
+      },
+      "id": "tpc-lire",
+      "name": "Lire Paramètres",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-valide",
+              "leftValue": "={{ $json.valide }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "tpc-if",
+      "name": "Paramètre Valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        760,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.TORAH_API_URL }}/api/torah/parashiyot/{{ encodeURIComponent($json.name) }}/commentators",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "tpc-api",
+      "name": "Lister (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        20
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- Désencapsulation de l'erreur HTTP -------------------------------------\n// Avec onError: continueRegularOutput, un HTTP Request en échec ne produit PAS\n// {statusCode, body} mais l'objet d'erreur axios : statusCode est absent, et le\n// statut réel est enfoui dans le message sous la forme « 404 - {\"detail\":…} ».\n// Sans ce traitement, le code retombe sur 200, la branche succès s'exécute sur\n// un objet d'erreur, et l'appelant reçoit soit un faux succès vide, soit un 500\n// (« Invalid status code: ERR_BAD_REQUEST » — error.code d'axios n'est pas un\n// entier). Même problème et même parade que Normalize Error de DOC - Render PDF.\nfunction lireErreur(item) {\n  let brut = '';\n  for (const c of [item?.error?.message, item?.message, item?.error?.description,\n                   typeof item?.error === 'string' ? item.error : null]) {\n    if (c) { brut = String(c); break; }\n  }\n  const m = brut.match(/^\\s*(\\d{3})\\s*-\\s*/);\n  const statut = m ? parseInt(m[1], 10) : null;\n\n  let detail = null;\n  const i = brut.indexOf('{'), j = brut.lastIndexOf('}');\n  if (i >= 0 && j > i) {\n    const bloc = brut.slice(i, j + 1);\n    for (const essai of [bloc, bloc.replace(/\\\\\"/g, '\"').replace(/\\\\\\\\/g, '\\\\')]) {\n      try {\n        const o = JSON.parse(essai);\n        detail = o.detail || o?.error?.message || o.message || null;\n        break;\n      } catch (e) { /* essai suivant */ }\n    }\n  }\n  return { statut, detail, brut };\n}\n\nconst input = $input.first().json;\nconst params = $('Lire Paramètres').first().json;\n\nconst estErreur = input?.error !== undefined || input?.statusCode === undefined;\n\nif (estErreur) {\n  const e = lireErreur(input);\n  const code = e.statut || 502;\n  return [{\n    json: {\n      success: false,\n      name: params.name,\n      error: {\n        code: code,\n        message: e.detail || e.brut || \"L'API n'a pas répondu\",\n        status: code === 404 ? 'PARASHA_NOT_FOUND' : 'API_ERROR'\n      }\n    }\n  }];\n}\n\nconst data = input.body || input;\nconst liste = data.commentators || [];\n\n// Proxy 1:1 : les clés `commentator` sont celles du filtre ?commentators= et ne\n// doivent subir aucune réécriture. count racine = nombre de commentateurs distincts.\nreturn [{\n  json: {\n    success: true,\n    name: data.name || params.name,\n    start_ref: data.start_ref ?? null,\n    end_ref: data.end_ref ?? null,\n    count: data.count ?? liste.length,\n    commentators: liste\n  }\n}];"
+      },
+      "id": "tpc-fmt",
+      "name": "Formater Réponse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ ($json.error && Number.isInteger($json.error.code)) ? $json.error.code : ($json.success === false ? 502 : 200) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "tpc-rep",
+      "name": "Répondre",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1420,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.erreur }) }}",
+        "options": {
+          "responseCode": "={{ $json.erreur?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "tpc-rep-ko",
+      "name": "Répondre Erreur",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        980,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Lire Paramètres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire Paramètres": {
+      "main": [
+        [
+          {
+            "node": "Paramètre Valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paramètre Valide ?": {
+      "main": [
+        [
+          {
+            "node": "Lister (API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Répondre Erreur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lister (API)": {
+      "main": [
+        [
+          {
+            "node": "Formater Réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formater Réponse": {
+      "main": [
+        [
+          {
+            "node": "Répondre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "pinData": {}
+}
