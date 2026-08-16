@@ -73,6 +73,31 @@ try {
   texteReel = (Array.isArray(brut) ? brut[0] : brut).text || null;
 } catch (e) { /* le log est un artefact de diagnostic, pas une dépendance */ }
 
+console.log('\n0. expressions n8n — le préfixe « = » ne peut pas manquer');
+{
+  // Sans « = » en tête, n8n envoie la chaîne LITTÉRALE : le nœud Save to Cache
+  // appelait « {{ $env.TORAH_API_URL }}/api/vocalization/save » tel quel, et
+  // recevait « Invalid URL … must start with http or https ».
+  //
+  // Le défaut était muet : onError=continueRegularOutput l'avalait, et rien ne
+  // regardait le résultat du save. C'est la cause d'azy.daily#150 — « 0 ligne
+  // persistée sur ~1M commentaires ». Le contrôle de persistance ajouté depuis
+  // l'a rendu visible, mais la cause tenait à un caractère.
+  const sansPrefixe = [];
+  for (const n of WF.nodes) {
+    for (const champ of ['url', 'jsonBody', 'responseBody']) {
+      const v = (n.parameters || {})[champ];
+      if (typeof v === 'string' && v.includes('{{') && !v.startsWith('=')) {
+        sansPrefixe.push(`${n.name}.${champ}`);
+      }
+    }
+  }
+  controle('aucune expression sans « = »', sansPrefixe, []);
+  controle('Save to Cache appelle bien une expression',
+    WF.nodes.find(n => n.name === 'Save to Cache').parameters.url,
+    '={{ $env.TORAH_API_URL }}/api/vocalization/save');
+}
+
 console.log('\n1. découpage du texte réel qui a expiré');
 if (!texteReel) {
   console.log('  ⏭  logs_vocalize.log absent — cas rejoué sur un texte synthétique');
