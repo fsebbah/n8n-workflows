@@ -1,0 +1,239 @@
+{
+  "name": "TORAH - Book Commentators",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## TORAH - Book Commentators\n\n**Endpoint :** `GET /webhook/torah-book-commentators?traite=Berakhot&page=2a`\n\nInventaire des commentateurs d'une page de corpus « livre » — Bavli, Mishna,\nYerushalmi — avec le nombre de commentaires. Proxy 1:1 de\n`GET {TORAH_API_URL}/api/books/{traite}/{page}/commentators`.\n\nPendant du webhook parasha `torah-tanakh-parasha-commentators` (azy.daily#227),\npour la généralisation multi-commentateurs aux autres corpus (azy.daily#234).\n\n### Pourquoi un webhook distinct plutôt qu'un paramètre\n\nLes deux familles ne se découpent pas pareil : une parasha s'identifie par son\n`name`, une page de Bavli par `traite` + `page`. Un webhook unique aurait exigé un\nparamètre `corpus` décidant quels autres paramètres sont valides — la sorte de\ncontrat où l'appelant découvre ses erreurs à l'exécution.\n\nLe nom reprend celui de la route API (`/api/books/…`), et « book » y est le\ndiscriminant réel : c'est ce qui distingue ces corpus des parashiot.\n\n### La clé renvoyée EST celle du filtre\n\nComme pour la parasha : `commentary_details.commentator` est comparé en égalité\n**stricte**, sans normalisation. Un nom d'affichage raccourci rend zéro\ncommentaire, **sans erreur**. Aucune réécriture ici — le champ passe tel quel.\n\n### Réponses\n\n- **200** `{success, traite, page, segment_num, corpus, count, total_commentaries,\n  commentators[{commentator, count}]}` — proxy fidèle, aucune transformation.\n- **200 avec `commentators: []`** — page connue sans commentaire, pas une erreur.\n- **404** — traité ou page inconnus.\n\nRéalisation : azy.daily#234",
+        "height": 780,
+        "width": 460,
+        "color": 4
+      },
+      "id": "tbc-doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -180,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "torah-book-commentators",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "tbc-hook",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        320,
+        100
+      ],
+      "webhookId": "torah-book-commentators"
+    },
+    {
+      "parameters": {
+        "jsCode": "// `traite` et `page` sont tous deux obligatoires : une page de Bavli ne s'identifie\n// pas autrement. Aucun défaut — servir l'inventaire d'une page arbitraire\n// tromperait l'appelant en silence.\n//\n// `segment_num` est optionnel : l'API l'expose pour restreindre à un segment.\n//\n// Aucune normalisation de casse : le match est strict côté API, et normaliser\n// masquerait un 404 légitime — le seul signal disant à l'appelant que sa\n// référence est fausse.\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst traite = (query.traite || '').trim();\nconst page = (query.page || '').trim();\nconst segment = (query.segment_num ?? '').toString().trim();\n\nconst manquants = [];\nif (!traite) manquants.push('traite');\nif (!page) manquants.push('page');\nif (manquants.length) {\n  return [{ json: { valide: false, erreur: {\n    code: 400,\n    message: 'Paramètre(s) requis : ' + manquants.join(', ')\n           + ' (ex. ?traite=Berakhot&page=2a)',\n    status: 'BAD_REQUEST'\n  } } }];\n}\n\nreturn [{ json: {\n  valide: true, traite: traite, page: page,\n  segment_num: segment || null,\n  requete: segment ? '?segment_num=' + encodeURIComponent(segment) : ''\n} }];"
+      },
+      "id": "tbc-lire",
+      "name": "Lire Paramètres",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-valide",
+              "leftValue": "={{ $json.valide }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "tbc-if",
+      "name": "Paramètres Valides ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        760,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.TORAH_API_URL }}/api/books/{{ encodeURIComponent($json.traite) }}/{{ encodeURIComponent($json.page) }}/commentators{{ $json.requete }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "tbc-api",
+      "name": "Lister (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        20
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- Désencapsulation de l'erreur HTTP -------------------------------------\n// Avec onError: continueRegularOutput, un HTTP Request en échec ne produit PAS\n// {statusCode, body} mais l'objet d'erreur axios : statusCode est absent, et le\n// statut réel est enfoui dans le message sous la forme « 404 - {\"detail\":…} ».\n// Sans ce traitement, le code retombe sur 200, la branche succès s'exécute sur\n// un objet d'erreur, et l'appelant reçoit soit un faux succès vide, soit un 500\n// (« Invalid status code: ERR_BAD_REQUEST » — error.code d'axios n'est pas un\n// entier). Même problème et même parade que Normalize Error de DOC - Render PDF.\nfunction lireErreur(item) {\n  let brut = '';\n  for (const c of [item?.error?.message, item?.message, item?.error?.description,\n                   typeof item?.error === 'string' ? item.error : null]) {\n    if (c) { brut = String(c); break; }\n  }\n  const m = brut.match(/^\\s*(\\d{3})\\s*-\\s*/);\n  const statut = m ? parseInt(m[1], 10) : null;\n\n  let detail = null;\n  const i = brut.indexOf('{'), j = brut.lastIndexOf('}');\n  if (i >= 0 && j > i) {\n    const bloc = brut.slice(i, j + 1);\n    for (const essai of [bloc, bloc.replace(/\\\\\"/g, '\"').replace(/\\\\\\\\/g, '\\\\')]) {\n      try {\n        const o = JSON.parse(essai);\n        detail = o.detail || o?.error?.message || o.message || null;\n        break;\n      } catch (e) { /* essai suivant */ }\n    }\n  }\n  return { statut, detail, brut };\n}\n\nconst input = $input.first().json;\nconst params = $('Lire Paramètres').first().json;\n\nconst estErreur = input?.error !== undefined || input?.statusCode === undefined;\n\nif (estErreur) {\n  const e = lireErreur(input);\n  const code = e.statut || 502;\n  return [{\n    json: {\n      success: false,\n      traite: params.traite,\n      page: params.page,\n      error: {\n        code: code,\n        message: e.detail || e.brut || \"L'API n'a pas répondu\",\n        status: code === 404 ? 'PAGE_NOT_FOUND' : 'API_ERROR'\n      }\n    }\n  }];\n}\n\nconst data = input.body || input;\nconst liste = data.commentators || [];\n\n// Proxy 1:1 : les clés `commentator` sont celles du filtre ?commentators= et ne\n// doivent subir aucune réécriture.\nreturn [{\n  json: {\n    success: true,\n    traite: data.traite || params.traite,\n    page: data.page || params.page,\n    segment_num: data.segment_num ?? params.segment_num,\n    corpus: data.corpus ?? null,\n    count: data.count ?? liste.length,\n    total_commentaries: data.total_commentaries ?? null,\n    commentators: liste\n  }\n}];"
+      },
+      "id": "tbc-fmt",
+      "name": "Formater Réponse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ ($json.error && Number.isInteger($json.error.code)) ? $json.error.code : ($json.success === false ? 502 : 200) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "tbc-rep",
+      "name": "Répondre",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1420,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.erreur }) }}",
+        "options": {
+          "responseCode": "={{ $json.erreur?.code || 400 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "tbc-rep-ko",
+      "name": "Répondre Erreur",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        980,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Lire Paramètres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire Paramètres": {
+      "main": [
+        [
+          {
+            "node": "Paramètres Valides ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paramètres Valides ?": {
+      "main": [
+        [
+          {
+            "node": "Lister (API)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Répondre Erreur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lister (API)": {
+      "main": [
+        [
+          {
+            "node": "Formater Réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formater Réponse": {
+      "main": [
+        [
+          {
+            "node": "Répondre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "pinData": {}
+}
