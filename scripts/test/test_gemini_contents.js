@@ -73,6 +73,21 @@ const IMAGE_GEMINI = { inline_data: { mime_type: 'image/jpeg', data: 'AAAA' } };
 const BASE = { provider: 'google', model: 'gemini-3.5-flash', api_key: 'x',
                max_tokens: 1024, temperature: 0.7, system: null };
 
+console.log('\n0. la syntaxe de l’expression n8n — aucune accolade double parasite');
+{
+  // Piège vécu : une expression n8n se termine au PREMIER « }} » rencontré.
+  // Un simple commentaire illustrant la forme Gemini — « {inline_data:{…}} » —
+  // suffisait à la tronquer. Le nœud rendait alors {"error":"invalid syntax"},
+  // aucun appel ne partait, et le formatteur traduisait ça en 502 GEMINI_ERROR :
+  // trois couches entre la cause et le symptôme.
+  for (const n of WF.nodes) {
+    const e = (n.parameters || {}).jsonBody;
+    if (typeof e !== 'string' || !e.startsWith('=')) continue;
+    const corps = e.replace(/\}\}\s*$/, '');
+    controle(`« ${n.name} » sans « }} » interne`, /\}\}/.test(corps), false);
+  }
+}
+
 console.log('\n1. le cas exact de la panne — vision, bloc natif Gemini');
 {
   const c = corps({ ...BASE, messages: [{ role: 'user', content: [
