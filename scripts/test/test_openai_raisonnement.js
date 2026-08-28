@@ -89,9 +89,24 @@ console.log('\n1. détection de la famille de modèle');
   for (const m of ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-3.5-turbo']) {
     controle(`« ${m} » → classique`, valider({ ...BASE, model: m }).raisonnement, false);
   }
-  // Le drapeau ne concerne qu'OpenAI : Anthropic accepte max_tokens sans réserve.
+  // Le drapeau ne concerne qu'OpenAI : Gemini accepte `temperature` sur ses
+  // modèles à raisonnement, Anthropic aussi tant que `thinking` est éteint.
+  // Étendre la garde leur retirerait des paramètres qui marchent.
   controle('anthropic non concerné',
     valider({ ...BASE, provider: 'anthropic', model: 'gpt-5' }).raisonnement, false);
+
+  // Variantes de nommage signalées par l'équipe mobile (azy.daily#276).
+  for (const m of ['openai/gpt-5', 'chatgpt-5-nano', 'openai/o3-mini', 'gpt-5.6-luna']) {
+    controle(`« ${m} » → raisonnement`, valider({ ...BASE, model: m }).raisonnement, true);
+  }
+
+  // La parole de l'appelant prime sur la devinette : le catalogue sait, pas nous.
+  controle('reasoning:true forcé sur un gpt-4o',
+    valider({ ...BASE, model: 'gpt-4o', reasoning: true }).raisonnement, true);
+  controle('reasoning:false forcé sur un gpt-5',
+    valider({ ...BASE, model: 'gpt-5', reasoning: false }).raisonnement, false);
+  controle('reasoning absent → repli sur le motif',
+    valider({ ...BASE, model: 'gpt-5' }).raisonnement, true);
 }
 
 console.log('\n2. corps envoyé — modèle de raisonnement');
