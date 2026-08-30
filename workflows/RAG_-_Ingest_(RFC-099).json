@@ -50,11 +50,12 @@
       "position": [
         760,
         240
-      ]
+      ],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Verification HMAC — signature calculee par le node Crypto 'Compute HMAC'\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\nconst computed = String(input.computed_signature || '').toLowerCase();\nconst sigHeader = headers['x-webhook-signature'] || headers['X-Webhook-Signature'] || '';\nconst provided = sigHeader.replace('sha256=', '').toLowerCase();\n\nif (!sigHeader) {\n  return { hmac_valid: false, error: 'Missing X-Webhook-Signature header', http_code: 401, body, headers };\n}\nif (!computed) {\n  return { hmac_valid: false, error: 'HMAC non calcule (verifier N8N_RAG_WEBHOOK_SECRET / acces $env)', http_code: 500, body, headers };\n}\nif (provided.length !== computed.length || provided !== computed) {\n  return { hmac_valid: false, error: 'Invalid HMAC signature', http_code: 401, body, headers };\n}\nreturn { hmac_valid: true, body, headers };"
+        "jsCode": "// Verification HMAC — signature calculee par le node Crypto 'Compute HMAC'\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n// ⚠️ Le nœud Crypto est en onError, et ce n'est pas décoratif : sans lui,\n// `createHmac(undefined)` LÈVE et interrompt le workflow AVANT ce nœud. La\n// branche « HMAC non calculé » ci-dessous n'était jamais atteinte, et l'appelant\n// recevait 200 avec un corps vide au lieu du 500 que ce code prévoit.\n// Vérifié le 2026-08-30 : « TypeError at prepareSecretKey ».\nconst computed = String(input.computed_signature || '').toLowerCase();\nconst sigHeader = headers['x-webhook-signature'] || headers['X-Webhook-Signature'] || '';\nconst provided = sigHeader.replace('sha256=', '').toLowerCase();\n\nif (!sigHeader) {\n  return { hmac_valid: false, error: 'Missing X-Webhook-Signature header', http_code: 401, body, headers };\n}\nif (!computed) {\n  return { hmac_valid: false, error: 'HMAC non calcule (verifier N8N_RAG_WEBHOOK_SECRET / acces $env)', http_code: 500, body, headers };\n}\nif (provided.length !== computed.length || provided !== computed) {\n  return { hmac_valid: false, error: 'Invalid HMAC signature', http_code: 401, body, headers };\n}\nreturn { hmac_valid: true, body, headers };"
       },
       "id": "verify-hmac",
       "name": "Verify HMAC",
