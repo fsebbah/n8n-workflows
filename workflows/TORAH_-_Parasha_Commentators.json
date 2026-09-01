@@ -36,7 +36,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// `name` est le seul paramètre, et il est obligatoire. Aucun défaut : servir\n// l'inventaire d'une parasha arbitraire tromperait l'appelant en silence.\n//\n// Le match est STRICT et sensible à la casse côté API (`parashiyot.name`), et les\n// alias ne sont pas résolus. On ne tente donc aucune normalisation ici : elle\n// masquerait un 404 légitime, seul signal disant à l'appelant que son nom est faux.\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst nom = (query.name || '').trim();\n\nif (!nom) {\n  return [{ json: { valide: false, erreur: {\n    code: 400,\n    message: 'Le paramètre \"name\" est requis (nom EN canonique, ex. Shoftim)',\n    status: 'BAD_REQUEST'\n  } } }];\n}\n\nreturn [{ json: { valide: true, name: nom } }];"
+        "jsCode": "// `name` est le seul paramètre, et il est obligatoire. Aucun défaut : servir\n// l'inventaire d'une parasha arbitraire tromperait l'appelant en silence.\n//\n// Le match est STRICT et sensible à la casse côté API (`parashiyot.name`), et les\n// alias ne sont pas résolus. On ne tente donc aucune normalisation ici : elle\n// masquerait un 404 légitime, seul signal disant à l'appelant que son nom est faux.\nconst input = $input.first().json;\nconst query = input.query || {};\n\nconst nom = (query.name || '').trim();\n\nif (!nom) {\n  return [{ json: { valide: false, erreur: {\n    code: 400,\n    message: 'Le paramètre \"name\" est requis (nom EN canonique, ex. Shoftim)',\n    status: 'BAD_REQUEST'\n  } } }];\n}\n\n// `target_language` décide de ce que compte `untranslated`, et data le déclare\n// obligatoire en précisant que le français et l'anglais sont quasi inversés.\n// Ne pas le relayer laissait l'API appliquer son défaut : un picker demandant\n// l'anglais recevait les comptes français. Mesuré sur Shoftim :\n//\n//     (aucun)               Malbim  untranslated = 0\n//     target_language=fr    Malbim  untranslated = 0\n//     target_language=en    Malbim  untranslated = 151\n//\n// Le picker masquait donc Malbim comme « rien à faire » alors que ses 151\n// commentaires restaient tous à traduire (azy.daily#233).\n//\n// Relayé TEL QUEL, sans liste blanche : c'est l'API qui connaît les langues\n// valides, et la dupliquer ici créerait une seconde source de vérité.\nconst langue = (query.target_language || '').trim();\n\nreturn [{ json: {\n  valide: true,\n  name: nom,\n  target_language: langue || null,\n  requete: langue ? '?target_language=' + encodeURIComponent(langue) : ''\n} }];"
       },
       "id": "tpc-lire",
       "name": "Lire Paramètres",
@@ -82,7 +82,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.TORAH_API_URL }}/api/torah/parashiyot/{{ encodeURIComponent($json.name) }}/commentators",
+        "url": "={{ $env.TORAH_API_URL }}/api/torah/parashiyot/{{ encodeURIComponent($json.name) }}/commentators{{ $json.requete }}",
         "options": {
           "response": {
             "response": {
