@@ -1,5 +1,5 @@
 {
-  "name": "Recipes - YouTube",
+  "name": "YOUTUBE - Transcribe and Extract",
   "active": true,
   "nodes": [
     {
@@ -14,7 +14,7 @@
       "webhookId": "recipes-youtube-webhook",
       "parameters": {
         "httpMethod": "POST",
-        "path": "recipes-youtube",
+        "path": "youtube-extract",
         "responseMode": "responseNode",
         "options": {}
       }
@@ -29,7 +29,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\n\nif (!body.query) {\n  errors.push('Missing required parameter: query');\n}\n\nif (!body.google_api_key) {\n  errors.push('Missing required parameter: google_api_key');\n}\n\nif (!body.anthropic_api_key && !body.openai_api_key) {\n  errors.push('Missing API key: anthropic_api_key or openai_api_key required for recipe extraction');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nconst prefs = body.preferences || {};\n\n// Generate job_id if callback_url provided but no job_id\nconst crypto = require('crypto');\nconst job_id = body.job_id || (body.callback_url ? crypto.randomUUID() : null);\n\nreturn [{\n  json: {\n    valid: true,\n    query: body.query,\n    google_api_key: body.google_api_key,\n    anthropic_api_key: body.anthropic_api_key,\n    openai_api_key: body.openai_api_key,\n    user_id: body.user_id,\n    language: prefs.language || 'fr',\n    max_videos: prefs.max_videos || 1,\n    prefer_short: prefs.prefer_short || false,\n    n8n_webhook_url: process.env.N8N_WEBHOOK_URL || 'http://localhost:5678',\n    callback_url: body.callback_url || null,\n    job_id: job_id\n  }\n}];"
+        "jsCode": "// ============================================================\n// YOUTUBE - Transcribe and Extract\n// Quatuor recu, jamais devine : provider / model / api_key / content.\n// Ni require() ni process.env : interdits par le bac a sable n8n.\n// ============================================================\nconst input = $input.first().json;\nconst body  = input.body || input;\nconst ctx   = body.context || {};\n\nconst lire = (src, ...cles) => {\n  for (const c of cles) {\n    const v = src && src[c];\n    if (v !== undefined && v !== null && v !== '') return v;\n  }\n  return undefined;\n};\nconst racine = (...cles) => lire(ctx, ...cles) ?? lire(body, ...cles);\n\nconst erreurs = [];\n\n// --- la source : une URL directe OU une recherche ---\nconst videoUrl = racine('video_url', 'videoUrl', 'url') || '';\nconst query    = racine('query', 'q') || '';\nif (!videoUrl && !query) erreurs.push('video_url ou query requis');\n\nconst googleApiKey = racine('google_api_key', 'youtube_api_key') || $env.GOOGLE_API_KEY || '';\nif (!videoUrl && !googleApiKey) {\n  erreurs.push('google_api_key requis pour la recherche YouTube (inutile si video_url est fourni)');\n}\n\n// --- transcription ---\nconst t = body.transcription || ctx.transcription || {};\nconst tProvider = String(lire(t, 'provider') || racine('provider') || 'google').toLowerCase();\nconst tModel    = lire(t, 'model', 'llm') || racine('model') || 'gemini-3.6-flash';\nconst tApiKey   = lire(t, 'api_key', 'apiKey') || racine('gemini_api_key') || $env.GEMINI_API_KEY || '';\nconst tContent  = lire(t, 'content', 'prompt') || '';\nconst operation = lire(t, 'operation') || racine('operation') || 'transcribe';\n\n// --- extraction : FACULTATIVE. Absente => on rend le transcript brut. ---\nconst e = body.extraction || ctx.extraction || {};\nconst eContent  = lire(e, 'content', 'prompt') || racine('content', 'prompt') || '';\nconst extraire  = !!eContent;\nconst eProvider = String(lire(e, 'provider') || 'anthropic').toLowerCase();\nconst eModel    = lire(e, 'model', 'llm') || 'claude-sonnet-4-6';\nconst eApiKey   = lire(e, 'api_key', 'apiKey')\n               || racine('anthropic_api_key', 'openai_api_key') || '';\nconst eMaxTokens = parseInt(lire(e, 'max_tokens') || 4096, 10);\n\nif (extraire && !eApiKey) {\n  erreurs.push('extraction.content fourni mais extraction.api_key manquante');\n}\n\nconst prefs = body.preferences || ctx.preferences || {};\nconst langue = lire(prefs, 'language') || racine('language') || 'fr';\n\nif (erreurs.length > 0) {\n  return [{ json: { valid: false, statut: 400,\n    error: { code: 400, message: erreurs.join(', '), status: 'BAD_REQUEST' } } }];\n}\n\nconst callbackUrl = racine('callback_url') || null;\n// job_id sans require('crypto') : $execution.id est unique par execution.\nconst jobId = racine('job_id') || (callbackUrl ? ('job_' + $execution.id + '_' + Date.now().toString(36)) : null);\n\nreturn [{ json: {\n  valid: true,\n  video_url: videoUrl || null,\n  query: query || null,\n  google_api_key: googleApiKey,\n  transcription: { provider: tProvider, model: tModel, api_key: tApiKey, content: tContent, operation },\n  extraction: { demandee: extraire, provider: eProvider, model: eModel,\n                api_key: eApiKey, content: eContent, max_tokens: eMaxTokens },\n  language: langue,\n  max_videos: lire(prefs, 'max_videos') || 1,\n  prefer_short: lire(prefs, 'prefer_short') === true,\n  n8n_webhook_url: $env.N8N_WEBHOOK_URL || 'http://localhost:5678',\n  callback_url: callbackUrl,\n  job_id: jobId,\n  user_id: racine('user_id') || null,\n} }];"
       }
     },
     {
@@ -282,7 +282,7 @@
         280
       ],
       "parameters": {
-        "jsCode": "const validationData = $('Validate Input').first().json;\nconst crypto = require('crypto');\n\nconst body = {\n  success: false,\n  job_id: validationData.job_id,\n  status: 'failed',\n  error: {\n    code: 404,\n    message: 'No YouTube videos found for query',\n    status: 'NOT_FOUND'\n  },\n  meta: {\n    provider: 'youtube',\n    query: validationData.query\n  }\n};\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: validationData.callback_url,\n    body: body,\n    signature: signature\n  }\n}];"
+        "jsCode": "// Idem : signature deleguee au noeud Crypto natif.\nconst e = $input.first().json;\nconst body = {\n  success: false,\n  job_id: e.job_id,\n  status: 'failed',\n  error: { code: 404, message: 'aucune video trouvee pour la requete', status: 'NO_RESULTS' },\n  meta: { query: e.query || null },\n};\nreturn [{ json: { callback_url: e.callback_url, body, corps_json: JSON.stringify(body) } }];"
       }
     },
     {
@@ -308,14 +308,24 @@
             {
               "name": "X-N8N-Signature",
               "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "X-Signature-Algorithm",
+              "value": "hmac-sha256"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ $json.body }}",
+        "jsonBody": "={{ $json.corps_json }}",
         "options": {
-          "timeout": 30000
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
         }
       },
       "onError": "continueRegularOutput"
@@ -330,7 +340,7 @@
         100
       ],
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\n\nconst video = input.items[0];\nconst videoId = video.id?.videoId;\n\nreturn [{\n  json: {\n    ...prevData,\n    video: {\n      id: videoId,\n      title: video.snippet?.title,\n      description: video.snippet?.description,\n      channel: video.snippet?.channelTitle,\n      thumbnail: video.snippet?.thumbnails?.high?.url || video.snippet?.thumbnails?.default?.url,\n      url: `https://www.youtube.com/watch?v=${videoId}`,\n      published_at: video.snippet?.publishedAt\n    },\n    video_url: `https://www.youtube.com/watch?v=${videoId}`\n  }\n}];"
+        "jsCode": "const amont = $('Validate Input').first().json;\nconst input = $input.first().json;\n\n// Voie A : URL fournie directement, aucune recherche n a eu lieu.\nif (amont.video_url) {\n  return [{ json: { ...amont,\n    video: { id: null, title: null, channel: null, url: amont.video_url },\n    video_url: amont.video_url } }];\n}\n\n// Voie B : resultat de la recherche YouTube.\nconst v = (input.items || [])[0];\nconst id = v?.id?.videoId;\nif (!id) {\n  return [{ json: { ...amont, valid: false, statut: 404,\n    error: { code: 404, message: 'aucune video trouvee pour la requete', status: 'NO_RESULTS' } } }];\n}\nreturn [{ json: { ...amont,\n  video: {\n    id,\n    title: v.snippet?.title,\n    description: v.snippet?.description,\n    channel: v.snippet?.channelTitle,\n    thumbnail: v.snippet?.thumbnails?.high?.url || v.snippet?.thumbnails?.default?.url,\n    url: 'https://www.youtube.com/watch?v=' + id,\n    published_at: v.snippet?.publishedAt,\n  },\n  video_url: 'https://www.youtube.com/watch?v=' + id } }];"
       }
     },
     {
@@ -357,16 +367,22 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"videoUrl\": \"{{ $json.video_url }}\",\n  \"language\": \"{{ $json.language }}\",\n  \"operation\": \"transcribe\"\n}",
+        "jsonBody": "={{ JSON.stringify({ videoUrl: $json.video_url, provider: $json.transcription.provider, model: $json.transcription.model, api_key: $json.transcription.api_key, content: $json.transcription.content, operation: $json.transcription.operation, language: $json.language }) }}",
         "options": {
-          "timeout": 120000
+          "timeout": 600000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
         }
       },
       "onError": "continueRegularOutput"
     },
     {
       "id": "extract-recipe",
-      "name": "Extract Recipe (LLM)",
+      "name": "Extract (LLM)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -375,30 +391,19 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "={{ $json.n8n_webhook_url }}/webhook/llm-call-messages",
         "authentication": "none",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "x-api-key",
-              "value": "={{ $('Validate Input').first().json.anthropic_api_key }}"
-            },
-            {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Extract a structured recipe from this video transcript. Include timestamps for each step when mentioned.\\n\\nVideo title: {{ $('Extract Video Info').first().json.video.title }}\\n\\nTranscript:\\n{{ $json.data?.transcript || $json.transcript || 'No transcript available' }}\\n\\nRespond with a JSON object:\\n{\\n  \\\"title\\\": \\\"Recipe title\\\",\\n  \\\"description\\\": \\\"Brief description\\\",\\n  \\\"servings\\\": number,\\n  \\\"prep_time_minutes\\\": number,\\n  \\\"cook_time_minutes\\\": number,\\n  \\\"difficulty\\\": \\\"facile|moyen|difficile\\\",\\n  \\\"ingredients\\\": [{\\\"name\\\": \\\"\\\", \\\"quantity\\\": number, \\\"unit\\\": \\\"\\\"}],\\n  \\\"steps\\\": [{\\\"order\\\": number, \\\"instruction\\\": \\\"\\\", \\\"timestamp\\\": \\\"MM:SS\\\"}],\\n  \\\"tips\\\": [\\\"tip1\\\"],\\n  \\\"tags\\\": [\\\"tag1\\\"]\\n}\\n\\nRespond ONLY with valid JSON.\"\n    }\n  ]\n}",
+        "jsonBody": "={{ JSON.stringify($json.llm_corps) }}",
         "options": {
-          "timeout": 60000
+          "timeout": 300000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
         }
       },
       "onError": "continueRegularOutput"
@@ -413,7 +418,7 @@
         100
       ],
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst prevData = $('Extract Video Info').first().json;\nconst transcriptData = $('Transcribe Video').first().json;\nconst validationData = $('Validate Input').first().json;\n\ntry {\n  if (input.error) {\n    return [{\n      json: {\n        success: false,\n        job_id: validationData.job_id,\n        status: validationData.callback_url ? 'failed' : undefined,\n        error: {\n          code: 500,\n          message: input.error.message || 'LLM extraction failed',\n          status: 'EXTRACTION_ERROR'\n        },\n        meta: { provider: 'youtube+anthropic' },\n        callback_url: validationData.callback_url\n      }\n    }];\n  }\n\n  const content = input.content?.[0]?.text || '{}';\n  let recipe;\n  \n  try {\n    recipe = JSON.parse(content);\n  } catch (e) {\n    // Try to extract JSON from response\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    recipe = jsonMatch ? JSON.parse(jsonMatch[0]) : { title: 'Parse error', raw: content };\n  }\n\n  return [{\n    json: {\n      success: true,\n      job_id: validationData.job_id,\n      status: validationData.callback_url ? 'completed' : undefined,\n      data: {\n        source: 'youtube',\n        video: prevData.video,\n        recipe,\n        transcript_excerpt: (transcriptData.data?.transcript || '').substring(0, 500) + '...'\n      },\n      meta: {\n        provider: 'youtube+anthropic',\n        models_used: ['gemini-2.5-flash', 'claude-haiku-4-5-20251001'],\n        tokens_used: {\n          transcription: 0,\n          extraction: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0)\n        }\n      },\n      callback_url: validationData.callback_url\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      job_id: validationData.job_id,\n      status: validationData.callback_url ? 'failed' : undefined,\n      error: {\n        code: 500,\n        message: 'Failed to process recipe: ' + e.message,\n        status: 'PROCESS_ERROR'\n      },\n      meta: { provider: 'youtube' },\n      callback_url: validationData.callback_url\n    }\n  }];\n}"
+        "jsCode": "// Rend le transcript dans tous les cas ; l extraction est un PLUS,\n// jamais une condition de succes. Cf. n8n-workflows#463 (faux succes).\nconst prep = $('Prepare Extraction').first().json;\nconst rep  = $input.first().json;\n\nlet extraction = null, extraction_erreur = null;\n\nif (prep.faire_extraction) {\n  const charge = rep.body !== undefined ? rep.body : rep;\n  let statut = rep.statusCode;\n  if (statut === undefined) {\n    const brut = String(rep?.error?.message || rep?.message || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    statut = m ? parseInt(m[1], 10) : ((rep?.error || rep?.code) ? 502 : 200);\n  }\n  const texte = charge?.content || charge?.data?.content || charge?.text || '';\n  if (statut >= 400 || !texte) {\n    extraction_erreur = charge?.error?.message || rep?.error?.message || ('extraction en echec (statut ' + statut + ')');\n  } else {\n    // Si le prompt demandait du JSON, on le rend structure ; sinon texte brut.\n    try { extraction = JSON.parse(texte); }\n    catch (_) {\n      const m = String(texte).match(/\\{[\\s\\S]*\\}/);\n      try { extraction = m ? JSON.parse(m[0]) : { text: texte }; }\n      catch (__) { extraction = { text: texte }; }\n    }\n  }\n}\n\nconst ok = !prep.transcription_echec;\nreturn [{ json: {\n  success: ok,\n  statut: ok ? 200 : (prep.transcription_statut || 502),\n  job_id: prep.job_id,\n  status: prep.callback_url ? (ok ? 'completed' : 'failed') : undefined,\n  video: prep.video,\n  video_url: prep.video_url,\n  language: prep.language,\n  transcript: prep.transcript || null,\n  extraction,\n  extraction_erreur,\n  error: ok ? undefined : { code: prep.transcription_statut || 502,\n                            message: prep.transcription_erreur || 'transcription indisponible',\n                            status: 'TRANSCRIPTION_ERROR' },\n  meta: {\n    transcription: { provider: prep.transcription?.provider, model: prep.transcription?.model },\n    extraction: prep.faire_extraction\n      ? { provider: prep.extraction?.provider, model: prep.extraction?.model }\n      : null,\n    usage: { transcription: prep.transcription_usage },\n  },\n  callback_url: prep.callback_url,\n  user_id: prep.user_id,\n} }];"
       }
     },
     {
@@ -472,7 +477,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst crypto = require('crypto');\n\n// Build callback body (exclude callback_url from response)\nconst body = {\n  success: input.success,\n  job_id: input.job_id,\n  status: input.status\n};\n\nif (input.success) {\n  body.data = input.data;\n} else {\n  body.error = input.error;\n}\n\nbody.meta = input.meta;\n\n// Generate HMAC signature (RFC-040 format)\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: input.callback_url,\n    body: body,\n    signature: signature\n  }\n}];"
+        "jsCode": "// La signature HMAC est calculee par le noeud Crypto natif qui suit :\n// le bac a sable n8n interdit require(). Cf. execution 855886.\nconst e = $input.first().json;\n\nconst body = { success: e.success, job_id: e.job_id, status: e.status };\nif (e.success) {\n  body.data = { transcript: e.transcript, extraction: e.extraction, video: e.video };\n  if (e.extraction_erreur) body.data.extraction_erreur = e.extraction_erreur;\n} else {\n  body.error = e.error;\n}\nbody.meta = e.meta;\n\nreturn [{ json: {\n  callback_url: e.callback_url,\n  body,\n  corps_json: JSON.stringify(body),\n} }];"
       }
     },
     {
@@ -498,14 +503,24 @@
             {
               "name": "X-N8N-Signature",
               "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "X-Signature-Algorithm",
+              "value": "hmac-sha256"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ $json.body }}",
+        "jsonBody": "={{ $json.corps_json }}",
         "options": {
-          "timeout": 30000
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
         }
       },
       "onError": "continueRegularOutput"
@@ -541,6 +556,125 @@
         "height": 160,
         "content": "## RFC-040 Async Pattern\n\n1. Check for `callback_url` in request\n2. If present: respond 202 immediately\n3. Continue processing in background\n4. POST result to callback_url with HMAC signature\n\n**Headers:** Content-Type, X-N8N-Signature"
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a-une-url",
+              "leftValue": "={{ $json.video_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        200
+      ],
+      "id": "aiguillage-url-directe",
+      "name": "URL directe ?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construit le corps de LLM - Call Messages. Le transcript est INJECTE\n// dans le prompt recu ; le prompt lui-meme n est jamais fabrique ici.\nconst amont = $('Extract Video Info').first().json;\nconst rep   = $input.first().json;\nconst charge = rep.body !== undefined ? rep.body : rep;\n\nlet statut = rep.statusCode;\nif (statut === undefined) {\n  const brut = String(rep?.error?.message || rep?.message || '');\n  const m = brut.match(/(\\d{3})\\s*-\\s*/);\n  statut = m ? parseInt(m[1], 10) : ((rep?.error || rep?.code) ? 502 : 200);\n}\n\nconst transcript = charge?.transcript || charge?.data?.transcript || '';\nconst echec = statut >= 400 || !transcript;\n\nconst ex = amont.extraction || {};\nconst prompt = String(ex.content || '')\n  .replace(/\\{\\{\\s*transcript\\s*\\}\\}/g, transcript)\n  .replace(/\\{\\{\\s*title\\s*\\}\\}/g, amont.video?.title || '')\n  .replace(/\\{\\{\\s*url\\s*\\}\\}/g, amont.video_url || '');\nconst promptFinal = prompt.includes(transcript) || !transcript\n  ? prompt\n  : prompt + '\\n\\n--- Transcript ---\\n' + transcript;\n\nreturn [{ json: { ...amont,\n  transcription_statut: statut,\n  transcription_echec: echec,\n  transcription_erreur: echec ? (charge?.error?.message || 'transcription indisponible') : null,\n  transcript,\n  transcription_usage: charge?.usage || null,\n  faire_extraction: !!(ex.demandee && !echec),\n  llm_corps: {\n    provider: ex.provider,\n    model: ex.model,\n    api_key: ex.api_key,\n    max_tokens: ex.max_tokens,\n    messages: [{ role: 'user', content: promptFinal }],\n  } } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        100
+      ],
+      "id": "prepare-extraction",
+      "name": "Prepare Extraction"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "faire-extraction",
+              "leftValue": "={{ $json.faire_extraction }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2460,
+        100
+      ],
+      "id": "extraction-demandee",
+      "name": "Extraction demandée ?"
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.corps_json }}",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET || 'default-secret' }}",
+        "encoding": "hex",
+        "dataPropertyName": "signature"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        3420,
+        0
+      ],
+      "id": "sign-callback",
+      "name": "Sign Callback"
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.corps_json }}",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET || 'default-secret' }}",
+        "encoding": "hex",
+        "dataPropertyName": "signature"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        2460,
+        280
+      ],
+      "id": "sign-error-callback",
+      "name": "Sign Error Callback"
     }
   ],
   "connections": {
@@ -595,7 +729,7 @@
         ],
         [
           {
-            "node": "Search YouTube",
+            "node": "URL directe ?",
             "type": "main",
             "index": 0
           }
@@ -617,7 +751,7 @@
       "main": [
         [
           {
-            "node": "Search YouTube",
+            "node": "URL directe ?",
             "type": "main",
             "index": 0
           }
@@ -675,7 +809,7 @@
       "main": [
         [
           {
-            "node": "Send Error Callback (No Results)",
+            "node": "Sign Error Callback",
             "type": "main",
             "index": 0
           }
@@ -697,18 +831,7 @@
       "main": [
         [
           {
-            "node": "Extract Recipe (LLM)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Extract Recipe (LLM)": {
-      "main": [
-        [
-          {
-            "node": "Format Output",
+            "node": "Prepare Extraction",
             "type": "main",
             "index": 0
           }
@@ -748,7 +871,87 @@
       "main": [
         [
           {
+            "node": "Sign Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "URL directe ?": {
+      "main": [
+        [
+          {
+            "node": "Extract Video Info",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Extraction": {
+      "main": [
+        [
+          {
+            "node": "Extraction demandée ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraction demandée ?": {
+      "main": [
+        [
+          {
+            "node": "Extract (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Callback": {
+      "main": [
+        [
+          {
             "node": "Send Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Error Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Error Callback (No Results)",
             "type": "main",
             "index": 0
           }
