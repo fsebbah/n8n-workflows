@@ -106,6 +106,15 @@ for (const wf of ['transcriber', 'youtube']) {
 }
 
 // ══════════════════════════════════════════════════════════════
+console.log('\n3 bis. tout nœud de réponse porte un code HTTP explicite');
+for (const wf of ['transcriber', 'youtube']) {
+  for (const n of WF[wf].nodes.filter((x) => x.type.endsWith('respondToWebhook'))) {
+    // Sans responseCode, n8n rend 200 quoi que dise le corps : un échec
+    // sort alors en succès. C'est la forme douce du défaut #467.
+    T(`${wf}/${n.name} : code défini`, true, n.parameters?.options?.responseCode !== undefined);
+  }
+}
+
 console.log('\n4. MCP - Transcriber : le quatuor est reçu, pas deviné');
 const V = (body, env = { GEMINI_API_KEY: 'CLE-ENV' }) => execCode('transcriber', 'Validate Input', { body }, {}, env);
 
@@ -247,17 +256,37 @@ if (!process.argv.includes('--en-ligne')) process.exit(ko === 0 ? 0 : 1);
     return { statut: rep.status, octets: txt.length, json: j, ms: Date.now() - t0 };
   };
 
+  let dur = 0;
+  const exige = (nom, cond, vu) => {
+    console.log(`     ${cond ? '✅' : '❌'} ${nom}${vu === undefined ? '' : ` : ${vu}`}`);
+    if (!cond) dur++;
+  };
+
   let e = await post('video-transcription', { videoUrl: V19, endTime: 10, content: 'Réponds uniquement : OK' });
   console.log(`  transcriber      HTTP ${e.statut}  ${e.octets} octets  ${e.ms} ms`);
-  if (e.octets === 0) { console.log('  ❌ corps VIDE — le défaut #467 est toujours là'); process.exit(1); }
-  console.log(`     success=${e.json?.success}  jetons vidéo=${e.json?.usage?.prompt_tokens_by_modality?.video}`);
+  exige('corps non vide (défaut #467)', e.octets > 0);
+  exige('succès réel, pas seulement une réponse', e.json?.success === true,
+        e.json?.success === true ? 'ok' : String(e.json?.error?.message).slice(0, 70));
+  exige('un transcript est rendu', !!e.json?.transcript, JSON.stringify(String(e.json?.transcript).slice(0, 30)));
+  exige('les jetons vidéo sont isolés', typeof e.json?.usage?.prompt_tokens_by_modality?.video === 'number',
+        e.json?.usage?.prompt_tokens_by_modality?.video);
+  exige('le bornage a réduit la facture (< 1676)',
+        (e.json?.usage?.prompt_tokens_by_modality?.video || 1e9) < 1676);
 
   e = await post('video-transcription', { videoUrl: V19, model: 'modele-qui-nexiste-pas' });
-  console.log(`  modèle inexistant HTTP ${e.statut}  success=${e.json?.success}  ${String(e.json?.error?.message).slice(0, 60)}`);
-  if (e.statut === 200 && e.json?.success) { console.log('  ❌ faux succès sur modèle mort'); process.exit(1); }
+  console.log(`  modèle inexistant HTTP ${e.statut}`);
+  exige('échec annoncé, pas de faux succès', e.json?.success === false);
+  exige('le code HTTP suit le corps', e.statut >= 400, e.statut);
 
   e = await post('youtube-extract', { video_url: V19, transcription: { content: 'Réponds : OK' } });
-  console.log(`  youtube-extract  HTTP ${e.statut}  ${e.octets} octets  transcript=${JSON.stringify(String(e.json?.transcript).slice(0, 24))}`);
-  if (e.octets === 0) { console.log('  ❌ corps VIDE'); process.exit(1); }
-  console.log('\n✅ chaîne en ligne vérifiée');
+  console.log(`  youtube-extract  HTTP ${e.statut}  ${e.octets} octets`);
+  exige('succès réel', e.json?.success === true,
+        e.json?.success === true ? 'ok' : String(e.json?.error?.message).slice(0, 70));
+  exige('transcript rendu', !!e.json?.transcript);
+  exige('le code HTTP suit le corps', e.json?.success === true ? e.statut === 200 : e.statut >= 400, e.statut);
+
+  console.log(dur === 0
+    ? '\n✅ chaîne en ligne vérifiée'
+    : `\n❌ ${dur} exigence(s) non tenue(s) — la chaîne n'est PAS vérifiée`);
+  process.exit(dur === 0 ? 0 : 1);
 })();
