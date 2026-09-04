@@ -74,7 +74,7 @@
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { success: false, error: $json.error, meta: { provider: 'youtube' } } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
           "responseCode": 400
         }
@@ -135,7 +135,7 @@
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { success: true, job_id: $json.job_id, status: 'processing', meta: { provider: 'youtube', async: true } } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
           "responseCode": 202
         }
@@ -266,7 +266,7 @@
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { success: false, error: { code: 404, message: 'No YouTube videos found for query', status: 'NOT_FOUND' }, meta: { provider: 'youtube', query: $('Validate Input').first().json.query } } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
           "responseCode": 404
         }
@@ -418,7 +418,7 @@
         100
       ],
       "parameters": {
-        "jsCode": "// Rend le transcript dans tous les cas ; l extraction est un PLUS,\n// jamais une condition de succes. Cf. n8n-workflows#463 (faux succes).\nconst prep = $('Prepare Extraction').first().json;\nconst rep  = $input.first().json;\n\nlet extraction = null, extraction_erreur = null;\n\nif (prep.faire_extraction) {\n  const charge = rep.body !== undefined ? rep.body : rep;\n  let statut = rep.statusCode;\n  if (statut === undefined) {\n    const brut = String(rep?.error?.message || rep?.message || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    statut = m ? parseInt(m[1], 10) : ((rep?.error || rep?.code) ? 502 : 200);\n  }\n  const texte = charge?.content || charge?.data?.content || charge?.text || '';\n  if (statut >= 400 || !texte) {\n    extraction_erreur = charge?.error?.message || rep?.error?.message || ('extraction en echec (statut ' + statut + ')');\n  } else {\n    // Si le prompt demandait du JSON, on le rend structure ; sinon texte brut.\n    try { extraction = JSON.parse(texte); }\n    catch (_) {\n      const m = String(texte).match(/\\{[\\s\\S]*\\}/);\n      try { extraction = m ? JSON.parse(m[0]) : { text: texte }; }\n      catch (__) { extraction = { text: texte }; }\n    }\n  }\n}\n\nconst ok = !prep.transcription_echec;\nreturn [{ json: {\n  success: ok,\n  statut: ok ? 200 : (prep.transcription_statut || 502),\n  job_id: prep.job_id,\n  status: prep.callback_url ? (ok ? 'completed' : 'failed') : undefined,\n  video: prep.video,\n  video_url: prep.video_url,\n  language: prep.language,\n  transcript: prep.transcript || null,\n  extraction,\n  extraction_erreur,\n  error: ok ? undefined : { code: prep.transcription_statut || 502,\n                            message: prep.transcription_erreur || 'transcription indisponible',\n                            status: 'TRANSCRIPTION_ERROR' },\n  meta: {\n    transcription: { provider: prep.transcription?.provider, model: prep.transcription?.model },\n    extraction: prep.faire_extraction\n      ? { provider: prep.extraction?.provider, model: prep.extraction?.model }\n      : null,\n    usage: { transcription: prep.transcription_usage },\n  },\n  callback_url: prep.callback_url,\n  user_id: prep.user_id,\n} }];"
+        "jsCode": "// Rend le transcript dans tous les cas ; l extraction est un PLUS,\n// jamais une condition de succes. Cf. n8n-workflows#463 (faux succes).\nconst prep = $('Prepare Extraction').first().json;\nconst rep  = $input.first().json;\n\nlet extraction = null, extraction_erreur = null;\n\nif (prep.faire_extraction) {\n  const charge = rep.body !== undefined ? rep.body : rep;\n  let statut = rep.statusCode;\n  if (statut === undefined) {\n    const brut = String(rep?.error?.message || rep?.message || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    statut = m ? parseInt(m[1], 10) : ((rep?.error || rep?.code) ? 502 : 200);\n  }\n  // Forme MESUREE de LLM - Call Messages : { success, data: { text, model,\n  // finish_reason }, meta }. Le texte est dans data.text — les autres clés\n  // sont des replis pour un appel direct fournisseur.\n  const texte = charge?.data?.text || charge?.content || charge?.data?.content || charge?.text || '';\n  if (statut >= 400 || !texte) {\n    extraction_erreur = charge?.error?.message || rep?.error?.message || ('extraction en echec (statut ' + statut + ')');\n  } else {\n    // Si le prompt demandait du JSON, on le rend structure ; sinon texte brut.\n    try { extraction = JSON.parse(texte); }\n    catch (_) {\n      const m = String(texte).match(/\\{[\\s\\S]*\\}/);\n      try { extraction = m ? JSON.parse(m[0]) : { text: texte }; }\n      catch (__) { extraction = { text: texte }; }\n    }\n  }\n}\n\nconst ok = !prep.transcription_echec;\nreturn [{ json: {\n  success: ok,\n  statut: ok ? 200 : (prep.transcription_statut || 502),\n  job_id: prep.job_id,\n  status: prep.callback_url ? (ok ? 'completed' : 'failed') : undefined,\n  video: prep.video,\n  video_url: prep.video_url,\n  language: prep.language,\n  transcript: prep.transcript || null,\n  extraction,\n  extraction_erreur,\n  error: ok ? undefined : { code: prep.transcription_statut || 502,\n                            message: prep.transcription_erreur || 'transcription indisponible',\n                            status: 'TRANSCRIPTION_ERROR' },\n  meta: {\n    transcription: { provider: prep.transcription?.provider, model: prep.transcription?.model },\n    extraction: prep.faire_extraction\n      ? { provider: prep.extraction?.provider, model: prep.extraction?.model }\n      : null,\n    usage: { transcription: prep.transcription_usage },\n  },\n  callback_url: prep.callback_url,\n  user_id: prep.user_id,\n} }];"
       }
     },
     {
@@ -463,7 +463,7 @@
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { success: $json.success, data: $json.data, error: $json.error, meta: $json.meta } }}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
           "responseCode": "={{ $json.statut || ($json.success ? 200 : 500) }}"
         }

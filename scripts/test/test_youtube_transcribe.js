@@ -115,6 +115,27 @@ for (const wf of ['transcriber', 'youtube']) {
   }
 }
 
+console.log('\n3 ter. aucun nœud de réponse ne perd de champ en route');
+// Le gabarit d'un respondToWebhook peut énumérer une liste blanche de champs.
+// C'est invisible dans les nœuds Code — le workflow calcule tout, et la sortie
+// en jette la moitié. Vu sur `Respond (Sync)`, qui traînait une liste héritée
+// de l'époque des recettes : { success, data, error, meta }.
+for (const wf of ['transcriber', 'youtube']) {
+  for (const n of WF[wf].nodes.filter((x) => x.type.endsWith('respondToWebhook'))) {
+    const tpl = String(n.parameters?.responseBody || '');
+    const sonde = { success: true, statut: 200, transcript: 'T', extraction: { a: 1 },
+                    extraction_erreur: null, video: { id: 'v' }, error: { code: 1 }, meta: { m: 1 } };
+    let rendu = null;
+    try {
+      const corps = tpl.replace(/^=/, '').replace(/^\{\{/, '').replace(/\}\}$/, '');
+      const v = vm.runInNewContext(`(${corps})`, { $json: sonde, JSON }, { timeout: 2000 });
+      rendu = typeof v === 'string' ? JSON.parse(v) : v;
+    } catch (e) { rendu = { __erreur: e.message }; }
+    const perdus = Object.keys(sonde).filter((k) => sonde[k] !== null && !(k in (rendu || {})));
+    T(`${wf}/${n.name} : aucun champ perdu`, [], perdus);
+  }
+}
+
 console.log('\n4. MCP - Transcriber : le quatuor est reçu, pas deviné');
 const V = (body, env = { GEMINI_API_KEY: 'CLE-ENV' }) => execCode('transcriber', 'Validate Input', { body }, {}, env);
 
@@ -225,7 +246,20 @@ T('transcript extrait de la réponse', 'TEXTE', p.transcript);
 T('gabarit {{transcript}} substitué', true, p.llm_corps.messages[0].content.includes('TEXTE'));
 T('extraction lancée', true, p.faire_extraction);
 
-let f = execCode('youtube', 'Format Output', { statusCode: 500, body: { error: { message: 'llm mort' } } },
+let // Forme réelle de LLM - Call Messages, relevée sur l'exécution 856047 :
+// le texte est dans data.text, pas dans content ni text.
+f = execCode('youtube', 'Format Output',
+  { statusCode: 200, body: { success: true, data: { text: '{"vu": true}', model: 'm' } } },
+  { 'Prepare Extraction': p });
+T('extraction lue dans data.text', { vu: true }, f.extraction);
+T('… sans erreur inventée', null, f.extraction_erreur);
+
+f = execCode('youtube', 'Format Output',
+  { statusCode: 200, body: { success: true, data: { text: 'texte libre, pas du JSON' } } },
+  { 'Prepare Extraction': p });
+T('réponse non-JSON rendue telle quelle', { text: 'texte libre, pas du JSON' }, f.extraction);
+
+f = execCode('youtube', 'Format Output', { statusCode: 500, body: { error: { message: 'llm mort' } } },
   { 'Prepare Extraction': p });
 T('extraction en échec : succès maintenu', true, f.success);
 T('… et le transcript est rendu', 'TEXTE', f.transcript);
