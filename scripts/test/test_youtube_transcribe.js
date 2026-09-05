@@ -298,6 +298,18 @@ if (!process.argv.includes('--en-ligne')) process.exit(ko === 0 ? 0 : 1);
 (async () => {
   console.log('\n══ mode en ligne ══');
   const base = process.env.N8N_WEBHOOK_BASE_URL || 'http://llm.local:5678/webhook';
+
+  // La clé est FOURNIE PAR L'APPELANT : chat.api l'injecte en production, le
+  // test la joue. Il n'y a plus de repli sur l'environnement du conteneur
+  // (azy.daily#330), donc sans clé ici on n'éprouve rien du tout.
+  const CLE_GEMINI = process.env.GEMINI_API_KEY;
+  const CLE_LLM = process.env.ANTHROPIC_API_KEY;
+  if (!CLE_GEMINI) {
+    console.log("  ⛔ GEMINI_API_KEY absente de l'environnement du TEST.");
+    console.log('     Le mode en ligne joue le rôle de chat.api : il doit porter la clé.');
+    console.log('     $ set -a; . .env.local; set +a; node scripts/test/test_youtube_transcribe.js --en-ligne');
+    process.exit(1);
+  }
   const V19 = 'https://www.youtube.com/watch?v=jNQXAC9IVRw';
   const post = async (chemin, corps) => {
     const t0 = Date.now();
@@ -315,7 +327,8 @@ if (!process.argv.includes('--en-ligne')) process.exit(ko === 0 ? 0 : 1);
     if (!cond) dur++;
   };
 
-  let e = await post('video-transcription', { videoUrl: V19, endTime: 10, content: 'Réponds uniquement : OK' });
+  let e = await post('video-transcription',
+    { videoUrl: V19, api_key: CLE_GEMINI, endTime: 10, content: 'Réponds uniquement : OK' });
   console.log(`  transcriber      HTTP ${e.statut}  ${e.octets} octets  ${e.ms} ms`);
   exige('corps non vide (défaut #467)', e.octets > 0);
   exige('succès réel, pas seulement une réponse', e.json?.success === true,
@@ -323,19 +336,45 @@ if (!process.argv.includes('--en-ligne')) process.exit(ko === 0 ? 0 : 1);
   exige('un transcript est rendu', !!e.json?.transcript, JSON.stringify(String(e.json?.transcript).slice(0, 30)));
   exige('les jetons vidéo sont isolés', typeof e.json?.usage?.prompt_tokens_by_modality?.video === 'number',
         e.json?.usage?.prompt_tokens_by_modality?.video);
+  exige('model = celui réellement servi', !!e.json?.model, e.json?.model);
+  exige('model_requested conservé', !!e.json?.model_requested, e.json?.model_requested);
+
+  // Un alias doit être résolu en version concrète, sinon le contrôle de
+  // facturation de l'api comparerait un écho de sa propre requête.
+  const a = await post('video-transcription',
+    { videoUrl: V19, api_key: CLE_GEMINI, model: 'gemini-flash-latest', endTime: 5, content: 'OK' });
+  exige('alias résolu par Google', a.json?.model !== 'gemini-flash-latest',
+        `${a.json?.model_requested} → ${a.json?.model}`);
+
+  // Sans clé, refus franc : plus aucun repli sur l'environnement du conteneur.
+  const sc = await post('video-transcription', { videoUrl: V19 });
+  exige('sans api_key → refus', sc.json?.success === false && sc.statut >= 400, sc.statut);
   exige('le bornage a réduit la facture (< 1676)',
         (e.json?.usage?.prompt_tokens_by_modality?.video || 1e9) < 1676);
 
-  e = await post('video-transcription', { videoUrl: V19, model: 'modele-qui-nexiste-pas' });
+  e = await post('video-transcription',
+    { videoUrl: V19, api_key: CLE_GEMINI, model: 'modele-qui-nexiste-pas' });
   console.log(`  modèle inexistant HTTP ${e.statut}`);
   exige('échec annoncé, pas de faux succès', e.json?.success === false);
   exige('le code HTTP suit le corps', e.statut >= 400, e.statut);
 
-  e = await post('youtube-extract', { video_url: V19, transcription: { content: 'Réponds : OK' } });
+  e = await post('youtube-extract', { video_url: V19,
+    transcription: { api_key: CLE_GEMINI, content: 'Réponds uniquement : OK' } });
   console.log(`  youtube-extract  HTTP ${e.statut}  ${e.octets} octets`);
   exige('succès réel', e.json?.success === true,
         e.json?.success === true ? 'ok' : String(e.json?.error?.message).slice(0, 70));
   exige('transcript rendu', !!e.json?.transcript);
+
+  if (CLE_LLM) {
+    const x = await post('youtube-extract', { video_url: V19,
+      transcription: { api_key: CLE_GEMINI, content: 'Réponds uniquement : OK' },
+      extraction: { api_key: CLE_LLM, model: 'claude-sonnet-4-6',
+                    content: 'Réponds uniquement par ce JSON strict : {"vu": true}' } });
+    exige('extraction restituée, pas avalée', x.json?.extraction != null,
+          JSON.stringify(x.json?.extraction));
+    exige("… sans erreur d'extraction inventée", !x.json?.extraction_erreur,
+          x.json?.extraction_erreur || 'aucune');
+  }
   exige('le code HTTP suit le corps', e.json?.success === true ? e.statut === 200 : e.statut >= 400, e.statut);
 
   console.log(dur === 0
