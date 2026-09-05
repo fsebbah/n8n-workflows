@@ -186,6 +186,16 @@ r = F({ statusCode: 200, body: { candidates: [{ content: { parts: [{ text: 'bonj
         usageMetadata: { promptTokenCount: 1693, candidatesTokenCount: 2, totalTokenCount: 1788,
           thoughtsTokenCount: 93, promptTokensDetails: [{ modality: 'VIDEO', tokenCount: 1676 }] } } });
 T('succès : transcript rendu', 'bonjour', r.transcript);
+T('model = celui réellement servi', 'm', r.model);
+T('model_requested conservé', 'm', r.model_requested);
+
+// Un alias est résolu par Google en une version concrète : le contrôle de
+// facturation en aval doit voir cette version, pas l'alias qu'il a envoyé.
+const rAlias = F({ statusCode: 200, modelVersion: 'ignoré-au-mauvais-niveau',
+  body: { modelVersion: 'gemini-3.8-flash',
+          candidates: [{ content: { parts: [{ text: 'x' }] } }], usageMetadata: {} } });
+T('alias résolu : model = version servie', 'gemini-3.8-flash', rAlias.model);
+T('alias résolu : demande conservée', 'm', rAlias.model_requested);
 T('reasoning compté dans completion', 95, r.usage.completion_tokens);
 T('jetons vidéo isolés', 1676, r.usage.prompt_tokens_by_modality.video);
 
