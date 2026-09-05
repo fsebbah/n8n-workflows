@@ -137,14 +137,21 @@ for (const wf of ['transcriber', 'youtube']) {
 }
 
 console.log('\n4. MCP - Transcriber : le quatuor est reçu, pas deviné');
-const V = (body, env = { GEMINI_API_KEY: 'CLE-ENV' }) => execCode('transcriber', 'Validate Input', { body }, {}, env);
+// La clé est désormais obligatoire dans le corps : les sondes en fournissent
+// une par défaut. Pour éprouver son absence, passer explicitement api_key: null.
+const V = (body, env = {}) =>
+  execCode('transcriber', 'Validate Input', { body: { api_key: 'CLE-APPEL', ...body } }, {}, env);
 
 let r = V({ videoUrl: 'https://www.youtube.com/watch?v=X' });
 T('provider par défaut', 'google', r.provider);
 T('modèle par défaut vivant', 'gemini-3.6-flash', r.model);
-T('clé reprise de l’environnement', 'CLE-ENV', r.api_key);
+// La clé vient de l'appelant. Un repli sur $env contournerait la facturation
+// de l'api, qui débite sur la clé qu'elle injecte (azy.daily#330).
+T('aucun repli sur l’environnement', false,
+  V({ videoUrl: 'u', api_key: null }, { GEMINI_API_KEY: 'CLE-ENV' }).valide);
 
 r = V({ videoUrl: 'u', provider: 'google', model: 'gemini-3.8-flash', api_key: 'CLE-APPEL' });
+T('la requête est la seule source de clé', 'CLE-APPEL', r.api_key);
 T('modèle relayé tel quel', 'gemini-3.8-flash', r.model);
 T('clé de la requête l’emporte', 'CLE-APPEL', r.api_key);
 
@@ -175,7 +182,9 @@ T('pas de bornage sur du base64', undefined, r.corps.contents[0].parts[0].video_
 
 console.log('\n6. MCP - Transcriber : les refus');
 T('sans vidéo → 400', [false, 400], [V({}).valide, V({}).statut]);
-T('sans clé nulle part → invalide', false, V({ videoUrl: 'u' }, {}).valide);
+T('sans clé → invalide', false, V({ videoUrl: 'u', api_key: null }).valide);
+T('sans clé : erreur explicite', true,
+  /api_key requise/.test(String(V({ videoUrl: 'u', api_key: null }).erreurs)));
 T('provider non-google refusé', false, V({ videoUrl: 'u', provider: 'openai' }).valide);
 
 console.log('\n7. MCP - Transcriber : le vrai statut est lu (#442)');
