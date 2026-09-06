@@ -37,7 +37,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extraire les données du job\nconst input = $input.first().json;\n\nlet verses = [];\nlet body = input;\n\n// Structure webhook standard\nif (input.body && Array.isArray(input.body.verses)) {\n  verses = input.body.verses;\n  body = input.body;\n} else if (Array.isArray(input.verses)) {\n  verses = input.verses;\n} else if (input.body && typeof input.body === 'string') {\n  try {\n    const parsed = JSON.parse(input.body);\n    if (Array.isArray(parsed.verses)) {\n      verses = parsed.verses;\n      body = parsed;\n    }\n  } catch(e) {}\n}\n\n// Extract callback_url and job_id for RFC-040 async pattern\nconst callbackUrl = body.callback_url || input.callback_url || null;\nconst jobId = body.job_id || input.job_id || (callbackUrl ? require('crypto').randomUUID() : null);\n\nreturn [{\n  json: {\n    jobId: jobId,\n    callbackUrl: callbackUrl,\n    project: body.project || input.project,\n    textName: body.text_name || input.text_name,\n    chapter: body.chapter || input.chapter,\n    refFormat: body.ref_format || input.ref_format || 'chapter_verse',\n    targetLanguage: body.target_language || input.target_language || 'fr',\n    apiKey: body.api_key || input.api_key,\n    openaiApiKey: body.openai_api_key || input.openai_api_key,\n    verses: verses,\n    versesCount: verses.length\n  }\n}];"
+        "jsCode": "// `crypto.randomUUID()` est indisponible : le bac a sable interdit require().\n// `$execution.id` est unique par execution (n8n-workflows#476).\nconst nouvelId = () => 'job_' + $execution.id + '_' + Date.now().toString(36);\n// Extraire les données du job\nconst input = $input.first().json;\n\nlet verses = [];\nlet body = input;\n\n// Structure webhook standard\nif (input.body && Array.isArray(input.body.verses)) {\n  verses = input.body.verses;\n  body = input.body;\n} else if (Array.isArray(input.verses)) {\n  verses = input.verses;\n} else if (input.body && typeof input.body === 'string') {\n  try {\n    const parsed = JSON.parse(input.body);\n    if (Array.isArray(parsed.verses)) {\n      verses = parsed.verses;\n      body = parsed;\n    }\n  } catch(e) {}\n}\n\n// Extract callback_url and job_id for RFC-040 async pattern\nconst callbackUrl = body.callback_url || input.callback_url || null;\nconst jobId = body.job_id || input.job_id || (callbackUrl ? nouvelId() : null);\n\nreturn [{\n  json: {\n    jobId: jobId,\n    callbackUrl: callbackUrl,\n    project: body.project || input.project,\n    textName: body.text_name || input.text_name,\n    chapter: body.chapter || input.chapter,\n    refFormat: body.ref_format || input.ref_format || 'chapter_verse',\n    targetLanguage: body.target_language || input.target_language || 'fr',\n    apiKey: body.api_key || input.api_key,\n    openaiApiKey: body.openai_api_key || input.openai_api_key,\n    verses: verses,\n    versesCount: verses.length\n  }\n}];"
       },
       "id": "parse-input",
       "name": "Parse Input",
@@ -492,7 +492,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Prepare error callback payload with HMAC signature (RFC-040)\nconst crypto = require('crypto');\nconst input = $input.first().json;\n\nconst body = {\n  success: false,\n  job_id: input.jobId,\n  status: 'failed',\n  error: input.claudeError || 'Translation failed',\n  translations_saved: input.updatePayload?.translations_saved || 0,\n  completed_at: new Date().toISOString()\n};\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callbackUrl: input.callbackUrl,\n    body: body,\n    signature: signature\n  }\n}];"
+        "jsCode": "// Signature deleguee au noeud Crypto natif qui suit : le bac a sable n8n\n// interdit require('crypto'). Cf. n8n-workflows#476.\n// Prepare error callback payload with HMAC signature (RFC-040)\nconst input = $input.first().json;\n\nconst body = {\n  success: false,\n  job_id: input.jobId,\n  status: 'failed',\n  error: input.claudeError || 'Translation failed',\n  translations_saved: input.updatePayload?.translations_saved || 0,\n  completed_at: new Date().toISOString()\n};\n\nconst corps_json = JSON.stringify(body);\n\nreturn [{\n  json: {\n    callbackUrl: input.callbackUrl,\n    body: body,\n    corps_json: corps_json,\n    rappel_signable: !!$env.N8N_WEBHOOK_SECRET\n  }\n}];"
       },
       "id": "prepare-error-callback",
       "name": "Prepare Error Callback",
@@ -522,7 +522,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "jsonBody": "={{ $json.corps_json }}",
         "options": {
           "timeout": 30000
         }
@@ -584,7 +584,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Prepare success callback payload with HMAC signature (RFC-040)\nconst crypto = require('crypto');\nconst input = $input.first().json;\n\nconst body = {\n  success: true,\n  job_id: input.jobId,\n  status: 'completed',\n  translations_saved: input.totalVerses,\n  project: input.project,\n  text_name: input.textName,\n  chapter: input.chapter,\n  completed_at: new Date().toISOString()\n};\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(body);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callbackUrl: input.callbackUrl,\n    body: body,\n    signature: signature\n  }\n}];"
+        "jsCode": "// Signature deleguee au noeud Crypto natif qui suit : le bac a sable n8n\n// interdit require('crypto'). Cf. n8n-workflows#476.\n// Prepare success callback payload with HMAC signature (RFC-040)\nconst input = $input.first().json;\n\nconst body = {\n  success: true,\n  job_id: input.jobId,\n  status: 'completed',\n  translations_saved: input.totalVerses,\n  project: input.project,\n  text_name: input.textName,\n  chapter: input.chapter,\n  completed_at: new Date().toISOString()\n};\n\nconst corps_json = JSON.stringify(body);\n\nreturn [{\n  json: {\n    callbackUrl: input.callbackUrl,\n    body: body,\n    corps_json: corps_json,\n    rappel_signable: !!$env.N8N_WEBHOOK_SECRET\n  }\n}];"
       },
       "id": "prepare-success-callback",
       "name": "Prepare Success Callback",
@@ -614,7 +614,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "jsonBody": "={{ $json.corps_json }}",
         "options": {
           "timeout": 30000
         }
@@ -639,6 +639,42 @@
         5280,
         304
       ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.corps_json }}",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET }}",
+        "encoding": "hex",
+        "dataPropertyName": "signature"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        5002,
+        248
+      ],
+      "id": "sign-success-callback",
+      "name": "Sign Success Callback"
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.corps_json }}",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET }}",
+        "encoding": "hex",
+        "dataPropertyName": "signature"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        4106,
+        248
+      ],
+      "id": "sign-error-callback",
+      "name": "Sign Error Callback"
     }
   ],
   "connections": {
@@ -927,7 +963,7 @@
       "main": [
         [
           {
-            "node": "Send Error Callback",
+            "node": "Sign Error Callback",
             "type": "main",
             "index": 0
           }
@@ -978,7 +1014,7 @@
       "main": [
         [
           {
-            "node": "Send Success Callback",
+            "node": "Sign Success Callback",
             "type": "main",
             "index": 0
           }
@@ -990,6 +1026,28 @@
         [
           {
             "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Success Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Success Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Error Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Error Callback",
             "type": "main",
             "index": 0
           }

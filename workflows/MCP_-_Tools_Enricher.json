@@ -566,7 +566,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst input = $input.first().json;\n\nconst callbackUrl = input.callbackUrl;\nconst body = input.responseBody;\nconst payload = JSON.stringify(body);\n\n// RFC-040: HMAC signature - sign body only, output hex WITHOUT prefix\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nconsole.log(`[Enricher] Sending callback to ${callbackUrl}`);\n\nreturn [{\n  json: {\n    callbackUrl,\n    payload,\n    signature\n  }\n}];"
+        "jsCode": "// Signature deleguee au noeud Crypto natif qui suit : le bac a sable n8n\n// interdit require('crypto'). Cf. n8n-workflows#476.\nconst input = $input.first().json;\n\nconst callbackUrl = input.callbackUrl;\nconst body = input.responseBody;\nconst corps_json = JSON.stringify(body);\n\nconsole.log(`[Enricher] Sending callback to ${callbackUrl}`);\n\nreturn [{\n  json: {\n    callbackUrl,\n    corps_json,\n    rappel_signable: !!$env.N8N_WEBHOOK_SECRET\n  }\n}];"
       },
       "id": "prepare-callback",
       "name": "Prepare Callback",
@@ -595,11 +595,12 @@
           ]
         },
         "sendBody": true,
-        "specifyBody": "string",
+        "specifyBody": "json",
         "body": "={{ $json.payload }}",
         "options": {
           "timeout": 30000
-        }
+        },
+        "jsonBody": "={{ $json.corps_json }}"
       },
       "id": "send-callback",
       "name": "Send Callback",
@@ -688,6 +689,24 @@
         1392,
         560
       ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.corps_json }}",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET }}",
+        "encoding": "hex",
+        "dataPropertyName": "signature"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        6602,
+        152
+      ],
+      "id": "sign-callback",
+      "name": "Sign Callback"
     }
   ],
   "connections": {
@@ -1023,7 +1042,7 @@
       "main": [
         [
           {
-            "node": "Send Callback",
+            "node": "Sign Callback",
             "type": "main",
             "index": 0
           }
@@ -1046,6 +1065,17 @@
         [
           {
             "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
             "type": "main",
             "index": 0
           }

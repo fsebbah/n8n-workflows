@@ -98,7 +98,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Store callback info for async processing\nconst crypto = require('crypto');\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\n// Generate or use provided job_id\nconst job_id = body.job_id || crypto.randomUUID();\nconst callback_url = body.callback_url;\n\nreturn [{\n  json: {\n    ...input,\n    _callback: {\n      job_id,\n      callback_url\n    }\n  }\n}];"
+        "jsCode": "// `crypto.randomUUID()` est indisponible : le bac a sable interdit require().\n// `$execution.id` est unique par execution (n8n-workflows#476).\nconst nouvelId = () => 'job_' + $execution.id + '_' + Date.now().toString(36);\n// Store callback info for async processing\nconst input = $('Webhook').first().json;\nconst body = input.body || input;\n\n// Generate or use provided job_id\nconst job_id = body.job_id || nouvelId();\nconst callback_url = body.callback_url;\n\nreturn [{\n  json: {\n    ...input,\n    _callback: {\n      job_id,\n      callback_url\n    }\n  }\n}];"
       },
       "id": "store-callback",
       "name": "Store Callback Info",
@@ -412,7 +412,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Compute HMAC signature (RFC-040 format)\nconst crypto = require('crypto');\nconst input = $input.first().json;\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(input.body);\n\n// Sign body only, output hex WITHOUT prefix\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    ...input,\n    signature\n  }\n}];"
+        "jsCode": "// Signature deleguee au noeud Crypto natif qui suit : le bac a sable n8n\n// interdit require('crypto'). Cf. n8n-workflows#476.\n// Compute HMAC signature (RFC-040 format)\nconst input = $input.first().json;\n\nconst corps_json = JSON.stringify(input.body);\n\n// Sign body only, output hex WITHOUT prefix\n\nreturn [{\n  json: {\n    ...input,\n    corps_json,\n    rappel_signable: !!$env.N8N_WEBHOOK_SECRET\n  }\n}];"
       },
       "id": "compute-hmac",
       "name": "Compute HMAC Signature",
@@ -442,7 +442,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ $json.body }}",
+        "jsonBody": "={{ $json.corps_json }}",
         "options": {
           "timeout": 30000
         }
@@ -471,7 +471,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Compute HMAC signature for error callback (RFC-040 format)\nconst crypto = require('crypto');\nconst input = $input.first().json;\n\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(input.body);\n\n// Sign body only, output hex WITHOUT prefix\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    ...input,\n    signature\n  }\n}];"
+        "jsCode": "// Signature deleguee au noeud Crypto natif qui suit : le bac a sable n8n\n// interdit require('crypto'). Cf. n8n-workflows#476.\n// Compute HMAC signature for error callback (RFC-040 format)\nconst input = $input.first().json;\n\nconst corps_json = JSON.stringify(input.body);\n\n// Sign body only, output hex WITHOUT prefix\n\nreturn [{\n  json: {\n    ...input,\n    corps_json,\n    rappel_signable: !!$env.N8N_WEBHOOK_SECRET\n  }\n}];"
       },
       "id": "compute-hmac-error",
       "name": "Compute HMAC Error",
@@ -501,7 +501,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ $json.body }}",
+        "jsonBody": "={{ $json.corps_json }}",
         "options": {
           "timeout": 30000
         }
@@ -514,6 +514,42 @@
         2480,
         360
       ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.corps_json }}",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET }}",
+        "encoding": "hex",
+        "dataPropertyName": "signature"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        2650,
+        176
+      ],
+      "id": "sign-success-callback",
+      "name": "Sign Success Callback"
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.corps_json }}",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET }}",
+        "encoding": "hex",
+        "dataPropertyName": "signature"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        2426,
+        400
+      ],
+      "id": "sign-error-callback",
+      "name": "Sign Error Callback"
     }
   ],
   "connections": {
@@ -765,7 +801,7 @@
       "main": [
         [
           {
-            "node": "Callback Success",
+            "node": "Sign Success Callback",
             "type": "main",
             "index": 0
           }
@@ -784,6 +820,28 @@
       ]
     },
     "Compute HMAC Error": {
+      "main": [
+        [
+          {
+            "node": "Sign Error Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Success Callback": {
+      "main": [
+        [
+          {
+            "node": "Callback Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Error Callback": {
       "main": [
         [
           {

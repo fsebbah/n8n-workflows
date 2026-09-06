@@ -381,7 +381,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "const data = $input.first().json;\nconst ctx = data.context;\n\nconst callback = {\n  job_id: ctx.job_id,\n  success: data.success,\n  result: data.success ? data.data : null,\n  metrics: data.meta || { urls_fetched: data.fetched_urls?.length || 0 },\n  error: data.error || null\n};\n\n// HMAC signature (RFC-040)\nconst crypto = require('crypto');\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callback);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: ctx.callback_url,\n    payload,\n    signature\n  }\n}];"
+        "jsCode": "// Signature deleguee au noeud Crypto natif qui suit : le bac a sable n8n\n// interdit require('crypto'). Cf. n8n-workflows#476.\nconst data = $input.first().json;\nconst ctx = data.context;\n\nconst callback = {\n  job_id: ctx.job_id,\n  success: data.success,\n  result: data.success ? data.data : null,\n  metrics: data.meta || { urls_fetched: data.fetched_urls?.length || 0 },\n  error: data.error || null\n};\n\nconst corps_json = JSON.stringify(callback);\n\nreturn [{\n  json: {\n    callback_url: ctx.callback_url,\n    corps_json,\n    rappel_signable: !!$env.N8N_WEBHOOK_SECRET\n  }\n}];"
       }
     },
     {
@@ -412,7 +412,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ $json.payload }}",
+        "jsonBody": "={{ $json.corps_json }}",
         "options": {
           "timeout": 30000
         }
@@ -466,6 +466,24 @@
         "height": 200,
         "content": "## LLM - URL Extractor (RFC-040)\n\n**Endpoint:** POST /webhook/llm-url-extractor\n\n**Input:** urls[], query, provider, output_schema, callback_url\n\n**Providers:** claude, openai, gemini, mistral\n\n**RFC-040:** If callback_url → 202 + async callback\n\n**Note:** Uses HTTP Request nodes for fetching (not fetch())"
       }
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.corps_json }}",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET }}",
+        "encoding": "hex",
+        "dataPropertyName": "signature"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        3270,
+        240
+      ],
+      "id": "sign-callback",
+      "name": "Sign Callback"
     }
   ],
   "connections": {
@@ -634,6 +652,17 @@
       ]
     },
     "Prepare Callback": {
+      "main": [
+        [
+          {
+            "node": "Sign Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Callback": {
       "main": [
         [
           {
