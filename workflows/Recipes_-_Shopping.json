@@ -29,7 +29,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\nconst action = body.action || 'get';\n\n// Common validation\nif (!body.user_id) {\n  errors.push('Missing required parameter: user_id');\n}\n\n// Action-specific validation\nif (action === 'add') {\n  if (!body.name) {\n    errors.push('Missing required parameter: name');\n  }\n} else if (action === 'add_from_recipe') {\n  if (!body.recipe_id) {\n    errors.push('Missing required parameter: recipe_id');\n  }\n} else if (action === 'check' || action === 'remove') {\n  if (!body.item_id) {\n    errors.push('Missing required parameter: item_id');\n  }\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    action: action,\n    user_id: body.user_id,\n    item_id: body.item_id,\n    recipe_id: body.recipe_id,\n    // Item data\n    name: body.name,\n    quantity: body.quantity,\n    unit: body.unit,\n    category: body.category,\n    is_checked: body.is_checked,\n    // Clear options\n    checked_only: body.checked_only || false,\n    api_base_url: body.api_base_url || process.env.API_BASE_URL || 'http://api.torah.solutions/api'\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\nconst action = body.action || 'get';\n\n// Common validation\nif (!body.user_id) {\n  errors.push('Missing required parameter: user_id');\n}\n\n// Action-specific validation\nif (action === 'add') {\n  if (!body.name) {\n    errors.push('Missing required parameter: name');\n  }\n} else if (action === 'add_from_recipe') {\n  if (!body.recipe_id) {\n    errors.push('Missing required parameter: recipe_id');\n  }\n} else if (action === 'check' || action === 'remove') {\n  if (!body.item_id) {\n    errors.push('Missing required parameter: item_id');\n  }\n}\n\n// L adresse du backend est FOURNIE PAR L APPELANT : ni variable d environnement,\n// ni valeur de repli. Un repli sur une URL de production codee en dur ferait\n// d une panne bruyante une panne silencieuse. Convention du parc : 38 workflows\n// lisent `backend_api_url`. Cf. azy.daily#334.\nconst ctx = body.context || {};\nconst backendApiUrl = (body.backend_api_url && String(body.backend_api_url).trim())\n  || (ctx.backend_api_url && String(ctx.backend_api_url).trim());\nif (!backendApiUrl) {\n  errors.push('Missing required parameter: backend_api_url');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    action: action,\n    user_id: body.user_id,\n    item_id: body.item_id,\n    recipe_id: body.recipe_id,\n    // Item data\n    name: body.name,\n    quantity: body.quantity,\n    unit: body.unit,\n    category: body.category,\n    is_checked: body.is_checked,\n    // Clear options\n    checked_only: body.checked_only || false,\n    backend_api_url: backendApiUrl\n  }\n}];"
       }
     },
     {
@@ -234,7 +234,7 @@
       ],
       "parameters": {
         "method": "GET",
-        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/{{ $('Validate Input').first().json.user_id }}",
+        "url": "={{ $('Validate Input').first().json.backend_api_url }}/api/shopping-list/{{ $('Validate Input').first().json.user_id }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -262,7 +262,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/{{ $('Validate Input').first().json.user_id }}/items",
+        "url": "={{ $('Validate Input').first().json.backend_api_url }}/api/shopping-list/{{ $('Validate Input').first().json.user_id }}/items",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -293,7 +293,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/{{ $('Validate Input').first().json.user_id }}/from-recipe/{{ $('Validate Input').first().json.recipe_id }}",
+        "url": "={{ $('Validate Input').first().json.backend_api_url }}/api/shopping-list/{{ $('Validate Input').first().json.user_id }}/from-recipe/{{ $('Validate Input').first().json.recipe_id }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -321,7 +321,7 @@
       ],
       "parameters": {
         "method": "PUT",
-        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/item/{{ $('Validate Input').first().json.item_id }}",
+        "url": "={{ $('Validate Input').first().json.backend_api_url }}/api/shopping-list/item/{{ $('Validate Input').first().json.item_id }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -352,7 +352,7 @@
       ],
       "parameters": {
         "method": "DELETE",
-        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/item/{{ $('Validate Input').first().json.item_id }}",
+        "url": "={{ $('Validate Input').first().json.backend_api_url }}/api/shopping-list/item/{{ $('Validate Input').first().json.item_id }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -380,7 +380,7 @@
       ],
       "parameters": {
         "method": "DELETE",
-        "url": "={{ $('Validate Input').first().json.api_base_url }}/shopping-list/{{ $('Validate Input').first().json.user_id }}/clear?checked_only={{ $('Validate Input').first().json.checked_only }}",
+        "url": "={{ $('Validate Input').first().json.backend_api_url }}/api/shopping-list/{{ $('Validate Input').first().json.user_id }}/clear?checked_only={{ $('Validate Input').first().json.checked_only }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {

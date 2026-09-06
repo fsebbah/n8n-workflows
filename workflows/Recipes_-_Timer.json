@@ -29,7 +29,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\nconst action = body.action || 'create';\n\n// Common validation\nif (!body.user_id) {\n  errors.push('Missing required parameter: user_id');\n}\n\n// Action-specific validation\nif (action === 'create') {\n  // discord_channel_id is optional (used for tracking, not required for DM notifications)\n  if (!body.label) {\n    errors.push('Missing required parameter: label');\n  }\n  if (!body.duration_minutes) {\n    errors.push('Missing required parameter: duration_minutes');\n  } else if (body.duration_minutes < 1 || body.duration_minutes > 1440) {\n    errors.push('duration_minutes must be between 1 and 1440 (24h max)');\n  }\n} else if (action === 'cancel') {\n  if (!body.timer_id) {\n    errors.push('Missing required parameter: timer_id');\n  }\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    action: action,\n    user_id: body.user_id,\n    discord_channel_id: body.discord_channel_id || null,  // Optional - for tracking\n    timer_id: body.timer_id,\n    label: body.label,\n    duration_minutes: body.duration_minutes,\n    recipe_id: body.recipe_id,\n    recipe_title: body.recipe_title,\n    status_filter: body.status || 'active',\n    api_base_url: body.api_base_url || process.env.API_BASE_URL || 'http://api.torah.solutions/api'\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst errors = [];\nconst action = body.action || 'create';\n\n// Common validation\nif (!body.user_id) {\n  errors.push('Missing required parameter: user_id');\n}\n\n// Action-specific validation\nif (action === 'create') {\n  // discord_channel_id is optional (used for tracking, not required for DM notifications)\n  if (!body.label) {\n    errors.push('Missing required parameter: label');\n  }\n  if (!body.duration_minutes) {\n    errors.push('Missing required parameter: duration_minutes');\n  } else if (body.duration_minutes < 1 || body.duration_minutes > 1440) {\n    errors.push('duration_minutes must be between 1 and 1440 (24h max)');\n  }\n} else if (action === 'cancel') {\n  if (!body.timer_id) {\n    errors.push('Missing required parameter: timer_id');\n  }\n}\n\n// L adresse du backend est FOURNIE PAR L APPELANT : ni variable d environnement,\n// ni valeur de repli. Un repli sur une URL de production codee en dur ferait\n// d une panne bruyante une panne silencieuse. Convention du parc : 38 workflows\n// lisent `backend_api_url`. Cf. azy.daily#334.\nconst ctx = body.context || {};\nconst backendApiUrl = (body.backend_api_url && String(body.backend_api_url).trim())\n  || (ctx.backend_api_url && String(ctx.backend_api_url).trim());\nif (!backendApiUrl) {\n  errors.push('Missing required parameter: backend_api_url');\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: {\n        code: 400,\n        message: errors.join(', '),\n        status: 'BAD_REQUEST'\n      }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    action: action,\n    user_id: body.user_id,\n    discord_channel_id: body.discord_channel_id || null,  // Optional - for tracking\n    timer_id: body.timer_id,\n    label: body.label,\n    duration_minutes: body.duration_minutes,\n    recipe_id: body.recipe_id,\n    recipe_title: body.recipe_title,\n    status_filter: body.status || 'active',\n    backend_api_url: backendApiUrl\n  }\n}];"
       }
     },
     {
@@ -171,7 +171,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "={{ $('Validate Input').first().json.api_base_url }}/recipes/timer",
+        "url": "={{ $('Validate Input').first().json.backend_api_url }}/api/recipes/timer",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -202,7 +202,7 @@
       ],
       "parameters": {
         "method": "GET",
-        "url": "={{ $('Validate Input').first().json.api_base_url }}/recipes/timers/{{ $('Validate Input').first().json.user_id }}?status={{ $('Validate Input').first().json.status_filter }}",
+        "url": "={{ $('Validate Input').first().json.backend_api_url }}/api/recipes/timers/{{ $('Validate Input').first().json.user_id }}?status={{ $('Validate Input').first().json.status_filter }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -230,7 +230,7 @@
       ],
       "parameters": {
         "method": "DELETE",
-        "url": "={{ $('Validate Input').first().json.api_base_url }}/recipes/timer/{{ $('Validate Input').first().json.timer_id }}",
+        "url": "={{ $('Validate Input').first().json.backend_api_url }}/api/recipes/timer/{{ $('Validate Input').first().json.timer_id }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
