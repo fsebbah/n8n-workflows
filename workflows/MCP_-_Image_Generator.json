@@ -108,7 +108,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst webhookData = $input.first().json;\n\n// Generate or use provided job_id\nconst job_id = webhookData.body.job_id || crypto.randomUUID();\nconst callback_url = webhookData.body.callback_url;\n\nreturn [{\n  json: {\n    ...webhookData,\n    job_context: {\n      job_id: job_id,\n      callback_url: callback_url,\n      started_at: new Date().toISOString()\n    }\n  }\n}];"
+        "jsCode": "// `crypto.randomUUID()` est indisponible : le bac a sable interdit require().\n// `$execution.id` est unique par execution (n8n-workflows#476).\nconst nouvelId = () => 'job_' + $execution.id + '_' + Date.now().toString(36);\nconst webhookData = $input.first().json;\n\n// Generate or use provided job_id\nconst job_id = webhookData.body.job_id || nouvelId();\nconst callback_url = webhookData.body.callback_url;\n\nreturn [{\n  json: {\n    ...webhookData,\n    job_context: {\n      job_id: job_id,\n      callback_url: callback_url,\n      started_at: new Date().toISOString()\n    }\n  }\n}];"
       }
     },
     {
@@ -186,7 +186,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\n\n// Extract callback URL from job context\nconst callback_url = item.job_context.callback_url;\n\n// Prepare the callback body (without job_context internal data)\nconst callbackBody = {\n  success: item.success,\n  job_id: item.job_id,\n  status: item.status,\n  data: item.data,\n  meta: item.meta\n};\n\nif (item.error) {\n  callbackBody.error = item.error;\n}\n\n// Generate HMAC signature (RFC-040 format)\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callbackBody);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: callback_url,\n    callback_body: callbackBody,\n    signature: signature\n  }\n}];"
+        "jsCode": "// Signature deleguee au noeud Crypto natif qui suit : le bac a sable n8n\n// interdit require('crypto'). Cf. n8n-workflows#476.\nconst item = $input.first().json;\n\n// Extract callback URL from job context\nconst callback_url = item.job_context.callback_url;\n\n// Prepare the callback body (without job_context internal data)\nconst callbackBody = {\n  success: item.success,\n  job_id: item.job_id,\n  status: item.status,\n  data: item.data,\n  meta: item.meta\n};\n\nif (item.error) {\n  callbackBody.error = item.error;\n}\n\n// Generate HMAC signature (RFC-040 format)\nconst corps_json = JSON.stringify(callbackBody);\n\nreturn [{\n  json: {\n    callback_url: callback_url,\n    callback_body: callbackBody,\n    corps_json: corps_json,\n    rappel_signable: !!$env.N8N_WEBHOOK_SECRET\n  }\n}];"
       }
     },
     {
@@ -217,7 +217,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.callback_body) }}",
+        "jsonBody": "={{ $json.corps_json }}",
         "options": {
           "timeout": 30000
         }
@@ -334,6 +334,24 @@
         "height": 80,
         "content": "## Sync Flow (Retrocompatibility)\nWithout callback_url: Processes and responds synchronously as before."
       }
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.corps_json }}",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET }}",
+        "encoding": "hex",
+        "dataPropertyName": "signature"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        1990,
+        240
+      ],
+      "id": "sign-callback",
+      "name": "Sign Callback"
     }
   ],
   "connections": {
@@ -432,7 +450,7 @@
       "main": [
         [
           {
-            "node": "Send Callback",
+            "node": "Sign Callback",
             "type": "main",
             "index": 0
           }
@@ -455,6 +473,17 @@
         [
           {
             "node": "Respond (Sync)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
             "type": "main",
             "index": 0
           }

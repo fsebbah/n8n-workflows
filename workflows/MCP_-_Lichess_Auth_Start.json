@@ -21,7 +21,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $input.first().json.body || {};\n\nconst tenant_id = body.tenant_id;\nconst user_id = body.user_id;\nconst redirect_uri = body.redirect_uri || $env.LICHESS_REDIRECT_URI;\n\n// Validation\nconst errors = [];\nif (!tenant_id) errors.push('tenant_id requis');\nif (!user_id) errors.push('user_id requis');\nif (!redirect_uri) errors.push('redirect_uri requis (ou configurer LICHESS_REDIRECT_URI)');\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  };\n}\n\n// Generate state token (includes user_id + tenant_id for callback)\nconst state = Buffer.from(JSON.stringify({\n  tenant_id,\n  user_id,\n  ts: Date.now(),\n  nonce: Math.random().toString(36).substring(2, 15)\n})).toString('base64url');\n\n// PKCE: Generate code_verifier and code_challenge\nconst crypto = require('crypto');\nconst code_verifier = crypto.randomBytes(32).toString('base64url');\nconst code_challenge = crypto\n  .createHash('sha256')\n  .update(code_verifier)\n  .digest('base64url');\n\n// Lichess OAuth scopes\nconst scopes = [\n  'preference:read',\n  'challenge:read',\n  'challenge:write', \n  'puzzle:read',\n  'team:read',\n  'board:play'\n].join(' ');\n\nreturn {\n  json: {\n    valid: true,\n    tenant_id,\n    user_id,\n    redirect_uri,\n    state,\n    code_verifier,\n    code_challenge,\n    scopes\n  }\n};"
+        "jsCode": "// ── base64url en JS pur : ni Buffer, ni btoa/atob (interdits par le bac a sable) ──\nconst A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';\nconst enUtf8 = (s) => {\n  const o = [];\n  for (let i = 0; i < s.length; i++) {\n    let c = s.charCodeAt(i);\n    if (c < 0x80) o.push(c);\n    else if (c < 0x800) o.push(0xc0 | (c >> 6), 0x80 | (c & 63));\n    else if (c >= 0xd800 && c < 0xdc00) {\n      c = 0x10000 + ((c - 0xd800) << 10) + (s.charCodeAt(++i) - 0xdc00);\n      o.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));\n    } else o.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));\n  }\n  return o;\n};\nconst deUtf8 = (o) => {\n  let out = '';\n  for (let i = 0; i < o.length; ) {\n    const c = o[i++];\n    if (c < 0x80) out += String.fromCharCode(c);\n    else if (c < 0xe0) out += String.fromCharCode(((c & 31) << 6) | (o[i++] & 63));\n    else if (c < 0xf0) out += String.fromCharCode(((c & 15) << 12) | ((o[i++] & 63) << 6) | (o[i++] & 63));\n    else {\n      const v = (((c & 7) << 18) | ((o[i++] & 63) << 12) | ((o[i++] & 63) << 6) | (o[i++] & 63)) - 0x10000;\n      out += String.fromCharCode(0xd800 + (v >> 10), 0xdc00 + (v & 1023));\n    }\n  }\n  return out;\n};\nconst b64urlEncode = (texte) => {\n  const b = enUtf8(texte);\n  let out = '';\n  for (let i = 0; i < b.length; i += 3) {\n    const n = (b[i] << 16) | ((b[i + 1] || 0) << 8) | (b[i + 2] || 0);\n    out += A[(n >> 18) & 63] + A[(n >> 12) & 63];\n    if (i + 1 < b.length) out += A[(n >> 6) & 63];\n    if (i + 2 < b.length) out += A[n & 63];\n  }\n  return out;\n};\nconst b64urlDecode = (s) => {\n  const o = [];\n  for (let i = 0; i < s.length; i += 4) {\n    const a = A.indexOf(s[i]), b = A.indexOf(s[i + 1]);\n    const c = A.indexOf(s[i + 2]), d = A.indexOf(s[i + 3]);\n    if (a < 0 || b < 0) throw new Error('base64url invalide');\n    const n = (a << 18) | (b << 12) | ((c < 0 ? 0 : c) << 6) | (d < 0 ? 0 : d);\n    o.push((n >> 16) & 255);\n    if (c >= 0) o.push((n >> 8) & 255);\n    if (d >= 0) o.push(n & 255);\n  }\n  return deUtf8(o);\n};\n\nconst body = $input.first().json.body || {};\n\nconst tenant_id = body.tenant_id;\nconst user_id = body.user_id;\nconst redirect_uri = body.redirect_uri || $env.LICHESS_REDIRECT_URI;\n\n// Validation\nconst errors = [];\nif (!tenant_id) errors.push('tenant_id requis');\nif (!user_id) errors.push('user_id requis');\nif (!redirect_uri) errors.push('redirect_uri requis (ou configurer LICHESS_REDIRECT_URI)');\n\nif (errors.length > 0) {\n  return {\n    json: {\n      valid: false,\n      error: { code: 400, message: errors.join(', '), status: 'BAD_REQUEST' }\n    }\n  };\n}\n\n// Jeton `state` : meme format base64url qu avant, mais sans Buffer (interdit\n// par le bac a sable). MCP - Lichess Auth Callback le relit avec le decodeur\n// jumeau. Cf. n8n-workflows#476.\nconst state = b64urlEncode(JSON.stringify({\n  tenant_id,\n  user_id,\n  ts: Date.now(),\n  nonce: Math.random().toString(36).substring(2, 15)\n}));\n\n// PKCE : le code_verifier est engendre par le noeud Crypto « Generate Verifier »\n// (crypto.randomBytes cote n8n), et son challenge par « Hash Challenge ».\n// require('crypto') est indisponible ici.\n\n// Lichess OAuth scopes\nconst scopes = [\n  'preference:read',\n  'challenge:read',\n  'challenge:write', \n  'puzzle:read',\n  'team:read',\n  'board:play'\n].join(' ');\n\nreturn {\n  json: {\n    valid: true,\n    tenant_id,\n    user_id,\n    redirect_uri,\n    state,\n    scopes\n  }\n};"
       },
       "id": "validate-and-prepare",
       "name": "Validate & Prepare",
@@ -185,6 +185,52 @@
         60,
         40
       ]
+    },
+    {
+      "parameters": {
+        "action": "generate",
+        "encodingType": "hex",
+        "stringLength": 32,
+        "dataPropertyName": "code_verifier"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        830,
+        420
+      ],
+      "id": "generate-verifier",
+      "name": "Generate Verifier"
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "type": "SHA256",
+        "value": "={{ $json.code_verifier }}",
+        "encoding": "base64",
+        "dataPropertyName": "code_challenge_b64"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        420
+      ],
+      "id": "hash-challenge",
+      "name": "Hash Challenge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// PKCE S256 exige du base64url. Le noeud Crypto rend du base64 standard :\n// on convertit par simples substitutions de caracteres, sans Buffer.\nconst j = $input.first().json;\nconst code_challenge = String(j.code_challenge_b64 || '')\n  .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');\nreturn [{ json: { ...j, code_challenge } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1170,
+        420
+      ],
+      "id": "finalise-pkce",
+      "name": "Finalise PKCE"
     }
   ],
   "connections": {
@@ -214,7 +260,7 @@
       "main": [
         [
           {
-            "node": "Store Pending Auth",
+            "node": "Generate Verifier",
             "type": "main",
             "index": 0
           }
@@ -244,6 +290,39 @@
         [
           {
             "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Verifier": {
+      "main": [
+        [
+          {
+            "node": "Hash Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash Challenge": {
+      "main": [
+        [
+          {
+            "node": "Finalise PKCE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalise PKCE": {
+      "main": [
+        [
+          {
+            "node": "Store Pending Auth",
             "type": "main",
             "index": 0
           }

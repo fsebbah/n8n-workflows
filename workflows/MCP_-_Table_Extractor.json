@@ -108,7 +108,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "const webhookData = $('Webhook').first().json;\nconst crypto = require('crypto');\n\n// Generate or use provided job_id\nconst job_id = webhookData.body.job_id || crypto.randomUUID();\nconst callback_url = webhookData.body.callback_url;\n\nreturn [{\n  json: {\n    ...webhookData,\n    _async: {\n      job_id,\n      callback_url,\n      started_at: new Date().toISOString()\n    }\n  }\n}];"
+        "jsCode": "// `crypto.randomUUID()` est indisponible : le bac a sable interdit require().\n// `$execution.id` est unique par execution (n8n-workflows#476).\nconst nouvelId = () => 'job_' + $execution.id + '_' + Date.now().toString(36);\nconst webhookData = $('Webhook').first().json;\n\n// Generate or use provided job_id\nconst job_id = webhookData.body.job_id || nouvelId();\nconst callback_url = webhookData.body.callback_url;\n\nreturn [{\n  json: {\n    ...webhookData,\n    _async: {\n      job_id,\n      callback_url,\n      started_at: new Date().toISOString()\n    }\n  }\n}];"
       }
     },
     {
@@ -186,7 +186,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst item = $input.first();\nconst asyncContext = item.json._async;\n\n// Prepare callback body (without _async internal data)\nconst callbackBody = { ...item.json };\ndelete callbackBody._async;\n\n// Generate HMAC signature\nconst secret = $env.N8N_WEBHOOK_SECRET || 'default-secret';\nconst payload = JSON.stringify(callbackBody);\nconst signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nreturn [{\n  json: {\n    callback_url: asyncContext.callback_url,\n    callback_body: callbackBody,\n    signature: signature\n  }\n}];"
+        "jsCode": "// Signature deleguee au noeud Crypto natif qui suit : le bac a sable n8n\n// interdit require('crypto'). Cf. n8n-workflows#476.\nconst item = $input.first();\nconst asyncContext = item.json._async;\n\n// Prepare callback body (without _async internal data)\nconst callbackBody = { ...item.json };\ndelete callbackBody._async;\n\n// Generate HMAC signature\nconst corps_json = JSON.stringify(callbackBody);\n\nreturn [{\n  json: {\n    callback_url: asyncContext.callback_url,\n    callback_body: callbackBody,\n    corps_json: corps_json,\n    rappel_signable: !!$env.N8N_WEBHOOK_SECRET\n  }\n}];"
       }
     },
     {
@@ -217,7 +217,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ $json.callback_body }}",
+        "jsonBody": "={{ $json.corps_json }}",
         "options": {
           "timeout": 30000
         }
@@ -318,6 +318,24 @@
         "height": 160,
         "content": "## Async Callback Flow (RFC-040)\n\n1. Store job_id & callback_url\n2. Respond 202 Accepted immediately\n3. Process OCR in background\n4. POST result to callback_url with HMAC signature"
       }
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.corps_json }}",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET }}",
+        "encoding": "hex",
+        "dataPropertyName": "signature"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        1950,
+        240
+      ],
+      "id": "sign-callback",
+      "name": "Sign Callback"
     }
   ],
   "connections": {
@@ -416,7 +434,7 @@
       "main": [
         [
           {
-            "node": "Send Callback",
+            "node": "Sign Callback",
             "type": "main",
             "index": 0
           }
@@ -439,6 +457,17 @@
         [
           {
             "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
             "type": "main",
             "index": 0
           }
