@@ -58,6 +58,26 @@ let r = N('Normalize Gemini', { candidates: [{ content: { parts: [] } }] });
 T('Gemini : réponse vide refusée', false, r.normalized);
 T('… avec un statut explicite', 502, r.http_status);
 
+console.log('\n2 bis. ⚠️ Normalize OpenAI lit la forme /v1/responses');
+// Le nœud appelle /v1/responses, qui rend `output[]`. Le normalisateur lisait
+// `choices[0].message` — la forme de chat/completions. D'où un texte vide, donc
+// un succès à contenu vide avant la garde. Forme mesurée le 2026-09-08.
+const REP = { output: [{ type: 'web_search_call' }, { type: 'message', content: [
+  { type: 'output_text', text: 'REPONSE', annotations: [
+    { type: 'url_citation', url: 'https://exemple.org/a', title: 'A' },
+    { type: 'url_citation', url: 'https://exemple.org/b', title: 'B' }] }] }],
+  usage: { input_tokens: 7843, output_tokens: 136, total_tokens: 7979 } };
+let ro = N('Normalize OpenAI', REP);
+T('texte extrait de output[]', 'REPONSE', ro.content);
+T('sources extraites des annotations', 2, (ro.sources || []).length);
+T('usage lu en input_tokens', 7843, ro.usage?.input_tokens);
+// ⚠️ `output_text` n'existe PAS dans la réponse : il faut parcourir output[].
+T('ne dépend pas de output_text', true, !JSON.stringify(REP).includes('"output_text":"'));
+// la forme chat/completions reste tolérée
+ro = N('Normalize OpenAI', { choices: [{ message: { content: 'X', annotations: [] } }],
+  usage: { prompt_tokens: 5, completion_tokens: 2 } });
+T('forme chat/completions encore lue', ['X', 5], [ro.content, ro.usage?.input_tokens]);
+
 console.log('\n3. le cas nominal passe toujours');
 r = N('Normalize Gemini', { candidates: [{ content: { parts: [{ text: 'Paris' }] },
       groundingMetadata: { groundingChunks: [] } }], usageMetadata: { promptTokenCount: 3 } });
