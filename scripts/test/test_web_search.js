@@ -82,7 +82,22 @@ for (const m of ['gemini-2.5-flash', 'gpt-4o-search-preview', 'gpt-4o-mini-searc
   T(`${m} absent`, false, livre.includes(m));
 }
 T('gemini-3.6-flash présent', true, livre.includes('gemini-3.6-flash'));
-T('gpt-5.4 présent', true, livre.includes('gpt-5.4'));
+T('gpt-5.6-terra présent', true, livre.includes('gpt-5.6-terra'));
+T('gpt-5.6-luna présent (variante économique)', true, livre.includes('gpt-5.6-luna'));
+// gpt-5.4 fut mon premier remplaçant ; le PO a désigné gpt-5.6-terra.
+T('gpt-5.4 remplacé', false, livre.includes('gpt-5.4'));
+
+console.log('\n5 bis. ⚠️ le corps OpenAI a la forme MESURÉE valide');
+// Mesuré le 2026-09-08 : `tool_choice.search_context_size` rend 400
+// « Unknown parameter ». Le paramètre appartient à la DÉFINITION de l'outil.
+// Le remplacement de modèle seul n'aurait rien réparé : la branche serait
+// passée d'un 404 à un 400.
+const bo = nd('OpenAI Web Search').parameters.jsonBody;
+T('search_context_size dans l’outil', true,
+  /"type":\s*"web_search",\s*"search_context_size"/.test(bo));
+T('… et PAS dans tool_choice', false, /tool_choice[^}]*search_context_size/.test(bo));
+T('le forçage de l’outil est conservé', true, /"tool_choice":\s*\{\s*"type":\s*"web_search"\s*\}/.test(bo));
+T('modèles mesurés fonctionnels', true, bo.includes('gpt-5.6-terra') && bo.includes('gpt-5.6-luna'));
 
 console.log('\n6. les outils de recherche portent leur nom actuel');
 const so = JSON.stringify(nd('OpenAI Web Search').parameters);
