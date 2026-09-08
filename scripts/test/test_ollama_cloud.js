@@ -106,5 +106,41 @@ T('bloc image_url traversé intact', img, b.messages[0].content[1]);
 b = corpsDe({ model: 'm', max_tokens: 8, messages: [] });
 T('temperature omise si absente', false, 'temperature' in b);
 
+console.log('\n7. ⚠️ Format Ollama exécuté — la structure ne suffisait pas');
+// Ces contrôles sont nés d'un faux succès mesuré en production le 2026-09-08 :
+// une clé volontairement fausse rendait success:true. Les 29 contrôles
+// précédents vérifiaient l'URL, le câblage et les étiquettes — aucun n'avait
+// jamais FAIT TOURNER le formateur sur une réponse en erreur.
+const F = (enveloppe) => vm.runInNewContext(
+  `(function(){${nd('Format Ollama').parameters.jsCode}})()`, {
+    $input: { first: () => ({ json: enveloppe }) },
+    $: () => ({ first: () => ({ json: { model: 'gemma4:31b', startTime: Date.now(), metadata: {} } }) }),
+    JSON, String, Number, Object, Array, Date, Math, parseInt, parseFloat, isNaN, Error, RegExp,
+  }, { timeout: 5000 });
+
+let r = F({ statusCode: 401, body: { error: { message: 'Unauthorized' } } });
+T('401 → échec, pas succès', false, r.success);
+T('401 → statut relayé', 401, r.error.http_status);
+T('401 → étiquette conservée', 'ollama-cloud', r._trace.provider);
+
+r = F({ statusCode: 404, body: { error: { message: 'model not found' } } });
+T('404 → statut relayé', 404, r.error.http_status);
+
+r = F({ statusCode: 200, body: { choices: [{ message: { content: 'bonjour' }, finish_reason: 'stop' }],
+        model: 'gemma4:31b', usage: { prompt_tokens: 3, completion_tokens: 2 } } });
+T('200 avec texte → succès', true, r.success);
+T('… texte rendu', 'bonjour', r.data.text);
+T('… modèle réellement servi', 'gemma4:31b', r.meta.model);
+T('… étiquette ollama-cloud', 'ollama-cloud', r.meta.provider);
+
+r = F({ statusCode: 200, body: { choices: [] } });
+T('200 sans texte → échec explicite', [false, 502], [r.success, r.error.http_status]);
+
+// panne de transport : onError attrape, aucun statusCode n'est émis
+r = F({ error: { message: 'Request failed with status code 429 - {"e":1}' } });
+T('statut lu dans le message quand absent', 429, r.error.http_status);
+r = F({ error: { message: 'socket hang up' } });
+T('panne de transport → 502', 502, r.error.http_status);
+
 console.log(`\n${ko === 0 ? '✅ tous les contrôles passent' : `❌ ${ko} contrôle(s) en échec`}  (${ok}/${ok + ko})`);
 process.exit(ko === 0 ? 0 : 1);
