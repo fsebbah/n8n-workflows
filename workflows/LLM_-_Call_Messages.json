@@ -37,7 +37,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - LLM Call Messages (BYOT)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: provider ---\nconst provider = (body.provider || ctx.provider || '').toLowerCase();\nconst validProviders = ['anthropic', 'openai', 'mistral', 'google'];\nif (!provider) {\n  errors.push('provider requis (anthropic, openai, mistral, google)');\n} else if (!validProviders.includes(provider)) {\n  errors.push(`provider invalide: ${provider} (doit etre: ${validProviders.join(', ')})`);\n}\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model;\nif (!model || typeof model !== 'string' || model.trim().length === 0) {\n  errors.push('model requis (ex: claude-haiku-4-5-20251001, gpt-4o)');\n}\n\n// --- REQUIRED: api_key (BYOT - NO FALLBACK) ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length === 0) {\n  errors.push('api_key requis (BYOT pattern - aucun fallback sur env)');\n}\n\n// --- REQUIRED: messages ---\nconst messages = body.messages || ctx.messages;\nif (!messages || !Array.isArray(messages) || messages.length === 0) {\n  errors.push('messages requis (array non vide)');\n}\n\n// --- Optional: system prompt ---\nconst system = body.system || ctx.system || null;\n\n// --- Optional: max_tokens ---\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 4096);\nif (isNaN(maxTokens) || maxTokens < 1 || maxTokens > 200000) {\n  errors.push('max_tokens doit etre entre 1 et 200000');\n}\n\n// --- Optional: temperature ---\nconst temperature = parseFloat(body.temperature ?? ctx.temperature ?? 0.7);\nif (isNaN(temperature) || temperature < 0 || temperature > 2) {\n  errors.push('temperature doit etre entre 0 et 2');\n}\n\n// --- Passthrough metadata ---\nconst metadata = body.metadata || ctx.metadata || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    metadata: metadata\n  };\n}\n\n// Les modèles de raisonnement d'OpenAI n'acceptent ni `max_tokens` ni une\n// `temperature` autre que 1 (azy.daily#276).\n//\n// L'appelant peut le DIRE, et sa parole prime : le catalogue connaît la capacité\n// du modèle, nous la devinons. Deviner sur l'identifiant est un pis-aller qui\n// rate ce qu'il ne reconnaît pas — remonté par l'équipe mobile.\n//\n// Le repli par motif ne couvre QUE le nommage d'OpenAI, et volontairement :\n// Gemini accepte `temperature` sur ses modèles à raisonnement, Anthropic aussi\n// tant que `thinking` n'est pas activé. Étendre la garde aux autres providers\n// leur retirerait des paramètres qui fonctionnent.\nconst MODELE_RAISONNEMENT = /^(?:openai\\/)?(?:chat)?gpt-5|^(?:openai\\/)?o[1-9]/i;\nconst raisonnement = body.reasoning ?? ctx.reasoning ??\n  (provider === 'openai' && MODELE_RAISONNEMENT.test((model || '').trim()));\n\nreturn {\n  valid: true,\n  provider: provider,\n  model: model.trim(),\n  raisonnement: raisonnement,\n  api_key: apiKey.trim(),\n  system: system,\n  messages: messages,\n  max_tokens: maxTokens,\n  temperature: temperature,\n  metadata: metadata,\n  startTime: Date.now()\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - LLM Call Messages (BYOT)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: provider ---\nconst provider = (body.provider || ctx.provider || '').toLowerCase();\nconst validProviders = ['anthropic', 'openai', 'mistral', 'google', 'ollama-cloud'];\nif (!provider) {\n  errors.push('provider requis (anthropic, openai, mistral, google)');\n} else if (!validProviders.includes(provider)) {\n  errors.push(`provider invalide: ${provider} (doit etre: ${validProviders.join(', ')})`);\n}\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model;\nif (!model || typeof model !== 'string' || model.trim().length === 0) {\n  errors.push('model requis (ex: claude-haiku-4-5-20251001, gpt-4o)');\n}\n\n// --- REQUIRED: api_key (BYOT - NO FALLBACK) ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length === 0) {\n  errors.push('api_key requis (BYOT pattern - aucun fallback sur env)');\n}\n\n// --- REQUIRED: messages ---\nconst messages = body.messages || ctx.messages;\nif (!messages || !Array.isArray(messages) || messages.length === 0) {\n  errors.push('messages requis (array non vide)');\n}\n\n// --- Optional: system prompt ---\nconst system = body.system || ctx.system || null;\n\n// --- Optional: max_tokens ---\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 4096);\nif (isNaN(maxTokens) || maxTokens < 1 || maxTokens > 200000) {\n  errors.push('max_tokens doit etre entre 1 et 200000');\n}\n\n// --- Optional: temperature ---\nconst temperature = parseFloat(body.temperature ?? ctx.temperature ?? 0.7);\nif (isNaN(temperature) || temperature < 0 || temperature > 2) {\n  errors.push('temperature doit etre entre 0 et 2');\n}\n\n// --- Passthrough metadata ---\nconst metadata = body.metadata || ctx.metadata || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    metadata: metadata\n  };\n}\n\n// Les modèles de raisonnement d'OpenAI n'acceptent ni `max_tokens` ni une\n// `temperature` autre que 1 (azy.daily#276).\n//\n// L'appelant peut le DIRE, et sa parole prime : le catalogue connaît la capacité\n// du modèle, nous la devinons. Deviner sur l'identifiant est un pis-aller qui\n// rate ce qu'il ne reconnaît pas — remonté par l'équipe mobile.\n//\n// Le repli par motif ne couvre QUE le nommage d'OpenAI, et volontairement :\n// Gemini accepte `temperature` sur ses modèles à raisonnement, Anthropic aussi\n// tant que `thinking` n'est pas activé. Étendre la garde aux autres providers\n// leur retirerait des paramètres qui fonctionnent.\nconst MODELE_RAISONNEMENT = /^(?:openai\\/)?(?:chat)?gpt-5|^(?:openai\\/)?o[1-9]/i;\nconst raisonnement = body.reasoning ?? ctx.reasoning ??\n  (provider === 'openai' && MODELE_RAISONNEMENT.test((model || '').trim()));\n\nreturn {\n  valid: true,\n  provider: provider,\n  model: model.trim(),\n  raisonnement: raisonnement,\n  api_key: apiKey.trim(),\n  system: system,\n  messages: messages,\n  max_tokens: maxTokens,\n  temperature: temperature,\n  metadata: metadata,\n  startTime: Date.now()\n};"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -209,6 +209,28 @@
               },
               "renameOutput": true,
               "outputKey": "google"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.provider }}",
+                    "rightValue": "ollama-cloud",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ollama-cloud"
             }
           ]
         },
@@ -450,6 +472,60 @@
         1392,
         420
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ollama.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => { const d = $json; const msgs = []; if (d.system) msgs.push({ role: 'system', content: d.system }); msgs.push(...(d.messages || [])); const c = { model: d.model, messages: msgs, max_tokens: d.max_tokens }; if (d.temperature !== undefined && d.temperature !== null) c.temperature = d.temperature; return c; })()) }}",
+        "options": {
+          "timeout": 300000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        560
+      ],
+      "id": "ollama-cloud-api",
+      "name": "Ollama Cloud API",
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Ollama Cloud sert la surface compatible OpenAI ; la reponse a donc la meme\n// forme. Mais l ETIQUETTE reste `ollama-cloud` de bout en bout : `openai`\n// ferait compter l audit au prix d OpenAI (azy.daily#340).\n// ============================================\n// FORMAT OPENAI RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\n\n// Handle error response\nif (input.error) {\n  // Le statut réel n'était pas remonté : un 400 « paramètre non supporté »\n  // ressortait en 500, et l'appelant cherchait une panne serveur pour une\n  // requête malformée (azy.daily#276, même famille que n8n-workflows#442).\n  // Avec onError=continueRegularOutput, statusCode est absent et le statut est\n  // enfoui dans le message sous la forme « 400 - {...} ».\n  let statut = input.statusCode;\n  if (statut === undefined) {\n    const brut = String(input.error.message || input.message || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    statut = m ? parseInt(m[1], 10) : 502;\n  }\n  return {\n    success: false,\n    error: {\n      code: input.error.code || 'OPENAI_ERROR',\n      message: input.error.message || 'OpenAI API error',\n      http_status: statut\n    },\n    metadata: prevData.metadata,\n    _trace: {\n      llm_response: null,\n      service_response: input,\n      provider: 'ollama-cloud',\n      model: prevData.model,\n      tokens: { input: 0, output: 0 },\n      latency_ms: latencyMs\n    }\n  };\n}\n\nconst text = input.choices?.[0]?.message?.content || '';\nconst finishReason = input.choices?.[0]?.finish_reason || 'stop';\nconst modelUsed = input.model || prevData.model;\n\nreturn {\n  success: true,\n  data: {\n    text: text,\n    model: modelUsed,\n    finish_reason: finishReason\n  },\n  meta: {\n    provider: 'ollama-cloud',\n    model: modelUsed,\n    usage: {\n      prompt_tokens: input.usage?.prompt_tokens || 0,\n      completion_tokens: input.usage?.completion_tokens || 0,\n      total_tokens: input.usage?.total_tokens || 0,\n      // OpenAI place le cache dans `prompt_tokens_details.cached_tokens`, et les\n      // jetons de raisonnement sont DÉJÀ compris dans completion_tokens — le\n      // détail est fourni en supplément, jamais en remplacement (azy.daily#287).\n      cache_read_input_tokens: input.usage?.prompt_tokens_details?.cached_tokens || 0,\n      cache_creation_input_tokens: 0,\n      reasoning_tokens: input.usage?.completion_tokens_details?.reasoning_tokens || 0\n    }\n  },\n  metadata: prevData.metadata,\n  _trace: {\n    llm_response: text,\n    service_response: input,\n    provider: 'ollama-cloud',\n    model: modelUsed,\n    tokens: {\n      input: input.usage?.prompt_tokens || 0,\n      output: input.usage?.completion_tokens || 0\n    },\n    latency_ms: latencyMs\n  }\n};"
+      },
+      "id": "format-ollama",
+      "name": "Format Ollama",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        560
+      ]
     }
   ],
   "connections": {
@@ -530,6 +606,13 @@
         [
           {
             "node": "Gemini API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ollama Cloud API",
             "type": "main",
             "index": 0
           }
@@ -625,6 +708,28 @@
       ]
     },
     "Format Gemini": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Cloud API": {
+      "main": [
+        [
+          {
+            "node": "Format Ollama",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Ollama": {
       "main": [
         [
           {
