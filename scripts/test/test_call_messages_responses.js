@@ -246,9 +246,57 @@ const refs = new Set(fxM.outputs.filter((o) => o.type === 'message.output')
   .flatMap((o) => o.content.filter((c) => c.type === 'tool_reference').map((c) => c.url)));
 T('mistral : sources = tool_reference dédoublonnées', [...refs], r.data.sources.map((s) => s.url));
 T('mistral : recherche constatée', [true, 1], [r.meta.search_performed, r.meta.usage.web_search_requests]);
-T('⚠️ mistral : connector_tokens rendus à part', [788, 60, 7748, 6900],
-  [r.meta.usage.prompt_tokens, r.meta.usage.completion_tokens, r.meta.usage.total_tokens, r.meta.usage.connector_tokens]);
+// ⚠️ Mistral compte à part ce que la recherche injecte ; OpenAI et Anthropic le
+// comptent dans l'entrée. Replié : entrée → sortie montre ce qui a été consommé.
+T('⚠️ mistral : connecteur replié dans l’entrée', [788 + 6900, 60, 7748],
+  [r.meta.usage.prompt_tokens, r.meta.usage.completion_tokens, r.meta.usage.total_tokens]);
+T('… détail fourni en supplément', 6900, r.meta.usage.connector_tokens);
 T('mistral : étiquette mistral', 'mistral', r.meta.provider);
+
+console.log('\n7. ⚠️ entrée + sortie = total, chez les quatre (azy.daily#361)');
+// Un client affiche « entrée → sortie » : si la somme ne fait pas le total, son
+// écran montre un coût qui n'est pas celui consommé.
+const sommes = [
+  ['openai', F('Format OpenAI Responses', env(fxO), PREV({ provider: 'openai', model: 'm', web_search: true }))],
+  ['anthropic', F('Format Anthropic', fxA, PREV({ provider: 'anthropic', model: 'm', web_search: true }))],
+  ['google', F('Format Gemini', FX('gemini_web_search.json'), PREV({ provider: 'google', model: 'm', web_search: true }))],
+  ['mistral', F('Format Mistral Conversations', env(fxM), PREV({ provider: 'mistral', model: 'm', web_search: true }))],
+];
+for (const [p, x] of sommes) {
+  const u = x.meta.usage;
+  T(`${p} : prompt + completion = total`, u.total_tokens, u.prompt_tokens + u.completion_tokens);
+}
+
+console.log('\n8. « a cherché, rien retenu » ≠ « n’a pas cherché »');
+// La liste vide seule confondrait les deux ; desktop les affiche différemment.
+r = F('Format OpenAI Responses', env({ status: 'completed', error: null, usage: {}, output: [
+  { type: 'web_search_call', status: 'completed' },
+  { type: 'message', content: [{ type: 'output_text', text: 'rien trouvé', annotations: [] }] }] }),
+  PREV({ provider: 'openai', model: 'm', web_search: true }));
+T('openai : cherché, 0 source → search_performed vrai', [true, 0, 0],
+  [r.meta.search_performed, r.data.sources.length, r.meta.sources_count]);
+r = F('Format OpenAI Responses', env({ status: 'completed', error: null, usage: {}, output: [
+  { type: 'message', content: [{ type: 'output_text', text: 'bonjour', annotations: [] }] }] }),
+  PREV({ provider: 'openai', model: 'm', web_search: true }));
+T('openai : pas cherché → search_performed faux', [false, 0], [r.meta.search_performed, r.data.sources.length]);
+r = F('Format Mistral Conversations', env({ outputs: [{ type: 'tool.execution', name: 'web_search' },
+  { type: 'message.output', content: [{ type: 'text', text: 'rien' }] }], usage: {} }),
+  PREV({ provider: 'mistral', model: 'm', web_search: true }));
+T('mistral : cherché, 0 source → search_performed vrai', [true, 0], [r.meta.search_performed, r.data.sources.length]);
+
+console.log('\n9. le compteur compte la liste — dédoublonnage partout');
+const doublon = { type: 'url_citation', title: 'A', url: 'https://a.org/x' };
+r = F('Format OpenAI Responses', env({ status: 'completed', error: null, usage: {}, output: [
+  { type: 'web_search_call' }, { type: 'message', content: [{ type: 'output_text', text: 't',
+    annotations: [doublon, doublon, { type: 'url_citation', title: 'B', url: 'https://b.org/y' }] }] }] }),
+  PREV({ provider: 'openai', model: 'm', web_search: true }));
+T('openai : 3 citations dont 1 doublon → 2 sources, compteur 2', [2, 2], [r.data.sources.length, r.meta.sources_count]);
+r = F('Format Gemini', { candidates: [{ content: { parts: [{ text: 't' }] }, finishReason: 'STOP',
+  groundingMetadata: { webSearchQueries: ['q'], groundingChunks: [
+    { web: { uri: 'https://vertexaisearch.cloud.google.com/r/1', title: 'a.org' } },
+    { web: { uri: 'https://vertexaisearch.cloud.google.com/r/1', title: 'a.org' } }] } }], usageMetadata: {} },
+  PREV({ provider: 'google', model: 'g', web_search: true }));
+T('gemini : doublon d’ancrage → 1 source, compteur 1', [1, 1], [r.data.sources.length, r.meta.sources_count]);
 r = F('Format Mistral Conversations', env({ message: 'Unauthorized', request_id: 'x' }, 401), PREV({ provider: 'mistral', model: 'm', web_search: true }));
 T('mistral : 401 relayé', [false, 401, 'Unauthorized'], [r.success, r.error.http_status, r.error.message]);
 r = F('Format Mistral Conversations', env({ object: 'Error', detail: [{ msg: 'bad' }] }, 422), PREV({ provider: 'mistral', model: 'm', web_search: true }));
