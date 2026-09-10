@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## LLM - Call Messages (Multi-Provider BYOT)\n\n**Endpoint:** POST /webhook/llm-call-messages\n\n**Description:** Appel LLM synchrone multi-provider avec pattern BYOT (Bring Your Own Token).\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"provider\", \"model\", \"api_key\", \"messages\"],\n  \"properties\": {\n    \"provider\": { \"type\": \"string\", \"enum\": [\"anthropic\", \"openai\", \"mistral\"] },\n    \"model\": { \"type\": \"string\", \"description\": \"Model ID (ex: claude-haiku-4-5-20251001, gpt-4o)\" },\n    \"api_key\": { \"type\": \"string\", \"description\": \"API key for the provider (REQUIRED, no fallback)\" },\n    \"system\": { \"type\": \"string\", \"description\": \"System prompt\" },\n    \"messages\": { \"type\": \"array\", \"description\": \"Messages array [{role, content}]\" },\n    \"max_tokens\": { \"type\": \"integer\", \"default\": 4096 },\n    \"temperature\": { \"type\": \"number\", \"default\": 0.7, \"minimum\": 0, \"maximum\": 2 },\n    \"metadata\": { \"type\": \"object\", \"description\": \"Passthrough metadata\" }\n  }\n}\n```\n\n**Providers supportes:**\n- `anthropic` → Claude (claude-haiku-4-5-20251001, claude-haiku-4-5-20251001, etc.)\n- `openai` → GPT (gpt-4o, gpt-4o-mini, etc.)\n- `mistral` → Mistral (mistral-large-latest, mistral-medium, etc.)\n\n**BYOT Pattern:** api_key est OBLIGATOIRE. Aucun fallback sur les variables d'environnement.",
+        "content": "## LLM - Call Messages (Multi-Provider BYOT)\n\n**Endpoint:** POST /webhook/llm-call-messages\n\n**Description:** Appel LLM synchrone multi-provider avec pattern BYOT (Bring Your Own Token).\n\n**InputSchema:**\n```json\n{\n  \"required\": [\"provider\", \"model\", \"api_key\", \"messages\"],\n  \"properties\": {\n    \"provider\": { \"type\": \"string\", \"enum\": [\"anthropic\", \"openai\", \"mistral\", \"google\", \"ollama-cloud\"] },\n    \"model\": { \"type\": \"string\", \"description\": \"Model ID (ex: claude-haiku-4-5-20251001, gpt-4o)\" },\n    \"api_key\": { \"type\": \"string\", \"description\": \"API key for the provider (REQUIRED, no fallback)\" },\n    \"system\": { \"type\": \"string\", \"description\": \"System prompt\" },\n    \"messages\": { \"type\": \"array\", \"description\": \"Messages array [{role, content}]\" },\n    \"max_tokens\": { \"type\": \"integer\", \"default\": 4096 },\n    \"temperature\": { \"type\": \"number\", \"default\": 0.7, \"minimum\": 0, \"maximum\": 2 },\n    \"surface\": { \"type\": \"string\", \"description\": \"Surface catalogue : responses → /v1/responses (OpenAI). Absente → chat/completions\" },\n    \"web_search\": { \"type\": \"boolean\", \"default\": false, \"description\": \"Recherche web native, traduite par n8n. Fournisseur non câblé → 422 web_search_unavailable\" },\n    \"metadata\": { \"type\": \"object\", \"description\": \"Passthrough metadata\" }\n  }\n}\n```\n\n**Providers supportes:**\n- `anthropic` → Claude (claude-haiku-4-5-20251001, claude-haiku-4-5-20251001, etc.)\n- `openai` → GPT (gpt-4o, gpt-4o-mini, etc.)\n- `mistral` → Mistral (mistral-large-latest, mistral-medium, etc.)\n\n**BYOT Pattern:** api_key est OBLIGATOIRE. Aucun fallback sur les variables d'environnement.",
         "height": 700,
         "width": 450,
         "color": 4
@@ -37,7 +37,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT - LLM Call Messages (BYOT)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: provider ---\nconst provider = (body.provider || ctx.provider || '').toLowerCase();\nconst validProviders = ['anthropic', 'openai', 'mistral', 'google', 'ollama-cloud'];\nif (!provider) {\n  errors.push('provider requis (anthropic, openai, mistral, google)');\n} else if (!validProviders.includes(provider)) {\n  errors.push(`provider invalide: ${provider} (doit etre: ${validProviders.join(', ')})`);\n}\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model;\nif (!model || typeof model !== 'string' || model.trim().length === 0) {\n  errors.push('model requis (ex: claude-haiku-4-5-20251001, gpt-4o)');\n}\n\n// --- REQUIRED: api_key (BYOT - NO FALLBACK) ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length === 0) {\n  errors.push('api_key requis (BYOT pattern - aucun fallback sur env)');\n}\n\n// --- REQUIRED: messages ---\nconst messages = body.messages || ctx.messages;\nif (!messages || !Array.isArray(messages) || messages.length === 0) {\n  errors.push('messages requis (array non vide)');\n}\n\n// --- Optional: system prompt ---\nconst system = body.system || ctx.system || null;\n\n// --- Optional: max_tokens ---\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 4096);\nif (isNaN(maxTokens) || maxTokens < 1 || maxTokens > 200000) {\n  errors.push('max_tokens doit etre entre 1 et 200000');\n}\n\n// --- Optional: temperature ---\nconst temperature = parseFloat(body.temperature ?? ctx.temperature ?? 0.7);\nif (isNaN(temperature) || temperature < 0 || temperature > 2) {\n  errors.push('temperature doit etre entre 0 et 2');\n}\n\n// --- Passthrough metadata ---\nconst metadata = body.metadata || ctx.metadata || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    metadata: metadata\n  };\n}\n\n// Les modèles de raisonnement d'OpenAI n'acceptent ni `max_tokens` ni une\n// `temperature` autre que 1 (azy.daily#276).\n//\n// L'appelant peut le DIRE, et sa parole prime : le catalogue connaît la capacité\n// du modèle, nous la devinons. Deviner sur l'identifiant est un pis-aller qui\n// rate ce qu'il ne reconnaît pas — remonté par l'équipe mobile.\n//\n// Le repli par motif ne couvre QUE le nommage d'OpenAI, et volontairement :\n// Gemini accepte `temperature` sur ses modèles à raisonnement, Anthropic aussi\n// tant que `thinking` n'est pas activé. Étendre la garde aux autres providers\n// leur retirerait des paramètres qui fonctionnent.\nconst MODELE_RAISONNEMENT = /^(?:openai\\/)?(?:chat)?gpt-5|^(?:openai\\/)?o[1-9]/i;\nconst raisonnement = body.reasoning ?? ctx.reasoning ??\n  (provider === 'openai' && MODELE_RAISONNEMENT.test((model || '').trim()));\n\nreturn {\n  valid: true,\n  provider: provider,\n  model: model.trim(),\n  raisonnement: raisonnement,\n  api_key: apiKey.trim(),\n  system: system,\n  messages: messages,\n  max_tokens: maxTokens,\n  temperature: temperature,\n  metadata: metadata,\n  startTime: Date.now()\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT - LLM Call Messages (BYOT)\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || input;\nconst ctx = body.context || {};\n\nconst errors = [];\n\n// --- REQUIRED: provider ---\nconst provider = (body.provider || ctx.provider || '').toLowerCase();\nconst validProviders = ['anthropic', 'openai', 'mistral', 'google', 'ollama-cloud'];\nif (!provider) {\n  errors.push('provider requis (anthropic, openai, mistral, google)');\n} else if (!validProviders.includes(provider)) {\n  errors.push(`provider invalide: ${provider} (doit etre: ${validProviders.join(', ')})`);\n}\n\n// --- REQUIRED: model ---\nconst model = body.model || ctx.model;\nif (!model || typeof model !== 'string' || model.trim().length === 0) {\n  errors.push('model requis (ex: claude-haiku-4-5-20251001, gpt-4o)');\n}\n\n// --- REQUIRED: api_key (BYOT - NO FALLBACK) ---\nconst apiKey = body.api_key || ctx.api_key;\nif (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length === 0) {\n  errors.push('api_key requis (BYOT pattern - aucun fallback sur env)');\n}\n\n// --- REQUIRED: messages ---\nconst messages = body.messages || ctx.messages;\nif (!messages || !Array.isArray(messages) || messages.length === 0) {\n  errors.push('messages requis (array non vide)');\n}\n\n// --- Optional: system prompt ---\nconst system = body.system || ctx.system || null;\n\n// --- Optional: max_tokens ---\nconst maxTokens = parseInt(body.max_tokens || ctx.max_tokens || 4096);\nif (isNaN(maxTokens) || maxTokens < 1 || maxTokens > 200000) {\n  errors.push('max_tokens doit etre entre 1 et 200000');\n}\n\n// --- Optional: temperature ---\nconst temperature = parseFloat(body.temperature ?? ctx.temperature ?? 0.7);\nif (isNaN(temperature) || temperature < 0 || temperature > 2) {\n  errors.push('temperature doit etre entre 0 et 2');\n}\n\n// --- Optional: surface (catalogue chat.api, azy.daily#281) ---\n// Dit OU le modele repond SANS outil : `responses` -> /v1/responses. Absente ou\n// inconnue -> chat/completions, la voie historique : aucune regression.\nconst surface = String(body.surface ?? ctx.surface ?? '').trim().toLowerCase() || null;\n\n// --- Optional: web_search (booleen normalise, azy.daily#279 / #361) ---\n// L intention arrive en booleen ; c est n8n qui la traduit vers la forme du\n// fournisseur (decision api du 2026-09-10 : pas de `tools` relaye verbatim).\nconst demandeRecherche = body.web_search ?? ctx.web_search;\nconst webSearch = demandeRecherche === true || demandeRecherche === 'true';\n\n// --- Passthrough metadata ---\nconst metadata = body.metadata || ctx.metadata || {};\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    errors: errors,\n    metadata: metadata\n  };\n}\n\n// Fournisseurs dont la recherche est cablee ici. Hors de cette liste, une demande\n// de recherche rend un 422 : le contrat dit « un 422, jamais un silence », et\n// une reponse sans recherche serait indiscernable d une reponse qui a cherche.\nconst RECHERCHE_CABLEE = ['anthropic', 'openai', 'mistral', 'google'];\nif (webSearch && !RECHERCHE_CABLEE.includes(provider)) {\n  return {\n    valid: false,\n    errors: [\"La recherche web n'est pas disponible pour ce modèle.\"],\n    error_code: 'web_search_unavailable',\n    http_status: 422,\n    model_id: model.trim(),\n    metadata: metadata\n  };\n}\n\n// L aiguillage se decide ICI ; le Switch ne fait qu executer. Pour les cinq voies\n// historiques, route === provider.\n// ⚠️ La recherche impose SON endpoint, quelle que soit la surface (mesure du\n// 2026-09-10) : OpenAI refuse l outil web_search sur chat/completions (400\n// invalid_value, gpt-5.6-terra compris), Mistral aussi (400 « WebSearchTool\n// connector is not supported »).\nlet route = provider;\nif (provider === 'openai' && (webSearch || surface === 'responses')) route = 'openai-responses';\nif (provider === 'mistral' && webSearch) route = 'mistral-conversations';\n\n// Les modèles de raisonnement d'OpenAI n'acceptent ni `max_tokens` ni une\n// `temperature` autre que 1 (azy.daily#276).\n//\n// L'appelant peut le DIRE, et sa parole prime : le catalogue connaît la capacité\n// du modèle, nous la devinons. Deviner sur l'identifiant est un pis-aller qui\n// rate ce qu'il ne reconnaît pas — remonté par l'équipe mobile.\n//\n// Le repli par motif ne couvre QUE le nommage d'OpenAI, et volontairement :\n// Gemini accepte `temperature` sur ses modèles à raisonnement, Anthropic aussi\n// tant que `thinking` n'est pas activé. Étendre la garde aux autres providers\n// leur retirerait des paramètres qui fonctionnent.\nconst MODELE_RAISONNEMENT = /^(?:openai\\/)?(?:chat)?gpt-5|^(?:openai\\/)?o[1-9]/i;\nconst raisonnement = body.reasoning ?? ctx.reasoning ??\n  (provider === 'openai' && MODELE_RAISONNEMENT.test((model || '').trim()));\n\nreturn {\n  valid: true,\n  provider: provider,\n  route: route,\n  surface: surface,\n  web_search: webSearch,\n  model: model.trim(),\n  raisonnement: raisonnement,\n  api_key: apiKey.trim(),\n  system: system,\n  messages: messages,\n  max_tokens: maxTokens,\n  temperature: temperature,\n  metadata: metadata,\n  startTime: Date.now()\n};"
       },
       "id": "validate-input",
       "name": "Validate Input",
@@ -82,7 +82,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\nreturn {\n  success: false,\n  error: {\n    code: 'VALIDATION_ERROR',\n    message: input.errors.join(', '),\n    http_status: 400\n  },\n  metadata: input.metadata,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0\n  }\n};"
+        "jsCode": "// ============================================\n// BUILD VALIDATION ERROR\n// ============================================\n\nconst input = $input.first().json;\n\n// Le statut et le code viennent de Validate Input quand il les precise : le\n// 422 `web_search_unavailable` du contrat (azy.daily#361) n est pas un 400.\nconst erreur = {\n  code: input.error_code || 'VALIDATION_ERROR',\n  message: input.errors.join(', '),\n  http_status: input.http_status || 400\n};\nif (input.model_id) erreur.model_id = input.model_id;\n\nreturn {\n  success: false,\n  error: erreur,\n  metadata: input.metadata,\n  _trace: {\n    service_response: { validation_errors: input.errors },\n    provider: 'none',\n    mode: 'error',\n    latency_ms: 0\n  }\n};"
       },
       "id": "build-error",
       "name": "Build Error",
@@ -98,7 +98,7 @@
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 400,
+          "responseCode": "={{ $json.error?.http_status || 400 }}",
           "responseHeaders": {
             "entries": [
               {
@@ -131,7 +131,7 @@
                 },
                 "conditions": [
                   {
-                    "leftValue": "={{ $json.provider }}",
+                    "leftValue": "={{ $json.route }}",
                     "rightValue": "anthropic",
                     "operator": {
                       "type": "string",
@@ -153,7 +153,7 @@
                 },
                 "conditions": [
                   {
-                    "leftValue": "={{ $json.provider }}",
+                    "leftValue": "={{ $json.route }}",
                     "rightValue": "openai",
                     "operator": {
                       "type": "string",
@@ -175,7 +175,7 @@
                 },
                 "conditions": [
                   {
-                    "leftValue": "={{ $json.provider }}",
+                    "leftValue": "={{ $json.route }}",
                     "rightValue": "mistral",
                     "operator": {
                       "type": "string",
@@ -197,7 +197,7 @@
                 },
                 "conditions": [
                   {
-                    "leftValue": "={{ $json.provider }}",
+                    "leftValue": "={{ $json.route }}",
                     "rightValue": "google",
                     "operator": {
                       "type": "string",
@@ -219,7 +219,7 @@
                 },
                 "conditions": [
                   {
-                    "leftValue": "={{ $json.provider }}",
+                    "leftValue": "={{ $json.route }}",
                     "rightValue": "ollama-cloud",
                     "operator": {
                       "type": "string",
@@ -231,6 +231,50 @@
               },
               "renameOutput": true,
               "outputKey": "ollama-cloud"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "openai-responses",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "openai-responses"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "mistral-conversations",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "mistral-conversations"
             }
           ]
         },
@@ -268,7 +312,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ (() => {\n  const data = $json;\n  const body = {\n    model: data.model,\n    max_tokens: data.max_tokens,\n    temperature: data.temperature,\n    messages: data.messages\n  };\n  if (data.system) {\n    body.system = data.system;\n  }\n  return JSON.stringify(body);\n})() }}",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  const body = {\n    model: data.model,\n    max_tokens: data.max_tokens,\n    temperature: data.temperature,\n    messages: data.messages\n  };\n  if (data.system) {\n    body.system = data.system;\n  }\n  // Recherche web (azy.daily#361) : outil serveur, execute par Anthropic.\n  if (data.web_search) {\n    body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }];\n  }\n  return JSON.stringify(body);\n})() }}",
         "options": {
           "timeout": 120000
         }
@@ -353,7 +397,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT ANTHROPIC RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\n\n// Handle error response\nif (input.error) {\n    // Le statut réel n'était pas remonté : un 400 « payload invalide » ressortait\n  // en 500, et l'appelant cherchait une panne serveur. Avec\n  // onError=continueRegularOutput, statusCode est absent et le statut est enfoui\n  // dans le message sous la forme « 400 - {...} » (azy.daily#276, #442).\n  let statut = input.statusCode;\n  if (statut === undefined) {\n    const brut = String(input.error?.message || input.message || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    statut = m ? parseInt(m[1], 10) : 502;\n  }\n  return {\n    success: false,\n    error: {\n      code: input.error.type || 'ANTHROPIC_ERROR',\n      message: input.error.message || 'Anthropic API error',\n      http_status: statut\n    },\n    metadata: prevData.metadata,\n    _trace: {\n      llm_response: null,\n      service_response: input,\n      provider: 'anthropic',\n      model: prevData.model,\n      tokens: { input: 0, output: 0 },\n      latency_ms: latencyMs\n    }\n  };\n}\n\nconst text = input.content?.[0]?.text || '';\nconst stopReason = input.stop_reason || 'end_turn';\nconst modelUsed = input.model || prevData.model;\n\nreturn {\n  success: true,\n  data: {\n    text: text,\n    model: modelUsed,\n    finish_reason: stopReason\n  },\n  meta: {\n    provider: 'anthropic',\n    model: modelUsed,\n    usage: {\n      // Le triplet historique est CONSERVÉ : chat.api bascule à son rythme.\n      prompt_tokens: input.usage?.input_tokens || 0,\n      completion_tokens: input.usage?.output_tokens || 0,\n      total_tokens: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0),\n      // Ajoutés : les jetons de cache ne sont pas facturés au plein tarif —\n      // 0,1× en lecture, 1,25× en écriture. Les jeter faisait surfacturer la\n      // lecture et ignorer l'écriture (azy.daily#287, §2.4).\n      // Toujours présents, à 0 quand le fournisseur ne les rend pas : un champ\n      // absent et un champ nul ne se distinguent pas en aval.\n      cache_read_input_tokens: input.usage?.cache_read_input_tokens || 0,\n      cache_creation_input_tokens: input.usage?.cache_creation_input_tokens || 0,\n      reasoning_tokens: 0\n    }\n  },\n  metadata: prevData.metadata,\n  _trace: {\n    llm_response: text,\n    service_response: input,\n    provider: 'anthropic',\n    model: modelUsed,\n    tokens: {\n      input: input.usage?.input_tokens || 0,\n      output: input.usage?.output_tokens || 0\n    },\n    latency_ms: latencyMs\n  }\n};"
+        "jsCode": "// ============================================\n// FORMAT ANTHROPIC RESPONSE\n// ============================================\n\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\n\n// Handle error response\nif (input.error) {\n    // Le statut réel n'était pas remonté : un 400 « payload invalide » ressortait\n  // en 500, et l'appelant cherchait une panne serveur. Avec\n  // onError=continueRegularOutput, statusCode est absent et le statut est enfoui\n  // dans le message sous la forme « 400 - {...} » (azy.daily#276, #442).\n  let statut = input.statusCode;\n  if (statut === undefined) {\n    const brut = String(input.error?.message || input.message || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    statut = m ? parseInt(m[1], 10) : 502;\n  }\n  return {\n    success: false,\n    error: {\n      code: input.error.type || 'ANTHROPIC_ERROR',\n      message: input.error.message || 'Anthropic API error',\n      http_status: statut\n    },\n    metadata: prevData.metadata,\n    _trace: {\n      llm_response: null,\n      service_response: input,\n      provider: 'anthropic',\n      model: prevData.model,\n      tokens: { input: 0, output: 0 },\n      latency_ms: latencyMs\n    }\n  };\n}\n\n// Sources : { title, url, domain }, dedoublonnees par URL — la forme de\n// l outil web-search, pour que les clients n aient qu un parseur (azy.daily#361).\nconst domaineDe = (url) => { const m = String(url || '').match(/^https?:\\/\\/([^\\/]+)/); return m ? m[1] : ''; };\nconst sources = [];\nconst vues = new Set();\nconst ajouter = (titre, url, domaine) => {\n  if (!url || vues.has(url)) return;\n  vues.add(url);\n  sources.push({ title: titre || 'Source', url: url, domain: domaine || domaineDe(url) });\n};\n\n// ⚠️ Avec la recherche web, content[0] est l appel d outil (server_tool_use),\n// pas le texte : lire content[0].text rendait une reponse VIDE. Le texte est\n// reparti en plusieurs blocs, un par passage cite. Mesure du 2026-09-10.\nconst blocs = Array.isArray(input.content) ? input.content : [];\nconst text = blocs.filter(b => b.type === 'text').map(b => b.text || '').join('');\n\n// Les sources CITEES dans le texte d abord ; a defaut, les resultats recuperes.\nfor (const b of blocs) {\n  if (b.type !== 'text') continue;\n  for (const c of (b.citations || [])) {\n    if (c.type === 'web_search_result_location') ajouter(c.title, c.url);\n  }\n}\nif (!sources.length) {\n  for (const b of blocs) {\n    if (b.type === 'web_search_tool_result' && Array.isArray(b.content)) {\n      for (const r of b.content) if (r.type === 'web_search_result') ajouter(r.title, r.url);\n    }\n  }\n}\nconst recherches = input.usage?.server_tool_use?.web_search_requests\n  || blocs.filter(b => b.type === 'server_tool_use' && b.name === 'web_search').length;\n\n// En mode recherche, un 200 sans texte est un echec : pause_turn ou budget epuise.\nif (prevData.web_search && !text) {\n  return {\n    success: false,\n    error: { code: 'EMPTY_RESPONSE', message: 'Anthropic a repondu sans texte (stop_reason ' + (input.stop_reason || '?') + ')', http_status: 502 },\n    metadata: prevData.metadata,\n    _trace: { llm_response: null, service_response: input, provider: 'anthropic', model: prevData.model, tokens: { input: 0, output: 0 }, latency_ms: latencyMs }\n  };\n}\nconst stopReason = input.stop_reason || 'end_turn';\nconst modelUsed = input.model || prevData.model;\n\nconst res = {\n  success: true,\n  data: {\n    text: text,\n    model: modelUsed,\n    finish_reason: stopReason\n  },\n  meta: {\n    provider: 'anthropic',\n    model: modelUsed,\n    usage: {\n      // Le triplet historique est CONSERVÉ : chat.api bascule à son rythme.\n      prompt_tokens: input.usage?.input_tokens || 0,\n      completion_tokens: input.usage?.output_tokens || 0,\n      total_tokens: (input.usage?.input_tokens || 0) + (input.usage?.output_tokens || 0),\n      // Ajoutés : les jetons de cache ne sont pas facturés au plein tarif —\n      // 0,1× en lecture, 1,25× en écriture. Les jeter faisait surfacturer la\n      // lecture et ignorer l'écriture (azy.daily#287, §2.4).\n      // Toujours présents, à 0 quand le fournisseur ne les rend pas : un champ\n      // absent et un champ nul ne se distinguent pas en aval.\n      cache_read_input_tokens: input.usage?.cache_read_input_tokens || 0,\n      cache_creation_input_tokens: input.usage?.cache_creation_input_tokens || 0,\n      reasoning_tokens: 0\n    }\n  },\n  metadata: prevData.metadata,\n  _trace: {\n    llm_response: text,\n    service_response: input,\n    provider: 'anthropic',\n    model: modelUsed,\n    tokens: {\n      input: input.usage?.input_tokens || 0,\n      output: input.usage?.output_tokens || 0\n    },\n    latency_ms: latencyMs\n  }\n};\nif (prevData.web_search) {\n  res.data.sources = sources;\n  res.meta.search_performed = recherches > 0 || sources.length > 0;\n  res.meta.sources_count = sources.length;\n  res.meta.usage.web_search_requests = recherches;\n}\nreturn res;"
       },
       "id": "format-anthropic",
       "name": "Format Anthropic",
@@ -445,7 +489,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ (() => {\n  const data = $json;\n\n  // Gemini n'a PAS le schéma d'OpenAI. Le relais brut « contents: data.messages »\n  // produisait : 400 INVALID_ARGUMENT — Unknown name \"content\" at 'contents[0]'.\n  //   OpenAI   role + content[] : blocs « type/text » et « type/image_url »\n  //   Gemini   role + parts[]   : blocs « text » et « inline_data »\n  //\n  // ⚠️ Ne JAMAIS accoler deux accolades fermantes dans cette expression, même en\n  // commentaire : n8n y lit la fin de l'expression et tronque tout le reste. Le\n  // nœud rend alors « invalid syntax » sans qu'aucun appel ne soit parti — c'est\n  // exactement ce qu'un commentaire illustrant la forme Gemini a provoqué ici.\n  // et « assistant » s'y dit « model ».\n  const morceau = (bloc) => {\n    if (typeof bloc === 'string') return { text: bloc };\n    // Bloc déjà natif Gemini : chat.api construit l'image au format du provider.\n    if (bloc.inline_data || bloc.inlineData) return bloc;\n    if (bloc.type === 'text' || typeof bloc.text === 'string') return { text: bloc.text || '' };\n    // Repli défensif : un appelant qui enverrait l'image à la forme OpenAI.\n    if (bloc.type === 'image_url' && bloc.image_url && bloc.image_url.url) {\n      const m = String(bloc.image_url.url).match(/^data:([^;]+);base64,(.*)$/);\n      if (m) return { inline_data: { mime_type: m[1], data: m[2] } };\n    }\n    return { text: '' };\n  };\n\n  const contents = (data.messages || []).map((m) => ({\n    role: m.role === 'assistant' ? 'model' : 'user',\n    parts: Array.isArray(m.content) ? m.content.map(morceau) : [morceau(m.content)],\n  }));\n\n  const b = {\n    contents: contents,\n    generationConfig: { maxOutputTokens: data.max_tokens, temperature: data.temperature },\n  };\n  if (data.system) b.systemInstruction = { parts: [{ text: data.system }] };\n  return JSON.stringify(b);\n})() }}",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n\n  // Gemini n'a PAS le schéma d'OpenAI. Le relais brut « contents: data.messages »\n  // produisait : 400 INVALID_ARGUMENT — Unknown name \"content\" at 'contents[0]'.\n  //   OpenAI   role + content[] : blocs « type/text » et « type/image_url »\n  //   Gemini   role + parts[]   : blocs « text » et « inline_data »\n  //\n  // ⚠️ Ne JAMAIS accoler deux accolades fermantes dans cette expression, même en\n  // commentaire : n8n y lit la fin de l'expression et tronque tout le reste. Le\n  // nœud rend alors « invalid syntax » sans qu'aucun appel ne soit parti — c'est\n  // exactement ce qu'un commentaire illustrant la forme Gemini a provoqué ici.\n  // et « assistant » s'y dit « model ».\n  const morceau = (bloc) => {\n    if (typeof bloc === 'string') return { text: bloc };\n    // Bloc déjà natif Gemini : chat.api construit l'image au format du provider.\n    if (bloc.inline_data || bloc.inlineData) return bloc;\n    if (bloc.type === 'text' || typeof bloc.text === 'string') return { text: bloc.text || '' };\n    // Repli défensif : un appelant qui enverrait l'image à la forme OpenAI.\n    if (bloc.type === 'image_url' && bloc.image_url && bloc.image_url.url) {\n      const m = String(bloc.image_url.url).match(/^data:([^;]+);base64,(.*)$/);\n      if (m) return { inline_data: { mime_type: m[1], data: m[2] } };\n    }\n    return { text: '' };\n  };\n\n  const contents = (data.messages || []).map((m) => ({\n    role: m.role === 'assistant' ? 'model' : 'user',\n    parts: Array.isArray(m.content) ? m.content.map(morceau) : [morceau(m.content)],\n  }));\n\n  const b = {\n    contents: contents,\n    generationConfig: { maxOutputTokens: data.max_tokens, temperature: data.temperature },\n  };\n  if (data.system) b.systemInstruction = { parts: [{ text: data.system }] };\n  // Recherche web (azy.daily#361) : ancrage Google Search.\n  if (data.web_search) b.tools = [{ google_search: {} }];\n  return JSON.stringify(b);\n})() }}",
         "options": {
           "timeout": 120000
         }
@@ -462,7 +506,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT GEMINI (google) RESPONSE\n// ============================================\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\n\nif (input.error) {\n    // Le statut réel n'était pas remonté : un 400 « payload invalide » ressortait\n  // en 500, et l'appelant cherchait une panne serveur. Avec\n  // onError=continueRegularOutput, statusCode est absent et le statut est enfoui\n  // dans le message sous la forme « 400 - {...} » (azy.daily#276, #442).\n  let statut = input.statusCode;\n  if (statut === undefined) {\n    const brut = String(input.error?.message || input.message || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    statut = m ? parseInt(m[1], 10) : 502;\n  }\n  return {\n    success: false,\n    error: {\n      code: input.error.status || input.error.code || 'GEMINI_ERROR',\n      message: input.error.message || 'Gemini API error',\n      http_status: statut\n    },\n    metadata: prevData.metadata,\n    _trace: { llm_response: null, service_response: input, provider: 'google',\n      model: prevData.model, tokens: { input: 0, output: 0 }, latency_ms: latencyMs }\n  };\n}\n\nconst parts = (input.candidates && input.candidates[0] && input.candidates[0].content && input.candidates[0].content.parts) || [];\nconst text = parts.map(p => p.text || '').join('');\nconst finishReason = (input.candidates && input.candidates[0] && input.candidates[0].finishReason) || 'STOP';\nconst usage = input.usageMetadata || {};\nconst modelUsed = prevData.model;\n\nreturn {\n  success: true,\n  data: { text: text, model: modelUsed, finish_reason: finishReason },\n  meta: { provider: 'google', model: modelUsed,\n    usage: {\n      prompt_tokens: usage.promptTokenCount || 0,\n      // ⚠️ Convention arrêtée avec l'API (azy.daily#295 §2.5) :\n      //     output_tokens = candidatesTokenCount + thoughtsTokenCount\n      // Sans elle, prompt + completion ≠ total — mesuré 2 + 7 contre un total\n      // de 188, l'écart étant les 179 jetons de « pensée ». Google les facture,\n      // et les exclure sous-comptait jusqu'à 95 % de la sortie.\n      // Cette convention aligne aussi Gemini sur OpenAI, où les jetons de\n      // raisonnement sont déjà compris dans completion_tokens.\n      completion_tokens: (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0),\n      total_tokens: usage.totalTokenCount || 0,\n      cache_read_input_tokens: usage.cachedContentTokenCount || 0,\n      cache_creation_input_tokens: 0,\n      // Le détail vient EN SUPPLÉMENT du total, jamais à sa place.\n      reasoning_tokens: usage.thoughtsTokenCount || 0\n    } },\n  metadata: prevData.metadata,\n  _trace: { llm_response: text, service_response: input, provider: 'google',\n    model: modelUsed,\n    tokens: { input: usage.promptTokenCount || 0, output: usage.candidatesTokenCount || 0 },\n    latency_ms: latencyMs }\n};"
+        "jsCode": "// ============================================\n// FORMAT GEMINI (google) RESPONSE\n// ============================================\nconst input = $input.first().json;\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\n\nif (input.error) {\n    // Le statut réel n'était pas remonté : un 400 « payload invalide » ressortait\n  // en 500, et l'appelant cherchait une panne serveur. Avec\n  // onError=continueRegularOutput, statusCode est absent et le statut est enfoui\n  // dans le message sous la forme « 400 - {...} » (azy.daily#276, #442).\n  let statut = input.statusCode;\n  if (statut === undefined) {\n    const brut = String(input.error?.message || input.message || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    statut = m ? parseInt(m[1], 10) : 502;\n  }\n  return {\n    success: false,\n    error: {\n      code: input.error.status || input.error.code || 'GEMINI_ERROR',\n      message: input.error.message || 'Gemini API error',\n      http_status: statut\n    },\n    metadata: prevData.metadata,\n    _trace: { llm_response: null, service_response: input, provider: 'google',\n      model: prevData.model, tokens: { input: 0, output: 0 }, latency_ms: latencyMs }\n  };\n}\n\nconst parts = (input.candidates && input.candidates[0] && input.candidates[0].content && input.candidates[0].content.parts) || [];\nconst text = parts.map(p => p.text || '').join('');\nconst finishReason = (input.candidates && input.candidates[0] && input.candidates[0].finishReason) || 'STOP';\nconst usage = input.usageMetadata || {};\nconst modelUsed = prevData.model;\n\n// Sources : { title, url, domain }, dedoublonnees par URL — la forme de\n// l outil web-search, pour que les clients n aient qu un parseur (azy.daily#361).\nconst domaineDe = (url) => { const m = String(url || '').match(/^https?:\\/\\/([^\\/]+)/); return m ? m[1] : ''; };\nconst sources = [];\nconst vues = new Set();\nconst ajouter = (titre, url, domaine) => {\n  if (!url || vues.has(url)) return;\n  vues.add(url);\n  sources.push({ title: titre || 'Source', url: url, domain: domaine || domaineDe(url) });\n};\n\n// ⚠️ L URL d ancrage est une REDIRECTION vertexaisearch.cloud.google.com ; le\n// domaine reel n est que dans `title` (« wikipedia.org »). Mesure du 2026-09-10.\nconst ancrage = (input.candidates && input.candidates[0] && input.candidates[0].groundingMetadata) || {};\nfor (const ch of (ancrage.groundingChunks || [])) {\n  if (!ch.web) continue;\n  const d = domaineDe(ch.web.uri);\n  ajouter(ch.web.title, ch.web.uri, /vertexaisearch/.test(d) ? (ch.web.title || d) : d);\n}\nconst recherches = (ancrage.webSearchQueries || []).length;\n\nif (prevData.web_search && !text) {\n  return {\n    success: false,\n    error: { code: 'EMPTY_RESPONSE', message: 'Gemini a repondu sans texte (finishReason ' + finishReason + ')', http_status: 502 },\n    metadata: prevData.metadata,\n    _trace: { llm_response: null, service_response: input, provider: 'google', model: prevData.model, tokens: { input: 0, output: 0 }, latency_ms: latencyMs }\n  };\n}\n\nconst res = {\n  success: true,\n  data: { text: text, model: modelUsed, finish_reason: finishReason },\n  meta: { provider: 'google', model: modelUsed,\n    usage: {\n      prompt_tokens: usage.promptTokenCount || 0,\n      // ⚠️ Convention arrêtée avec l'API (azy.daily#295 §2.5) :\n      //     output_tokens = candidatesTokenCount + thoughtsTokenCount\n      // Sans elle, prompt + completion ≠ total — mesuré 2 + 7 contre un total\n      // de 188, l'écart étant les 179 jetons de « pensée ». Google les facture,\n      // et les exclure sous-comptait jusqu'à 95 % de la sortie.\n      // Cette convention aligne aussi Gemini sur OpenAI, où les jetons de\n      // raisonnement sont déjà compris dans completion_tokens.\n      completion_tokens: (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0),\n      total_tokens: usage.totalTokenCount || 0,\n      cache_read_input_tokens: usage.cachedContentTokenCount || 0,\n      cache_creation_input_tokens: 0,\n      // Le détail vient EN SUPPLÉMENT du total, jamais à sa place.\n      reasoning_tokens: usage.thoughtsTokenCount || 0\n    } },\n  metadata: prevData.metadata,\n  _trace: { llm_response: text, service_response: input, provider: 'google',\n    model: modelUsed,\n    tokens: { input: usage.promptTokenCount || 0, output: usage.candidatesTokenCount || 0 },\n    latency_ms: latencyMs }\n};\nif (prevData.web_search) {\n  res.data.sources = sources;\n  res.meta.search_performed = recherches > 0 || sources.length > 0;\n  res.meta.sources_count = sources.length;\n  res.meta.usage.web_search_requests = recherches;\n}\nreturn res;"
       },
       "id": "format-gemini",
       "name": "Format Gemini",
@@ -525,6 +569,114 @@
       "position": [
         1392,
         560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  // /v1/responses : `input` au lieu de `messages`, le system passe par\n  // `instructions`, et les blocs changent de nom — text -> input_text\n  // (output_text pour l assistant), image_url -> input_image.\n  const bloc = (b, role) => {\n    const texte = role === 'assistant' ? 'output_text' : 'input_text';\n    if (typeof b === 'string') return { type: texte, text: b };\n    if (b.type === 'text') return { type: texte, text: b.text || '' };\n    if (b.type === 'image_url' && b.image_url) return { type: 'input_image', image_url: b.image_url.url || b.image_url };\n    return b;\n  };\n  const input = (data.messages || []).map((m) => ({\n    role: m.role,\n    content: Array.isArray(m.content) ? m.content.map((b) => bloc(b, m.role)) : m.content\n  }));\n  const corps = { model: data.model, input: input };\n  if (data.system) corps.instructions = data.system;\n  // Meme regle que la voie chat/completions : un modele de raisonnement partage\n  // son budget avec des jetons invisibles, d ou un plancher, et refuse la\n  // temperature.\n  if (data.raisonnement) {\n    corps.max_output_tokens = Math.max(data.max_tokens, 1024);\n  } else {\n    corps.max_output_tokens = data.max_tokens;\n    corps.temperature = data.temperature;\n  }\n  // Pas de tool_choice force : le modele juge s il doit chercher, et\n  // search_performed dit la verite sur ce qu il a fait.\n  if (data.web_search) corps.tools = [{ type: 'web_search' }];\n  return JSON.stringify(corps);\n})() }}",
+        "options": {
+          "timeout": 300000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        720
+      ],
+      "id": "7417a942-46a7-46a8-a009-fc2b769c0db7",
+      "name": "OpenAI Responses API",
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT OPENAI RESPONSES (/v1/responses)\n// ============================================\n// Passent ici les modeles `surface: responses` (gpt-5-pro, codex… : 404 « only\n// supported in v1/responses » sur chat/completions) et TOUTE demande de\n// recherche web OpenAI (azy.daily#281, #361).\n// La forme n a rien de chat/completions : output[] (reasoning, web_search_call,\n// message) au lieu de choices[], input_tokens/output_tokens au lieu de\n// prompt/completion. Mesure du 2026-09-10.\n// ⚠️ Le noeud HTTP porte fullResponse + neverError : il emet\n// { statusCode, body, headers }, JAMAIS l objet d erreur au premier niveau.\n// Sans cette normalisation, un 401 ressortirait en succes (cf. Format Ollama).\nconst enveloppe = $input.first().json;\nconst input = enveloppe.body !== undefined ? enveloppe.body : enveloppe;\nlet statutHttp = enveloppe.statusCode;\nif (statutHttp === undefined) {\n  const msg = String((enveloppe.error && enveloppe.error.message) || enveloppe.message || '');\n  const m = msg.match(/(\\d{3})\\s*-\\s*/);\n  statutHttp = m ? parseInt(m[1], 10) : ((enveloppe.error || enveloppe.code) ? 502 : 200);\n}\n\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\nconst trace = (texte, t) => ({ llm_response: texte, service_response: enveloppe, provider: 'openai',\n  model: prevData.model, tokens: t || { input: 0, output: 0 }, latency_ms: latencyMs });\n\n// ⚠️ Une reponse reussie porte `error: null` : on teste la valeur, pas la cle.\nif (statutHttp >= 400 || input.error) {\n  return {\n    success: false,\n    error: {\n      code: (input.error && (input.error.code || input.error.type)) || 'OPENAI_ERROR',\n      message: (input.error && input.error.message) || ('OpenAI a repondu ' + statutHttp),\n      http_status: statutHttp >= 400 ? statutHttp : 502\n    },\n    metadata: prevData.metadata,\n    _trace: trace(null)\n  };\n}\n\n// Sources : { title, url, domain }, dedoublonnees par URL — la forme de\n// l outil web-search, pour que les clients n aient qu un parseur (azy.daily#361).\nconst domaineDe = (url) => { const m = String(url || '').match(/^https?:\\/\\/([^\\/]+)/); return m ? m[1] : ''; };\nconst sources = [];\nconst vues = new Set();\nconst ajouter = (titre, url, domaine) => {\n  if (!url || vues.has(url)) return;\n  vues.add(url);\n  sources.push({ title: titre || 'Source', url: url, domain: domaine || domaineDe(url) });\n};\n\nconst sorties = Array.isArray(input.output) ? input.output : [];\nlet text = '';\nfor (const o of sorties) {\n  if (o.type !== 'message') continue;\n  for (const c of (o.content || [])) {\n    if (c.type !== 'output_text') continue;\n    text += c.text || '';\n    for (const a of (c.annotations || [])) if (a.type === 'url_citation') ajouter(a.title, a.url);\n  }\n}\nconst recherches = sorties.filter(o => o.type === 'web_search_call').length;\n\nconst incomplet = input.incomplete_details && input.incomplete_details.reason;\nconst finishReason = input.status === 'completed' ? 'stop'\n  : (incomplet === 'max_output_tokens' ? 'length' : (incomplet || input.status || 'stop'));\n\n// Un 200 sans texte n est pas un succes : typiquement un budget de sortie\n// entierement consomme par le raisonnement (status incomplete).\nif (!text) {\n  return {\n    success: false,\n    error: { code: 'EMPTY_RESPONSE', http_status: 502,\n      message: 'OpenAI a repondu sans texte (statut ' + (input.status || '?') + (incomplet ? ', ' + incomplet : '') + ')' },\n    metadata: prevData.metadata,\n    _trace: trace(null)\n  };\n}\n\nconst usage = input.usage || {};\nconst modelUsed = input.model || prevData.model;\nconst res = {\n  success: true,\n  data: { text: text, model: modelUsed, finish_reason: finishReason },\n  meta: {\n    provider: 'openai',\n    model: modelUsed,\n    usage: {\n      prompt_tokens: usage.input_tokens || 0,\n      completion_tokens: usage.output_tokens || 0,\n      total_tokens: usage.total_tokens || 0,\n      cache_read_input_tokens: (usage.input_tokens_details && usage.input_tokens_details.cached_tokens) || 0,\n      // `input_tokens_details.cache_write_tokens` existe (mesure : 4401) mais son\n      // tarif n est pas etabli : on garde 0 comme la voie chat/completions,\n      // plutot que de le faire compter a 1,25× comme chez Anthropic.\n      cache_creation_input_tokens: 0,\n      // Deja compris dans output_tokens : detail en supplement (azy.daily#287).\n      reasoning_tokens: (usage.output_tokens_details && usage.output_tokens_details.reasoning_tokens) || 0\n    }\n  },\n  metadata: prevData.metadata,\n  _trace: trace(text, { input: usage.input_tokens || 0, output: usage.output_tokens || 0 })\n};\nif (prevData.web_search) {\n  res.data.sources = sources;\n  res.meta.search_performed = recherches > 0 || sources.length > 0;\n  res.meta.sources_count = sources.length;\n  res.meta.usage.web_search_requests = recherches;\n}\nreturn res;"
+      },
+      "id": "9d4a8a9e-2cb0-48a5-99fb-e7e1768282a7",
+      "name": "Format OpenAI Responses",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/conversations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const data = $json;\n  // /v1/conversations : outil en ligne, store:false — aucune ressource laissee\n  // sur le compte (l API Agents, elle, cree un agent persistant).\n  const messages = data.messages || [];\n  const consignes = messages.filter((m) => m.role === 'system').map((m) => m.content);\n  if (data.system) consignes.unshift(data.system);\n  const corps = {\n    model: data.model,\n    inputs: messages.filter((m) => m.role !== 'system'),\n    tools: [{ type: 'web_search' }],\n    completion_args: { max_tokens: data.max_tokens, temperature: data.temperature },\n    store: false\n  };\n  if (consignes.length) corps.instructions = consignes.join('\\n\\n');\n  return JSON.stringify(corps);\n})() }}",
+        "options": {
+          "timeout": 300000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        880
+      ],
+      "id": "a1d89e64-0908-4d17-8ea0-0f19b18fd449",
+      "name": "Mistral Conversations API",
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT MISTRAL CONVERSATIONS (/v1/conversations)\n// ============================================\n// Seule voie Mistral qui accepte l outil web_search (chat/completions : 400\n// « WebSearchTool connector is not supported »). Forme mesuree le 2026-09-10 :\n// outputs[] = tool.execution puis message.output, dont le content est une liste\n// de morceaux `text` et `tool_reference`.\n// ⚠️ Le noeud HTTP porte fullResponse + neverError : il emet\n// { statusCode, body, headers }, JAMAIS l objet d erreur au premier niveau.\n// Sans cette normalisation, un 401 ressortirait en succes (cf. Format Ollama).\nconst enveloppe = $input.first().json;\nconst input = enveloppe.body !== undefined ? enveloppe.body : enveloppe;\nlet statutHttp = enveloppe.statusCode;\nif (statutHttp === undefined) {\n  const msg = String((enveloppe.error && enveloppe.error.message) || enveloppe.message || '');\n  const m = msg.match(/(\\d{3})\\s*-\\s*/);\n  statutHttp = m ? parseInt(m[1], 10) : ((enveloppe.error || enveloppe.code) ? 502 : 200);\n}\n\nconst prevData = $('Validate Input').first().json;\nconst startTime = prevData.startTime || Date.now();\nconst latencyMs = Date.now() - startTime;\nconst trace = (texte, t) => ({ llm_response: texte, service_response: enveloppe, provider: 'mistral',\n  model: prevData.model, tokens: t || { input: 0, output: 0 }, latency_ms: latencyMs });\n\nif (statutHttp >= 400 || input.error || input.object === 'Error') {\n  const brut = input.message || (input.error && input.error.message) || input.detail;\n  return {\n    success: false,\n    error: {\n      code: 'MISTRAL_ERROR',\n      message: (typeof brut === 'string' ? brut : JSON.stringify(brut || '')) || ('Mistral a repondu ' + statutHttp),\n      http_status: statutHttp >= 400 ? statutHttp : 502\n    },\n    metadata: prevData.metadata,\n    _trace: trace(null)\n  };\n}\n\n// Sources : { title, url, domain }, dedoublonnees par URL — la forme de\n// l outil web-search, pour que les clients n aient qu un parseur (azy.daily#361).\nconst domaineDe = (url) => { const m = String(url || '').match(/^https?:\\/\\/([^\\/]+)/); return m ? m[1] : ''; };\nconst sources = [];\nconst vues = new Set();\nconst ajouter = (titre, url, domaine) => {\n  if (!url || vues.has(url)) return;\n  vues.add(url);\n  sources.push({ title: titre || 'Source', url: url, domain: domaine || domaineDe(url) });\n};\n\nconst sorties = Array.isArray(input.outputs) ? input.outputs : [];\nlet text = '';\nlet modelUsed = prevData.model;\nfor (const o of sorties) {\n  if (o.type !== 'message.output') continue;\n  if (o.model) modelUsed = o.model;\n  const c = o.content;\n  if (typeof c === 'string') { text += c; continue; }\n  for (const x of (c || [])) {\n    if (x.type === 'text') text += x.text || '';\n    else if (x.type === 'tool_reference') ajouter(x.title, x.url);\n  }\n}\nconst recherches = sorties.filter(o => o.type === 'tool.execution' && /^web_search/.test(o.name || '')).length;\n\nif (!text) {\n  return {\n    success: false,\n    error: { code: 'EMPTY_RESPONSE', message: 'Mistral a repondu sans texte', http_status: 502 },\n    metadata: prevData.metadata,\n    _trace: trace(null)\n  };\n}\n\nconst usage = input.usage || {};\nconst res = {\n  success: true,\n  // Conversations ne rend pas de raison d arret.\n  data: { text: text, model: modelUsed, finish_reason: 'stop' },\n  meta: {\n    provider: 'mistral',\n    model: modelUsed,\n    usage: {\n      // ⚠️ Mistral compte A PART les jetons que la recherche injecte\n      // (connector_tokens) : 788 + 60 contre un total de 7748, dont 6900 de\n      // connecteur. OpenAI et Anthropic les comptent DANS l entree (mesure :\n      // 7786 et 8523 jetons d entree pour une question d une ligne). On les\n      // replie dans prompt_tokens, sur le modele de la convention Gemini\n      // (azy.daily#295 §2.5) : prompt + completion = total chez les quatre, et\n      // un client qui affiche entree -> sortie montre ce qui a ete consomme\n      // (azy.daily#361). Le detail reste fourni en supplement, jamais a la place.\n      prompt_tokens: (usage.prompt_tokens || 0) + (usage.connector_tokens || 0),\n      completion_tokens: usage.completion_tokens || 0,\n      total_tokens: usage.total_tokens || 0,\n      cache_read_input_tokens: 0,\n      cache_creation_input_tokens: 0,\n      reasoning_tokens: 0,\n      connector_tokens: usage.connector_tokens || 0\n    }\n  },\n  metadata: prevData.metadata,\n  _trace: trace(text, { input: usage.prompt_tokens || 0, output: usage.completion_tokens || 0 })\n};\nif (prevData.web_search) {\n  res.data.sources = sources;\n  res.meta.search_performed = recherches > 0 || sources.length > 0;\n  res.meta.sources_count = sources.length;\n  res.meta.usage.web_search_requests = recherches;\n}\nreturn res;"
+      },
+      "id": "6f6b999b-4b7e-4cc8-8776-85b45281745b",
+      "name": "Format Mistral Conversations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        880
       ]
     }
   ],
@@ -613,6 +765,20 @@
         [
           {
             "node": "Ollama Cloud API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "OpenAI Responses API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mistral Conversations API",
             "type": "main",
             "index": 0
           }
@@ -730,6 +896,50 @@
       ]
     },
     "Format Ollama": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Responses API": {
+      "main": [
+        [
+          {
+            "node": "Format OpenAI Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format OpenAI Responses": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Conversations API": {
+      "main": [
+        [
+          {
+            "node": "Format Mistral Conversations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Mistral Conversations": {
       "main": [
         [
           {
