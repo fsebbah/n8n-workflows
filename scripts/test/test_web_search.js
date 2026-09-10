@@ -127,5 +127,70 @@ T('Gemini : google_search', true, sg.includes('google_search'));
 // mesuré : google_search_retrieval rend 400 « is not supported »
 T('Gemini : pas google_search_retrieval', false, sg.includes('google_search_retrieval'));
 
+console.log('\n7. ⚠️ Mistral passe par /v1/conversations, sans créer d’agent');
+// Mesuré le 2026-09-10 : POST /v1/agents CRÉAIT un agent à chaque appel et ne
+// posait jamais la question → 502 « réponse vide de mistral ». azy.daily#361.
+const pm = nd('Mistral Web Search').parameters;
+T('URL /v1/conversations', 'https://api.mistral.ai/v1/conversations', pm.url);
+T('plus aucun POST /v1/agents', false, livre.includes('api.mistral.ai/v1/agents'));
+T('le corps préparé est enfin envoyé', '={{ $json.mistral_body }}', pm.jsonBody);
+T('plus d’agent nommé en dur', false, livre.includes('Recipe Search Agent'));
+
+const PB = (entree) => JSON.parse(vm.runInNewContext(
+  `(function(){${nd('Prepare Mistral Body').parameters.jsCode}})()`,
+  { $input: { first: () => ({ json: entree }) } }, { timeout: 5000 })[0].json.mistral_body);
+let b = PB({ provider: 'mistral', model: 'mistral-medium-2505', query: 'q' });
+T('store:false (aucune ressource laissée)', false, b.store);
+T('outil web_search en ligne', [{ type: 'web_search' }], b.tools);
+T('modèle venu de la requête', 'mistral-medium-2505', b.model);
+b = PB({ provider: 'mistral-premium', model: 'm', query: 'q' });
+T('premium → web_search_premium', 'web_search_premium', b.tools[0].type);
+b = PB({ provider: 'mistral', model: 'm', query: 'q',
+  messages: [{ role: 'system', content: 'S' }, { role: 'user', content: 'U' }] });
+T('system → instructions, le reste → inputs', ['S', [{ role: 'user', content: 'U' }]], [b.instructions, b.inputs]);
+const SCH = { name: 'fiche', input_schema: { type: 'object', properties: { v: { type: 'string' } } } };
+b = PB({ provider: 'mistral', model: 'm', query: 'q', output_schema: SCH });
+// ⚠️ mesuré : web_search + fonction de sortie → le modèle appelle la fonction
+// SANS chercher et invente la réponse. response_format laisse la recherche se faire.
+T('sortie structurée : aucune fonction dans tools', [{ type: 'web_search' }], b.tools);
+T('… mais response_format json_schema', ['json_schema', 'fiche'],
+  [b.completion_args.response_format?.type, b.completion_args.response_format?.json_schema?.name]);
+T('plus de tool_choice "any" (422 mesuré)', undefined, b.completion_args.tool_choice);
+
+// forme exacte mesurée le 2026-09-10
+const CONV = { outputs: [{ type: 'tool.execution', name: 'web_search' }, { type: 'message.output', content: [
+  { type: 'text', text: 'Le vainqueur est ' },
+  { type: 'tool_reference', tool: 'web_search', title: 'A', url: 'https://a.org/x' },
+  { type: 'text', text: 'Pogačar.' },
+  { type: 'tool_reference', tool: 'web_search', title: 'A bis', url: 'https://a.org/x' },
+  { type: 'tool_reference', tool: 'web_search', title: 'B', url: 'https://b.org/y' }] }],
+  usage: { prompt_tokens: 774, completion_tokens: 129, total_tokens: 7807 } };
+const AM = { ...AMONT, provider: 'mistral' };
+const NM = (entree, amont) => {
+  const r = vm.runInNewContext(`(function(){${nd('Normalize Mistral').parameters.jsCode}})()`, {
+    $input: { first: () => ({ json: entree }) },
+    $: () => ({ first: () => ({ json: amont }) }),
+  }, { timeout: 5000 });
+  return r[0].json;
+};
+let rm = NM(CONV, AM);
+T('texte recomposé des morceaux', 'Le vainqueur est Pogačar.', rm.content);
+T('sources dédoublonnées par URL', ['https://a.org/x', 'https://b.org/y'], rm.sources.map((s) => s.url));
+T('recherche constatée', true, rm.search_performed);
+T('usage lu', [774, 129], [rm.usage.input_tokens, rm.usage.output_tokens]);
+rm = NM({ outputs: [{ type: 'message.output', content: 'texte simple' }] }, AM);
+T('content en chaîne toléré', 'texte simple', rm.content);
+rm = NM({ outputs: [{ type: 'message.output', content: [{ type: 'text',
+  text: '{"vainqueur": "Tadej {P}ogačar", "annee": 2026}. \n\nLe vainqueur du Tour…' }] }] },
+  { ...AM, output_schema: SCH });
+T('JSON de tête extrait malgré la prose', { vainqueur: 'Tadej {P}ogačar', annee: 2026 }, rm.structured_data?.data);
+T('… sous le nom du schéma', 'fiche', rm.structured_data?.tool_name);
+rm = NM({ outputs: [{ type: 'message.output', content: [{ type: 'text', text: 'pas de json' }] }] },
+  { ...AM, output_schema: SCH });
+T('sans JSON : texte livré, pas de données', [true, null], [rm.normalized, rm.structured_data]);
+// la réponse de l'ancien POST /v1/agents : un agent créé, aucune réponse
+rm = NM({ object: 'agent', id: 'ag_x', name: 'Recipe Search Agent' }, AM);
+T('« agent créé » sans réponse = échec 502', [false, 502], [rm.normalized, rm.http_status]);
+
 console.log(`\n${ko === 0 ? '✅ tous les contrôles passent' : `❌ ${ko} contrôle(s) en échec`}  (${ok}/${ok + ko})`);
 process.exit(ko === 0 ? 0 : 1);
