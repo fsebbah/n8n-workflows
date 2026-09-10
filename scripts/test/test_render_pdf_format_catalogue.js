@@ -55,7 +55,7 @@ r = lance('Validate Input', { webhookUrl: GEN, body: { ...DOC, format: ' EPUB ' 
 T('casse et espaces tolérés', 'http://webs.local:3100/render/epub', r.sortie.url);
 r = lance('Validate Input', { webhookUrl: GEN, body: { ...DOC, format: 'docx' } });
 T('⚠️ format inconnu → refusé, pas de repli sur pdf', false, r.ok);
-T('… le message nomme le format et la liste', true, /"docx" inconnu \(formats : pdf, epub\)/.test(r.erreur));
+T('… le message nomme le format et la liste', true, /"docx" inconnu \(formats pdf, epub\)/.test(r.erreur));
 r = lance('Validate Input', { webhookUrl: 'http://n8n/webhook/torah-pdf',
   body: { format: 'epub', data: { massekhet: 'Pesachim', daf: '12b', paragraphes: [] } } });
 T('alias torah : l’extension suit le format', 'Pesachim_12b.epub', r.sortie.corps.filename);
