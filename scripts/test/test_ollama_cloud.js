@@ -46,7 +46,8 @@ T('les quatre historiques marchent toujours',
 
 console.log('\n2. l’aiguillage');
 const sw = nd('Switch Provider').parameters.rules.values;
-T('cinq sorties', 5, sw.length);
+// + openai-responses et mistral-conversations (azy.daily#281, #361) : l'index 4 ne bouge pas.
+T('sept sorties', 7, sw.length);
 T('la cinquième est ollama-cloud', 'ollama-cloud', sw[4].outputKey);
 T('… et teste la bonne valeur', 'ollama-cloud', sw[4].conditions.conditions[0].rightValue);
 T('Switch [4] → Ollama Cloud API', ['Ollama Cloud API'], aval('Switch Provider')[4]);
