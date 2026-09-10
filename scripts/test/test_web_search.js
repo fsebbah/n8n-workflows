@@ -192,5 +192,65 @@ T('sans JSON : texte livré, pas de données', [true, null], [rm.normalized, rm.
 rm = NM({ object: 'agent', id: 'ag_x', name: 'Recipe Search Agent' }, AM);
 T('« agent créé » sans réponse = échec 502', [false, 502], [rm.normalized, rm.http_status]);
 
+console.log('\n8. ⚠️ une source par URL, et le vrai domaine (azy.daily#361)');
+// Mesuré le 2026-09-10 sur l'outil déployé : OpenAI rendait 6 sources pour 4 URL
+// (une même page citée deux fois dans le texte) et sources_count comptait les 6 —
+// le compteur disait autre chose que la liste affichée. Gemini rendait 10 sources
+// toutes au domaine « vertexaisearch.cloud.google.com » : l'URL d'ancrage est une
+// redirection, le vrai domaine n'est que dans `title`.
+// Les deux fixtures sont les réponses BRUTES des fournisseurs, capturées ce jour-là.
+const FXW = (nom) => JSON.parse(fs.readFileSync(path.resolve(__dirname, 'fixtures/web_search', nom), 'utf8'));
+const NS = (nom, entree, provider) => {
+  const r = vm.runInNewContext(`(function(){${nd(nom).parameters.jsCode}})()`, {
+    $input: { first: () => ({ json: entree }) },
+    $: () => ({ first: () => ({ json: { ...AMONT, provider } }) }),
+  }, { timeout: 5000 });
+  return Array.isArray(r) ? r[0].json : r;
+};
+const premieres = (liste) => { const vu = new Set(); return liste.filter((u) => !vu.has(u) && vu.add(u)); };
+
+const fxOA = FXW('openai_responses_doublons.json');
+const citeesOA = fxOA.output.filter((o) => o.type === 'message').flatMap((o) => o.content)
+  .flatMap((c) => (c.annotations || []).filter((a) => a.type === 'url_citation').map((a) => a.url));
+let rs = NS('Normalize OpenAI', fxOA, 'openai');
+T(`openai réel : ${citeesOA.length} citations → une source par URL`, premieres(citeesOA), rs.sources.map((s) => s.url));
+T('… des doublons existaient bien dans la réponse', true, citeesOA.length > new Set(citeesOA).size);
+rs = NS('Normalize OpenAI', { output: [{ type: 'message', content: [{ type: 'output_text', text: 't', annotations: [
+  { type: 'url_citation', url: 'https://a.org/x', title: 'A' },
+  { type: 'url_citation', url: 'https://a.org/x', title: 'A bis' },
+  { type: 'url_citation', url: 'https://b.org/y', title: 'B' }] }] }], usage: {} }, 'openai');
+T('openai : 3 citations dont 1 doublon → 2', ['https://a.org/x', 'https://b.org/y'], rs.sources.map((s) => s.url));
+T('… la première occurrence garde son titre', 'A', rs.sources[0].title);
+
+rs = NS('Normalize Claude', { content: [
+  { type: 'web_search_tool_result', content: [
+    { type: 'web_search_result', url: 'https://a.org/x', title: 'A' },
+    { type: 'web_search_result', url: 'https://a.org/x', title: 'A' },
+    { type: 'web_search_result', title: 'sans URL' }] },
+  { type: 'text', text: 't' }], usage: {} }, 'claude');
+T('claude : doublon et source sans URL écartés', ['https://a.org/x'], rs.sources.map((s) => s.url));
+
+const fxG = FXW('gemini_grounding.json');
+const chunks = fxG.candidates[0].groundingMetadata.groundingChunks.filter((c) => c.web);
+rs = NS('Normalize Gemini', fxG, 'gemini');
+T(`gemini réel : aucun domaine vertexaisearch (${chunks.length} ancrages)`, 0,
+  rs.sources.filter((s) => /vertexaisearch/.test(s.domain)).length);
+const vuG = new Set();
+T('… le domaine vient du titre d’ancrage',
+  chunks.filter((c) => !vuG.has(c.web.uri) && vuG.add(c.web.uri)).map((c) => c.web.title),
+  rs.sources.map((s) => s.domain));
+T('… l’URL de redirection reste le lien', true, rs.sources.every((s) => /^https:\/\//.test(s.url)));
+rs = NS('Normalize Gemini', { candidates: [{ content: { parts: [{ text: 't' }] }, groundingMetadata: { groundingChunks: [
+  { web: { uri: 'https://vertexaisearch.cloud.google.com/r/1', title: 'a.org' } },
+  { web: { uri: 'https://vertexaisearch.cloud.google.com/r/1', title: 'a.org' } },
+  { web: { uri: 'https://exemple.org/page', title: 'Une page' } }] } }], usageMetadata: {} }, 'gemini');
+T('gemini : doublon écarté ; URL directe → domaine de l’URL', ['a.org', 'exemple.org'], rs.sources.map((s) => s.domain));
+
+// Le compteur compte la liste : c'est Format Output qui le pose.
+const fo = FO({ normalized: true, provider: 'openai', content: 't', sources: NS('Normalize OpenAI', fxOA, 'openai').sources,
+  usage: {}, search_performed: true });
+T('Format Output : sources_count = longueur de la liste', fo.data.sources.length, fo.meta.sources_count);
+T('… et vaut le nombre d’URL distinctes', new Set(citeesOA).size, fo.meta.sources_count);
+
 console.log(`\n${ko === 0 ? '✅ tous les contrôles passent' : `❌ ${ko} contrôle(s) en échec`}  (${ok}/${ok + ko})`);
 process.exit(ko === 0 ? 0 : 1);
