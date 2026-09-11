@@ -180,7 +180,8 @@ T('conversations : system, messages system, puis la consigne', `SYS\n\nS2\n\n${D
 T('conversations : sans system, la consigne part quand même', DOC_MISTRAL,
   corpsDe('Mistral Conversations API', { model: 'm', max_tokens: 10, messages: [{ role: 'user', content: 'q' }] }).instructions);
 T('conversations : inputs sans system', [{ role: 'user', content: 'q' }], b.inputs);
-T('conversations : budget et temperature', { max_tokens: 300, temperature: 0.4 }, b.completion_args);
+// ⚠️ temperature 0.7 : 7/10 réponses ; sans : 10/10 (mesuré le 2026-09-11).
+T('conversations : le budget, jamais de temperature', { max_tokens: 300 }, b.completion_args);
 
 console.log('\n6. les formatteurs, sur les réponses RÉELLES');
 // OpenAI /v1/responses + recherche (gpt-5.6-terra)
