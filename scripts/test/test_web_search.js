@@ -147,7 +147,11 @@ b = PB({ provider: 'mistral-premium', model: 'm', query: 'q' });
 T('premium → web_search_premium', 'web_search_premium', b.tools[0].type);
 b = PB({ provider: 'mistral', model: 'm', query: 'q',
   messages: [{ role: 'system', content: 'S' }, { role: 'user', content: 'U' }] });
-T('system → instructions, le reste → inputs', ['S', [{ role: 'user', content: 'U' }]], [b.instructions, b.inputs]);
+const DOC_MISTRAL = 'You have the ability to perform web searches with `web_search` to find up-to-date information.';
+T('system → instructions (avant la consigne), le reste → inputs', [`S\n\n${DOC_MISTRAL}`, [{ role: 'user', content: 'U' }]], [b.instructions, b.inputs]);
+// ⚠️ Sans instructions, Mistral s'arrête souvent après sa recherche sans rédiger :
+// mesuré le 2026-09-10, 0/6 sans, 6/6 avec. Elles doivent donc TOUJOURS partir.
+T('sans consigne de l’appelant : la phrase de la doc seule', DOC_MISTRAL, PB({ provider: 'mistral', model: 'm', query: 'q' }).instructions);
 const SCH = { name: 'fiche', input_schema: { type: 'object', properties: { v: { type: 'string' } } } };
 b = PB({ provider: 'mistral', model: 'm', query: 'q', output_schema: SCH });
 // ⚠️ mesuré : web_search + fonction de sortie → le modèle appelle la fonction
@@ -251,6 +255,15 @@ const fo = FO({ normalized: true, provider: 'openai', content: 't', sources: NS(
   usage: {}, search_performed: true });
 T('Format Output : sources_count = longueur de la liste', fo.data.sources.length, fo.meta.sources_count);
 T('… et vaut le nombre d’URL distinctes', new Set(citeesOA).size, fo.meta.sources_count);
+
+console.log('\n9. ⚠️ Mistral a cherché sans rédiger : une erreur qui le dit');
+// Réponse réelle du 2026-09-10 : outputs = [tool.execution] seul, HTTP 200.
+const SANS_MSG = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'fixtures/call_messages/mistral_conversations_sans_message.json'), 'utf8'));
+let rsm = NM(SANS_MSG, { ...AMONT, provider: 'mistral' });
+T('échec signalé, 502', [false, 502], [rsm.normalized, rsm.http_status]);
+T('… avec la cause, pas « réponse vide »', 'Mistral a effectue la recherche mais n a pas redige de reponse', rsm.error);
+rsm = NM({ outputs: [], usage: {} }, { ...AMONT, provider: 'mistral' });
+T('sans recherche ni texte : message générique conservé', 'reponse vide de mistral', rsm.error);
 
 console.log(`\n${ko === 0 ? '✅ tous les contrôles passent' : `❌ ${ko} contrôle(s) en échec`}  (${ok}/${ok + ko})`);
 process.exit(ko === 0 ? 0 : 1);

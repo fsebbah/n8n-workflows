@@ -174,7 +174,11 @@ b = corpsDe('Mistral Conversations API', { model: 'mistral-medium-latest', max_t
   system: 'SYS', messages: [{ role: 'system', content: 'S2' }, { role: 'user', content: 'q' }] });
 T('conversations : store:false (aucun agent)', false, b.store);
 T('conversations : outil en ligne', [{ type: 'web_search' }], b.tools);
-T('conversations : system + messages system → instructions', 'SYS\n\nS2', b.instructions);
+const DOC_MISTRAL = 'You have the ability to perform web searches with `web_search` to find up-to-date information.';
+T('conversations : system, messages system, puis la consigne', `SYS\n\nS2\n\n${DOC_MISTRAL}`, b.instructions);
+// ⚠️ Sans instructions, Mistral s'arrête souvent après sa recherche (0/6 contre 6/6).
+T('conversations : sans system, la consigne part quand même', DOC_MISTRAL,
+  corpsDe('Mistral Conversations API', { model: 'm', max_tokens: 10, messages: [{ role: 'user', content: 'q' }] }).instructions);
 T('conversations : inputs sans system', [{ role: 'user', content: 'q' }], b.inputs);
 T('conversations : budget et temperature', { max_tokens: 300, temperature: 0.4 }, b.completion_args);
 
@@ -252,6 +256,10 @@ T('⚠️ mistral : connecteur replié dans l’entrée', [788 + 6900, 60, 7748]
   [r.meta.usage.prompt_tokens, r.meta.usage.completion_tokens, r.meta.usage.total_tokens]);
 T('… détail fourni en supplément', 6900, r.meta.usage.connector_tokens);
 T('mistral : étiquette mistral', 'mistral', r.meta.provider);
+// Réponse réelle du 2026-09-10 : Mistral a cherché, n'a rien rédigé, HTTP 200.
+r = F('Format Mistral Conversations', env(FX('mistral_conversations_sans_message.json')), PREV({ provider: 'mistral', model: 'm', web_search: true }));
+T('mistral : cherché sans rédiger → erreur qui le dit', [false, 502, 'Mistral a effectue la recherche mais n a pas redige de reponse'],
+  [r.success, r.error.http_status, r.error.message]);
 
 console.log('\n7. ⚠️ entrée + sortie = total, chez les quatre (azy.daily#361)');
 // Un client affiche « entrée → sortie » : si la somme ne fait pas le total, son
