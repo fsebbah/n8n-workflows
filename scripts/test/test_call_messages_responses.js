@@ -311,5 +311,27 @@ T('mistral : 401 relayé', [false, 401, 'Unauthorized'], [r.success, r.error.htt
 r = F('Format Mistral Conversations', env({ object: 'Error', detail: [{ msg: 'bad' }] }, 422), PREV({ provider: 'mistral', model: 'm', web_search: true }));
 T('mistral : 422 à détail structuré relayé', [false, 422, true], [r.success, r.error.http_status, /bad/.test(r.error.message)]);
 
+console.log('\n10. ⚠️ un filtre de domaines demandé au dispatch est SIGNALÉ, jamais perdu');
+// Contrat proposé par l'api (azy.daily#361) : allowed_domains / blocked_domains relayés
+// tels quels sur le dispatch. Pas encore branchés vers les fournisseurs : n8n le dit.
+const vd = V({ ...BASE, provider: 'anthropic', model: 'm', web_search: true,
+  allowed_domains: [' NASA.gov ', '', 'space.com'], blocked_domains: 'pas-une-liste' });
+T('Validate : listes lues, normalisées', [['nasa.gov', 'space.com'], []], [vd.allowed_domains, vd.blocked_domains]);
+T('Validate : sans listes → tableaux vides', [[], []],
+  [V({ ...BASE, provider: 'openai', model: 'm' }).allowed_domains, V({ ...BASE, provider: 'openai', model: 'm' }).blocked_domains]);
+const REP_OK = { success: true, data: { text: 't', sources: [] }, meta: { provider: 'anthropic', search_performed: true, sources_count: 0 } };
+let sg = F('Signal filtre domaines', REP_OK, { web_search: true, allowed_domains: ['nasa.gov'], blocked_domains: [] });
+T('recherche + liste blanche → signalé', [false, 'DOMAIN_FILTER_NOT_APPLIED'], [sg.meta.domain_filter_applied, sg.meta.warnings?.[0]?.code]);
+T('… le reste de meta est conservé', [true, 0], [sg.meta.search_performed, sg.meta.sources_count]);
+sg = F('Signal filtre domaines', REP_OK, { web_search: true, allowed_domains: [], blocked_domains: ['facebook.com'] });
+T('recherche + liste noire → signalé', false, sg.meta.domain_filter_applied);
+sg = F('Signal filtre domaines', REP_OK, { web_search: false, allowed_domains: ['nasa.gov'], blocked_domains: [] });
+T('sans recherche : rien à filtrer, réponse intacte', REP_OK, sg);
+sg = F('Signal filtre domaines', REP_OK, { web_search: true, allowed_domains: [], blocked_domains: [] });
+T('recherche sans liste : réponse intacte', REP_OK, sg);
+const REP_KO = { success: false, error: { code: 'X', http_status: 502 } };
+T('une erreur passe intacte', REP_KO, F('Signal filtre domaines', REP_KO, { web_search: true, allowed_domains: ['a.org'] }));
+T('câblage : Merge → Signal → Respond', [[['Signal filtre domaines']], [['Respond']]], [aval('Merge'), aval('Signal filtre domaines')]);
+
 console.log(`\n${ko === 0 ? '✅ tous les contrôles passent' : `❌ ${ko} contrôle(s) en échec`}  (${ok}/${ok + ko})`);
 process.exit(ko === 0 ? 0 : 1);
