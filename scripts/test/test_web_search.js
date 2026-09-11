@@ -265,5 +265,30 @@ T('… avec la cause, pas « réponse vide »', 'Mistral a effectue la recherche
 rsm = NM({ outputs: [], usage: {} }, { ...AMONT, provider: 'mistral' });
 T('sans recherche ni texte : message générique conservé', 'reponse vide de mistral', rsm.error);
 
+console.log('\n10. ⚠️ un filtre de domaines demandé mais non appliqué est SIGNALÉ');
+// Constat du 2026-09-11 : Validate Input accepte allowed_domains / blocked_domains,
+// aucun fournisseur ne les reçoit, et la documentation affirmait « Claude only ».
+const FOP = (entree, options) => {
+  const r = vm.runInNewContext(`(function(){${nd('Format Output').parameters.jsCode}})()`, {
+    $input: { first: () => ({ json: entree }) },
+    $: () => ({ first: () => ({ json: { ...AMONT, options } }) }),
+  }, { timeout: 5000 });
+  return Array.isArray(r) ? r[0].json : r;
+};
+const OK_TXT = { normalized: true, provider: 'claude', content: 't', sources: [], usage: {}, search_performed: true };
+let fo2 = FOP(OK_TXT, { allowed_domains: ['flutter.dev'], blocked_domains: [] });
+T('allowed_domains → domain_filter_applied: false', false, fo2.meta.domain_filter_applied);
+T('… avec un avertissement typé', 'DOMAIN_FILTER_NOT_APPLIED', fo2.meta.warnings?.[0]?.code);
+fo2 = FOP(OK_TXT, { allowed_domains: [], blocked_domains: ['facebook.com'] });
+T('blocked_domains → signalé aussi', false, fo2.meta.domain_filter_applied);
+fo2 = FOP({ ...OK_TXT, structured_data: { tool_name: 'x', data: {} } }, { allowed_domains: ['a.org'] });
+T('sortie structurée → signalé aussi', 'DOMAIN_FILTER_NOT_APPLIED', fo2.meta.warnings?.[0]?.code);
+fo2 = FOP(OK_TXT, { allowed_domains: [], blocked_domains: [] });
+T('sans demande : forme inchangée', [false, false], ['domain_filter_applied' in fo2.meta, 'warnings' in fo2.meta]);
+fo2 = FOP(OK_TXT, undefined);
+T('sans options du tout : forme inchangée', false, 'warnings' in fo2.meta);
+const doc = JSON.stringify(nd('Documentation').parameters);
+T('la documentation ne prétend plus « Claude only »', false, /Claude only|only works with Claude/.test(doc));
+
 console.log(`\n${ko === 0 ? '✅ tous les contrôles passent' : `❌ ${ko} contrôle(s) en échec`}  (${ok}/${ok + ko})`);
 process.exit(ko === 0 ? 0 : 1);
