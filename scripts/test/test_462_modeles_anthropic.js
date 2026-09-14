@@ -108,17 +108,21 @@ console.log('\n2. DISCORD - Student Recap › Generate Recap (Anthropic)');
 }
 
 const CW = charger('Torah_Chunk_Worker');
-const PI = { jobId: 'j', text: 'בְּרֵאשִׁית בָּרָא אֱלֹהִים. '.repeat(3), textLength: 90, threshold: 10000, apiKey: 'K', context: {}, needsChunking: true };
+const PI = { jobId: 'j', text: 'בְּרֵאשִׁית בָּרָא אֱלֹהִים. '.repeat(500), textLength: 14500, threshold: 10000, apiKey: 'K', context: {}, needsChunking: true };
+// Depuis #504, le corps est construit par « Prepare Split » : le modèle ne rend que des points de coupe
+// (numéros d'unités), plus le texte recopié — max_tokens 4096 au lieu de 8192.
+const PS = code(CW, 'Prepare Split', PI, { 'Parse Input': PI });
 console.log('\n3. Torah Chunk Worker › Claude Smart Split');
 {
   T('appelle api.anthropic.com/v1/messages', 'https://api.anthropic.com/v1/messages', nd(CW, 'Claude Smart Split').parameters.url);
   T('pas de « }} » interne à l’expression', true, sansExpressionTronquee(CW, 'Claude Smart Split'));
-  const b = corps(CW, 'Claude Smart Split', PI);
+  const b = corps(CW, 'Claude Smart Split', PS);
   T('modèle envoyé = remplaçant', HAIKU, b.model);
-  T('max_tokens inchangé, texte dans le prompt', [8192, true], [b.max_tokens, b.messages[0].content.endsWith(PI.text)]);
+  T('points de coupe (#504) : max_tokens 4096, unités numérotées', [4096, true], [b.max_tokens, /^#0 fin=\d+ \|/m.test(b.messages[0].content)]);
+  const coupe = PS.bornes.findIndex(x => x > 7000) - 1;
   const out = code(CW, 'Parse Chunks', { statusCode: 200, headers: {}, body: { model: HAIKU,
-    content: [{ type: 'text', text: '{"chunks": [{"index": 0, "text": "א", "char_count": 1}], "total_chunks": 1}' }] } }, { 'Parse Input': PI });
-  T('aval : segments lus', [true, 1, 'claude_semantic'], [out.success, out.total_segments, out.method]);
+    content: [{ type: 'text', text: JSON.stringify({ debuts: [0, coupe] }) }] } }, { 'Parse Input': PI, 'Prepare Split': PS });
+  T('aval : segments lus', [true, 2, 'claude_boundaries'], [out.success, out.total_segments, out.method]);
 }
 
 const EP = charger('LEARNING_-_Evaluate_Photo');
@@ -132,7 +136,7 @@ console.log('\n4. LEARNING - Evaluate Photo › Evaluate Photo with Vision (déj
 
 console.log('\n5. aucun claude-3 envoyé vers api.anthropic.com (activeVersion ignoré)');
 {
-  for (const [w, echantillon] of [[SD, VI], [SR, MB], [CW, PI], [EP, { body: { image_url: 'https://exemple.test/p.jpg' } }]]) {
+  for (const [w, echantillon] of [[SD, VI], [SR, MB], [CW, PS], [EP, { body: { image_url: 'https://exemple.test/p.jpg' } }]]) {
     const appels = appelsAnthropic(w);
     const modeles = appels.map(n => corps(w, n.name, echantillon, {}).model);
     T(`${w.name} : ${appels.length} appel(s) Anthropic, aucun claude-3`, false, modeles.some(m => /^claude-3/.test(m)));
