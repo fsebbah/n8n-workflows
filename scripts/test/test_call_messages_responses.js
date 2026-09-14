@@ -232,6 +232,17 @@ T('anthropic sans recherche : forme inchangée', [false, false], ['sources' in r
 r = F('Format Anthropic', { content: [{ type: 'server_tool_use', name: 'web_search' }], stop_reason: 'pause_turn', usage: {} },
   PREV({ provider: 'anthropic', model: 'c', web_search: true }));
 T('anthropic : recherche sans texte → 502, pas un succès vide', [false, 502], [r.success, r.error.http_status]);
+// Sonde du 2026-09-14 (météo Paris) : les annonces de recherche étaient collées à la réponse.
+const fxMeteo = FX('anthropic_meteo_annonces.json');
+const annoncesM = fxMeteo.content.filter((b, i) => b.type === 'text' && fxMeteo.content[i + 1]?.type === 'server_tool_use').map((b) => b.text);
+r = F('Format Anthropic', fxMeteo, PREV({ provider: 'anthropic', model: 'claude-haiku-4-5-20251001', web_search: true }));
+T('anthropic réel : la fixture contient des annonces', true, annoncesM.length > 0);
+T('⚠️ anthropic : aucune annonce dans la réponse', [], annoncesM.filter((a) => r.data.text.includes(a)));
+T('… la fin de la réponse est intacte', true, r.data.text.endsWith(fxMeteo.content.filter((b) => b.type === 'text').at(-1).text));
+r = F('Format Anthropic', { content: [{ type: 'text', text: 'Je cherche.' }, { type: 'server_tool_use', name: 'web_search' },
+  { type: 'web_search_tool_result', content: [] }, { type: 'text', text: 'Voici ' }, { type: 'text', text: 'la réponse.' }],
+  usage: { input_tokens: 1, output_tokens: 1 }, stop_reason: 'end_turn', model: 'c' }, PREV({ provider: 'anthropic', model: 'c', web_search: true }));
+T('anthropic : annonce écartée, réponse en plusieurs blocs gardée', 'Voici la réponse.', r.data.text);
 
 // Gemini + recherche (gemini-3.6-flash)
 r = F('Format Gemini', FX('gemini_web_search.json'), PREV({ provider: 'google', model: 'gemini-3.6-flash', web_search: true }));
