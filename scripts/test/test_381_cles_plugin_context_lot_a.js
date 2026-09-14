@@ -216,6 +216,68 @@ const TE = charger('MCP_-_Text_Embedder');
     const ko = execCode(TE, p.format, { error: { message: 'Unauthorized', code: 401 } }, b);
     controle(`${p.provider} (e) ${p.format} erreur sans clé`, [ko.success, contient(ko, PC)], [false, false]);
   }
+  // Seule la clé du fournisseur choisi est acceptée : jamais celle d'un autre
+  // (« on ne doit recevoir que l'api key mistral si c'est un embedder mistral »).
+  console.log('   — clé d’un autre fournisseur jamais utilisée');
+  const OPENAI = 'sk-openai-381-AUTRE-FOURNISSEUR-000000';
+  const MISTRAL = 'mistral-381-AUTRE-FOURNISSEUR-111111';
+  const GOOGLE = 'AIza-381-AUTRE-FOURNISSEUR-222222';
+  const envoi = {
+    openai: v => enTete(TE, 'OpenAI Embeddings', 'Authorization', v),
+    mistral: v => enTete(TE, 'Mistral Embeddings', 'Authorization', v),
+    gemini: v => new URL(resoudre(TE.nd('Gemini Embeddings').parameters.url, v)).searchParams.get('key'),
+  };
+  const refus = (libelle, body, cleInterdite) => {
+    const v = valider({ text: ['x'], ...body });
+    const err = execCode(TE, 'Build Error', v);
+    controle(`${libelle} → 400`, [v.valid, err.error && err.error.http_status], [false, 400]);
+    controle(`${libelle} → clé étrangère ni retenue ni renvoyée`, [v.api_key, contient(v, cleInterdite), contient(err, cleInterdite)], [undefined, false, false]);
+  };
+  refus('mistral + openai_api_key seule', { provider: 'mistral', openai_api_key: OPENAI }, OPENAI);
+  refus('mistral + context.openai_api_key seule', { provider: 'mistral', context: { openai_api_key: OPENAI } }, OPENAI);
+  refus('mistral + google_api_key seule', { provider: 'mistral', google_api_key: GOOGLE }, GOOGLE);
+  refus('google + openai_api_key seule', { provider: 'google', openai_api_key: OPENAI }, OPENAI);
+  refus('gemini + openai_api_key seule', { provider: 'gemini', openai_api_key: OPENAI }, OPENAI);
+  refus('google + mistral_api_key seule', { provider: 'google', mistral_api_key: MISTRAL }, MISTRAL);
+  refus('openai + mistral_api_key seule', { provider: 'openai', mistral_api_key: MISTRAL }, MISTRAL);
+  refus('openai + google_api_key seule', { provider: 'openai', google_api_key: GOOGLE }, GOOGLE);
+  refus('openai (défaut) + mistral_api_key seule', { mistral_api_key: MISTRAL }, MISTRAL);
+
+  const mOpPc = valider({ text: ['x'], provider: 'mistral', openai_api_key: OPENAI, ...plugin({ mistral: PC, openai: OPENAI }) });
+  controle('mistral + openai_api_key + plugin_context.mistral → clé Mistral envoyée', [mOpPc.valid, envoi.mistral(mOpPc) === `Bearer ${PC}`], [true, true]);
+  for (const p of ['google', 'gemini']) {
+    const gOpPc = valider({ text: ['x'], provider: p, openai_api_key: OPENAI, ...plugin({ google: PC, openai: OPENAI }) });
+    controle(`${p} + openai_api_key + plugin_context.google → clé Google envoyée`, [gOpPc.valid, envoi.gemini(gOpPc) === PC], [true, true]);
+  }
+  const oMiPc = valider({ text: ['x'], provider: 'openai', mistral_api_key: MISTRAL, ...plugin({ openai: PC }) });
+  controle('openai + mistral_api_key + plugin_context.openai → clé OpenAI envoyée', [oMiPc.valid, envoi.openai(oMiPc) === `Bearer ${PC}`], [true, true]);
+
+  // Champ propre au fournisseur : lu, et prioritaire sur plugin_context.
+  for (const [provider, champ, cle, lire] of [
+    ['openai', 'openai_api_key', OPENAI, v => envoi.openai(v) === `Bearer ${OPENAI}`],
+    ['mistral', 'mistral_api_key', MISTRAL, v => envoi.mistral(v) === `Bearer ${MISTRAL}`],
+    ['google', 'google_api_key', GOOGLE, v => envoi.gemini(v) === GOOGLE],
+    ['gemini', 'gemini_api_key', GOOGLE, v => envoi.gemini(v) === GOOGLE],
+  ]) {
+    const seul = valider({ text: ['x'], provider, [champ]: cle });
+    controle(`${provider} + ${champ} seule → envoyée`, [seul.valid, lire(seul)], [true, true]);
+    const ctxSeul = valider({ text: ['x'], provider, context: { [champ]: cle } });
+    controle(`${provider} + context.${champ} seule → envoyée`, [ctxSeul.valid, lire(ctxSeul)], [true, true]);
+    const avecPc = valider({ text: ['x'], provider, [champ]: cle, ...plugin({ [provider === 'gemini' ? 'google' : provider]: PC }) });
+    controle(`${provider} + ${champ} + plugin_context → ${champ} gagne`, lire(avecPc), true);
+  }
+
+  // Le message 400 ne cite que les champs du fournisseur choisi.
+  const message = provider => ((valider({ text: ['x'], provider }).errors) || []).join(' | ');
+  const CHAMPS = ['openai_api_key', 'mistral_api_key', 'google_api_key'];
+  for (const [provider, propre, code] of [['openai', 'openai_api_key', 'openai'], ['mistral', 'mistral_api_key', 'mistral'], ['google', 'google_api_key', 'google']]) {
+    const m = message(provider);
+    controle(`message ${provider} : cite ${propre}, api_key, plugin_context.api_keys.${code}`,
+      [m.includes(propre), /\bapi_key\b/.test(m), m.includes(`plugin_context.api_keys.${code}`)], [true, true, true]);
+    controle(`message ${provider} : ne cite aucun champ d’un autre fournisseur`,
+      CHAMPS.filter(c => c !== propre).concat(provider === 'google' ? [] : ['gemini_api_key']).filter(c => m.includes(c)), []);
+  }
+
   const fournisseurInvalide = valider({ text: 'x', provider: 'cohere', ...plugin({ openai: PC }) });
   controle('provider invalide → toujours invalide, sans clé', [fournisseurInvalide.valid, contient(fournisseurInvalide, PC)], [false, false]);
   sansEnvNiCredential(TE, ['OpenAI Embeddings', 'Mistral Embeddings', 'Gemini Embeddings']);
