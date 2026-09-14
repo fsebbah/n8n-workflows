@@ -103,8 +103,11 @@ console.log('\n1. détection de la famille de modèle');
   // La parole de l'appelant prime sur la devinette : le catalogue sait, pas nous.
   controle('reasoning:true forcé sur un gpt-4o',
     valider({ ...BASE, model: 'gpt-4o', reasoning: true }).raisonnement, true);
-  controle('reasoning:false forcé sur un gpt-5',
-    valider({ ...BASE, model: 'gpt-5', reasoning: false }).raisonnement, false);
+  // ⚠️ Changement de sens (azy.daily#365, décision PO du 14/09) : `reasoning: false`
+  // veut désormais dire « effort plancher », pas « ce modèle ne raisonne pas ».
+  // Il ne peut donc plus retirer la garde : gpt-5 refuserait max_tokens (400).
+  controle('reasoning:false sur un gpt-5 → la garde reste',
+    valider({ ...BASE, model: 'gpt-5', reasoning: false }).raisonnement, true);
   controle('reasoning absent → repli sur le motif',
     valider({ ...BASE, model: 'gpt-5' }).raisonnement, true);
 }
