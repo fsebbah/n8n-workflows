@@ -20,12 +20,25 @@
       }
     },
     {
-      "id": "validate-input",
-      "name": "Validate Input",
+      "id": "prepare-image-request",
+      "name": "Prepare Image Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ============================================\n// PREPARE IMAGE REQUEST - gpt-image (azy.daily#383)\n// ============================================\n// DALL-E n'est plus servi par OpenAI (HTTP 400 « model does not exist », 14/09).\n// La famille gpt-image refuse quality standard/hd, style et response_format.\n// Le corps est construit ICI puis JSON.stringify : l'ancien JSON écrit en dur\n// (\"prompt\": \"{{ ... }}\") cassait dès qu'un prompt contenait un guillemet.\n// Toute valeur hors liste est refusée en 400 AVANT l'appel.\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst ctx = body.context || {};\nconst opts = body.options || {};\nconst errors = [];\n\n// options.X prime sur X à la racine\nconst lire = nom => [opts[nom], body[nom]].find(v => v !== undefined && v !== null && v !== '');\n\n// --- prompt (requis) ---\nconst prompt = body.prompt;\nif (typeof prompt !== 'string' || prompt.trim().length === 0) {\n  errors.push('prompt requis (chaîne non vide)');\n}\n\n// --- model : libre (catalogue), défaut gpt-image-1-mini ---\nconst modelDemande = lire('model');\nlet model = 'gpt-image-1-mini';\nif (modelDemande !== undefined) {\n  if (typeof modelDemande !== 'string' || modelDemande.trim().length === 0) {\n    errors.push('model doit être une chaîne non vide');\n  } else {\n    model = modelDemande.trim();\n  }\n}\n\n// --- n : 1 à 10, défaut 1 ---\nconst nDemande = lire('n');\nlet n = 1;\nif (nDemande !== undefined) {\n  n = Number(nDemande);\n  if (!Number.isInteger(n) || n < 1 || n > 10) {\n    errors.push('n doit être un entier entre 1 et 10');\n  }\n}\n\n// --- size : anciennes tailles DALL-E converties ---\nconst TAILLES = ['1024x1024', '1536x1024', '1024x1536', 'auto'];\nconst ANCIENNES_TAILLES = { '1792x1024': '1536x1024', '1024x1792': '1024x1536' };\nconst sizeDemande = lire('size');\nconst size = sizeDemande === undefined ? '1024x1024' : (ANCIENNES_TAILLES[sizeDemande] || sizeDemande);\nif (!TAILLES.includes(size)) {\n  errors.push(`size invalide (${String(sizeDemande)}), valeurs acceptées ${TAILLES.join(' | ')}`);\n}\n\n// --- quality : anciennes qualités DALL-E converties ---\nconst QUALITES = ['low', 'medium', 'high', 'auto'];\nconst ANCIENNES_QUALITES = { standard: 'medium', hd: 'high' };\nconst qualityDemande = lire('quality');\nconst quality = qualityDemande === undefined ? 'auto' : (ANCIENNES_QUALITES[qualityDemande] || qualityDemande);\nif (!QUALITES.includes(quality)) {\n  errors.push(`quality invalide (${String(qualityDemande)}), valeurs acceptées ${QUALITES.join(' | ')}`);\n}\n\n// --- facultatifs : transmis seulement s'ils sont fournis ---\nconst FORMATS = ['png', 'jpeg', 'webp'];\nconst outputFormat = lire('output_format');\nif (outputFormat !== undefined && !FORMATS.includes(outputFormat)) {\n  errors.push(`output_format invalide (${String(outputFormat)}), valeurs acceptées ${FORMATS.join(' | ')}`);\n}\nconst compressionDemandee = lire('output_compression');\nconst outputCompression = compressionDemandee === undefined ? undefined : Number(compressionDemandee);\nif (outputCompression !== undefined && (!Number.isInteger(outputCompression) || outputCompression < 0 || outputCompression > 100)) {\n  errors.push('output_compression doit être un entier entre 0 et 100');\n}\nconst FONDS = ['transparent', 'opaque', 'auto'];\nconst background = lire('background');\nif (background !== undefined && !FONDS.includes(background)) {\n  errors.push(`background invalide (${String(background)}), valeurs acceptées ${FONDS.join(' | ')}`);\n}\n\n// --- clé OpenAI : BYOT, jamais de credential ni de variable d'environnement ---\n// La clé ne sort de ce nœud que vers l'en-tête Authorization ; elle n'est\n// jamais recopiée dans la réponse, le rappel ni les erreurs.\nconst cleFournie = body.openai_api_key || ctx.openai_api_key || body.plugin_context?.api_keys?.openai;\nconst openaiApiKey = typeof cleFournie === 'string' ? cleFournie.trim() : '';\nif (!openaiApiKey) {\n  errors.push('openai_api_key requis (ou context.openai_api_key, plugin_context.api_keys.openai)');\n}\n\nconst executionMode = body.execution_mode || 'online';\nconst callbackUrl = typeof body.callback_url === 'string' ? body.callback_url.trim() : '';\n\nif (errors.length > 0) {\n  return {\n    valid: false,\n    response: {\n      success: false,\n      error: {\n        code: 400,\n        http_status: 400,\n        message: errors.join(' ; '),\n        status: 'BAD_REQUEST',\n        errors: errors\n      },\n      meta: { provider: 'openai', execution_mode: executionMode }\n    }\n  };\n}\n\nconst imageBody = { model, prompt, n, size, quality };\nif (outputFormat !== undefined) imageBody.output_format = outputFormat;\nif (outputCompression !== undefined) imageBody.output_compression = outputCompression;\nif (background !== undefined) imageBody.background = background;\n\nreturn {\n  valid: true,\n  image_body: JSON.stringify(imageBody),\n  openai_api_key: openaiApiKey,\n  model: model,\n  n: n,\n  size: size,\n  quality: quality,\n  output_format: outputFormat || 'png',\n  background: background || null,\n  prompt: prompt,\n  callback_url: callbackUrl,\n  job_id: body.job_id || null,\n  execution_mode: executionMode,\n  startTime: Date.now()\n};\n"
+      }
+    },
+    {
+      "id": "check-valid",
+      "name": "Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        460,
+        680,
         300
       ],
       "parameters": {
@@ -37,11 +50,12 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ $json.body.prompt }}",
-              "rightValue": "",
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "isNotEmpty"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],
@@ -51,17 +65,17 @@
       }
     },
     {
-      "id": "error-no-prompt",
-      "name": "Error: No Prompt",
+      "id": "error-validation",
+      "name": "Error: Validation",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        700,
-        520
+        900,
+        540
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": false, \"error\": { \"code\": 400, \"message\": \"Missing required parameter: prompt\", \"status\": \"BAD_REQUEST\" }, \"meta\": { \"provider\": \"openai\", \"execution_mode\": $json.body.execution_mode || \"online\" } } }}",
+        "responseBody": "={{ $json.response }}",
         "options": {
           "responseCode": 400
         }
@@ -73,7 +87,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        700,
+        900,
         300
       ],
       "parameters": {
@@ -85,7 +99,7 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ $json.body.callback_url }}",
+              "leftValue": "={{ $json.callback_url }}",
               "rightValue": "",
               "operator": {
                 "type": "string",
@@ -104,11 +118,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        940,
+        1120,
         200
       ],
       "parameters": {
-        "jsCode": "// `crypto.randomUUID()` est indisponible : le bac a sable interdit require().\n// `$execution.id` est unique par execution (n8n-workflows#476).\nconst nouvelId = () => 'job_' + $execution.id + '_' + Date.now().toString(36);\nconst webhookData = $input.first().json;\n\n// Generate or use provided job_id\nconst job_id = webhookData.body.job_id || nouvelId();\nconst callback_url = webhookData.body.callback_url;\n\nreturn [{\n  json: {\n    ...webhookData,\n    job_context: {\n      job_id: job_id,\n      callback_url: callback_url,\n      started_at: new Date().toISOString()\n    }\n  }\n}];"
+        "jsCode": "// `crypto.randomUUID()` est indisponible : le bac a sable interdit require().\n// `$execution.id` est unique par execution (n8n-workflows#476).\nconst nouvelId = () => 'job_' + $execution.id + '_' + Date.now().toString(36);\nconst webhookData = $input.first().json;\n\n// Generate or use provided job_id\nconst job_id = webhookData.job_id || nouvelId();\nconst callback_url = webhookData.callback_url;\n\nreturn [{\n  json: {\n    ...webhookData,\n    job_context: {\n      job_id: job_id,\n      callback_url: callback_url,\n      started_at: new Date().toISOString()\n    }\n  }\n}];"
       }
     },
     {
@@ -117,7 +131,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        1160,
+        1340,
         200
       ],
       "parameters": {
@@ -129,12 +143,12 @@
       }
     },
     {
-      "id": "dalle-generate-async",
-      "name": "DALL-E Generate (Async)",
+      "id": "gpt-image-generate-async",
+      "name": "OpenAI Image Generate (Async)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1380,
+        1560,
         200
       ],
       "parameters": {
@@ -146,7 +160,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $json.body.openai_api_key || $json.body.plugin_context?.api_keys?.openai }}"
+              "value": "=Bearer {{ $json.openai_api_key }}"
             },
             {
               "name": "Content-Type",
@@ -156,9 +170,9 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"{{ $json.body.options?.model || 'dall-e-3' }}\",\n  \"prompt\": \"{{ $json.body.prompt }}\",\n  \"n\": {{ $json.body.options?.n || 1 }},\n  \"size\": \"{{ $json.body.options?.size || '1024x1024' }}\",\n  \"quality\": \"{{ $json.body.options?.quality || 'standard' }}\",\n  \"style\": \"{{ $json.body.options?.style || 'vivid' }}\",\n  \"response_format\": \"{{ $json.body.options?.response_format || 'url' }}\"\n}",
+        "jsonBody": "={{ $json.image_body }}",
         "options": {
-          "timeout": 120000
+          "timeout": 180000
         }
       },
       "onError": "continueRegularOutput"
@@ -169,11 +183,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1600,
+        1780,
         200
       ],
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst jobContextData = $('Store Job Context').first().json;\nconst webhookData = jobContextData;\n\nconst PRICING = {\n  'dall-e-3': {\n    'standard': { '1024x1024': 0.04, '1792x1024': 0.08, '1024x1792': 0.08 },\n    'hd': { '1024x1024': 0.08, '1792x1024': 0.12, '1024x1792': 0.12 }\n  },\n  'dall-e-2': {\n    'standard': { '256x256': 0.016, '512x512': 0.018, '1024x1024': 0.02 }\n  }\n};\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        job_id: jobContextData.job_context.job_id,\n        status: 'failed',\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Unknown error',\n          status: item.json.error.type || 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        },\n        job_context: jobContextData.job_context\n      }\n    };\n  }\n\n  const model = webhookData.body.options?.model || 'dall-e-3';\n  const quality = webhookData.body.options?.quality || 'standard';\n  const size = webhookData.body.options?.size || '1024x1024';\n  const n = webhookData.body.options?.n || 1;\n  \n  const unitPrice = PRICING[model]?.[quality]?.[size] || 0.04;\n  const costEstimate = unitPrice * n;\n\n  const images = (item.json.data || []).map(img => ({\n    url: img.url || null,\n    b64_json: img.b64_json || null,\n    revised_prompt: img.revised_prompt || null,\n    size: size\n  }));\n\n  return {\n    json: {\n      success: true,\n      job_id: jobContextData.job_context.job_id,\n      status: 'completed',\n      data: {\n        images: images,\n        prompt_original: webhookData.body.prompt,\n        prompt_revised: images[0]?.revised_prompt || null\n      },\n      meta: {\n        provider: 'openai',\n        model: model,\n        execution_mode: webhookData.body.execution_mode || 'online',\n        cost_estimate_usd: costEstimate\n      },\n      job_context: jobContextData.job_context\n    }\n  };\n});\n\nreturn results;"
+        "jsCode": "// ============================================\n// FORMAT OUTPUT (Async) - gpt-image (azy.daily#383)\n// ============================================\n// Contrat : data.images [{ b64_json, mime_type }] + usage du fournisseur TEL\n// QUEL (facturation au jeton chez chat.api). Plus de table de prix : aucun\n// prix n'est inventé ici.\n\nconst input = $input.first().json;\nconst req = $('Store Job Context').first().json;\nconst ASYNC = true;\nconst latencyMs = Date.now() - (req.startTime || Date.now());\n\n// La clé BYOT ne doit JAMAIS ressortir. L'objet d'erreur du nœud HTTP peut\n// embarquer la requête, en-têtes compris : il n'est jamais recopié tel quel,\n// et toute occurrence de la clé est masquée dans la sortie finale.\nconst cle = String(req.openai_api_key || '');\nconst masquer = v => {\n  if (typeof v === 'string') return cle.length >= 8 && v.includes(cle) ? v.split(cle).join('[clé masquée]') : v;\n  if (Array.isArray(v)) return v.map(masquer);\n  if (v && typeof v === 'object') {\n    const o = {};\n    for (const k of Object.keys(v)) o[k] = masquer(v[k]);\n    return o;\n  }\n  return v;\n};\n\nconst suivi = statut => ASYNC ? { job_id: req.job_context.job_id, status: statut } : {};\nconst meta = {\n  provider: 'openai',\n  model: req.model,\n  execution_mode: req.execution_mode || 'online',\n  latency_ms: latencyMs\n};\nconst echec = (statut, message, type, codeFournisseur) => masquer({\n  success: false,\n  ...suivi('failed'),\n  error: {\n    code: statut,\n    http_status: statut,\n    message: message,\n    status: type,\n    provider_code: codeFournisseur\n  },\n  meta: meta,\n  ...(ASYNC ? { job_context: req.job_context } : {})\n});\n\nif (input.error) {\n  // Avec onError=continueRegularOutput, n8n n'émet pas statusCode : le statut\n  // est enfoui dans le message sous la forme « 401 - {...} ». Sans statut\n  // (panne réseau, délai dépassé) → 502.\n  const brut = String(input.error.message || input.message || '');\n  let statut = Number(input.statusCode ?? input.error.statusCode ?? input.error.status ?? input.error.httpCode);\n  const m = brut.match(/^\\s*(\\d{3})\\s*-\\s*([\\s\\S]*)$/) || brut.match(/\\b([45]\\d{2})\\s*-\\s*([{\\[\"][\\s\\S]*)$/);\n  if (!(statut >= 400 && statut <= 599) && m) statut = parseInt(m[1], 10);\n  if (!(statut >= 400 && statut <= 599)) statut = 502;\n\n  let corpsAmont = null;\n  if (m) {\n    try {\n      corpsAmont = JSON.parse(m[2]);\n      if (typeof corpsAmont === 'string') corpsAmont = JSON.parse(corpsAmont);\n    } catch (e) {\n      corpsAmont = null;\n    }\n  }\n  const erreurAmont = (corpsAmont && corpsAmont.error) || {};\n  return echec(\n    statut,\n    erreurAmont.message || input.error.description || brut || 'OpenAI API error',\n    erreurAmont.type || (m ? 'API_ERROR' : 'NETWORK_ERROR'),\n    erreurAmont.code || input.error.code || null\n  );\n}\n\nconst formatSortie = input.output_format || req.output_format || 'png';\nconst MIME = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' };\nconst images = (Array.isArray(input.data) ? input.data : [])\n  .filter(img => img && typeof img.b64_json === 'string' && img.b64_json.length > 0)\n  .map(img => ({ b64_json: img.b64_json, mime_type: MIME[formatSortie] || 'image/png' }));\n\nif (images.length === 0) {\n  return echec(502, 'Réponse OpenAI sans image (data[].b64_json absent)', 'EMPTY_RESPONSE', null);\n}\n\nreturn masquer({\n  success: true,\n  ...suivi('completed'),\n  data: {\n    images: images,\n    model: input.model || req.model,\n    size: input.size || req.size,\n    quality: input.quality || req.quality,\n    output_format: formatSortie,\n    background: input.background || req.background || null,\n    created: input.created || null\n  },\n  usage: input.usage || null,\n  meta: meta,\n  ...(ASYNC ? { job_context: req.job_context } : {})\n});\n"
       }
     },
     {
@@ -182,11 +196,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1820,
+        2000,
         200
       ],
       "parameters": {
-        "jsCode": "// Signature deleguee au noeud Crypto natif qui suit : le bac a sable n8n\n// interdit require('crypto'). Cf. n8n-workflows#476.\nconst item = $input.first().json;\n\n// Extract callback URL from job context\nconst callback_url = item.job_context.callback_url;\n\n// Prepare the callback body (without job_context internal data)\nconst callbackBody = {\n  success: item.success,\n  job_id: item.job_id,\n  status: item.status,\n  data: item.data,\n  meta: item.meta\n};\n\nif (item.error) {\n  callbackBody.error = item.error;\n}\n\n// Generate HMAC signature (RFC-040 format)\nconst corps_json = JSON.stringify(callbackBody);\n\nreturn [{\n  json: {\n    callback_url: callback_url,\n    callback_body: callbackBody,\n    corps_json: corps_json,\n    rappel_signable: !!$env.N8N_WEBHOOK_SECRET\n  }\n}];"
+        "jsCode": "// Signature deleguee au noeud Crypto natif qui suit : le bac a sable n8n\n// interdit require('crypto'). Cf. n8n-workflows#476.\nconst item = $input.first().json;\n\n// Extract callback URL from job context\nconst callback_url = item.job_context.callback_url;\n\n// Prepare the callback body (without job_context internal data)\nconst callbackBody = {\n  success: item.success,\n  job_id: item.job_id,\n  status: item.status,\n  data: item.data,\n  usage: item.usage,\n  meta: item.meta\n};\n\nif (item.error) {\n  callbackBody.error = item.error;\n}\n\n// Generate HMAC signature (RFC-040 format)\nconst corps_json = JSON.stringify(callbackBody);\n\nreturn [{\n  json: {\n    callback_url: callback_url,\n    callback_body: callbackBody,\n    corps_json: corps_json,\n    rappel_signable: !!$env.N8N_WEBHOOK_SECRET\n  }\n}];"
       }
     },
     {
@@ -195,7 +209,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2040,
+        2440,
         200
       ],
       "parameters": {
@@ -225,12 +239,12 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "dalle-generate-sync",
-      "name": "DALL-E Generate (Sync)",
+      "id": "gpt-image-generate-sync",
+      "name": "OpenAI Image Generate (Sync)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        940,
+        1120,
         400
       ],
       "parameters": {
@@ -242,7 +256,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $json.body.openai_api_key || $json.body.plugin_context?.api_keys?.openai }}"
+              "value": "=Bearer {{ $json.openai_api_key }}"
             },
             {
               "name": "Content-Type",
@@ -252,9 +266,9 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"{{ $json.body.options?.model || 'dall-e-3' }}\",\n  \"prompt\": \"{{ $json.body.prompt }}\",\n  \"n\": {{ $json.body.options?.n || 1 }},\n  \"size\": \"{{ $json.body.options?.size || '1024x1024' }}\",\n  \"quality\": \"{{ $json.body.options?.quality || 'standard' }}\",\n  \"style\": \"{{ $json.body.options?.style || 'vivid' }}\",\n  \"response_format\": \"{{ $json.body.options?.response_format || 'url' }}\"\n}",
+        "jsonBody": "={{ $json.image_body }}",
         "options": {
-          "timeout": 120000
+          "timeout": 180000
         }
       },
       "onError": "continueRegularOutput"
@@ -265,11 +279,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1160,
+        1340,
         400
       ],
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst webhookData = $('Webhook').first().json;\n\nconst PRICING = {\n  'dall-e-3': {\n    'standard': { '1024x1024': 0.04, '1792x1024': 0.08, '1024x1792': 0.08 },\n    'hd': { '1024x1024': 0.08, '1792x1024': 0.12, '1024x1792': 0.12 }\n  },\n  'dall-e-2': {\n    'standard': { '256x256': 0.016, '512x512': 0.018, '1024x1024': 0.02 }\n  }\n};\n\nconst results = items.map(item => {\n  // Check for API errors\n  if (item.json.error) {\n    return {\n      json: {\n        success: false,\n        error: {\n          code: item.json.error.code || 500,\n          message: item.json.error.message || 'Unknown error',\n          status: item.json.error.type || 'API_ERROR'\n        },\n        meta: {\n          provider: 'openai',\n          execution_mode: webhookData.body.execution_mode || 'online'\n        }\n      }\n    };\n  }\n\n  const model = webhookData.body.options?.model || 'dall-e-3';\n  const quality = webhookData.body.options?.quality || 'standard';\n  const size = webhookData.body.options?.size || '1024x1024';\n  const n = webhookData.body.options?.n || 1;\n  \n  const unitPrice = PRICING[model]?.[quality]?.[size] || 0.04;\n  const costEstimate = unitPrice * n;\n\n  const images = (item.json.data || []).map(img => ({\n    url: img.url || null,\n    b64_json: img.b64_json || null,\n    revised_prompt: img.revised_prompt || null,\n    size: size\n  }));\n\n  return {\n    json: {\n      success: true,\n      data: {\n        images: images,\n        prompt_original: webhookData.body.prompt,\n        prompt_revised: images[0]?.revised_prompt || null\n      },\n      meta: {\n        provider: 'openai',\n        model: model,\n        execution_mode: webhookData.body.execution_mode || 'online',\n        cost_estimate_usd: costEstimate\n      }\n    }\n  };\n});\n\nreturn results;"
+        "jsCode": "// ============================================\n// FORMAT OUTPUT (Sync) - gpt-image (azy.daily#383)\n// ============================================\n// Contrat : data.images [{ b64_json, mime_type }] + usage du fournisseur TEL\n// QUEL (facturation au jeton chez chat.api). Plus de table de prix : aucun\n// prix n'est inventé ici.\n\nconst input = $input.first().json;\nconst req = $('Prepare Image Request').first().json;\nconst ASYNC = false;\nconst latencyMs = Date.now() - (req.startTime || Date.now());\n\n// La clé BYOT ne doit JAMAIS ressortir. L'objet d'erreur du nœud HTTP peut\n// embarquer la requête, en-têtes compris : il n'est jamais recopié tel quel,\n// et toute occurrence de la clé est masquée dans la sortie finale.\nconst cle = String(req.openai_api_key || '');\nconst masquer = v => {\n  if (typeof v === 'string') return cle.length >= 8 && v.includes(cle) ? v.split(cle).join('[clé masquée]') : v;\n  if (Array.isArray(v)) return v.map(masquer);\n  if (v && typeof v === 'object') {\n    const o = {};\n    for (const k of Object.keys(v)) o[k] = masquer(v[k]);\n    return o;\n  }\n  return v;\n};\n\nconst suivi = statut => ASYNC ? { job_id: req.job_context.job_id, status: statut } : {};\nconst meta = {\n  provider: 'openai',\n  model: req.model,\n  execution_mode: req.execution_mode || 'online',\n  latency_ms: latencyMs\n};\nconst echec = (statut, message, type, codeFournisseur) => masquer({\n  success: false,\n  ...suivi('failed'),\n  error: {\n    code: statut,\n    http_status: statut,\n    message: message,\n    status: type,\n    provider_code: codeFournisseur\n  },\n  meta: meta,\n  ...(ASYNC ? { job_context: req.job_context } : {})\n});\n\nif (input.error) {\n  // Avec onError=continueRegularOutput, n8n n'émet pas statusCode : le statut\n  // est enfoui dans le message sous la forme « 401 - {...} ». Sans statut\n  // (panne réseau, délai dépassé) → 502.\n  const brut = String(input.error.message || input.message || '');\n  let statut = Number(input.statusCode ?? input.error.statusCode ?? input.error.status ?? input.error.httpCode);\n  const m = brut.match(/^\\s*(\\d{3})\\s*-\\s*([\\s\\S]*)$/) || brut.match(/\\b([45]\\d{2})\\s*-\\s*([{\\[\"][\\s\\S]*)$/);\n  if (!(statut >= 400 && statut <= 599) && m) statut = parseInt(m[1], 10);\n  if (!(statut >= 400 && statut <= 599)) statut = 502;\n\n  let corpsAmont = null;\n  if (m) {\n    try {\n      corpsAmont = JSON.parse(m[2]);\n      if (typeof corpsAmont === 'string') corpsAmont = JSON.parse(corpsAmont);\n    } catch (e) {\n      corpsAmont = null;\n    }\n  }\n  const erreurAmont = (corpsAmont && corpsAmont.error) || {};\n  return echec(\n    statut,\n    erreurAmont.message || input.error.description || brut || 'OpenAI API error',\n    erreurAmont.type || (m ? 'API_ERROR' : 'NETWORK_ERROR'),\n    erreurAmont.code || input.error.code || null\n  );\n}\n\nconst formatSortie = input.output_format || req.output_format || 'png';\nconst MIME = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' };\nconst images = (Array.isArray(input.data) ? input.data : [])\n  .filter(img => img && typeof img.b64_json === 'string' && img.b64_json.length > 0)\n  .map(img => ({ b64_json: img.b64_json, mime_type: MIME[formatSortie] || 'image/png' }));\n\nif (images.length === 0) {\n  return echec(502, 'Réponse OpenAI sans image (data[].b64_json absent)', 'EMPTY_RESPONSE', null);\n}\n\nreturn masquer({\n  success: true,\n  ...suivi('completed'),\n  data: {\n    images: images,\n    model: input.model || req.model,\n    size: input.size || req.size,\n    quality: input.quality || req.quality,\n    output_format: formatSortie,\n    background: input.background || req.background || null,\n    created: input.created || null\n  },\n  usage: input.usage || null,\n  meta: meta,\n  ...(ASYNC ? { job_context: req.job_context } : {})\n});\n"
       }
     },
     {
@@ -278,13 +292,15 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        1380,
+        1560,
         400
       ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json }}",
-        "options": {}
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : ($json.error?.http_status || 502) }}"
+        }
       }
     },
     {
@@ -294,13 +310,13 @@
       "typeVersion": 1,
       "position": [
         240,
-        60
+        -700
       ],
       "parameters": {
         "color": 6,
         "width": 900,
-        "height": 340,
-        "content": "## MCP - Image Generator (DALL-E) - RFC-040 Async Callback Pattern\n\n**Endpoint:** POST /webhook/image-generator\n\n**Parameters:**\n- `prompt` (required): Image generation prompt\n- `openai_api_key` (required): OpenAI API key (repli : `plugin_context.api_keys.openai`, injecté par MCP)\n- `callback_url` (optional): URL for async callback (enables async mode)\n- `job_id` (optional): Custom job ID (auto-generated if not provided)\n- `options.model` (optional): dall-e-3 | dall-e-2 (default: dall-e-3)\n- `options.size` (optional): 1024x1024 | 1792x1024 | 1024x1792 (default: 1024x1024)\n- `options.quality` (optional): standard | hd (default: standard)\n- `options.style` (optional): vivid | natural (default: vivid)\n- `options.n` (optional): Number of images (default: 1)\n- `options.response_format` (optional): url | b64_json (default: url)\n- `execution_mode` (optional): online | offline\n\n**Sync Mode (no callback_url):** Returns generated image directly\n**Async Mode (with callback_url):** Returns 202 Accepted immediately, POSTs result to callback_url when done\n\n**Callback Headers:** Content-Type: application/json, X-N8N-Signature: HMAC-SHA256(payload, N8N_WEBHOOK_SECRET)\n\n**Pricing (DALL-E 3):** Standard $0.04-0.08, HD $0.08-0.12 per image"
+        "height": 820,
+        "content": "## MCP - Image Generator (OpenAI gpt-image) - RFC-040 Async Callback Pattern\n\n**Endpoint :** POST /webhook/image-generator — migré de DALL-E vers `gpt-image` (azy.daily#383). DALL-E n'est plus servi : « The model 'dall-e-3' does not exist ».\n\n**Clé (BYOT, requise) :** `openai_api_key`, sinon `context.openai_api_key`, sinon `plugin_context.api_keys.openai` (injecté par MCP). Absente → 400 avant tout appel. Aucune credential n8n ; la clé ne ressort jamais (réponse, rappel, erreurs).\n\n**Paramètres** (`options.X` prime sur `X` à la racine) :\n- `prompt` (requis) — envoyé tel quel (corps construit par `Prepare Image Request` puis `JSON.stringify`)\n- `model` : libre, vient du catalogue (catégorie `image`) — `gpt-image-1-mini` (défaut), `gpt-image-1`, `gpt-image-1.5`, `gpt-image-2`, `gpt-image-2-2026-04-21`…\n- `n` : 1 à 10 (défaut 1)\n- `size` : `1024x1024` (défaut) | `1536x1024` | `1024x1536` | `auto` — anciennes valeurs converties : `1792x1024→1536x1024`, `1024x1792→1024x1536`\n- `quality` : `low` | `medium` | `high` | `auto` (défaut) — `standard→medium`, `hd→high`\n- `output_format` (`png` | `jpeg` | `webp`), `output_compression` (0-100), `background` (`transparent` | `opaque` | `auto`) : transmis seulement s'ils sont fournis\n- `callback_url` (active l'asynchrone), `job_id`, `execution_mode`\n- Retirés : `style`, `response_format` (ignorés). Valeur hors liste → 400 `BAD_REQUEST` explicite, sans appel.\n\n**Réponse (synchrone, et corps du rappel) :**\n```\n{ success, [job_id, status],\n  data: { images: [{ b64_json, mime_type }], model, size, quality, output_format, background, created },\n  usage: { input_tokens, output_tokens, total_tokens, input_tokens_details: { text_tokens, image_tokens } },\n  meta: { provider: \"openai\", model, execution_mode, latency_ms } }\n```\n- ⚠️ `b64_json` uniquement, plus d'URL : **≈ 2,3 Mo de texte** pour un PNG 1024x1024 en `low`. n8n ne stocke rien.\n- `usage` = celui d'OpenAI **tel quel** : facturation **au jeton** (plus de prix par image, plus de `cost_estimate_usd`, plus de `revised_prompt`).\n\n**Erreurs :** `{ success: false, error: { code, http_status, message, status, provider_code } }` — statut OpenAI relayé (400, 401, 429…), 502 si panne réseau, délai (180 s) ou réponse sans image. En asynchrone, le rappel porte `status: \"failed\"` et cette erreur.\n\n**Rappel :** Content-Type: application/json, X-N8N-Signature: HMAC-SHA256(corps, N8N_WEBHOOK_SECRET).\n"
       }
     },
     {
@@ -309,14 +325,14 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        940,
-        60
+        1120,
+        40
       ],
       "parameters": {
         "color": 4,
-        "width": 400,
-        "height": 100,
-        "content": "## Async Flow (RFC-040)\nWith callback_url: Responds 202 immediately, processes in background, sends signed callback when complete."
+        "width": 520,
+        "height": 140,
+        "content": "## Async Flow (RFC-040)\nAvec callback_url : 202 immédiat (job_id, processing) AVANT l'appel lent (~11 s, délai 180 s), puis rappel signé (X-N8N-Signature) portant le même contrat que le synchrone (data.images base64, usage), ou l'erreur avec son statut (error.http_status)."
       }
     },
     {
@@ -325,14 +341,14 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        940,
-        480
+        1120,
+        560
       ],
       "parameters": {
         "color": 5,
-        "width": 400,
-        "height": 80,
-        "content": "## Sync Flow (Retrocompatibility)\nWithout callback_url: Processes and responds synchronously as before."
+        "width": 520,
+        "height": 120,
+        "content": "## Sync Flow\nSans callback_url : répond après génération. Code HTTP = 200 en succès, sinon le statut OpenAI (400/401/429…) ou 502 (réseau, délai, réponse sans image)."
       }
     },
     {
@@ -347,8 +363,8 @@
       "type": "n8n-nodes-base.crypto",
       "typeVersion": 1,
       "position": [
-        1990,
-        240
+        2220,
+        200
       ],
       "id": "sign-callback",
       "name": "Sign Callback"
@@ -359,14 +375,25 @@
       "main": [
         [
           {
-            "node": "Validate Input",
+            "node": "Prepare Image Request",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Validate Input": {
+    "Prepare Image Request": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
       "main": [
         [
           {
@@ -377,7 +404,7 @@
         ],
         [
           {
-            "node": "Error: No Prompt",
+            "node": "Error: Validation",
             "type": "main",
             "index": 0
           }
@@ -395,7 +422,7 @@
         ],
         [
           {
-            "node": "DALL-E Generate (Sync)",
+            "node": "OpenAI Image Generate (Sync)",
             "type": "main",
             "index": 0
           }
@@ -417,14 +444,14 @@
       "main": [
         [
           {
-            "node": "DALL-E Generate (Async)",
+            "node": "OpenAI Image Generate (Async)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "DALL-E Generate (Async)": {
+    "OpenAI Image Generate (Async)": {
       "main": [
         [
           {
@@ -457,7 +484,18 @@
         ]
       ]
     },
-    "DALL-E Generate (Sync)": {
+    "Sign Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Image Generate (Sync)": {
       "main": [
         [
           {
@@ -473,17 +511,6 @@
         [
           {
             "node": "Respond (Sync)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign Callback": {
-      "main": [
-        [
-          {
-            "node": "Send Callback",
             "type": "main",
             "index": 0
           }
