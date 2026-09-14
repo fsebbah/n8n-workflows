@@ -327,5 +327,36 @@ const doc = JSON.stringify(nd('Documentation').parameters);
 T('la documentation ne prétend plus « Claude only »', false, /Claude only|only works with Claude/.test(doc));
 T('… ni « non appliqué » chez tous', false, /NON APPLIQUÉ|transmis à aucun/.test(doc));
 
+console.log('\n11. ⚠️ ce que la sonde du 14/09 a trouvé');
+// S6 : 422 dans le corps, 400 sur le fil.
+T('Respond Error : statut lu, plus de 400 en dur', '={{ $json.error?.http_status || 400 }}',
+  nd('Respond Error').parameters.options.responseCode);
+// S9 / S3 : OpenAI a cherché (web_search_call) sans citer d'URL → search_performed était faux.
+for (const [fic, n] of [['openai_meteo_sans_citation.json', 1], ['openai_noire_open_page.json', 2]]) {
+  const fx = FXW(fic);
+  const citations = fx.output.filter((o) => o.type === 'message').flatMap((o) => o.content).flatMap((c) => c.annotations || []);
+  T(`${fic.slice(0, 26)} : ${n} recherche(s), 0 citation`, [n, 0], [fx.output.filter((o) => o.type === 'web_search_call').length, citations.length]);
+  const ro = NS('Normalize OpenAI', fx, 'openai');
+  T('⚠️ … search_performed vrai, 0 source, succès', [true, 0, true], [ro.search_performed, ro.sources.length, ro.normalized]);
+}
+T('openai sans appel d’outil : search_performed faux', false,
+  NS('Normalize OpenAI', { output: [{ type: 'message', content: [{ type: 'output_text', text: '51', annotations: [] }] }], usage: {} }, 'openai').search_performed);
+// S10 : annonces de Claude.
+const fxC = FXW('claude_meteo_annonces.json');
+const annoncesC = fxC.content.filter((b, i) => b.type === 'text' && fxC.content[i + 1]?.type === 'server_tool_use').map((b) => b.text);
+let rc = NS('Normalize Claude', fxC, 'claude');
+T('claude réel : la fixture contient des annonces', true, annoncesC.length > 0);
+T('⚠️ claude : aucune annonce dans la réponse', [], annoncesC.filter((a) => rc.content.includes(a)));
+T('… la fin de la réponse est intacte', true, rc.content.endsWith(fxC.content.filter((b) => b.type === 'text').at(-1).text));
+T('… recherche constatée, sources lues', [true, true], [rc.search_performed, rc.sources.length > 0]);
+rc = NS('Normalize Claude', { content: [{ type: 'server_tool_use', name: 'web_search' }, { type: 'web_search_tool_result', content: [] },
+  { type: 'text', text: 'Rien trouvé.' }], usage: { server_tool_use: { web_search_requests: 1 } } }, 'claude');
+T('claude : cherché sans résultat → search_performed vrai', [true, 0, 'Rien trouvé.'], [rc.search_performed, rc.sources.length, rc.content]);
+rc = NS('Normalize Claude', { content: [{ type: 'text', text: 'bon' }, { type: 'text', text: 'jour' }], usage: {} }, 'claude');
+T('claude sans recherche : tous les blocs, search_performed faux', ['bonjour', false], [rc.content, rc.search_performed]);
+// S8 : jetons de recherche Mistral.
+const rmc = NM({ ...CONV, usage: { prompt_tokens: 807, completion_tokens: 97, total_tokens: 7552, connector_tokens: 6648 } }, AM);
+T('mistral : jetons de recherche comptés en entrée', [7455, 97, 7552], [rmc.usage.input_tokens, rmc.usage.output_tokens, rmc.usage.total_tokens]);
+
 console.log(`\n${ko === 0 ? '✅ tous les contrôles passent' : `❌ ${ko} contrôle(s) en échec`}  (${ok}/${ok + ko})`);
 process.exit(ko === 0 ? 0 : 1);
