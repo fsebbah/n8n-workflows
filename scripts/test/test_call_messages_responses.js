@@ -311,26 +311,60 @@ T('mistral : 401 relayé', [false, 401, 'Unauthorized'], [r.success, r.error.htt
 r = F('Format Mistral Conversations', env({ object: 'Error', detail: [{ msg: 'bad' }] }, 422), PREV({ provider: 'mistral', model: 'm', web_search: true }));
 T('mistral : 422 à détail structuré relayé', [false, 422, true], [r.success, r.error.http_status, /bad/.test(r.error.message)]);
 
-console.log('\n10. ⚠️ un filtre de domaines demandé au dispatch est SIGNALÉ, jamais perdu');
-// Contrat proposé par l'api (azy.daily#361) : allowed_domains / blocked_domains relayés
-// tels quels sur le dispatch. Pas encore branchés vers les fournisseurs : n8n le dit.
-const vd = V({ ...BASE, provider: 'anthropic', model: 'm', web_search: true,
-  allowed_domains: [' NASA.gov ', '', 'space.com'], blocked_domains: 'pas-une-liste' });
+console.log('\n10. ⚠️ le filtre de domaines est APPLIQUÉ chez Anthropic et OpenAI, signalé ailleurs');
+// Contrat api (CONTRAT-web-search-domaines.md) : allowed_domains OU blocked_domains
+// sur le dispatch. Mesures : Anthropic le 11/09, OpenAI le 14/09 — sous-domaines inclus.
+const VD = (o) => V({ ...BASE, provider: 'anthropic', model: 'm', web_search: true, ...o });
+let vd = VD({ allowed_domains: [' NASA.gov ', '', 'space.com'], blocked_domains: 'pas-une-liste' });
 T('Validate : listes lues, normalisées', [['nasa.gov', 'space.com'], []], [vd.allowed_domains, vd.blocked_domains]);
-T('Validate : sans listes → tableaux vides', [[], []],
-  [V({ ...BASE, provider: 'openai', model: 'm' }).allowed_domains, V({ ...BASE, provider: 'openai', model: 'm' }).blocked_domains]);
+vd = VD({ allowed_domains: ['https://www.Python.org/doc/', 'python.org', 'flutter.dev:443'] });
+T('Validate : schéma, www., chemin, port ôtés, sans doublon', ['python.org', 'flutter.dev'], vd.allowed_domains);
+vd = V({ ...BASE, provider: 'openai', model: 'm', web_search: true });
+T('Validate : sans listes → pas de filtre', [[], [], null], [vd.allowed_domains, vd.blocked_domains, vd.domain_filter]);
+T('Validate : listes sans recherche → pas de filtre', null,
+  V({ ...BASE, provider: 'anthropic', model: 'm', allowed_domains: ['a.org'] }).domain_filter);
+vd = VD({ allowed_domains: ['python.org', 'flutter.dev', 'docs.flutter.dev'], blocked_domains: ['flutter.dev'] });
+T('bloquer un domaine retire ses sous-domaines autorisés', ['python.org'], vd.domain_filter.allowed_domains);
+vd = VD({ allowed_domains: ['docs.flutter.dev'], blocked_domains: ['flutter.dev'] });
+T('⚠️ tout l’autorisé est bloqué → 422 domain_filter_empty', [false, 422, 'domain_filter_empty'], [vd.valid, vd.http_status, vd.error_code]);
+const beFiltre = F('Build Error', vd, {});
+T('… Build Error garde code et statut', ['domain_filter_empty', 422], [beFiltre.error.code, beFiltre.error.http_status]);
+
+const VA = (o) => ({ model: 'm', max_tokens: 100, temperature: 0.5, messages: [{ role: 'user', content: 'x' }], web_search: true, ...o });
+let ca = corpsDe('Anthropic API', VA({ domain_filter: { allowed_domains: ['flutter.dev'], blocked_domains: ['x.com'] } }));
+T('anthropic : la blanche seule sur l’outil (400 si les deux)', [['flutter.dev'], undefined], [ca.tools[0].allowed_domains, ca.tools[0].blocked_domains]);
+ca = corpsDe('Anthropic API', VA({ domain_filter: { allowed_domains: [], blocked_domains: ['reddit.com'] } }));
+T('anthropic : la noire quand il n’y a pas de blanche', [undefined, ['reddit.com']], [ca.tools[0].allowed_domains, ca.tools[0].blocked_domains]);
+T('anthropic : sans filtre, outil inchangé', { type: 'web_search_20250305', name: 'web_search', max_uses: 5 },
+  corpsDe('Anthropic API', VA({ domain_filter: null })).tools[0]);
+let co = corpsDe('OpenAI Responses API', VA({ domain_filter: { allowed_domains: ['python.org'], blocked_domains: ['bugs.python.org'] } }));
+T('openai : les deux listes dans filters', { allowed_domains: ['python.org'], blocked_domains: ['bugs.python.org'] }, co.tools[0].filters);
+co = corpsDe('OpenAI Responses API', VA({ domain_filter: { allowed_domains: [], blocked_domains: ['reddit.com'] } }));
+T('openai : la noire seule', { blocked_domains: ['reddit.com'] }, co.tools[0].filters);
+T('openai : sans filtre, pas de filters', { type: 'web_search' }, corpsDe('OpenAI Responses API', VA({ domain_filter: null })).tools[0]);
+
 const REP_OK = { success: true, data: { text: 't', sources: [] }, meta: { provider: 'anthropic', search_performed: true, sources_count: 0 } };
-let sg = F('Signal filtre domaines', REP_OK, { web_search: true, allowed_domains: ['nasa.gov'], blocked_domains: [] });
-T('recherche + liste blanche → signalé', [false, 'DOMAIN_FILTER_NOT_APPLIED'], [sg.meta.domain_filter_applied, sg.meta.warnings?.[0]?.code]);
+const FA = { allowed_domains: ['nasa.gov'], blocked_domains: [] };
+const SG = (prev) => F('Signal filtre domaines', REP_OK, { web_search: true, domain_filter: FA, ...prev });
+for (const p of ['anthropic', 'openai']) {
+  const s = SG({ provider: p });
+  T(`${p} : domain_filter_applied true, sans avertissement`, [true, false], [s.meta.domain_filter_applied, 'warnings' in s.meta]);
+}
+for (const p of ['google', 'mistral']) {
+  const s = SG({ provider: p });
+  T(`${p} : non appliqué, signalé`, [false, 'DOMAIN_FILTER_NOT_APPLIED'], [s.meta.domain_filter_applied, s.meta.warnings?.[0]?.code]);
+}
+const SOUS = { allowed_domains: ['python.org'], blocked_domains: ['bugs.python.org', 'reddit.com'] };
+let sg = SG({ provider: 'anthropic', domain_filter: SOUS });
+T('⚠️ anthropic : sous-domaine bloqué sous l’autorisé → PARTIAL', [true, 'DOMAIN_FILTER_PARTIAL', ['bugs.python.org']],
+  [sg.meta.domain_filter_applied, sg.meta.warnings?.[0]?.code, sg.meta.warnings?.[0]?.blocked_domains]);
+sg = SG({ provider: 'openai', domain_filter: SOUS });
+T('openai : même cas, rien de partiel', false, 'warnings' in sg.meta);
 T('… le reste de meta est conservé', [true, 0], [sg.meta.search_performed, sg.meta.sources_count]);
-sg = F('Signal filtre domaines', REP_OK, { web_search: true, allowed_domains: [], blocked_domains: ['facebook.com'] });
-T('recherche + liste noire → signalé', false, sg.meta.domain_filter_applied);
-sg = F('Signal filtre domaines', REP_OK, { web_search: false, allowed_domains: ['nasa.gov'], blocked_domains: [] });
-T('sans recherche : rien à filtrer, réponse intacte', REP_OK, sg);
-sg = F('Signal filtre domaines', REP_OK, { web_search: true, allowed_domains: [], blocked_domains: [] });
-T('recherche sans liste : réponse intacte', REP_OK, sg);
+T('sans filtre : réponse intacte', REP_OK, SG({ provider: 'anthropic', domain_filter: null }));
+T('sans recherche : réponse intacte', REP_OK, SG({ provider: 'anthropic', web_search: false }));
 const REP_KO = { success: false, error: { code: 'X', http_status: 502 } };
-T('une erreur passe intacte', REP_KO, F('Signal filtre domaines', REP_KO, { web_search: true, allowed_domains: ['a.org'] }));
+T('une erreur passe intacte', REP_KO, F('Signal filtre domaines', REP_KO, { provider: 'google', web_search: true, domain_filter: FA }));
 T('câblage : Merge → Signal → Respond', [[['Signal filtre domaines']], [['Respond']]], [aval('Merge'), aval('Signal filtre domaines')]);
 
 console.log(`\n${ko === 0 ? '✅ tous les contrôles passent' : `❌ ${ko} contrôle(s) en échec`}  (${ok}/${ok + ko})`);

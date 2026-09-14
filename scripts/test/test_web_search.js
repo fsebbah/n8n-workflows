@@ -112,15 +112,20 @@ console.log('\n5 bis. ⚠️ le corps OpenAI a la forme MESURÉE valide');
 // « Unknown parameter ». Le paramètre appartient à la DÉFINITION de l'outil.
 // Le remplacement de modèle seul n'aurait rien réparé : la branche serait
 // passée d'un 404 à un 400.
-const bo = nd('OpenAI Web Search').parameters.jsonBody;
-T('search_context_size dans l’outil', true,
-  /"type":\s*"web_search",\s*"search_context_size"/.test(bo));
-T('… et PAS dans tool_choice', false, /tool_choice[^}]*search_context_size/.test(bo));
-T('le forçage de l’outil est conservé', true, /"tool_choice":\s*\{\s*"type":\s*"web_search"\s*\}/.test(bo));
-T('modèles mesurés fonctionnels', true, bo.includes('gpt-5.6-terra') && bo.includes('gpt-5.6-luna'));
+// Depuis le 2026-09-14, le corps est construit par « Prepare OpenAI Body » : on
+// contrôle ce qui PART, pas un texte de nœud.
+const corpsOA = (provider) => {
+  const v = N('Validate Input', { query: 'q', provider, openai_api_key: 'K' });
+  return JSON.parse(N('Prepare OpenAI Body', v).openai_body);
+};
+const bo = corpsOA('openai');
+T('search_context_size dans l’outil', 'medium', bo.tools[0].search_context_size);
+T('… et PAS dans tool_choice', false, 'search_context_size' in bo.tool_choice);
+T('le forçage de l’outil est conservé', { type: 'web_search' }, bo.tool_choice);
+T('modèles mesurés fonctionnels', ['gpt-5.6-terra', 'gpt-5.6-luna'], [bo.model, corpsOA('openai-mini').model]);
 
 console.log('\n6. les outils de recherche portent leur nom actuel');
-const so = JSON.stringify(nd('OpenAI Web Search').parameters);
+const so = JSON.stringify(bo) + nd('Prepare OpenAI Body').parameters.jsCode;
 T('OpenAI : outil web_search', true, so.includes('web_search') && !so.includes('web_search_preview'));
 const sg = JSON.stringify(nd('Gemini Web Search').parameters);
 T('Gemini : google_search', true, sg.includes('google_search'));
@@ -265,30 +270,62 @@ T('… avec la cause, pas « réponse vide »', 'Mistral a effectue la recherche
 rsm = NM({ outputs: [], usage: {} }, { ...AMONT, provider: 'mistral' });
 T('sans recherche ni texte : message générique conservé', 'reponse vide de mistral', rsm.error);
 
-console.log('\n10. ⚠️ un filtre de domaines demandé mais non appliqué est SIGNALÉ');
-// Constat du 2026-09-11 : Validate Input accepte allowed_domains / blocked_domains,
-// aucun fournisseur ne les reçoit, et la documentation affirmait « Claude only ».
-const FOP = (entree, options) => {
+console.log('\n10. ⚠️ le filtre de domaines est APPLIQUÉ chez OpenAI et Claude, signalé ailleurs');
+// Constat du 2026-09-11 : les listes étaient acceptées et transmises à personne (#496).
+// Mesures : Anthropic le 11/09, OpenAI le 14/09 — un domaine couvre ses sous-domaines.
+const VW = (options, o = {}) => N('Validate Input', { query: 'q', provider: 'openai', openai_api_key: 'K', options, ...o });
+let vw = VW({ allowed_domains: ['https://www.Flutter.dev/docs', 'flutter.dev', ' '], blocked_domains: ['Reddit.com'] });
+T('Validate : normalisées, sans doublon', [['flutter.dev'], ['reddit.com']], [vw.options.allowed_domains, vw.options.blocked_domains]);
+T('Validate : filtre effectif', { allowed_domains: ['flutter.dev'], blocked_domains: ['reddit.com'] }, vw.domain_filter);
+T('Validate : sans listes → pas de filtre', null, VW({}).domain_filter);
+vw = VW({ allowed_domains: ['docs.flutter.dev'], blocked_domains: ['flutter.dev'] });
+T('⚠️ tout l’autorisé est bloqué → 422 domain_filter_empty', [false, 422, 'domain_filter_empty'], [vw.valid, vw.http_status, vw.error_code]);
+T('… Build Error garde code et statut', ['domain_filter_empty', 422], (() => { const e = N('Build Error', vw).error; return [e.code, e.http_status]; })());
+T('une autre erreur reste un 400', [400, 'VALIDATION_ERROR'], (() => { const e = N('Build Error', VW({}, { query: '' })).error; return [e.http_status, e.code]; })());
+
+const PREP = { query: 'Quelle est la version de "Python" ?', model: 'gpt-5.6-luna', options: { search_depth: 'deep', max_results: 3 }, user_request: null };
+let ob = JSON.parse(N('Prepare OpenAI Body', { ...PREP, domain_filter: { allowed_domains: ['python.org'], blocked_domains: [] } }).openai_body);
+T('⚠️ openai : question à guillemets → JSON valide, intacte', 'Quelle est la version de "Python" ?', ob.input);
+T('openai : modèle demandé, recherche imposée', ['gpt-5.6-luna', 'web_search'], [ob.model, ob.tool_choice.type]);
+T('openai : deep → search_context_size high', 'high', ob.tools[0].search_context_size);
+T('openai : filters.allowed_domains', { allowed_domains: ['python.org'] }, ob.tools[0].filters);
+ob = JSON.parse(N('Prepare OpenAI Body', { ...PREP, options: {}, domain_filter: null }).openai_body);
+T('openai : sans filtre ni profondeur → medium, pas de filters', ['medium', false], [ob.tools[0].search_context_size, 'filters' in ob.tools[0]]);
+T('le nœud HTTP envoie CE corps', '={{ $json.openai_body }}', nd('OpenAI Web Search').parameters.jsonBody);
+let cb = JSON.parse(N('Prepare Claude Body', { ...PREP, model: 'c', domain_filter: { allowed_domains: ['flutter.dev'], blocked_domains: ['x.com'] } }).claude_body);
+T('claude : la blanche seule (400 si les deux)', [['flutter.dev'], undefined], [cb.tools[0].allowed_domains, cb.tools[0].blocked_domains]);
+cb = JSON.parse(N('Prepare Claude Body', { ...PREP, model: 'c', domain_filter: { allowed_domains: [], blocked_domains: ['reddit.com'] } }).claude_body);
+T('claude : la noire sinon', ['reddit.com'], cb.tools[0].blocked_domains);
+
+const FOP = (entree, prev) => {
   const r = vm.runInNewContext(`(function(){${nd('Format Output').parameters.jsCode}})()`, {
     $input: { first: () => ({ json: entree }) },
-    $: () => ({ first: () => ({ json: { ...AMONT, options } }) }),
+    $: () => ({ first: () => ({ json: { ...AMONT, ...prev } }) }),
   }, { timeout: 5000 });
   return Array.isArray(r) ? r[0].json : r;
 };
 const OK_TXT = { normalized: true, provider: 'claude', content: 't', sources: [], usage: {}, search_performed: true };
-let fo2 = FOP(OK_TXT, { allowed_domains: ['flutter.dev'], blocked_domains: [] });
-T('allowed_domains → domain_filter_applied: false', false, fo2.meta.domain_filter_applied);
-T('… avec un avertissement typé', 'DOMAIN_FILTER_NOT_APPLIED', fo2.meta.warnings?.[0]?.code);
-fo2 = FOP(OK_TXT, { allowed_domains: [], blocked_domains: ['facebook.com'] });
-T('blocked_domains → signalé aussi', false, fo2.meta.domain_filter_applied);
-fo2 = FOP({ ...OK_TXT, structured_data: { tool_name: 'x', data: {} } }, { allowed_domains: ['a.org'] });
+const FW = { allowed_domains: ['flutter.dev'], blocked_domains: [] };
+for (const pt of ['openai', 'claude']) {
+  const f = FOP(OK_TXT, { provider: pt, provider_type: pt, domain_filter: FW });
+  T(`${pt} : domain_filter_applied true, sans avertissement`, [true, false], [f.meta.domain_filter_applied, 'warnings' in f.meta]);
+}
+for (const pt of ['gemini', 'mistral']) {
+  const f = FOP(OK_TXT, { provider: pt, provider_type: pt, domain_filter: FW });
+  T(`${pt} : non appliqué, signalé`, [false, 'DOMAIN_FILTER_NOT_APPLIED'], [f.meta.domain_filter_applied, f.meta.warnings?.[0]?.code]);
+}
+let fo2 = FOP(OK_TXT, { provider: 'claude-haiku', provider_type: 'claude', domain_filter: { allowed_domains: ['python.org'], blocked_domains: ['bugs.python.org'] } });
+T('⚠️ claude : sous-domaine bloqué sous l’autorisé → PARTIAL', ['DOMAIN_FILTER_PARTIAL', ['bugs.python.org']],
+  [fo2.meta.warnings?.[0]?.code, fo2.meta.warnings?.[0]?.blocked_domains]);
+fo2 = FOP({ ...OK_TXT, structured_data: { tool_name: 'x', data: {} } }, { provider: 'gemini', provider_type: 'gemini', domain_filter: FW });
 T('sortie structurée → signalé aussi', 'DOMAIN_FILTER_NOT_APPLIED', fo2.meta.warnings?.[0]?.code);
-fo2 = FOP(OK_TXT, { allowed_domains: [], blocked_domains: [] });
-T('sans demande : forme inchangée', [false, false], ['domain_filter_applied' in fo2.meta, 'warnings' in fo2.meta]);
-fo2 = FOP(OK_TXT, undefined);
-T('sans options du tout : forme inchangée', false, 'warnings' in fo2.meta);
+fo2 = FOP(OK_TXT, { domain_filter: null });
+T('sans filtre : forme inchangée', [false, false], ['domain_filter_applied' in fo2.meta, 'warnings' in fo2.meta]);
+fo2 = FOP(OK_TXT, {});
+T('amont sans domain_filter : forme inchangée', false, 'warnings' in fo2.meta);
 const doc = JSON.stringify(nd('Documentation').parameters);
 T('la documentation ne prétend plus « Claude only »', false, /Claude only|only works with Claude/.test(doc));
+T('… ni « non appliqué » chez tous', false, /NON APPLIQUÉ|transmis à aucun/.test(doc));
 
 console.log(`\n${ko === 0 ? '✅ tous les contrôles passent' : `❌ ${ko} contrôle(s) en échec`}  (${ok}/${ok + ko})`);
 process.exit(ko === 0 ? 0 : 1);
