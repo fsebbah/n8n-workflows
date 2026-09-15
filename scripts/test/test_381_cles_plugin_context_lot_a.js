@@ -287,44 +287,52 @@ const TE = charger('MCP_-_Text_Embedder');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-console.log('\n4. MCP - Image Generator (openai → DALL-E Generate Sync/Async, hors ligne)');
+console.log('\n4. MCP - Image Generator (openai → OpenAI Image Generate Sync/Async, hors ligne)');
 const IG = charger('MCP_-_Image_Generator');
 {
-  const BASE = { prompt: 'Un chat', options: { model: 'dall-e-3' } };
-  const ENTETE_DEVELOP = '=Bearer {{ $json.body.openai_api_key }}';
-  // Sync : l'item du Webhook. Async : la sortie de Store Job Context, relayée par Respond 202.
-  const itemSync = body => ({ body, headers: {} });
-  const itemAsync = body => execCode(IG, 'Store Job Context', { body: { ...body, callback_url: 'http://cb.test' }, headers: {} });
+  // Depuis azy.daily#383 (gpt-image), la clé est résolue par `Prepare Image Request`
+  // et l'en-tête lit sa sortie ; une clé absente est refusée en 400 avant l'appel.
+  const BASE = { prompt: 'Un chat', options: { model: 'gpt-image-1-mini' } };
+  const preparer = body => execCode(IG, 'Prepare Image Request', { body, headers: {} });
+  // Sync : la sortie de Prepare Image Request. Async : celle de Store Job Context, relayée par Respond 202.
+  const itemSync = body => preparer(body);
+  const itemAsync = body => execCode(IG, 'Store Job Context', preparer({ ...body, callback_url: 'http://cb.test' }));
 
-  for (const [noeud, item] of [['DALL-E Generate (Sync)', itemSync], ['DALL-E Generate (Async)', itemAsync]]) {
+  for (const [noeud, item] of [['OpenAI Image Generate (Sync)', itemSync], ['OpenAI Image Generate (Async)', itemAsync]]) {
     const auth = body => enTete(IG, noeud, 'Authorization', item(body));
     controle(`${noeud} (a) openai_api_key seule → Bearer <clé explicite>`, auth({ ...BASE, openai_api_key: CLE }) === `Bearer ${CLE}`, true);
+    controle(`${noeud} (a) context.openai_api_key seule → Bearer <clé explicite>`, auth({ ...BASE, context: { openai_api_key: CLE } }) === `Bearer ${CLE}`, true);
     controle(`${noeud} (b) plugin_context.api_keys.openai seule → Bearer <repli>`, auth({ ...BASE, ...plugin({ openai: PC }) }) === `Bearer ${PC}`, true);
     controle(`${noeud} (c) les deux → la clé explicite gagne`, auth({ ...BASE, openai_api_key: CLE, ...plugin({ openai: PC }) }) === `Bearer ${CLE}`, true);
-    controle(`${noeud} (d) aucune clé → même en-tête que develop`,
-      auth({ ...BASE }), resoudre(ENTETE_DEVELOP, item({ ...BASE })));
-    controle(`${noeud} (d) plugin_context sans openai → même en-tête que develop`,
-      auth({ ...BASE, ...plugin({ mistral: PC }) }), resoudre(ENTETE_DEVELOP, item({ ...BASE })));
     controle(`${noeud} : clé absente du corps envoyé`, contient(corps(IG, noeud, item({ ...BASE, ...plugin({ openai: PC }) })), PC), false);
   }
-  controle('Validate Input (prompt) inchangé : nœud IF sur body.prompt',
-    IG.nd('Validate Input').parameters.conditions.conditions[0].leftValue, '={{ $json.body.prompt }}');
+  for (const [libelle, body] of [['aucune clé', { ...BASE }], ['plugin_context sans openai', { ...BASE, ...plugin({ mistral: PC }) }]]) {
+    const p = preparer(body);
+    controle(`(d) ${libelle} → 400 avant l'appel`, [p.valid, p.response && p.response.error.code], [false, 400]);
+    controle(`(d) ${libelle} → message nomme plugin_context.api_keys.openai`,
+      /plugin_context\.api_keys\.openai/.test(p.response && p.response.error.message), true);
+  }
+  controle('Valid? aiguille sur la validation de Prepare Image Request',
+    IG.nd('Valid?').parameters.conditions.conditions[0].leftValue, '={{ $json.valid }}');
 
   const bodyPC = { ...BASE, ...plugin({ openai: PC }), openai_api_key: CLE };
-  const erreurDallE = { error: { message: 'Your request was rejected', code: 'content_policy_violation', type: 'invalid_request_error' } };
-  const succesDallE = { data: [{ url: 'https://img.test/1.png', revised_prompt: 'Un chat' }] };
-  for (const [libelle, reponse] of [['succès', succesDallE], ['erreur', erreurDallE]]) {
-    const sync = execCode(IG, 'Format Output (Sync)', reponse, itemSync(bodyPC));
-    controle(`(e) Format Output (Sync) ${libelle} sans clé`, contient(sync, CLE, PC), false);
+  const erreurOpenAI = { error: { message: `401 - ${JSON.stringify({ error: { message: 'Your request was rejected', code: 'content_policy_violation' } })}`,
+    config: { headers: { Authorization: `Bearer ${CLE}` } } } };
+  const succesImage = { data: [{ b64_json: 'iVBORw0KGgo=' }], usage: { input_tokens: 22, output_tokens: 272 } };
+  for (const [libelle, reponse] of [['succès', succesImage], ['erreur', erreurOpenAI]]) {
+    const sync = execCode(IG, 'Format Output (Sync)', reponse, { __parNom: true, 'Prepare Image Request': itemSync(bodyPC) });
+    controle(`(e) Format Output (Sync) ${libelle} sans clé`, [sync.success, contient(sync, CLE, PC)], [libelle === 'succès', false]);
     const job = itemAsync(bodyPC);
     const asyncOut = execCode(IG, 'Format Output (Async)', reponse, job);
-    controle(`(e) Format Output (Async) ${libelle} sans clé`, contient(asyncOut, CLE, PC), false);
+    controle(`(e) Format Output (Async) ${libelle} sans clé`, [asyncOut.success, contient(asyncOut, CLE, PC)], [libelle === 'succès', false]);
     const rappel = execCode(IG, 'Prepare Callback with HMAC', asyncOut, null, { $env: { N8N_WEBHOOK_SECRET: 's' } });
     controle(`(e) corps du rappel (${libelle}) sans clé`, [typeof rappel.corps_json, contient(rappel, CLE, PC)], ['string', false]);
   }
   const accepte = resoudre(IG.nd('Respond 202 Accepted').parameters.responseBody, itemAsync(bodyPC));
   controle('(e) Respond 202 Accepted sans clé', [accepte.status, contient(accepte, CLE, PC)], ['processing', false]);
-  sansEnvNiCredential(IG, ['DALL-E Generate (Sync)', 'DALL-E Generate (Async)']);
+  const refus = resoudre(IG.nd('Error: Validation').parameters.responseBody, preparer({ openai_api_key: CLE, ...plugin({ openai: PC }) }));
+  controle('(e) Error: Validation (prompt absent) sans clé', [refus.success, contient(refus, CLE, PC)], [false, false]);
+  sansEnvNiCredential(IG, ['OpenAI Image Generate (Sync)', 'OpenAI Image Generate (Async)']);
   controle('sticky documente plugin_context.api_keys.openai',
     (IG.nd('API Documentation').parameters.content || '').includes('plugin_context.api_keys.openai'), true);
 }
@@ -382,7 +390,7 @@ async function enLigne() {
       { Authorization: enTete(TE, 'Mistral Embeddings', 'Authorization', te), 'Content-Type': 'application/json' },
       corps(TE, 'Mistral Embeddings', te), cleMistral, j => execCode(TE, 'Format Mistral', j, te));
   }
-  console.log('  ⏭  Gemini non mesuré (pas de clé Google) ; DALL-E non appelé (coût)');
+  console.log('  ⏭  Gemini non mesuré (pas de clé Google) ; gpt-image non appelé ici (coût, cf. test_383_image_generator.js)');
 }
 
 function conclure() {
