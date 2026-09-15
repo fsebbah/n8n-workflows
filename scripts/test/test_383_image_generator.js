@@ -250,7 +250,8 @@ section('5. Réponse synchrone : images base64, usage tel quel, pas de clé', ()
   controle('data.images = [{ b64_json, mime_type }]', s.data && s.data.images, [{ b64_json: PNG_1X1, mime_type: 'image/png' }]);
   controle('data.model, size, quality, output_format',
     s.data && [s.data.model, s.data.size, s.data.quality, s.data.output_format], ['gpt-image-1-mini', '1024x1024', 'low', 'png']);
-  controle('usage du fournisseur tel quel', s.usage, USAGE);
+  controle('meta.usage = usage du fournisseur tel quel', s.meta && s.meta.usage, USAGE);
+  controle('plus de usage à la racine', 'usage' in s, false);
   controle('meta.provider = openai', s.meta && s.meta.provider, 'openai');
   controle('plus de cost_estimate ni de prompt_revised', /cost_estimate|revised_prompt|prompt_revised/.test(JSON.stringify(s)), false);
   controle('Respond (Sync) rend 200', statutRespond(s), 200);
@@ -308,7 +309,7 @@ section('7. Rappel asynchrone : forme, statut, pas de clé', () => {
   const corpsOk = JSON.parse(rOk.corps_json || 'null') || {};
   controle('succès : callback_url', rOk.callback_url, 'http://cb.test/rappel');
   controle('succès : success, job_id, status', [corpsOk.success, corpsOk.job_id, corpsOk.status], [true, 'job-383', 'completed']);
-  controle('succès : images et usage tel quel', [corpsOk.data && corpsOk.data.images, corpsOk.usage],
+  controle('succès : images et meta.usage tel quel', [corpsOk.data && corpsOk.data.images, corpsOk.meta && corpsOk.meta.usage],
     [[{ b64_json: PNG_1X1, mime_type: 'image/png' }], USAGE]);
   controle('succès : data.model/size/quality/output_format',
     corpsOk.data && [corpsOk.data.model, corpsOk.data.size, corpsOk.data.quality, corpsOk.data.output_format],
@@ -411,13 +412,13 @@ async function enLigne() {
   const b64 = (s.data && s.data.images && s.data.images[0] && s.data.images[0].b64_json) || '';
   const png = Buffer.from(b64, 'base64');
   console.log(`     génération : HTTP ${vrai.statut}, ${vrai.ms} ms, réponse ${(vrai.octets / 1e6).toFixed(2)} Mo, base64 ${(b64.length / 1e6).toFixed(2)} Mo `
-    + `(${png.length} octets), usage ${JSON.stringify(s.usage)}` + (s.error ? `, erreur « ${s.error.message} »` : ''));
+    + `(${png.length} octets), usage ${JSON.stringify(s.meta && s.meta.usage)}` + (s.error ? `, erreur « ${s.error.message} »` : ''));
   controle('génération : HTTP 200', vrai.statut, 200);
   controle('génération : success', s.success, true);
   controle('génération : base64 décodable, en-tête PNG', png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
   controle('génération : mime_type image/png', s.data && s.data.images[0].mime_type, 'image/png');
   controle('génération : usage présent (input_tokens, output_tokens)',
-    [typeof (s.usage && s.usage.input_tokens), typeof (s.usage && s.usage.output_tokens)], ['number', 'number']);
+    [typeof (s.meta && s.meta.usage && s.meta.usage.input_tokens), typeof (s.meta && s.meta.usage && s.meta.usage.output_tokens)], ['number', 'number']);
   controle('génération : Respond rendrait 200', statutRespond(s), 200);
   controle('génération : clé absente de la sortie', contient(s, cle), false);
 }
