@@ -352,6 +352,28 @@ async function hors_ligne() {
     controle('MCP : markdown = data.text, pages = 2, détail relayé tel quel', [r.mcp.markdown === r.json.data.text, r.mcp.pages, JSON.stringify(r.mcp.page_details) === JSON.stringify(r.json.data.page_details), r.mcp.warnings], [true, 2, true, []]);
   });
 
+  await section('11. ⚠️ file_data (base64) atteint vraiment Mistral', async () => {
+    // Mesuré le 17/09 : document_url n'acceptait que file_url ; avec file_data seul,
+    // Mistral recevait un document vide → 422 « OCR_API_ERROR », panne silencieuse.
+    // Mistral exige « data:<mime>;base64,… » (base64 nu → 422, document_base64 inconnu).
+    const B64 = 'JVBERi0xLjQKJTEyMwo=';
+    const doc = v => v.mistralRequest.document;
+    const vNu = await valider(PDF, { file_data: B64, mistral_api_key: 'K' });
+    controle('base64 nu → document_url en URI data:', doc(vNu).document_url, `data:application/pdf;base64,${B64}`);
+    controle('… et fileData reste NU pour le chemin Google', vNu.fileData, B64);
+    const vPrefixe = await valider(PDF, { file_data: `data:image/png;base64,${B64}`, mistral_api_key: 'K' });
+    controle('préfixe data: déjà présent → mime conservé, base64 non dupliqué',
+      [doc(vPrefixe).document_url, vPrefixe.fileData], [`data:image/png;base64,${B64}`, B64]);
+    const vMime = await valider(PDF, { file_data: B64, mime_type: 'image/jpeg', mistral_api_key: 'K' });
+    controle('mime_type de l’appelant utilisé', doc(vMime).document_url, `data:image/jpeg;base64,${B64}`);
+    const vUrl = await valider(PDF, { file_url: 'https://b2.test/a.pdf', file_data: B64, mistral_api_key: 'K' });
+    controle('file_url présent → il l’emporte', doc(vUrl).document_url, 'https://b2.test/a.pdf');
+    const vRien = await valider(PDF, { mistral_api_key: 'K' });
+    controle('ni file_url ni file_data → erreur de validation', [vRien.valid, vRien.errors.some(e => /file_url ou file_data/.test(e))], [false, true]);
+    const vEspaces = await valider(PDF, { file_data: `${B64.slice(0, 8)}\n ${B64.slice(8)}`, mistral_api_key: 'K' });
+    controle('sauts de ligne du base64 retirés', doc(vEspaces).document_url, `data:application/pdf;base64,${B64}`);
+  });
+
   await section('10. image-ocr rend la même forme', async () => {
     const v = await valider(IMG, { image_url: 'https://img.test/page.png', mistral_api_key: CLE, include_blocks: true, table_format: 'html' });
     const s = await execCode(IMG, 'Format Response', { json: reponse(M.p12Html) }, { 'Validate Input': v });
