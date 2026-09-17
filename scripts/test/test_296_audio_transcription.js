@@ -201,7 +201,6 @@ section('2. Validation : 400 synchrone, aucun rappel', () => {
     ['audio_url non URL', { audio_url: 'reunion.ogg' }, 'audio_url'],
     ['mime_type absent', { mime_type: undefined }, 'mime_type'],
     ['filename absent', { filename: '  ' }, 'filename'],
-    ['size_bytes absent', { size_bytes: undefined }, 'size_bytes'],
     ['size_bytes = 0', { size_bytes: 0 }, 'size_bytes'],
     ['size_bytes = 1.5', { size_bytes: 1.5 }, 'size_bytes'],
     ['provider absent', { provider: undefined }, 'provider'],
@@ -221,9 +220,11 @@ section('2. Validation : 400 synchrone, aucun rappel', () => {
       [false, false, 'invalid_request', 400, true]);
   }
   const vide = execCode(V_REQ, { json: { headers: {} } }).json;
-  controle('corps absent → 400, les 9 champs requis nommés', [vide.valide, vide.reponse.error.fields.length], [false, 9]);
+  controle('corps absent → 400, les 8 champs requis nommés (size_bytes facultatif)', [vide.valide, vide.reponse.error.fields.length], [false, 8]);
   controle('language et duration_seconds absents ou null → valide',
     [valider({ ...BASE, language: undefined, duration_seconds: undefined }).valide, valider({ ...BASE, language: null, duration_seconds: null }).valide], [true, true]);
+  controle('size_bytes absent ou null → valide, size_bytes null (demande api 17/09)',
+    [valider({ ...BASE, size_bytes: undefined }).valide, valider({ ...BASE, size_bytes: null }).size_bytes], [true, null]);
   controle('size_bytes et duration_seconds en chaîne de chiffres → acceptés',
     [valider({ ...BASE, size_bytes: '1024', duration_seconds: '12.5' }).size_bytes, valider({ ...BASE, size_bytes: '1024', duration_seconds: '12.5' }).duration_seconds], [1024, 12.5]);
   controle('URL signée avec requête sans chemin → acceptée', valider({ ...BASE, audio_url: 'https://b2.test?sig=1' }).valide, true);
@@ -333,6 +334,7 @@ section('5. Refus avant appel', () => {
   controle('OpenAI, 26 214 400 − 16 384 octets → accepté (marge multipart)', refus({ provider: 'openai', model: 'whisper-1', size_bytes: 26214400 - 16384 }), null);
   controle('OpenAI, 1 octet de plus → file_too_large', refus({ provider: 'openai', model: 'whisper-1', size_bytes: 26214400 - 16383 }).code, 'file_too_large');
   controle('Mistral, 60 Mo → aucun refus (> 57 Mo acceptés, #301)', refus({ size_bytes: 60000000 }), null);
+  controle('OpenAI sans size_bytes → aucun refus avant appel (vérifié après téléchargement)', refus({ provider: 'openai', model: 'whisper-1', size_bytes: undefined }), null);
   controle('gpt-4o-transcribe, 1 500 s → audio_too_long 400',
     [refus({ provider: 'openai', model: 'gpt-4o-transcribe', duration_seconds: 1500, size_bytes: 1000 }).code, refus({ provider: 'openai', model: 'gpt-4o-transcribe', duration_seconds: 1500, size_bytes: 1000 }).http_status], ['audio_too_long', 400]);
   controle('gpt-4o-mini-transcribe-2025-12-15, 1 401 s → audio_too_long', refus({ provider: 'openai', model: 'gpt-4o-mini-transcribe-2025-12-15', duration_seconds: 1401, size_bytes: 1000 }).code, 'audio_too_long');
@@ -348,16 +350,16 @@ section('5. Refus avant appel', () => {
   const prep = (json, binary) => garder(execCode(PREP, { json, binary }, { [V_REQ]: oa })).json;
   const BIN = { data: { data: 'T2dnUw==', mimeType: 'audio/ogg', fileName: 'x', bytes: 1000 } };
   const tel403 = prep({ statusCode: 403, statusMessage: 'Forbidden', headers: {} }, BIN);
-  controle('téléchargement 403 (URL expirée) → internal_error 403', [tel403.echec.code, tel403.echec.http_status], ['internal_error', 403]);
-  controle('téléchargement 404 → internal_error 404', prep({ statusCode: 404, headers: {} }, BIN).echec.http_status, 404);
+  controle('téléchargement 403 (URL expirée) → audio_fetch_failed 403', [tel403.echec.code, tel403.echec.http_status], ['audio_fetch_failed', 403]);
+  controle('téléchargement 404 → audio_fetch_failed 404', [prep({ statusCode: 404, headers: {} }, BIN).echec.code, prep({ statusCode: 404, headers: {} }, BIN).echec.http_status], ['audio_fetch_failed', 404]);
   const telDelai = prep({ error: { message: 'timeout of 600000ms exceeded', code: 'ECONNABORTED' } });
-  controle('téléchargement délai dépassé → internal_error 504', [telDelai.echec.code, telDelai.echec.http_status], ['internal_error', 504]);
-  controle('téléchargement DNS → internal_error 502', prep({ error: { message: 'getaddrinfo ENOTFOUND b2.test', code: 'ENOTFOUND' } }).echec.http_status, 502);
+  controle('téléchargement délai dépassé → audio_fetch_failed, http_status null', [telDelai.echec.code, telDelai.echec.http_status], ['audio_fetch_failed', null]);
+  controle('téléchargement DNS → http_status null', prep({ error: { message: 'getaddrinfo ENOTFOUND b2.test', code: 'ENOTFOUND' } }).echec.http_status, null);
   const telGros = prep({ statusCode: 200, headers: { 'content-length': '26300000' } }, BIN);
   controle('taille téléchargée 26,3 Mo (size_bytes mentait) → file_too_large 413', [telGros.echec.code, telGros.echec.http_status], ['file_too_large', 413]);
   controle('taille téléchargée par bytes si pas de content-length', prep({ statusCode: 200, headers: {} }, { data: { ...BIN.data, bytes: 26300000 } }).echec.code, 'file_too_large');
-  controle('fichier vide → internal_error', prep({ statusCode: 200, headers: { 'content-length': '0' } }, BIN).echec.code, 'internal_error');
-  controle('200 sans binaire → internal_error', prep({ statusCode: 200, headers: {} }).echec.code, 'internal_error');
+  controle('fichier vide → audio_unreadable (relancer ne le remplira pas)', prep({ statusCode: 200, headers: { 'content-length': '0' } }, BIN).echec.code, 'audio_unreadable');
+  controle('200 sans binaire → audio_fetch_failed', prep({ statusCode: 200, headers: {} }).echec.code, 'audio_fetch_failed');
   controle('Fichier refusé ? : vrai sur échec de téléchargement', siCondition('Fichier refusé ?', tel403), true);
   controle('URL signée masquée dans le message de téléchargement',
     prep({ error: { message: `connect ECONNREFUSED ${BASE.audio_url}`, code: 'ECONNREFUSED' } }).echec.provider_message.includes('SIGNATURE'), false);
@@ -367,7 +369,7 @@ section('5. Refus avant appel', () => {
   controle('refus avant appel → rappel { success: false, audio_too_long, 400 }',
     [r.corps.success, r.corps.error.code, r.corps.error.http_status], [false, 'audio_too_long', 400]);
   const r2 = rappel(oa, tel403);
-  controle('échec de téléchargement → rappel internal_error 403', [r2.corps.error.code, r2.corps.error.http_status], ['internal_error', 403]);
+  controle('échec de téléchargement → rappel audio_fetch_failed 403', [r2.corps.error.code, r2.corps.error.http_status], ['audio_fetch_failed', 403]);
 });
 
 section('6. Correspondance des erreurs — messages MESURÉS', () => {
@@ -381,8 +383,8 @@ section('6. Correspondance des erreurs — messages MESURÉS', () => {
     ['OpenAI 400 « Invalid file format »', oaW, reponse(400, M.openai_format), 'unsupported_format', 400, 'Invalid file format'],
     ['Mistral 400 « Audio input could not be decoded »', mi, reponse(400, M.mistral_non_audio), 'audio_unreadable', 400, 'could not be decoded'],
     ['Mistral 400 file_url HTML « could not be decoded »', mi, reponse(400, M.mistral_url_html), 'audio_unreadable', 400, "Audio from 'https://www.example.com/'"],
-    ['Mistral 400 file_url 403 « File could not be fetched »', mi, reponse(400, M.mistral_url_403), 'internal_error', 400, 'File could not be fetched from url'],
-    ['Mistral 400 file_url 404 « File could not be fetched »', mi, reponse(400, M.mistral_url_404), 'internal_error', 400, 'Inexistant_azy_296.ogg'],
+    ['Mistral 400 file_url 403 « File could not be fetched »', mi, reponse(400, M.mistral_url_403), 'audio_fetch_failed', 400, 'File could not be fetched from url'],
+    ['Mistral 400 file_url 404 « File could not be fetched »', mi, reponse(400, M.mistral_url_404), 'audio_fetch_failed', 400, 'Inexistant_azy_296.ogg'],
     ['Mistral 422 corps JSON refusé', mi, reponse(422, M.mistral_json_422), 'internal_error', 422, 'multipart/form-data'],
     ['Mistral 400 « Invalid model »', mi, reponse(400, M.mistral_modele), 'internal_error', 400, 'Invalid model'],
     ['OpenAI 404 « model_not_found »', oaW, reponse(404, M.openai_modele), 'internal_error', 404, 'does not exist'],
@@ -406,9 +408,9 @@ section('6. Correspondance des erreurs — messages MESURÉS', () => {
   }
   // Sans réponse du fournisseur : onError=continueRegularOutput
   const delai = rappel(mi, { error: { message: 'timeout of 1200000ms exceeded', code: 'ECONNABORTED', name: 'AxiosError' } });
-  controle('délai dépassé → provider_unavailable 504', [delai.corps.error.code, delai.corps.error.http_status], ['provider_unavailable', 504]);
+  controle('délai dépassé → provider_unavailable, http_status null', [delai.corps.error.code, delai.corps.error.http_status], ['provider_unavailable', null]);
   const dns = rappel(mi, { error: { message: 'getaddrinfo EAI_AGAIN api.mistral.ai', code: 'EAI_AGAIN' } });
-  controle('panne réseau → provider_unavailable 502', [dns.corps.error.code, dns.corps.error.http_status], ['provider_unavailable', 502]);
+  controle('panne réseau → provider_unavailable, http_status null', [dns.corps.error.code, dns.corps.error.http_status], ['provider_unavailable', null]);
   const enfoui = rappel(oaW, { error: { message: `401 - ${JSON.stringify(M.openai_401)}`, code: 'ERR_BAD_REQUEST',
     options: { headers: { Authorization: `Bearer ${CLE}` } } } });
   controle('statut enfoui « 401 - {...} » (onError) → provider_auth 401', [enfoui.corps.error.code, enfoui.corps.error.http_status], ['provider_auth', 401]);
@@ -422,8 +424,8 @@ section('6. Correspondance des erreurs — messages MESURÉS', () => {
   const url = rappel(mi, reponse(400, M.mistral_url_403));
   controle('URL signée citée par Mistral → requête masquée',
     [url.corps.error.provider_message.includes('sig='), url.corps.error.provider_message.includes('https://stockage.test/fine-tune/f7e0.ogg?[paramètres masqués]')], [false, true]);
-  const codes = new Set(['file_too_large', 'unsupported_format', 'audio_unreadable', 'audio_too_long', 'provider_unavailable', 'provider_auth', 'internal_error']);
-  controle('les 7 codes de la liste fermée sont atteints, et eux seuls',
+  const codes = new Set(['file_too_large', 'unsupported_format', 'audio_unreadable', 'audio_too_long', 'provider_unavailable', 'provider_auth', 'audio_fetch_failed', 'internal_error']);
+  controle('les 8 codes de la liste fermée sont atteints, et eux seuls',
     [...new Set(SORTIES.map(s => { try { return JSON.parse(s.json.corps_json).error.code; } catch (e) { return undefined; } }).filter(Boolean))].sort(),
     [...codes].sort());
 });
@@ -521,7 +523,7 @@ section('10. Documentation', () => {
   const doc = W.nodes.filter(n => n.type.endsWith('stickyNote')).map(n => n.parameters.content || '').join('\n');
   for (const mot of ['azy.daily#296', '/webhook/audio-transcription', '202', '400', 'accepted', 'X-N8N-Signature', 'N8N_WEBHOOK_SECRET',
     'file_url', 'verbose_json', 'duration_seconds', 'prompt_audio_seconds', 'Omis', '1 400 s', '26 214 400',
-    'file_too_large', 'unsupported_format', 'audio_unreadable', 'audio_too_long', 'provider_unavailable', 'provider_auth', 'internal_error',
+    'file_too_large', 'unsupported_format', 'audio_unreadable', 'audio_too_long', 'provider_unavailable', 'provider_auth', 'audio_fetch_failed', 'internal_error',
     'provider_message', '20 min', 'Secret absent']) {
     controle(`sticky mentionne ${mot}`, doc.includes(mot), true);
   }
@@ -596,7 +598,7 @@ async function enLigne() {
     const miAlt = valider({ ...corpsBase, api_key: MI, audio_url: alteree });
     const rMA = rappel(miAlt, await envoyer(MISTRAL, miAlt));
     console.log(`     Mistral URL altérée : ${masquer(rMA.corps_json)}`);
-    controle('en ligne — Mistral URL signée altérée → internal_error, requête masquée', [rMA.corps.error && rMA.corps.error.code, /sig=/.test(rMA.corps_json)], ['internal_error', false]);
+    controle('en ligne — Mistral URL signée altérée → audio_fetch_failed, requête masquée', [rMA.corps.error && rMA.corps.error.code, /sig=/.test(rMA.corps_json)], ['audio_fetch_failed', false]);
 
     // OpenAI : vrai téléchargement de l'URL signée, puis Préparer le fichier (nom « .opus » corrigé)
     const oa = valider({ ...corpsBase, provider: 'openai', model: 'whisper-1', api_key: OA, filename: 'parole.opus', mime_type: 'audio/ogg' });
