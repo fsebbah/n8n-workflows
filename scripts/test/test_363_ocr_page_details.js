@@ -374,6 +374,30 @@ async function hors_ligne() {
     controle('sauts de ligne du base64 retirés', doc(vEspaces).document_url, `data:application/pdf;base64,${B64}`);
   });
 
+  await section('12. ⚠️ provider « mistralai » (code catalogue chat.api) accepté', async () => {
+    // Panne du 18/09 : chat.api envoie le code catalogue « mistralai » depuis le 21/07
+    // (chat.api#2743) et MCP en dérive le nom de la clé (`mistralai_api_key`). La version
+    // qui tournait l'acceptait ; le réimport a appliqué la validation stricte de git.
+    // Vérifié sur l'exécution n8n 918562 du 17/09 08:20 : provider « mistralai », valid: true.
+    const vAlias = await valider(PDF, { file_url: 'https://b2.test/a.pdf', provider: 'mistralai', mistralai_api_key: 'K' });
+    controle('provider mistralai + mistralai_api_key → valide, ramené à mistral',
+      [vAlias.valid, vAlias.provider, !!vAlias.mistralApiKey], [true, 'mistral', true]);
+    const vCasse = await valider(PDF, { file_url: 'https://b2.test/a.pdf', provider: '  MistralAI ', mistral_api_key: 'K' });
+    controle('casse et espaces tolérés', [vCasse.valid, vCasse.provider], [true, 'mistral']);
+    const vPc = await valider(PDF, { file_url: 'https://b2.test/a.pdf', provider: 'mistralai', plugin_context: { api_keys: { mistralai: 'K' } } });
+    controle('clé sous plugin_context.api_keys.mistralai → acceptée', vPc.valid, true);
+    const vHistorique = await valider(PDF, { file_url: 'https://b2.test/a.pdf', provider: 'mistral', mistral_api_key: 'K' });
+    controle('le vocabulaire historique marche toujours', [vHistorique.valid, vHistorique.provider], [true, 'mistral']);
+    const vSansCle = await valider(PDF, { file_url: 'https://b2.test/a.pdf', provider: 'mistralai' });
+    controle('mistralai sans aucune clé → toujours refusé', [vSansCle.valid, vSansCle.errors.some(e => /mistral_api_key/.test(e))], [false, true]);
+    const vInconnu = await valider(PDF, { file_url: 'https://b2.test/a.pdf', provider: 'anthropic', mistral_api_key: 'K' });
+    controle('provider inconnu → toujours 400', [vInconnu.valid, vInconnu.errors.some(e => /Invalid provider/.test(e))], [false, true]);
+    const vGoogle = await valider(PDF, { file_url: 'gs://seau/a.pdf', provider: 'googleai', googleai_api_key: 'K' });
+    controle('alias googleai → google, clé googleai_api_key lue', [vGoogle.valid, vGoogle.provider], [true, 'google']);
+    const vImg = await valider(IMG, { image_url: 'https://b2.test/a.png', mistralai_api_key: 'K' });
+    controle('image-ocr : clé sous mistralai_api_key → acceptée', vImg.valid, true);
+  });
+
   await section('10. image-ocr rend la même forme', async () => {
     const v = await valider(IMG, { image_url: 'https://img.test/page.png', mistral_api_key: CLE, include_blocks: true, table_format: 'html' });
     const s = await execCode(IMG, 'Format Response', { json: reponse(M.p12Html) }, { 'Validate Input': v });
