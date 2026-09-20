@@ -53,6 +53,13 @@ verifier('les deux nœuds portent un bloc IDENTIQUE (pas de dérive entre sync e
 verifier('le champ est ajouté à data.pages[] (là où Google le met)',
   noeuds.every((n) => /detected_languages:\s*languesDetectees363\(p\.markdown\)/.test(n.parameters.jsCode)));
 
+const noeudsGoogle = workflow.nodes.filter((n) => /^Normalize Google \((Sync|Async)\)$/.test(n.name));
+verifier('la branche Google publie AUSSI le champ dans page_details[], depuis sa source native',
+  noeudsGoogle.length === 2
+  && noeudsGoogle.every((n) => (n.parameters.jsCode.match(
+    /detected_languages:\s*\(annotation\.pages\?\.\[0\]\?\.property\?\.detectedLanguages/g) || []).length === 2),
+  'attendu : une fois dans pages[], une fois dans page_details[], dans chacun des deux nœuds');
+
 if (!blocs[0]) {
   console.log('\nRésultat : bloc introuvable, arrêt\n');
   process.exit(1);
@@ -132,9 +139,13 @@ for (const [intitule, entree] of [
 
 console.log('\nForme du champ (contrat Google Vision)');
 const echantillon = detecter(FR);
-verifier('tableau d\'objets { languageCode, confidence }',
-  echantillon.every((l) => typeof l.languageCode === 'string' && typeof l.confidence === 'number'),
-  JSON.stringify(echantillon));
+verifier('tableau d\'objets { languageCode, confidence, source }',
+  echantillon.every((l) => typeof l.languageCode === 'string' && typeof l.confidence === 'number'
+    && typeof l.source === 'string'), JSON.stringify(echantillon));
+verifier('source = script_heuristic sur la branche Mistral (front #363 : la valeur porte sa provenance)',
+  echantillon.every((l) => l.source === 'script_heuristic'), JSON.stringify(echantillon));
+verifier('la branche Google marque source = engine (valeur du moteur, pas la nôtre)',
+  noeudsGoogle.every((n) => /source:\s*'engine'/.test(n.parameters.jsCode)));
 verifier('confidence dans [0, 1]',
   echantillon.every((l) => l.confidence >= 0 && l.confidence <= 1), JSON.stringify(echantillon));
 const triMixte = detecter(MIXTE).map((l) => l.confidence);
@@ -181,10 +192,18 @@ async function verifierNoeudEntier() {
     JSON.stringify(r.data.pages[0].detected_languages));
   verifier('page 2 (anglais) → en', r.data.pages[1].detected_languages[0]?.languageCode === 'en',
     JSON.stringify(r.data.pages[1].detected_languages));
-  verifier('page_details[] n\'est PAS modifié (contrat #363 intact)',
+  // chat.api ne construit page_details[] QUE depuis la clé `page_details` (ocr_service.py),
+  // et MCP relaie cette liste verbatim (ocr_routes.py : page_details: Optional[list]).
+  // data.pages[] ne traverse donc jamais la frontière : sans ce champ ici, aucun client ne le voit.
+  verifier('page_details[] porte le champ, en fin d\'objet (contrat #363 étendu, pas cassé)',
     JSON.stringify(Object.keys(r.data.page_details[0]))
-      === JSON.stringify(['index', 'markdown', 'header', 'footer', 'page_width', 'page_height', 'dpi']),
+      === JSON.stringify(['index', 'markdown', 'header', 'footer', 'page_width', 'page_height', 'dpi',
+        'detected_languages']),
     JSON.stringify(Object.keys(r.data.page_details[0])));
+  verifier('même valeur dans page_details[] et dans pages[] (une seule vérité)',
+    JSON.stringify(r.data.page_details[0].detected_languages)
+      === JSON.stringify(r.data.pages[0].detected_languages),
+    `${JSON.stringify(r.data.page_details[0].detected_languages)} vs ${JSON.stringify(r.data.pages[0].detected_languages)}`);
   verifier('meta.usage intact', r.meta.usage.pages_processed === 2 && r.meta.usage.doc_size_bytes === 1234);
 }
 
