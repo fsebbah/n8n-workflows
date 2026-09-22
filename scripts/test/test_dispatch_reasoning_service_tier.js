@@ -98,7 +98,11 @@ T('rien envoyé → pas de reasoning ni de service_tier', [false, false], ['reas
 
 console.log('\n5. ⚠️ Anthropic : thinking tel quel, contraintes appliquées');
 c = corpsDe('Anthropic API', D({ provider: 'anthropic', model: 'claude-sonnet-5', reasoning_config: { thinking: { type: 'disabled' } }, service_tier: 'flex' }));
-T('disabled : thinking posé, temperature gardée, pas de tier', [{ type: 'disabled' }, 0.7, false], [c.thinking, c.temperature, 'service_tier' in c]);
+// azy.daily#411 : cette attente disait « temperature gardée » — c'est elle qui a produit la
+// panne du 22/09 (vision/describe en 502). Mesuré ce jour : claude-sonnet-5 + temperature 0.7
+// → 400 « `temperature` is deprecated for this model. », thinking disabled ou pas. La famille
+// Claude 5 refuse tout paramètre d'échantillonnage ; les 4.x l'acceptent encore (ligne suivante).
+T('disabled : thinking posé, temperature RETIRÉE (Claude 5), pas de tier', [{ type: 'disabled' }, false, false], [c.thinking, 'temperature' in c, 'service_tier' in c]);
 c = corpsDe('Anthropic API', D({ provider: 'anthropic', model: 'claude-sonnet-4-6', reasoning_config: { thinking: { type: 'adaptive' }, output_config: { effort: 'low' } } }));
 T('adaptive : temperature retirée, output_config gardé', [false, { effort: 'low' }, 1500], ['temperature' in c, c.output_config, c.max_tokens]);
 c = corpsDe('Anthropic API', D({ provider: 'anthropic', model: 'claude-haiku-4-5-20251001', reasoning_config: { thinking: { type: 'enabled', budget_tokens: 4096 } } }));
