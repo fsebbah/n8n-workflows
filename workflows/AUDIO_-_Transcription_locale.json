@@ -1,0 +1,439 @@
+{
+  "name": "AUDIO - Transcription locale",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## AUDIO — Transcription locale (whisper-local)\n\n**Webhook** `POST /webhook/audio-transcription-local` — azy.daily#421, contrat #296.\n\nCe workflow **ne transcrit pas**. Le service faster-whisper de prod001 va chercher l'audio,\ntranscrit, puis fait LUI-MÊME le rappel signé vers la `callback_url` reçue.\n\nn8n : valide → relaie verbatim → répond 202. Et **seulement si la soumission échoue**, émet\nl'échec signé : le service n'a alors jamais accepté le job, donc personne d'autre ne rappellera\net chat.api attendrait indéfiniment (jobs orphelins, azy.daily#422).\n\n### Environnement\n- `WHISPER_LOCAL_URL` — défaut `http://prod001.local:8088`\n- `WHISPER_LOCAL_TOKEN` — facultatif ; envoyé en `Authorization: Bearer` s'il est posé.\n  Infra a laissé le service SANS jeton pour ne pas bloquer : il accepte une `audio_url`\n  qu'il va chercher et une `callback_url` où il poste. Poser le jeton des deux côtés ferme\n  ce levier — n8n est prêt, la variable suffit.\n- `N8N_WEBHOOK_SECRET` — signature HMAC du rappel d'échec (jamais de rappel non signé).\n\n### Ce que n8n garantit ici\nchamps requis, `https` (ou `http` vers le réseau local), modèle parmi `small|medium`\n(préfixe `faster-whisper-` toléré), charge relayée verbatim, échec dans la liste FERMÉE\ndu contrat (`provider_unavailable`, `provider_auth`), `http_status` jamais inventé.\n\n### Ce que n8n NE fait pas pour ce fournisseur\ntéléchargement, transcription, rappel de succès, `usage.duration_seconds` : tout cela\nappartient au service, qui expose le contrat #296 tel quel.",
+        "height": 640,
+        "width": 620,
+        "color": 4
+      },
+      "id": "documentation",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "audio-transcription-local",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "a7c1f2d4-5e6b-4a8c-9d0e-1f2a3b4c5d6e"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// VALIDER LA REQUÊTE — whisper-local (azy.daily#421, contrat #296)\n// ============================================================\n// Ce workflow ne transcrit pas : le service de prod001 va chercher l'audio, transcrit et\n// fait LUI-MÊME le rappel signé vers callback_url. n8n valide, relaie verbatim, répond 202\n// et n'intervient plus — SAUF si la soumission échoue : dans ce cas le service n'a jamais\n// accepté le job, personne ne rappellera, et c'est à nous d'émettre l'échec signé.\n\nconst entree = $input.first().json;\nconst body = entree && entree.body && typeof entree.body === 'object' && !Array.isArray(entree.body)\n  ? entree.body\n  : (entree && typeof entree === 'object' ? entree : {});\n\nconst erreurs = [];\nconst champs = [];\nconst refuser = (champ, message) => { champs.push(champ); erreurs.push(message); };\nconst absent = v => v === undefined || v === null || v === '';\n\nconst texteRequis = nom => {\n  const v = body[nom];\n  if (absent(v) || typeof v !== 'string') { refuser(nom, `${nom} requis (chaîne non vide)`); return ''; }\n  return v.trim();\n};\n\nconst jobId = texteRequis('job_id');\nconst callbackUrl = texteRequis('callback_url');\nconst audioUrl = texteRequis('audio_url');\nconst mimeType = texteRequis('mime_type');\nconst model = texteRequis('model');\n\n// https partout, sauf vers le réseau local : le service de prod001 et chat.api en dev\n// s'appellent en http sur des noms .local. Tout le reste doit être chiffré.\nconst HTTPS = /^https:\\/\\/[^\\s\\/?#@]+([\\/?#][^\\s]*)?$/i;\nconst HTTP_LOCAL = /^http:\\/\\/([a-z0-9-]+\\.local|localhost|127\\.0\\.0\\.1|192\\.168\\.\\d{1,3}\\.\\d{1,3})(:\\d+)?([\\/?#][^\\s]*)?$/i;\nconst urlAcceptable = u => HTTPS.test(u) || HTTP_LOCAL.test(u);\nif (callbackUrl && !urlAcceptable(callbackUrl)) refuser('callback_url', 'callback_url doit être https (ou http vers le réseau local)');\nif (audioUrl && !urlAcceptable(audioUrl)) refuser('audio_url', 'audio_url doit être https (ou http vers le réseau local)');\n\n// Modèles annoncés par infra le 23/09 : small | medium, préfixés faster-whisper- ou non.\n// Un nom inconnu est refusé ICI plutôt que par le service : l'erreur nomme le champ et\n// les valeurs acceptées, au lieu d'un transcription_model_unsupported en différé.\nconst MODELES = ['small', 'medium'];\nconst modeleNu = model.replace(/^faster-whisper-/i, '').toLowerCase();\nif (model && !MODELES.includes(modeleNu)) {\n  refuser('model', `model inconnu (${model.slice(0, 40)}), valeurs acceptées ${MODELES.join(' | ')} (préfixe faster-whisper- toléré)`);\n}\n\nlet language = null;\nif (!absent(body.language)) {\n  if (typeof body.language !== 'string' || body.language.trim().length > 8) {\n    refuser('language', 'language doit être une chaîne courte (ex. fr)');\n  } else language = body.language.trim();\n}\n\nlet durationSeconds = null;\nif (!absent(body.duration_seconds)) {\n  const n = typeof body.duration_seconds === 'string' && /^\\d+(\\.\\d+)?$/.test(body.duration_seconds.trim())\n    ? Number(body.duration_seconds) : body.duration_seconds;\n  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) {\n    refuser('duration_seconds', 'duration_seconds doit être un nombre positif');\n  } else durationSeconds = n;\n}\n\nif (erreurs.length > 0) {\n  return [{\n    json: {\n      valide: false,\n      reponse: {\n        success: false,\n        job_id: jobId || null,\n        error: { code: 'invalid_request', http_status: 400, message: erreurs.join(' ; '), fields: champs },\n      },\n    },\n  }];\n}\n\n// Charge utile relayée VERBATIM au service : c'est le contrat #296, pas une interface à nous.\n// On ne transmet ni api_key (le moteur est local, il n'en a pas) ni provider (le webhook EST\n// le routage). Les champs facultatifs ne sont posés que s'ils existent.\nconst charge = { job_id: jobId, callback_url: callbackUrl, audio_url: audioUrl, mime_type: mimeType, model: model };\nif (language !== null) charge.language = language;\nif (durationSeconds !== null) charge.duration_seconds = durationSeconds;\n\nreturn [{\n  json: {\n    valide: true,\n    job_id: jobId,\n    callback_url: callbackUrl,\n    model: model,\n    language: language,\n    charge: charge,\n    reponse: { success: true, job_id: jobId, status: 'accepted' },\n  },\n}];\n"
+      },
+      "id": "valider-la-requête",
+      "name": "Valider la requête",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "whisper-valide",
+              "leftValue": "={{ $json.valide }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "requête-valide-?",
+      "name": "Requête valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.reponse }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "répondre-400",
+      "name": "Répondre 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        660,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.reponse }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "répondre-202",
+      "name": "Répondre 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHISPER_LOCAL_URL || 'http://prod001.local:8088' }}/api/v1/audio/transcribe",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $env.WHISPER_LOCAL_TOKEN ? 'Bearer ' + $env.WHISPER_LOCAL_TOKEN : undefined }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.charge) }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "whisper-local---soumettre",
+      "name": "whisper-local — soumettre",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "whisper-accepte",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 202,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "job-accepté-?",
+      "name": "Job accepté ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "terminé---le-service-rappellera",
+      "name": "Terminé — le service rappellera",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// CONSTRUIRE LE RAPPEL D'ÉCHEC — whisper-local (azy.daily#421)\n// ============================================================\n// N'est atteint QUE si la soumission au service a échoué. Le service n'a alors jamais\n// accepté le job : il ne rappellera pas, et chat.api attendrait indéfiniment (les jobs\n// orphelins ne rendent pas les crédits, azy.daily#422). C'est donc à nous d'émettre\n// l'échec, signé comme n'importe quel rappel du contrat #296.\nconst req = $('Valider la requête').first().json;\nconst entree = $input.first().json || {};\n\n// Liste FERMÉE du contrat #296 : un code hors liste casserait l'aiguillage des clients.\nconst CODES = ['file_too_large', 'unsupported_format', 'audio_unreadable', 'audio_too_long',\n  'provider_unavailable', 'provider_auth', 'audio_fetch_failed', 'internal_error'];\n\nconst nettoyer = s => String(s === undefined || s === null ? '' : s)\n  .replace(/\\s+/g, ' ').trim().slice(0, 300);\n\nconst analyser = c => {\n  if (c && typeof c === 'object') return c;\n  if (typeof c === 'string') { try { return JSON.parse(c); } catch (e) { return { message: c }; } }\n  return {};\n};\n\n// Statut HTTP : présent si le service a répondu ; absent sur une erreur de transport, et\n// n8n ne laisse alors qu'un message « NNN - … » ou un code réseau (cf. n8n : onError masque\n// le statut). http_status reste null quand il n'y a eu AUCUNE réponse — on ne l'invente pas.\nlet statut = null;\nlet message = '';\nif (typeof entree.statusCode === 'number') {\n  statut = entree.statusCode;\n  const corps = analyser(entree.body !== undefined ? entree.body : entree.data);\n  message = corps.message || corps.error || `HTTP ${statut}`;\n} else if (entree.error !== undefined) {\n  const e = entree.error && typeof entree.error === 'object' ? entree.error : { message: String(entree.error) };\n  const brut = String(e.message || '');\n  const m = brut.match(/^\\s*(\\d{3})\\s*-\\s*([\\s\\S]*)$/);\n  if (m) { statut = Number(m[1]); message = m[2]; } else { message = brut || String(e.code || 'transport'); }\n} else {\n  message = 'réponse inattendue du service whisper-local';\n}\n\n// provider_auth si le service exige un jeton que nous n'avons pas (ou plus) ; sinon le\n// service est en panne, injoignable ou refuse la charge : provider_unavailable.\nconst code = (statut === 401 || statut === 403) ? 'provider_auth' : 'provider_unavailable';\n\nconst corps = {\n  success: false,\n  job_id: req.job_id,\n  error: {\n    code: CODES.includes(code) ? code : 'internal_error',\n    http_status: statut,\n    provider_message: nettoyer(`whisper-local n'a pas accepté le job — ${message}`),\n  },\n  meta: { provider: 'whisper-local', model: req.model },\n};\n\nreturn [{ json: { job_id: req.job_id, callback_url: req.callback_url, corps_json: JSON.stringify(corps) } }];\n"
+      },
+      "id": "construire-le-rappel-d'échec",
+      "name": "Construire le rappel d'échec",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "whisper-secret",
+              "leftValue": "={{ !!$env.N8N_WEBHOOK_SECRET }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "secret-configuré-?",
+      "name": "Secret configuré ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "=Secret absent — N8N_WEBHOOK_SECRET non configuré, rappel du job {{ $json.job_id }} non envoyé (aucun rappel non signé)"
+      },
+      "id": "erreur---secret-absent",
+      "name": "Erreur — secret absent",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.corps_json }}",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET }}",
+        "encoding": "hex",
+        "dataPropertyName": "signature"
+      },
+      "id": "signer-le-rappel",
+      "name": "Signer le rappel",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.corps_json }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "envoyer-le-rappel",
+      "name": "Envoyer le rappel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        240
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Valider la requête",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valider la requête": {
+      "main": [
+        [
+          {
+            "node": "Requête valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requête valide ?": {
+      "main": [
+        [
+          {
+            "node": "Répondre 202",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Répondre 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Répondre 202": {
+      "main": [
+        [
+          {
+            "node": "whisper-local — soumettre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "whisper-local — soumettre": {
+      "main": [
+        [
+          {
+            "node": "Job accepté ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job accepté ?": {
+      "main": [
+        [
+          {
+            "node": "Terminé — le service rappellera",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Construire le rappel d'échec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construire le rappel d'échec": {
+      "main": [
+        [
+          {
+            "node": "Secret configuré ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Secret configuré ?": {
+      "main": [
+        [
+          {
+            "node": "Signer le rappel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Erreur — secret absent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signer le rappel": {
+      "main": [
+        [
+          {
+            "node": "Envoyer le rappel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "pinData": {}
+}
