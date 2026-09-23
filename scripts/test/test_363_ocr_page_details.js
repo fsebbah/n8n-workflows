@@ -189,8 +189,20 @@ async function hors_ligne() {
     const R = ['// ── azy.daily#363 — relance page par page', '// ── fin du bloc relance #363 ──'];
     const dS = bloc(nd(PDF, 'Normalize Mistral (Sync)').parameters.jsCode, ...D);
     controle('bloc « détail par page » présent', dS !== null, true);
-    controle('bloc « détail par page » identique dans les 3 nœuds Mistral',
-      [bloc(nd(PDF, 'Normalize Mistral (Async)').parameters.jsCode, ...D), bloc(nd(IMG, 'Format Response').parameters.jsCode, ...D)].map(b => b === dS), [true, true]);
+    // #520 a ajouté detected_languages à pdf-ocr seulement (image-ocr : trop peu de texte pour
+    // que la détection soit honnête). Le bloc doit rester identique PARTOUT AILLEURS : on retire
+    // cette ligne et ses commentaires avant de comparer, sinon la garde ne protège plus de rien.
+    // Normalisation avant comparaison : #520 a ajouté detected_languages à pdf-ocr seulement
+    // (image-ocr : trop peu de texte pour que la détection soit honnête). On retire cette ligne
+    // et les commentaires, et on neutralise la virgule finale — elle ne diffère que parce que
+    // le champ suivant existe d'un côté. Toute VRAIE divergence de code reste détectée.
+    const sansLangue = b => (b || '').split('\n')
+      .filter(l => !/detected_languages/.test(l) && !/^\s*\/\//.test(l))
+      .map(l => l.replace(/,\s*$/, ''))
+      .join('\n');
+    controle('bloc « détail par page » identique dans les 3 nœuds Mistral (hors détection de langue)',
+      [bloc(nd(PDF, 'Normalize Mistral (Async)').parameters.jsCode, ...D), bloc(nd(IMG, 'Format Response').parameters.jsCode, ...D)]
+        .map(b => sansLangue(b) === sansLangue(dS)), [true, true]);
     const rS = bloc(nd(PDF, 'Normalize Mistral (Sync)').parameters.jsCode, ...R);
     controle('bloc « relance » présent et identique dans les 2 normalisations PDF',
       [rS !== null, bloc(nd(PDF, 'Normalize Mistral (Async)').parameters.jsCode, ...R) === rS], [true, true]);
@@ -201,9 +213,9 @@ async function hors_ligne() {
     controle('sans option : extract_header_footer true, include_blocks false, table_format markdown',
       [v.valid, v.extractHeaderFooter, v.includeBlocks, v.tableFormat], [true, true, false, 'markdown']);
     const corps = b => JSON.parse(resoudre(nd(PDF, 'Mistral OCR (Sync)').parameters.jsonBody, b));
-    controle('défaut : extract_header + extract_footer, ni table_format ni include_blocks, pas d\'images', corps(v), {
+    controle('défaut : extract_header + extract_footer, figures demandées, ni table_format ni include_blocks', corps(v), {
       model: 'mistral-ocr-latest', document: { type: 'document_url', document_url: BASE.file_url },
-      include_image_base64: false, extract_header: true, extract_footer: true,
+      include_image_base64: true, extract_header: true, extract_footer: true,
     });
     const avec = async o => valider(PDF, { ...BASE, ...o });
     const corpsSans = corps(await avec({ extract_header_footer: false }));
@@ -225,14 +237,15 @@ async function hors_ligne() {
     const vi = await valider(IMG, { image_url: 'https://img.test/page.png', mistral_api_key: CLE, include_blocks: true });
     controle('image-ocr : image_url + mêmes options par défaut',
       JSON.parse(resoudre(nd(IMG, 'Mistral OCR').parameters.jsonBody, vi)),
-      { model: 'mistral-ocr-latest', document: { type: 'image_url', image_url: 'https://img.test/page.png' }, include_image_base64: false, extract_header: true, extract_footer: true, include_blocks: true });
+      { model: 'mistral-ocr-latest', document: { type: 'image_url', image_url: 'https://img.test/page.png' }, include_image_base64: true, extract_header: true, extract_footer: true, include_blocks: true });
   });
 
   await section('3. page_details toujours présent (Shoftim p. 2, options par défaut)', async () => {
     const r = await chaineSync({ ...BASE, extract_header_footer: true }, reponse(M.p2));
     controle('succès 200', [r.json.success, r.code], [true, 200]);
     controle('une entrée, clés exactes du contrat (sans blocks ni tables)', pd(r).map(p => Object.keys(p)),
-      [['index', 'markdown', 'header', 'footer', 'page_width', 'page_height', 'dpi']]);
+      [['index', 'markdown', 'header', 'footer', 'page_width', 'page_height', 'dpi',
+        'images', 'detected_languages']]);
     const p = pd(r)[0] || {};
     controle('index 1 (Mistral compte depuis 0)', p.index, 1);
     controle('header et footer extraits', [p.header, p.footer], ['Aliyah 1\nKI TEITZEI ALIYAH 1 · ÉDITION BILINGUE', 'KI TEITZEI ALIYAH 1-ALIYAH 7\n2 / 21']);
@@ -240,7 +253,10 @@ async function hors_ligne() {
     controle('markdown de la page = markdown de Mistral, nettoyé', [p.markdown === M.p2.reponse.pages[0].markdown, /2 \/ 21|ÉDITION BILINGUE|^Aliyah 1$/m.test(p.markdown || 'x 2 / 21')], [true, false]);
     controle('data.text (document) nettoyé lui aussi', /2 \/ 21/.test(r.json.data.text), false);
     controle('warnings vide', r.json.data.warnings, []);
-    controle('forme existante inchangée : pages[], page_count, usage', [r.json.data.pages, r.json.data.page_count, r.json.meta.usage],
+    // detected_languages (#519) est vérifié par test_363_langue_par_page.js : on l'écarte ici
+    // pour que ce contrôle continue de dire ce qu'il dit — la forme historique n'a pas bougé.
+    const pagesSansLangue = (r.json.data.pages || []).map(({ detected_languages, ...reste }) => reste);
+    controle('forme existante inchangée : pages[], page_count, usage', [pagesSansLangue, r.json.data.page_count, r.json.meta.usage],
       [[{ page: 1, markdown: M.p2.reponse.pages[0].markdown, has_images: true }], 1, { pages_processed: 1, doc_size_bytes: 308579 }]);
   });
 
@@ -291,11 +307,22 @@ async function hors_ligne() {
     controle('défaut (markdown) : tableau inline dans le markdown, pas de tables', [/\|  2 \| Aliyah 1  \|/.test((pd(md)[0] || {}).markdown), 'tables' in (pd(md)[0] || {})], [true, false]);
   });
 
-  await section('7. Images jamais rendues', async () => {
+  await section('7. Figures rendues, jamais transformées (décision PO du 21/09)', async () => {
     const r = await chaineSync({ ...BASE, include_blocks: true, table_format: 'html' }, reponse(M.p12Html));
-    controle('corps : include_image_base64 false par défaut', r.corps.include_image_base64, false);
-    controle('page_details sans images ni base64', /image_base64|"images"|data:image/.test(JSON.stringify(pd(r))), false);
-    controle('data (texte, pages, détail) sans base64', /base64/.test(JSON.stringify(r.json.data)), false);
+    // Décision PO : « ce que n8n renvoie, chat.api le rend, toujours ». Le défaut passe à true
+    // PARCE QUE /api/ocr/extract refuse include_images (422, extra="forbid") : sans ce défaut,
+    // images[] arriverait systématiquement vide chez chat.api — livré et inutile.
+    controle('corps : include_image_base64 true par défaut', r.corps.include_image_base64, true);
+    controle('page_details : images présent sur chaque page', pd(r).every(p => Array.isArray(p.images)), true);
+    controle('les figures de la réponse Mistral ressortent telles quelles',
+      pd(r).map(p => p.images), M.p12Html.reponse.pages.map(p => p.images || []));
+    const avecFigure = await chaineSync({ ...BASE }, reponse({
+      ...M.p2, reponse: { ...M.p2.reponse, pages: [{ ...M.p2.reponse.pages[0],
+        images: [{ id: 'img-0.jpeg', top_left_x: 68, top_left_y: 71, bottom_right_x: 930, bottom_right_y: 693,
+                   image_base64: 'data:image/jpeg;base64,/9j/4AAQ', image_annotation: null }] }] } }));
+    controle('figure relayée VERBATIM, champ par champ', pd(avecFigure)[0].images,
+      [{ id: 'img-0.jpeg', top_left_x: 68, top_left_y: 71, bottom_right_x: 930, bottom_right_y: 693,
+         image_base64: 'data:image/jpeg;base64,/9j/4AAQ', image_annotation: null }]);
   });
 
   await section('8. Relance page par page (Shoftim p. 2-3 : la p. 3 fait tomber Mistral)', async () => {
@@ -384,7 +411,8 @@ async function hors_ligne() {
     controle('data.pages (Mistral brut) inchangé', JSON.stringify(d.pages) === JSON.stringify(M.p12Html.reponse.pages), true);
     const vd = await valider(IMG, { image_base64: 'iVBORw0KGgo=', mistral_api_key: CLE });
     const sd = await execCode(IMG, 'Format Response', { json: reponse(M.p2) }, { 'Validate Input': vd });
-    controle('défaut : ni blocks ni tables', Object.keys((sd.data.page_details || [])[0] || {}), ['index', 'markdown', 'header', 'footer', 'page_width', 'page_height', 'dpi']);
+    controle('défaut : ni blocks ni tables', Object.keys((sd.data.page_details || [])[0] || {}),
+      ['index', 'markdown', 'header', 'footer', 'page_width', 'page_height', 'dpi', 'images']);
     controle('MCP lirait la même forme', lectureMcp(sd).lu_dans, 'data');
     const se = await execCode(IMG, 'Format Response', { json: reponse(M.doc500) }, { 'Validate Input': vd });
     controle('500 sur une image : erreur relayée, pas de relance', [se.success, se.error && se.error.http_status], [false, 500]);
@@ -396,7 +424,10 @@ async function hors_ligne() {
     const s = await execCode(PDF, 'Normalize Google (Sync)', { json: vision }, { 'Validate Input': v });
     controle('page_details : index, markdown, header/footer null, dimensions Vision, sans blocks',
       [(s.data || {}).page_details, (s.data || {}).warnings],
-      [[{ index: 1, markdown: 'Bonjour\nle monde', header: null, footer: null, page_width: 800, page_height: 600, dpi: null }], []]);
+      [[{ index: 1, markdown: 'Bonjour\nle monde', header: null, footer: null, page_width: 800, page_height: 600, dpi: null,
+          // Vision ne rend pas de figures : le champ existe quand même, pour une forme unique
+          // entre fournisseurs — un client ne doit pas tester la présence de la clé.
+          images: [], detected_languages: [] }], []]);
     const sa = await execCode(PDF, 'Normalize Google (Async)', { json: vision }, { 'Validate Input': v });
     controle('async : même détail', JSON.stringify((((sa.callbackBody || {}).data) || {}).page_details) === JSON.stringify((s.data || {}).page_details), true);
   });
