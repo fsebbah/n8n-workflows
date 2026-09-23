@@ -85,6 +85,28 @@ for (const [model, attendu] of [
     v.echantillonnage_refuse === attendu, `obtenu : ${v.echantillonnage_refuse}`);
 }
 
+console.log('\nLa règle qui ne vieillit pas : ne jamais inventer de température');
+// Mesuré le 2026-09-23 : claude-opus-4-8 → 400 sur temperature 0.7, claude-sonnet-4-6 → 200.
+// Un « 4-8 » refuse là où un « 4-6 » accepte : aucune liste de modèles ne peut suivre. La seule
+// protection qui ne demande pas d'entretien est de ne transmettre que ce qui a été demandé.
+for (const [noeud, model, provider] of [
+  ['Anthropic API', 'claude-opus-4-8', 'anthropic'],
+  ['Anthropic API', 'claude-sonnet-4-6', 'anthropic'],
+  ['OpenAI API', 'gpt-4o-mini', 'openai'],
+  ['Mistral API', 'mistral-small-latest', 'mistral'],
+]) {
+  const sans = corpsHttp(noeud, valider(REQUETE(model)));
+  verifier(`${model} sans demande → aucune temperature dans le corps`,
+    !('temperature' in sans), JSON.stringify(Object.keys(sans)));
+}
+const explicite = corpsHttp('Anthropic API', valider(REQUETE('claude-sonnet-4-6', { temperature: 0.2 })));
+verifier('claude-sonnet-4-6 avec temperature 0.2 → transmise (elle fonctionne)',
+  explicite.temperature === 0.2, JSON.stringify(explicite.temperature));
+verifier('la validation accepte l\'absence de température (plus de NaN)',
+  valider(REQUETE('claude-sonnet-4-6')).valid === true);
+verifier('une température hors bornes reste refusée',
+  valider(REQUETE('claude-sonnet-4-6', { temperature: 5 })).valid === false);
+
 console.log('\nDemande explicite ou défaut maison');
 verifier('temperature envoyée par l\'appelant → demande explicite',
   valider(REQUETE('claude-sonnet-5', { temperature: 0.2 })).temperature_demandee === true);
