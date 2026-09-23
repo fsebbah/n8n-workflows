@@ -98,6 +98,33 @@ for (const [fichier, noeuds] of [
   console.log('');
 }
 
+console.log('La trace ne transporte pas les figures une seconde fois');
+// Mesuré le 23/09 : 203 Ko de réponse pour un PDF d'une page à une figure, dont la MOITIÉ en
+// base64 dupliqué dans _trace.service_response. MCP ne lit pas _trace : trajet doublé pour rien.
+{
+  const code = noeud(charger('MCP_-_PDF_OCR.json'), 'Normalize Mistral (Sync)').parameters.jsCode;
+  const reponse = {
+    statusCode: 200,
+    body: { model: 'mistral-ocr-latest', usage_info: { pages_processed: 1, doc_size_bytes: 10 },
+      pages: [{ index: 0, markdown: '![img-0.jpeg](img-0.jpeg)', images: [FIGURE_MISTRAL] }] },
+  };
+  const ctx = vm.createContext({
+    $input: { first: () => ({ json: reponse }) },
+    $: () => ({ first: () => ({ json: { startTime: Date.now(), includeBlocks: false, tableFormat: 'markdown' } }) }),
+    console,
+  });
+  vm.runInContext(`this.executer = (async function () {\n${code}\n});`, ctx);
+  module.exports.__attente = ctx.executer.call({ helpers: {} }).then((sortie) => {
+    const traceImg = sortie._trace.service_response.pages[0].images[0];
+    verifier('_trace : le base64 est remplacé par sa taille',
+      /^<base64 retiré: \d+ octets>$/.test(traceImg.image_base64), traceImg.image_base64);
+    verifier('_trace : le reste de la figure est conservé (id, coins)',
+      traceImg.id === FIGURE_MISTRAL.id && traceImg.top_left_x === 68);
+    verifier('data : le vrai base64 est intact, lui',
+      sortie.data.page_details[0].images[0].image_base64 === FIGURE_MISTRAL.image_base64);
+  });
+}
+
 console.log('Branche Google (Vision ne rend pas de figures)');
 const pdf = charger('MCP_-_PDF_OCR.json');
 for (const nom of ['Normalize Google (Sync)', 'Normalize Google (Async)']) {
@@ -111,5 +138,7 @@ const [s, a] = ['Normalize Mistral (Sync)', 'Normalize Mistral (Async)']
   .map((c) => c.slice(c.indexOf('function detailPage363'), c.indexOf('// Statut HTTP')));
 verifier('sync et async construisent la page de façon identique', s === a);
 
-console.log(`\nRésultat : ${ok} ok, ${ko} échec(s)\n`);
-process.exit(ko === 0 ? 0 : 1);
+module.exports.__attente.then(() => {
+  console.log(`\nRésultat : ${ok} ok, ${ko} échec(s)\n`);
+  process.exit(ko === 0 ? 0 : 1);
+});
