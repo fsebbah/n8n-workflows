@@ -74,8 +74,12 @@ T('nom inconnu + fragment du catalogue → raisonne', true,
 T('nom inconnu + reasoning:true → raisonne (parole de l’appelant)', true,
   D({ provider: 'openai', model: 'modele-maison', reasoning: true }).raisonnement);
 v = D({ provider: 'openai', model: 'gpt-4.1-mini', reasoning: false });
-T('gpt-4.1-mini + reasoning:false → corps classique', [false, true, true],
+// azy.daily#411 : sans temperature dans la requête, le corps n'en porte plus — nous n'en
+// inventons plus (un 0.7 maison faisait tomber claude-opus-4-8 et claude-sonnet-5 en 400).
+T('gpt-4.1-mini + reasoning:false → corps classique, sans temperature inventée', [false, true, false],
   [v.raisonnement, 'max_tokens' in corpsDe('OpenAI API', v), 'temperature' in corpsDe('OpenAI API', v)]);
+T('… mais une temperature demandée est transmise', 0.2,
+  corpsDe('OpenAI API', D({ provider: 'openai', model: 'gpt-4.1-mini', temperature: 0.2 })).temperature);
 
 console.log('\n3. OpenAI chat/completions : fragment tel quel, tier relayé');
 c = corpsDe('OpenAI API', D({ provider: 'openai', model: 'gpt-5.6-luna', reasoning_config: { reasoning_effort: 'none' }, service_tier: 'flex' }));
@@ -108,7 +112,8 @@ T('adaptive : temperature retirée, output_config gardé', [false, { effort: 'lo
 c = corpsDe('Anthropic API', D({ provider: 'anthropic', model: 'claude-haiku-4-5-20251001', reasoning_config: { thinking: { type: 'enabled', budget_tokens: 4096 } } }));
 T('enabled + budget : max_tokens = réponse + budget, sans temperature', [5596, false], [c.max_tokens, 'temperature' in c]);
 c = corpsDe('Anthropic API', D({ provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }));
-T('rien envoyé → corps inchangé', [false, 0.7, 1500], ['thinking' in c, c.temperature, c.max_tokens]);
+// azy.daily#411 : plus de temperature par défaut ; le fournisseur applique la sienne.
+T('rien envoyé → corps inchangé, sans temperature', [false, false, 1500], ['thinking' in c, 'temperature' in c, c.max_tokens]);
 
 console.log('\n6. Gemini et Mistral');
 c = corpsDe('Gemini API', D({ provider: 'google', model: 'gemini-3.5-flash', reasoning_config: { thinkingConfig: { thinkingBudget: 0 } }, service_tier: 'flex' }));
