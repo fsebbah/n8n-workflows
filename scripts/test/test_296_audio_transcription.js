@@ -177,7 +177,14 @@ section('1. Structure', () => {
       [false, false, true]);
   }
   const avecEnv = W.nodes.filter(n => /\$env/.test(JSON.stringify(n.parameters)) && !n.type.endsWith('stickyNote')).map(n => n.name).sort();
-  controle('$env seulement pour le secret HMAC', avecEnv, ['Secret configuré ?', 'Signer le rappel']);
+  // azy.daily#421 : deux $env s'ajoutent sur la branche whisper-local, et la distinction
+  // est celle qui compte — les clés des FOURNISSEURS restent interdites en $env (BYOT, elles
+  // arrivent dans le corps), tandis que l'adresse d'un service d'infrastructure unique et le
+  // jeton d'accès à ce service n'ont pas d'autre endroit où vivre.
+  controle('$env : secret HMAC, adresse et jeton du moteur local — jamais une clé fournisseur', avecEnv,
+    ['Secret configuré ?', 'Signer le rappel', 'whisper-local — soumettre']);
+  controle('aucune clé de fournisseur en $env',
+    /\$env\.[A-Z_]*(API_KEY|OPENAI|MISTRAL|ANTHROPIC|GOOGLE)/.test(JSON.stringify(W.nodes)), false);
   const expressions = [];
   const parcourir = v => { if (typeof v === 'string') expressions.push(v); else if (v && typeof v === 'object') Object.values(v).forEach(parcourir); };
   W.nodes.filter(n => !n.type.endsWith('stickyNote')).forEach(n => parcourir(n.parameters));
@@ -244,7 +251,12 @@ section('3. Câblage : le 202 part AVANT tout travail lent', () => {
   controle('Valider → Requête valide ?', aval(V_REQ), [['Requête valide ?']]);
   controle('Requête valide ? → Répondre 202 | Répondre 400', aval('Requête valide ?'), [['Répondre 202'], ['Répondre 400']]);
   controle('Répondre 202 → Refus avant appel ?', aval('Répondre 202'), [['Refus avant appel ?']]);
-  controle('Refus avant appel ? → Construire le rappel | Mistral ?', aval('Refus avant appel ?'), [[RAPPEL], ['Mistral ?']]);
+  // Le fournisseur local est testé AVANT le choix Mistral/OpenAI : sa branche ne transcrit pas.
+  controle('Refus avant appel ? → Construire le rappel | whisper-local ?', aval('Refus avant appel ?'), [[RAPPEL], ['whisper-local ?']]);
+  controle('whisper-local ? → soumettre | Mistral ?', aval('whisper-local ?'), [['whisper-local — soumettre'], ['Mistral ?']]);
+  controle('Job accepté ? → fin (le moteur rappelle) | rappel d\'échec', aval('Job accepté ?'),
+    [['Terminé — le moteur rappellera'], ["Construire le rappel d'échec local"]]);
+  controle('le rappel d\'échec local rejoint la signature commune', aval("Construire le rappel d'échec local"), [['Secret configuré ?']]);
   controle('Mistral ? → Mistral file_url | OpenAI télécharger', aval('Mistral ?'), [[MISTRAL], [TELECH]]);
   controle('Mistral → Construire le rappel', aval(MISTRAL), [[RAPPEL]]);
   controle('Télécharger → Préparer le fichier → Fichier refusé ?', [aval(TELECH), aval(PREP)], [[[PREP]], [['Fichier refusé ?']]]);
