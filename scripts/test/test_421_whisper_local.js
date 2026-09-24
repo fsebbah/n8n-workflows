@@ -72,8 +72,11 @@ verifier('le webhook reste unique et inchangé', noeud('Webhook').parameters.pat
 verifier('le routage local est testé AVANT le choix Mistral/OpenAI',
   workflow.connections['Refus avant appel ?'].main[1][0].node === 'whisper-local ?',
   JSON.stringify(workflow.connections['Refus avant appel ?'].main[1]));
-verifier('un fournisseur distant continue par le chemin existant',
-  workflow.connections['whisper-local ?'].main[1][0].node === 'Mistral ?');
+// Depuis azy.daily#421 (Garage non public), Mistral reçoit les octets comme OpenAI : le
+// téléchargement est partagé et le choix du fournisseur ne survient qu'à l'appel final.
+verifier('un fournisseur distant part vers le téléchargement partagé',
+  workflow.connections['whisper-local ?'].main[1][0].node === 'Télécharger audio_url',
+  workflow.connections['whisper-local ?'].main[1][0].node);
 verifier('la branche locale rejoint la signature commune (un seul chemin de rappel)',
   workflow.connections["Construire le rappel d'échec local"].main[0][0].node === 'Secret configuré ?');
 const noms = new Set(workflow.nodes.map((n) => n.name));
