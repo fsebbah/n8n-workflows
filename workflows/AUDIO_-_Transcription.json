@@ -68,7 +68,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDER LA REQUÊTE — audio-transcription (azy.daily#296)\n// ============================================\n// Entrée invalide → 400 SYNCHRONE { accepted: false, error } et AUCUN rappel.\n// Entrée valide → le 202 part tout de suite, puis :\n//   - refus avant appel (durée connue au-delà de la limite du modèle, ou\n//     fichier trop gros pour OpenAI) → rappel d'échec sans appel fournisseur ;\n//   - Mistral → file_url (l'URL signée), n8n ne télécharge rien ;\n//   - OpenAI → téléchargement puis multipart (nœuds HTTP natifs).\n// La clé (api_key) ne sort de ce nœud que vers l'en-tête Authorization des\n// nœuds HTTP : jamais dans une réponse, un rappel ou un message d'erreur.\n\nconst entree = $input.first().json;\nconst body = entree && entree.body && typeof entree.body === 'object' && !Array.isArray(entree.body) ? entree.body : {};\nconst erreurs = [];\nconst champs = [];\nconst refuser = (champ, message) => { champs.push(champ); erreurs.push(message); };\n\nconst PROVIDERS = ['mistralai', 'openai'];\n// Mesuré (azy.daily#301) : OpenAI plafonne la REQUÊTE à 26 214 400 octets (413),\n// enveloppe multipart comprise. On garde une marge pour l'enveloppe.\nconst OPENAI_PLAFOND_REQUETE = 26214400;\nconst MARGE_MULTIPART = 16384;\n// Mesuré (#301) : gpt-4o-transcribe et son mini refusent au-delà de 1 400 s.\n// whisper-1 et voxtral-mini-2602 : 2 h acceptées, aucune limite connue → aucun refus.\nconst LIMITES_DUREE = [{ motif: /^gpt-4o(-mini)?-transcribe(-\\d{4}-\\d{2}-\\d{2})?$/, secondes: 1400 }];\n\nconst texteRequis = nom => {\n  const v = body[nom];\n  if (typeof v !== 'string' || v.trim() === '') {\n    refuser(nom, `${nom} requis (chaîne non vide)`);\n    return '';\n  }\n  return v.trim();\n};\nconst absent = v => v === undefined || v === null || v === '';\nconst HTTPS = /^https:\\/\\/[^\\s\\/?#@]+([\\/?#][^\\s]*)?$/i;\n\nconst jobId = texteRequis('job_id');\nconst callbackUrl = texteRequis('callback_url');\nconst audioUrl = texteRequis('audio_url');\nconst mimeType = texteRequis('mime_type');\nconst filename = texteRequis('filename');\nconst provider = texteRequis('provider');\nconst model = texteRequis('model');\nconst apiKey = texteRequis('api_key');\n\nif (callbackUrl && !HTTPS.test(callbackUrl)) refuser('callback_url', 'callback_url doit être une URL https');\nif (audioUrl && !HTTPS.test(audioUrl)) refuser('audio_url', 'audio_url doit être une URL https');\nif (provider && !PROVIDERS.includes(provider)) {\n  refuser('provider', `provider inconnu (${provider.slice(0, 40)}), valeurs acceptées ${PROVIDERS.join(' | ')}`);\n}\n\n// size_bytes : FACULTATIF (demande api du 17/09, azy.daily#296) — un document\n// ancien sans taille ne doit pas échouer. Présent : entier > 0 (nombre ou chaîne\n// de chiffres). Absent : le plafond OpenAI est vérifié après téléchargement\n// (content-length, puis taille du binaire) dans « Préparer le fichier OpenAI ».\nlet sizeBytes = null;\nif (!absent(body.size_bytes)) {\n  const n = typeof body.size_bytes === 'string' && /^\\d+$/.test(body.size_bytes.trim()) ? Number(body.size_bytes) : body.size_bytes;\n  if (typeof n !== 'number' || !Number.isInteger(n) || n <= 0) refuser('size_bytes', 'size_bytes doit être un entier positif');\n  else sizeBytes = n;\n}\n\n// language : facultatif ; transmis tel quel (vide = détection par le fournisseur)\nlet language = '';\nif (!absent(body.language)) {\n  if (typeof body.language !== 'string' || body.language.trim() === '' || body.language.trim().length > 16) {\n    refuser('language', 'language doit être une chaîne courte (ex. fr)');\n  } else {\n    language = body.language.trim();\n  }\n}\n\n// duration_seconds : facultatif ; annoncé par le client, sert au refus avant appel\nlet durationSeconds = null;\nif (!absent(body.duration_seconds)) {\n  const n = typeof body.duration_seconds === 'string' && /^\\d+(\\.\\d+)?$/.test(body.duration_seconds.trim())\n    ? Number(body.duration_seconds) : body.duration_seconds;\n  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) refuser('duration_seconds', 'duration_seconds doit être un nombre positif');\n  else durationSeconds = n;\n}\n\nif (erreurs.length > 0) {\n  return [{\n    json: {\n      valide: false,\n      reponse: {\n        accepted: false,\n        job_id: jobId || null,\n        error: { code: 'invalid_request', http_status: 400, message: erreurs.join(' ; '), fields: champs },\n      },\n    },\n  }];\n}\n\n// --- Nom de fichier pour OpenAI ---\n// Mesuré le 17/09 : OpenAI juge le format sur l'EXTENSION du nom envoyé.\n// « parole.ogg » et « parole » passent ; « parole.opus » et « parole.bin » →\n// 400 « Invalid file format ». On corrige l'extension d'après mime_type.\nconst EXT_OPENAI = ['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm'];\nconst EXT_PAR_MIME = {\n  'audio/ogg': 'ogg', 'audio/opus': 'ogg', 'application/ogg': 'ogg', 'audio/x-ogg': 'ogg',\n  'audio/webm': 'webm', 'video/webm': 'webm',\n  'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/mpga': 'mp3', 'audio/x-mp3': 'mp3',\n  'audio/flac': 'flac', 'audio/x-flac': 'flac',\n  'audio/mp4': 'm4a', 'audio/m4a': 'm4a', 'audio/x-m4a': 'm4a', 'video/mp4': 'mp4',\n  'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav', 'audio/vnd.wave': 'wav',\n};\nconst ALIAS_EXT = { opus: 'ogg' };\nconst nomPropre = filename.split(/[\\\\/]/).pop().replace(/[\"\\r\\n\\t]/g, '_') || 'audio';\nconst m = nomPropre.match(/^(.*)\\.([A-Za-z0-9]{1,5})$/);\nconst base = m && m[1] ? m[1] : nomPropre;\nconst ext = m && m[1] ? m[2].toLowerCase() : '';\nconst extMime = EXT_PAR_MIME[mimeType.toLowerCase().split(';')[0].trim()];\nlet nomFichier = nomPropre;\nif (!EXT_OPENAI.includes(ext)) {\n  const cible = ALIAS_EXT[ext] || extMime;\n  if (cible) nomFichier = `${base}.${cible}`;\n}\n\n// --- Refus avant appel ---\nconst limite = (LIMITES_DUREE.find(l => l.motif.test(model)) || {}).secondes || null;\nlet echec = null;\nif (limite && durationSeconds !== null && durationSeconds > limite) {\n  echec = {\n    code: 'audio_too_long',\n    http_status: 400,\n    provider_message: `Refusé avant appel par n8n — duration_seconds ${durationSeconds} dépasse la durée maximale de ${model} (${limite} s)`,\n  };\n} else if (provider === 'openai' && sizeBytes !== null && sizeBytes + MARGE_MULTIPART > OPENAI_PLAFOND_REQUETE) {\n  echec = {\n    code: 'file_too_large',\n    http_status: 413,\n    provider_message: `Refusé avant appel par n8n — size_bytes ${sizeBytes} plus la marge multipart (${MARGE_MULTIPART}) dépasse le plafond de requête OpenAI (${OPENAI_PLAFOND_REQUETE} octets)`,\n  };\n}\n\nreturn [{\n  json: {\n    valide: true,\n    reponse: { accepted: true, job_id: jobId },\n    job_id: jobId,\n    callback_url: callbackUrl,\n    audio_url: audioUrl,\n    mime_type: mimeType,\n    filename: filename,\n    nom_fichier: nomFichier,\n    size_bytes: sizeBytes,\n    provider: provider,\n    model: model,\n    api_key: apiKey,\n    language: language,\n    duration_seconds: durationSeconds,\n    limite_duree_s: limite,\n    // Mesuré : verbose_json (qui porte duration) n'existe que pour whisper ;\n    // gpt-4o-*-transcribe → 400 « not compatible with model ».\n    response_format: provider === 'openai' ? (/^whisper/.test(model) ? 'verbose_json' : 'json') : null,\n    echec: echec,\n  },\n}];\n"
+        "jsCode": "// ============================================\n// VALIDER LA REQUÊTE — audio-transcription (azy.daily#296)\n// ============================================\n// Entrée invalide → 400 SYNCHRONE { accepted: false, error } et AUCUN rappel.\n// Entrée valide → le 202 part tout de suite, puis :\n//   - refus avant appel (durée connue au-delà de la limite du modèle, ou\n//     fichier trop gros pour OpenAI) → rappel d'échec sans appel fournisseur ;\n//   - Mistral → file_url (l'URL signée), n8n ne télécharge rien ;\n//   - OpenAI → téléchargement puis multipart (nœuds HTTP natifs).\n// La clé (api_key) ne sort de ce nœud que vers l'en-tête Authorization des\n// nœuds HTTP : jamais dans une réponse, un rappel ou un message d'erreur.\n\nconst entree = $input.first().json;\nconst body = entree && entree.body && typeof entree.body === 'object' && !Array.isArray(entree.body) ? entree.body : {};\nconst erreurs = [];\nconst champs = [];\nconst refuser = (champ, message) => { champs.push(champ); erreurs.push(message); };\n\n// whisper-local (azy.daily#421) : moteur faster-whisper de prod001. Option B — le routage\n  // vers un fournisseur vit dans n8n, y compris quand il est local. Sa charge est relayée\n  // VERBATIM : le moteur expose le contrat #296, pas une interface à lui.\n  const PROVIDERS = ['mistralai', 'openai', 'whisper-local'];\n// Mesuré (azy.daily#301) : OpenAI plafonne la REQUÊTE à 26 214 400 octets (413),\n// enveloppe multipart comprise. On garde une marge pour l'enveloppe.\nconst OPENAI_PLAFOND_REQUETE = 26214400;\nconst MARGE_MULTIPART = 16384;\n// Mesuré (#301) : gpt-4o-transcribe et son mini refusent au-delà de 1 400 s.\n// whisper-1 et voxtral-mini-2602 : 2 h acceptées, aucune limite connue → aucun refus.\nconst LIMITES_DUREE = [{ motif: /^gpt-4o(-mini)?-transcribe(-\\d{4}-\\d{2}-\\d{2})?$/, secondes: 1400 }];\n\nconst texteRequis = nom => {\n  const v = body[nom];\n  if (typeof v !== 'string' || v.trim() === '') {\n    refuser(nom, `${nom} requis (chaîne non vide)`);\n    return '';\n  }\n  return v.trim();\n};\nconst absent = v => v === undefined || v === null || v === '';\nconst HTTPS = /^https:\\/\\/[^\\s\\/?#@]+([\\/?#][^\\s]*)?$/i;\n\nconst jobId = texteRequis('job_id');\nconst callbackUrl = texteRequis('callback_url');\nconst audioUrl = texteRequis('audio_url');\nconst mimeType = texteRequis('mime_type');\nconst filename = texteRequis('filename');\nconst provider = texteRequis('provider');\nconst model = texteRequis('model');\nconst apiKey = texteRequis('api_key');\n\n// https partout, SAUF vers le réseau local (azy.daily#421) : depuis Garage, chat.api signe\n// des URL `http://prod001.local:3900/...` — exiger https refuserait tout job whisper-local,\n// et chat.api en dev écoute lui aussi en http sur un nom .local. Mesuré le 2026-09-23.\nconst HTTP_LOCAL = /^http:\\/\\/([a-z0-9-]+\\.local|localhost|127\\.0\\.0\\.1|192\\.168\\.\\d{1,3}\\.\\d{1,3})(:\\d+)?([\\/?#][^\\s]*)?$/i;\nconst urlAcceptable = u => HTTPS.test(u) || HTTP_LOCAL.test(u);\nif (callbackUrl && !urlAcceptable(callbackUrl)) refuser('callback_url', 'callback_url doit être https (ou http vers le réseau local)');\nif (audioUrl && !urlAcceptable(audioUrl)) refuser('audio_url', 'audio_url doit être https (ou http vers le réseau local)');\nif (provider && !PROVIDERS.includes(provider)) {\n  refuser('provider', `provider inconnu (${provider.slice(0, 40)}), valeurs acceptées ${PROVIDERS.join(' | ')}`);\n}\n\n// size_bytes : FACULTATIF (demande api du 17/09, azy.daily#296) — un document\n// ancien sans taille ne doit pas échouer. Présent : entier > 0 (nombre ou chaîne\n// de chiffres). Absent : le plafond OpenAI est vérifié après téléchargement\n// (content-length, puis taille du binaire) dans « Préparer le fichier OpenAI ».\nlet sizeBytes = null;\nif (!absent(body.size_bytes)) {\n  const n = typeof body.size_bytes === 'string' && /^\\d+$/.test(body.size_bytes.trim()) ? Number(body.size_bytes) : body.size_bytes;\n  if (typeof n !== 'number' || !Number.isInteger(n) || n <= 0) refuser('size_bytes', 'size_bytes doit être un entier positif');\n  else sizeBytes = n;\n}\n\n// language : facultatif ; transmis tel quel (vide = détection par le fournisseur)\nlet language = '';\nif (!absent(body.language)) {\n  if (typeof body.language !== 'string' || body.language.trim() === '' || body.language.trim().length > 16) {\n    refuser('language', 'language doit être une chaîne courte (ex. fr)');\n  } else {\n    language = body.language.trim();\n  }\n}\n\n// duration_seconds : facultatif ; annoncé par le client, sert au refus avant appel\nlet durationSeconds = null;\nif (!absent(body.duration_seconds)) {\n  const n = typeof body.duration_seconds === 'string' && /^\\d+(\\.\\d+)?$/.test(body.duration_seconds.trim())\n    ? Number(body.duration_seconds) : body.duration_seconds;\n  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) refuser('duration_seconds', 'duration_seconds doit être un nombre positif');\n  else durationSeconds = n;\n}\n\nif (erreurs.length > 0) {\n  return [{\n    json: {\n      valide: false,\n      reponse: {\n        accepted: false,\n        job_id: jobId || null,\n        error: { code: 'invalid_request', http_status: 400, message: erreurs.join(' ; '), fields: champs },\n      },\n    },\n  }];\n}\n\n// --- Nom de fichier pour OpenAI ---\n// Mesuré le 17/09 : OpenAI juge le format sur l'EXTENSION du nom envoyé.\n// « parole.ogg » et « parole » passent ; « parole.opus » et « parole.bin » →\n// 400 « Invalid file format ». On corrige l'extension d'après mime_type.\nconst EXT_OPENAI = ['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm'];\nconst EXT_PAR_MIME = {\n  'audio/ogg': 'ogg', 'audio/opus': 'ogg', 'application/ogg': 'ogg', 'audio/x-ogg': 'ogg',\n  'audio/webm': 'webm', 'video/webm': 'webm',\n  'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/mpga': 'mp3', 'audio/x-mp3': 'mp3',\n  'audio/flac': 'flac', 'audio/x-flac': 'flac',\n  'audio/mp4': 'm4a', 'audio/m4a': 'm4a', 'audio/x-m4a': 'm4a', 'video/mp4': 'mp4',\n  'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav', 'audio/vnd.wave': 'wav',\n};\nconst ALIAS_EXT = { opus: 'ogg' };\nconst nomPropre = filename.split(/[\\\\/]/).pop().replace(/[\"\\r\\n\\t]/g, '_') || 'audio';\nconst m = nomPropre.match(/^(.*)\\.([A-Za-z0-9]{1,5})$/);\nconst base = m && m[1] ? m[1] : nomPropre;\nconst ext = m && m[1] ? m[2].toLowerCase() : '';\nconst extMime = EXT_PAR_MIME[mimeType.toLowerCase().split(';')[0].trim()];\nlet nomFichier = nomPropre;\nif (!EXT_OPENAI.includes(ext)) {\n  const cible = ALIAS_EXT[ext] || extMime;\n  if (cible) nomFichier = `${base}.${cible}`;\n}\n\n// --- Refus avant appel ---\nconst limite = (LIMITES_DUREE.find(l => l.motif.test(model)) || {}).secondes || null;\nlet echec = null;\nif (limite && durationSeconds !== null && durationSeconds > limite) {\n  echec = {\n    code: 'audio_too_long',\n    http_status: 400,\n    provider_message: `Refusé avant appel par n8n — duration_seconds ${durationSeconds} dépasse la durée maximale de ${model} (${limite} s)`,\n  };\n} else if (provider === 'openai' && sizeBytes !== null && sizeBytes + MARGE_MULTIPART > OPENAI_PLAFOND_REQUETE) {\n  echec = {\n    code: 'file_too_large',\n    http_status: 413,\n    provider_message: `Refusé avant appel par n8n — size_bytes ${sizeBytes} plus la marge multipart (${MARGE_MULTIPART}) dépasse le plafond de requête OpenAI (${OPENAI_PLAFOND_REQUETE} octets)`,\n  };\n}\n\nreturn [{\n  json: {\n    valide: true,\n    reponse: { accepted: true, job_id: jobId },\n    job_id: jobId,\n    callback_url: callbackUrl,\n    audio_url: audioUrl,\n    mime_type: mimeType,\n    filename: filename,\n    nom_fichier: nomFichier,\n    size_bytes: sizeBytes,\n    provider: provider,\n    model: model,\n    api_key: apiKey,\n    language: language,\n    duration_seconds: durationSeconds,\n    limite_duree_s: limite,\n    // Mesuré : verbose_json (qui porte duration) n'existe que pour whisper ;\n    // gpt-4o-*-transcribe → 400 « not compatible with model ».\n    response_format: provider === 'openai' ? (/^whisper/.test(model) ? 'verbose_json' : 'json') : null,\n  // Relayée telle quelle au moteur local, y compris provider et api_key ('local', qu'il\n  // ignore) : ce que chat.api a composé fait foi, nous ne recomposons rien.\n  charge_locale: provider === 'whisper-local' ? body : null,\n    echec: echec,\n  },\n}];\n"
       },
       "id": "audio-tr-valider",
       "name": "Valider la requête",
@@ -508,6 +508,151 @@
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "audio-tr-cond-local",
+              "leftValue": "={{ $json.provider }}",
+              "rightValue": "whisper-local",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "audio-tr-si-local",
+      "name": "whisper-local ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHISPER_LOCAL_URL || 'http://prod001.local:8088' }}/api/v1/audio/transcribe",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $env.WHISPER_LOCAL_TOKEN ? 'Bearer ' + $env.WHISPER_LOCAL_TOKEN : undefined }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.charge_locale) }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "audio-tr-local-post",
+      "name": "whisper-local — soumettre",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        -180
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "audio-tr-cond-accepte",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 202,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "audio-tr-accepte",
+      "name": "Job accepté ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1580,
+        -180
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "audio-tr-local-fin",
+      "name": "Terminé — le moteur rappellera",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// CONSTRUIRE LE RAPPEL D'ÉCHEC — whisper-local (azy.daily#421)\n// ============================================================\n// N'est atteint QUE si la soumission au service a échoué. Le service n'a alors jamais\n// accepté le job : il ne rappellera pas, et chat.api attendrait indéfiniment (les jobs\n// orphelins ne rendent pas les crédits, azy.daily#422). C'est donc à nous d'émettre\n// l'échec, signé comme n'importe quel rappel du contrat #296.\nconst req = $('Valider la requête').first().json;\nconst entree = $input.first().json || {};\n\n// Liste FERMÉE du contrat #296 : un code hors liste casserait l'aiguillage des clients.\nconst CODES = ['file_too_large', 'unsupported_format', 'audio_unreadable', 'audio_too_long',\n  'provider_unavailable', 'provider_auth', 'audio_fetch_failed', 'internal_error'];\n\nconst nettoyer = s => String(s === undefined || s === null ? '' : s)\n  .replace(/\\s+/g, ' ').trim().slice(0, 300);\n\nconst analyser = c => {\n  if (c && typeof c === 'object') return c;\n  if (typeof c === 'string') { try { return JSON.parse(c); } catch (e) { return { message: c }; } }\n  return {};\n};\n\n// Statut HTTP : présent si le service a répondu ; absent sur une erreur de transport, et\n// n8n ne laisse alors qu'un message « NNN - … » ou un code réseau (cf. n8n : onError masque\n// le statut). http_status reste null quand il n'y a eu AUCUNE réponse — on ne l'invente pas.\nlet statut = null;\nlet message = '';\nif (typeof entree.statusCode === 'number') {\n  statut = entree.statusCode;\n  const corps = analyser(entree.body !== undefined ? entree.body : entree.data);\n  message = corps.message || corps.error || `HTTP ${statut}`;\n} else if (entree.error !== undefined) {\n  const e = entree.error && typeof entree.error === 'object' ? entree.error : { message: String(entree.error) };\n  const brut = String(e.message || '');\n  const m = brut.match(/^\\s*(\\d{3})\\s*-\\s*([\\s\\S]*)$/);\n  if (m) { statut = Number(m[1]); message = m[2]; } else { message = brut || String(e.code || 'transport'); }\n} else {\n  message = 'réponse inattendue du service whisper-local';\n}\n\n// provider_auth si le service exige un jeton que nous n'avons pas (ou plus) ; sinon le\n// service est en panne, injoignable ou refuse la charge : provider_unavailable.\nconst code = (statut === 401 || statut === 403) ? 'provider_auth' : 'provider_unavailable';\n\nconst corps = {\n  success: false,\n  job_id: req.job_id,\n  error: {\n    code: CODES.includes(code) ? code : 'internal_error',\n    http_status: statut,\n    provider_message: nettoyer(`whisper-local n'a pas accepté le job — ${message}`),\n  },\n  meta: { provider: 'whisper-local', model: req.model },\n};\n\nreturn [{ json: { job_id: req.job_id, callback_url: req.callback_url, corps_json: JSON.stringify(corps) } }];\n"
+      },
+      "id": "audio-tr-local-echec",
+      "name": "Construire le rappel d'échec local",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## whisper-local (azy.daily#421)\n\nMoteur **faster-whisper** de prod001 — `POST {WHISPER_LOCAL_URL}/api/v1/audio/transcribe`,\ndéfaut `http://prod001.local:8088`.\n\nn8n **ne transcrit pas** ici : le moteur va chercher l'audio, transcrit, et fait LUI-MÊME\nle rappel signé vers `callback_url`. Nous relayons la charge **verbatim** et répondons 202.\n\n⚠️ **Le seul rappel que n8n émet sur cette branche est un échec de SOUMISSION** : le moteur\nn'a alors jamais accepté le job, personne ne rappellera, et chat.api attendrait\nindéfiniment — les jobs orphelins ne rendent pas les crédits (azy.daily#422).\n\n`WHISPER_LOCAL_TOKEN` : envoyé en `Authorization: Bearer` s'il est posé. Le moteur est\nouvert au réseau local aujourd'hui ; la variable suffit à fermer ce levier.\n\nJoignabilité mesurée le 23/09 depuis llm **et** host2 : moteur `/health` 200, stockage\nGarage `prod001.local:3900` joignable (403 S3 sans signature = la route existe).",
+        "height": 420,
+        "width": 480,
+        "color": 4
+      },
+      "id": "audio-tr-note-local",
+      "name": "Note whisper-local",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        -700
+      ]
     }
   ],
   "connections": {
@@ -573,7 +718,7 @@
         ],
         [
           {
-            "node": "Mistral ?",
+            "node": "whisper-local ?",
             "type": "main",
             "index": 0
           }
@@ -694,6 +839,64 @@
         [
           {
             "node": "Envoyer le rappel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "whisper-local ?": {
+      "main": [
+        [
+          {
+            "node": "whisper-local — soumettre",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mistral ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "whisper-local — soumettre": {
+      "main": [
+        [
+          {
+            "node": "Job accepté ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job accepté ?": {
+      "main": [
+        [
+          {
+            "node": "Terminé — le moteur rappellera",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Construire le rappel d'échec local",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construire le rappel d'échec local": {
+      "main": [
+        [
+          {
+            "node": "Secret configuré ?",
             "type": "main",
             "index": 0
           }
