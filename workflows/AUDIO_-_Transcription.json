@@ -205,64 +205,9 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1100,
-        300
+        2020,
+        380
       ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.mistral.ai/v1/audio/transcriptions",
-        "authentication": "none",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $json.api_key }}"
-            }
-          ]
-        },
-        "sendBody": true,
-        "contentType": "multipart-form-data",
-        "bodyParameters": {
-          "parameters": [
-            {
-              "parameterType": "formData",
-              "name": "model",
-              "value": "={{ $json.model }}"
-            },
-            {
-              "parameterType": "formData",
-              "name": "file_url",
-              "value": "={{ $json.audio_url }}"
-            },
-            {
-              "parameterType": "formData",
-              "name": "language",
-              "value": "={{ $json.language }}"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 1200000,
-          "response": {
-            "response": {
-              "fullResponse": true,
-              "neverError": true
-            }
-          }
-        }
-      },
-      "id": "audio-tr-mistral",
-      "name": "Mistral — transcrire (file_url)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1360,
-        120
-      ],
-      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -282,26 +227,26 @@
         }
       },
       "id": "audio-tr-telecharger",
-      "name": "OpenAI — télécharger audio_url",
+      "name": "Télécharger audio_url",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         1360,
-        400
+        300
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// PRÉPARER LE FICHIER OPENAI — audio-transcription (azy.daily#296)\n// ============================================\n// Entrée : la sortie du téléchargement de audio_url (HTTP Request natif,\n// responseFormat file + fullResponse + neverError) → json { headers, statusCode },\n// binaire dans « data ». En panne réseau / délai : json { error } (onError).\n//\n// Ce nœud ne TOUCHE PAS aux octets (n8n altère les Buffer passés à\n// helpers.httpRequest, et le multipart est construit par le nœud HTTP natif) :\n// il ne fait que renommer le binaire « file » et corriger fileName / mimeType\n// (OpenAI juge le format sur l'extension du nom — mesuré).\n//\n// Échec de téléchargement (URL signée expirée 403, 404, panne du stockage) →\n// audio_fetch_failed (relançable côté api : le même POST refait une URL signée ;\n// azy.daily#296, 17/09). Ni le fichier ni le fournisseur ne sont en cause.\n// http_status : celui de la réponse du stockage, null si aucune réponse HTTP.\n// Fichier vide au stockage → audio_unreadable : relancer ne le remplira pas.\n\nconst req = $('Valider la requête').first().json;\nconst item = $input.first();\nconst r = item.json || {};\nconst bin = item.binary && item.binary.data;\n\nconst OPENAI_PLAFOND_REQUETE = 26214400;\nconst MARGE_MULTIPART = 16384;\n\nconst cle = String(req.api_key || '');\nconst nettoyer = s => {\n  let t = String(s === undefined || s === null ? '' : s);\n  if (cle.length >= 8) t = t.split(cle).join('[clé masquée]');\n  // Une URL signée (audio_url) donne accès au fichier : on masque sa requête.\n  t = t.replace(/(https?:\\/\\/[^\\s'\"?]+)\\?[^\\s'\"]*/g, '$1?[paramètres masqués]');\n  return t.slice(0, 2000);\n};\nconst echec = (code, httpStatus, message) => [{\n  json: { job_id: req.job_id, echec: { code: code, http_status: httpStatus, provider_message: nettoyer(message) } },\n}];\n\nif (r.error !== undefined && r.statusCode === undefined) {\n  const e = r.error && typeof r.error === 'object' ? r.error : { message: String(r.error) };\n  const brut = `${e.code || ''} ${e.message || ''}`.trim();\n  const delai = /ECONNABORTED|ETIMEDOUT|ESOCKETTIMEDOUT|timeout/i.test(brut);\n  return echec('audio_fetch_failed', null,\n    `Téléchargement de audio_url impossible (${delai ? 'délai dépassé' : 'erreur réseau'}) — ${brut || 'sans détail'}`);\n}\n\nconst statut = Number(r.statusCode);\nif (!(statut >= 200 && statut < 300)) {\n  return echec('audio_fetch_failed', statut >= 100 && statut <= 599 ? statut : null,\n    `Téléchargement de audio_url en échec — HTTP ${Number.isFinite(statut) ? statut : '?'} ${r.statusMessage || ''}`.trim());\n}\nif (!bin) {\n  return echec('audio_fetch_failed', statut, 'Téléchargement de audio_url sans contenu binaire');\n}\n\nconst entetes = r.headers || {};\nconst longueur = entetes['content-length'];\nif (longueur !== undefined && Number(longueur) === 0) {\n  return echec('audio_unreadable', statut, 'Téléchargement de audio_url — fichier vide (content-length 0)');\n}\nconst octets = [Number(longueur), Number(bin.bytes)].find(n => Number.isFinite(n) && n > 0) || null;\nif (octets !== null && octets + MARGE_MULTIPART > OPENAI_PLAFOND_REQUETE) {\n  return echec('file_too_large', 413,\n    `Refusé avant appel par n8n — le fichier téléchargé pèse ${octets} octets, plus la marge multipart (${MARGE_MULTIPART}) le plafond de requête OpenAI (${OPENAI_PLAFOND_REQUETE} octets) est dépassé`);\n}\n\nreturn [{\n  json: {\n    job_id: req.job_id,\n    provider: req.provider,\n    model: req.model,\n    api_key: req.api_key,\n    language: req.language,\n    response_format: req.response_format,\n    octets_telecharges: octets,\n    echec: null,\n  },\n  binary: {\n    file: Object.assign({}, bin, {\n      fileName: req.nom_fichier,\n      fileExtension: (String(req.nom_fichier).match(/\\.([A-Za-z0-9]+)$/) || [])[1],\n      mimeType: req.mime_type,\n    }),\n  },\n}];\n"
+        "jsCode": "// ============================================\n// PRÉPARER LE FICHIER — audio-transcription (azy.daily#296, #421)\n// ============================================\n// Entrée : la sortie du téléchargement de audio_url (HTTP Request natif,\n// responseFormat file + fullResponse + neverError) → json { headers, statusCode },\n// binaire dans « data ». En panne réseau / délai : json { error } (onError).\n//\n// Ce nœud ne TOUCHE PAS aux octets (n8n altère les Buffer passés à\n// helpers.httpRequest, et le multipart est construit par le nœud HTTP natif) :\n// il ne fait que renommer le binaire « file » et corriger fileName / mimeType\n// (OpenAI juge le format sur l'extension du nom — mesuré).\n//\n// Échec de téléchargement (URL signée expirée 403, 404, panne du stockage) →\n// audio_fetch_failed (relançable côté api : le même POST refait une URL signée ;\n// azy.daily#296, 17/09). Ni le fichier ni le fournisseur ne sont en cause.\n// http_status : celui de la réponse du stockage, null si aucune réponse HTTP.\n// Fichier vide au stockage → audio_unreadable : relancer ne le remplira pas.\n\nconst req = $('Valider la requête').first().json;\nconst item = $input.first();\nconst r = item.json || {};\nconst bin = item.binary && item.binary.data;\n\nconst OPENAI_PLAFOND_REQUETE = 26214400;\nconst MARGE_MULTIPART = 16384;\n\nconst cle = String(req.api_key || '');\nconst nettoyer = s => {\n  let t = String(s === undefined || s === null ? '' : s);\n  if (cle.length >= 8) t = t.split(cle).join('[clé masquée]');\n  // Une URL signée (audio_url) donne accès au fichier : on masque sa requête.\n  t = t.replace(/(https?:\\/\\/[^\\s'\"?]+)\\?[^\\s'\"]*/g, '$1?[paramètres masqués]');\n  return t.slice(0, 2000);\n};\nconst echec = (code, httpStatus, message) => [{\n  json: { job_id: req.job_id, echec: { code: code, http_status: httpStatus, provider_message: nettoyer(message) } },\n}];\n\nif (r.error !== undefined && r.statusCode === undefined) {\n  const e = r.error && typeof r.error === 'object' ? r.error : { message: String(r.error) };\n  const brut = `${e.code || ''} ${e.message || ''}`.trim();\n  const delai = /ECONNABORTED|ETIMEDOUT|ESOCKETTIMEDOUT|timeout/i.test(brut);\n  return echec('audio_fetch_failed', null,\n    `Téléchargement de audio_url impossible (${delai ? 'délai dépassé' : 'erreur réseau'}) — ${brut || 'sans détail'}`);\n}\n\nconst statut = Number(r.statusCode);\nif (!(statut >= 200 && statut < 300)) {\n  return echec('audio_fetch_failed', statut >= 100 && statut <= 599 ? statut : null,\n    `Téléchargement de audio_url en échec — HTTP ${Number.isFinite(statut) ? statut : '?'} ${r.statusMessage || ''}`.trim());\n}\nif (!bin) {\n  return echec('audio_fetch_failed', statut, 'Téléchargement de audio_url sans contenu binaire');\n}\n\nconst entetes = r.headers || {};\nconst longueur = entetes['content-length'];\nif (longueur !== undefined && Number(longueur) === 0) {\n  return echec('audio_unreadable', statut, 'Téléchargement de audio_url — fichier vide (content-length 0)');\n}\nconst octets = [Number(longueur), Number(bin.bytes)].find(n => Number.isFinite(n) && n > 0) || null;\n// Le plafond est celui d'OPENAI (26 Mo par requête, mesuré) — pas une règle universelle.\n// Mistral reçoit désormais les octets lui aussi (azy.daily#421), mais son plafond multipart\n// n'a PAS été mesuré : on ne refuse donc rien avant appel de son côté, plutôt que d'inventer\n// une limite qui rejetterait des fichiers qu'il accepte. Un refus de sa part est traduit par\n// « Construire le rappel », comme tout message de fournisseur.\nif (req.provider === 'openai' && octets !== null && octets + MARGE_MULTIPART > OPENAI_PLAFOND_REQUETE) {\n  return echec('file_too_large', 413,\n    `Refusé avant appel par n8n — le fichier téléchargé pèse ${octets} octets, plus la marge multipart (${MARGE_MULTIPART}) le plafond de requête OpenAI (${OPENAI_PLAFOND_REQUETE} octets) est dépassé`);\n}\n\nreturn [{\n  json: {\n    job_id: req.job_id,\n    provider: req.provider,\n    model: req.model,\n    api_key: req.api_key,\n    language: req.language,\n    response_format: req.response_format,\n    octets_telecharges: octets,\n    echec: null,\n  },\n  binary: {\n    file: Object.assign({}, bin, {\n      fileName: req.nom_fichier,\n      fileExtension: (String(req.nom_fichier).match(/\\.([A-Za-z0-9]+)$/) || [])[1],\n      mimeType: req.mime_type,\n    }),\n  },\n}];\n"
       },
       "id": "audio-tr-preparer-fichier",
-      "name": "Préparer le fichier OpenAI",
+      "name": "Préparer le fichier",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         1580,
-        400
+        300
       ]
     },
     {
@@ -333,7 +278,7 @@
       "typeVersion": 2.2,
       "position": [
         1800,
-        400
+        300
       ]
     },
     {
@@ -391,7 +336,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2020,
+        2260,
         480
       ],
       "onError": "continueRegularOutput"
@@ -653,6 +598,61 @@
         1300,
         -700
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/audio/transcriptions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.api_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "file"
+            },
+            {
+              "parameterType": "formData",
+              "name": "model",
+              "value": "={{ $json.model }}"
+            },
+            {
+              "parameterType": "formData",
+              "name": "language",
+              "value": "={{ $json.language }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 1200000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "audio-tr-mistral-multipart",
+      "name": "Mistral — transcrire (multipart)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2260,
+        240
+      ],
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -729,47 +729,14 @@
       "main": [
         [
           {
-            "node": "Mistral — transcrire (file_url)",
+            "node": "Mistral — transcrire (multipart)",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "OpenAI — télécharger audio_url",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Mistral — transcrire (file_url)": {
-      "main": [
-        [
-          {
-            "node": "Construire le rappel",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "OpenAI — télécharger audio_url": {
-      "main": [
-        [
-          {
-            "node": "Préparer le fichier OpenAI",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Préparer le fichier OpenAI": {
-      "main": [
-        [
-          {
-            "node": "Fichier refusé ?",
+            "node": "OpenAI — transcrire (multipart)",
             "type": "main",
             "index": 0
           }
@@ -787,7 +754,7 @@
         ],
         [
           {
-            "node": "OpenAI — transcrire (multipart)",
+            "node": "Mistral ?",
             "type": "main",
             "index": 0
           }
@@ -856,7 +823,7 @@
         ],
         [
           {
-            "node": "Mistral ?",
+            "node": "Télécharger audio_url",
             "type": "main",
             "index": 0
           }
@@ -897,6 +864,39 @@
         [
           {
             "node": "Secret configuré ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Télécharger audio_url": {
+      "main": [
+        [
+          {
+            "node": "Préparer le fichier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer le fichier": {
+      "main": [
+        [
+          {
+            "node": "Fichier refusé ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral — transcrire (multipart)": {
+      "main": [
+        [
+          {
+            "node": "Construire le rappel",
             "type": "main",
             "index": 0
           }

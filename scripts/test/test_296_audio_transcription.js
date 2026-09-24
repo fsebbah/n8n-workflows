@@ -12,7 +12,7 @@
  *     connexions valides, Code nodes sans require/process ;
  *  2. validation : entrée invalide → 400 SYNCHRONE { accepted: false }, aucun rappel ;
  *  3. câblage : le 202 part AVANT tout nœud lent (téléchargement, transcription, rappel) ;
- *  4. corps fournisseur : Mistral en file_url (multipart sans fichier), OpenAI en
+ *  4. corps fournisseur : Mistral ET OpenAI reçoivent les OCTETS en multipart (azy.daily#421 :
  *     multipart binaire, response_format selon le modèle, nom de fichier corrigé ;
  *  5. refus avant appel : taille (OpenAI), durée (gpt-4o-*-transcribe), échec de téléchargement ;
  *  6. correspondance de CHAQUE code d'erreur à partir des vrais messages mesurés le 17/09 ;
@@ -38,10 +38,10 @@ const W = JSON.parse(BRUT);
 const nd = n => W.nodes.find(x => x.name === n) || { parameters: {} };
 
 const V_REQ = 'Valider la requête';
-const PREP = 'Préparer le fichier OpenAI';
+const PREP = 'Préparer le fichier';
 const RAPPEL = 'Construire le rappel';
-const MISTRAL = 'Mistral — transcrire (file_url)';
-const TELECH = 'OpenAI — télécharger audio_url';
+const MISTRAL = 'Mistral — transcrire (multipart)';
+const TELECH = 'Télécharger audio_url';
 const OPENAI = 'OpenAI — transcrire (multipart)';
 
 const echecs = [];
@@ -253,14 +253,18 @@ section('3. Câblage : le 202 part AVANT tout travail lent', () => {
   controle('Répondre 202 → Refus avant appel ?', aval('Répondre 202'), [['Refus avant appel ?']]);
   // Le fournisseur local est testé AVANT le choix Mistral/OpenAI : sa branche ne transcrit pas.
   controle('Refus avant appel ? → Construire le rappel | whisper-local ?', aval('Refus avant appel ?'), [[RAPPEL], ['whisper-local ?']]);
-  controle('whisper-local ? → soumettre | Mistral ?', aval('whisper-local ?'), [['whisper-local — soumettre'], ['Mistral ?']]);
+
   controle('Job accepté ? → fin (le moteur rappelle) | rappel d\'échec', aval('Job accepté ?'),
     [['Terminé — le moteur rappellera'], ["Construire le rappel d'échec local"]]);
   controle('le rappel d\'échec local rejoint la signature commune', aval("Construire le rappel d'échec local"), [['Secret configuré ?']]);
-  controle('Mistral ? → Mistral file_url | OpenAI télécharger', aval('Mistral ?'), [[MISTRAL], [TELECH]]);
+  // azy.daily#421 : le téléchargement est PARTAGÉ, le choix du fournisseur vient après —
+  // Mistral ne reçoit plus une URL mais le fichier, comme OpenAI (Garage n'est pas public).
+  controle('whisper-local ? → soumettre | Télécharger audio_url', aval('whisper-local ?'), [['whisper-local — soumettre'], [TELECH]]);
+  controle('Fichier refusé ? → rappel | Mistral ?', aval('Fichier refusé ?'), [[RAPPEL], ['Mistral ?']]);
+  controle('Mistral ? → Mistral multipart | OpenAI multipart', aval('Mistral ?'), [[MISTRAL], [OPENAI]]);
   controle('Mistral → Construire le rappel', aval(MISTRAL), [[RAPPEL]]);
   controle('Télécharger → Préparer le fichier → Fichier refusé ?', [aval(TELECH), aval(PREP)], [[[PREP]], [['Fichier refusé ?']]]);
-  controle('Fichier refusé ? → Construire le rappel | OpenAI transcrire', aval('Fichier refusé ?'), [[RAPPEL], [OPENAI]]);
+
   controle('OpenAI transcrire → Construire le rappel', aval(OPENAI), [[RAPPEL]]);
   controle('Construire → Secret configuré ? → Signer | Erreur', [aval(RAPPEL), aval('Secret configuré ?')],
     [[['Secret configuré ?']], [['Signer le rappel'], ['Erreur — secret absent']]]);
@@ -291,10 +295,11 @@ section('4. Corps envoyés, fournisseur par fournisseur', () => {
   const m = nd(MISTRAL);
   controle('Mistral : POST /v1/audio/transcriptions', [m.parameters.method, m.parameters.url], ['POST', 'https://api.mistral.ai/v1/audio/transcriptions']);
   controle('Mistral : multipart (un corps JSON est refusé en 422 — mesuré)', m.parameters.contentType, 'multipart-form-data');
-  controle('Mistral : champs model, file_url = audio_url, language — AUCUN fichier',
-    champsMultipart(MISTRAL, mi), [['model', 'voxtral-mini-2602'], ['file_url', BASE.audio_url], ['language', 'fr']]);
-  controle('Mistral : language vide quand absent (mesuré accepté)',
-    champsMultipart(MISTRAL, valider({ ...BASE, language: undefined }))[2], ['language', '']);
+  controle('Mistral : champs file (octets), model, language — plus AUCUNE url',
+    champsMultipart(MISTRAL, mi), [['file', { binaire: 'file' }], ['model', 'voxtral-mini-2602'], ['language', 'fr']]);
+  controle('Mistral : le fichier est le binaire préparé, pas une valeur',
+    nd(MISTRAL).parameters.bodyParameters.parameters[0],
+    { parameterType: 'formBinaryData', name: 'file', inputDataFieldName: 'file' });
   controle('Mistral : Authorization Bearer <clé>', enTete(MISTRAL, 'Authorization', mi) === `Bearer ${CLE}`, true);
 
   const oa = valider({ ...BASE, provider: 'openai', model: 'whisper-1', size_bytes: 21140 });
