@@ -125,6 +125,39 @@ console.log('La trace ne transporte pas les figures une seconde fois');
   });
 }
 
+console.log('Lien bloc → figure : image_id et confidence (azy.daily#363, demande desktop)');
+// Mesuré le 28/09 : Mistral rend `image_id` et `confidence_scores` par bloc, et nous les
+// jetions — `confidence: null` en dur, `image_id` absent. Sans ce lien, un client qui rend la
+// mise en page sait qu'une figure occupe telle position et dispose de images[], mais ne peut
+// pas savoir LAQUELLE va où : sur une page à trois figures, il ne peut que les intervertir.
+{
+  const code = noeud(charger('MCP_-_PDF_OCR.json'), 'Normalize Mistral (Sync)').parameters.jsCode;
+  const page = {
+    index: 0, markdown: '![img-0.jpeg](img-0.jpeg)',
+    images: [FIGURE_MISTRAL],
+    blocks: [
+      { type: 'image', content: '', image_id: 'img-0.jpeg', confidence_scores: 0.97,
+        top_left_x: 68, top_left_y: 71, bottom_right_x: 930, bottom_right_y: 693 },
+      { type: 'text', content: 'Un paragraphe.', confidence_scores: 0.88,
+        top_left_x: 10, top_left_y: 700, bottom_right_x: 500, bottom_right_y: 740 },
+    ],
+  };
+  const detail = detailDe(code, page, { includeBlocks: true, tableFormat: 'markdown' });
+  const figure = detail.blocks[0];
+  const texte = detail.blocks[1];
+  verifier('le bloc figure porte image_id, qui le relie à images[]',
+    figure.image_id === 'img-0.jpeg' && detail.images[0].id === figure.image_id,
+    JSON.stringify(figure));
+  verifier('la confidence vient de Mistral, plus de null en dur',
+    figure.confidence === 0.97 && texte.confidence === 0.88,
+    `${figure.confidence} / ${texte.confidence}`);
+  verifier('un bloc sans image_id rend null, jamais undefined',
+    texte.image_id === null, JSON.stringify(texte.image_id));
+  verifier('un confidence_scores absent rend null, jamais NaN',
+    detailDe(code, { index: 0, blocks: [{ type: 'text', content: 'x' }] },
+      { includeBlocks: true, tableFormat: 'markdown' }).blocks[0].confidence === null);
+}
+
 console.log('Branche Google (Vision ne rend pas de figures)');
 const pdf = charger('MCP_-_PDF_OCR.json');
 for (const nom of ['Normalize Google (Sync)', 'Normalize Google (Async)']) {
