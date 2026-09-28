@@ -1,0 +1,387 @@
+{
+  "name": "BETA - Inscription",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "pinData": {},
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## BÊTA — Inscription\n\n`POST https://n8n.azy.education/webhook/beta-inscription`\n\nCorps attendu : `nom`, `email`, `profil` (parent | enseignant | etablissement),\n`consentement` (true), `consentement_texte`, `site_web` (pot de miel, doit rester vide).\n\n**Réponse toujours identique** — `202 {\"ok\": true}` — que l'adresse soit nouvelle,\ndéjà inscrite, refusée ou envoyée par un robot. Personne ne peut donc savoir qui est\ninscrit en essayant des adresses.\n\nLe jeton de confirmation n'est **jamais** stocké : seule son empreinte SHA-256 l'est.\nSa durée de validité est de 7 jours.\n\nIdentifiants à créer : PostgreSQL (`Postgres azy`) et SMTP (`SMTP azy`).",
+        "height": 420,
+        "width": 520,
+        "color": 4
+      },
+      "id": "documentation",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "beta-inscription",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "b1e7a2c4-0001-4c8a-9d0e-1f2a3b4c5d01"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// VALIDER L'INSCRIPTION — bêta azy.education\n// ============================================================\n// Tout se vérifie ICI, côté serveur : la page peut être contournée, pas ce nœud.\n// Aucun service extérieur n'est appelé (ni Formspree, ni reCAPTCHA de Google).\n\nconst entree = $input.first().json;\nconst body = entree && entree.body && typeof entree.body === 'object' ? entree.body : {};\n\nconst erreurs = [];\nconst texte = (v) => (typeof v === 'string' ? v.trim() : '');\n\n// --- Pot de miel : champ invisible pour l'humain, rempli par un robot ---------\n// Il ne s'agit pas d'un test d'intelligence : un robot remplit tous les champs\n// qu'il trouve, un visiteur ne voit pas celui-ci. Aucune image à déchiffrer.\nif (texte(body.site_web) !== '') {\n  return [{ json: { valide: false, silencieux: true, motif: 'pot_de_miel' } }];\n}\n\n// --- Adresse électronique -----------------------------------------------------\n// Volontairement permissif : le seul test qui prouve qu'une adresse existe est\n// l'envoi du courriel de confirmation. On écarte les fautes de frappe grossières.\nconst email = texte(body.email).toLowerCase();\nconst FORME_EMAIL = /^[^\\s@]+@[^\\s@.]+(\\.[^\\s@.]+)+$/;\nif (!email) erreurs.push('email requis');\nelse if (email.length > 254) erreurs.push('email trop long');\nelse if (!FORME_EMAIL.test(email)) erreurs.push('email invalide');\n\n// --- Nom ----------------------------------------------------------------------\nconst nom = texte(body.nom);\nif (!nom) erreurs.push('nom requis');\nelse if (nom.length > 120) erreurs.push('nom trop long');\n\n// --- Profil : l'élève est refusé côté serveur --------------------------------\n// C'est le parent qui inscrit l'enfant. Un visiteur qui modifie la page pour\n// envoyer « eleve » se voit refuser ici, pas seulement dans le navigateur.\n// Valeurs ANGLAISES : c'est le vocabulaire du CHECK en base (équipe api). Les libellés\n// affichés restent en français dans la page — une seule langue traverse la chaîne,\n// donc aucune table de traduction à maintenir entre le formulaire et la base.\nconst PROFILS = ['parent', 'teacher', 'institution'];\nconst profil = texte(body.profil).toLowerCase();\nif (!profil) erreurs.push('profil requis');\nelse if (['eleve', 'élève', 'student'].includes(profil)) erreurs.push('profil_eleve_refuse');\nelse if (!PROFILS.includes(profil)) erreurs.push(`profil inconnu (${PROFILS.join(' | ')})`);\n\n// --- Consentement : le texte EXACT accepté est conservé ----------------------\n// Le RGPD demande de pouvoir prouver à quoi la personne a consenti, pas seulement\n// qu'elle a coché. On enregistre donc la phrase affichée et l'horodatage.\nconst consentementDonne = body.consentement === true || body.consentement === 'true';\nconst consentementTexte = texte(body.consentement_texte);\nif (!consentementDonne) erreurs.push('consentement requis');\nif (!consentementTexte) erreurs.push('consentement_texte requis');\nelse if (consentementTexte.length > 2000) erreurs.push('consentement_texte trop long');\n\nif (erreurs.length > 0) {\n  return [{ json: { valide: false, silencieux: false, erreurs } }];\n}\n\nreturn [{\n  json: {\n    valide: true,\n    email,\n    nom,\n    profil,\n    consentement_texte: consentementTexte,\n    // L'adresse IP sert uniquement à la preuve du consentement, pas au pistage.\n    ip: texte(entree.headers && entree.headers['x-forwarded-for']).split(',')[0].trim() || null,\n  },\n}];\n"
+      },
+      "id": "valider-linscription",
+      "name": "Valider l'inscription",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "beta-valide",
+              "leftValue": "={{ $json.valide }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "valide-?",
+      "name": "Valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "action": "generate",
+        "dataPropertyName": "jeton",
+        "encodingType": "hex",
+        "stringLength": 48
+      },
+      "id": "générer-le-jeton",
+      "name": "Générer le jeton",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "type": "SHA256",
+        "value": "={{ $json.jeton }}",
+        "dataPropertyName": "jeton_empreinte",
+        "encoding": "hex"
+      },
+      "id": "empreinte-du-jeton",
+      "name": "Empreinte du jeton",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO beta_signups\n  (email, name, profile, consent_text, consent_ip, token_hash, token_expires_at)\nVALUES ($1, $2, $3, $4, $5, $6, now() + interval '7 days')\n-- L'unicité porte sur lower(email) (index de l'équipe api) : « Test@x.com » et\n-- « test@x.com » sont la MÊME inscription, cas courant sur un formulaire public.\nON CONFLICT ((lower(email))) DO NOTHING\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ $('Valider l\\'inscription').first().json.email }},={{ $('Valider l\\'inscription').first().json.nom }},={{ $('Valider l\\'inscription').first().json.profil }},={{ $('Valider l\\'inscription').first().json.consentement_texte }},={{ $('Valider l\\'inscription').first().json.ip }},={{ $json.jeton_empreinte }}"
+        }
+      },
+      "id": "enregistrer-(en-attente)",
+      "name": "Enregistrer (en attente)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1100,
+        200
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REMPLACER",
+          "name": "Postgres azy"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "beta-nouvelle",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "={{ null }}",
+              "operator": {
+                "type": "number",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "nouvelle-inscription-?",
+      "name": "Nouvelle inscription ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le lien porte le jeton EN CLAIR ; la base n'en a que l'empreinte. Un vol de la\n// base ne permet donc pas de confirmer des inscriptions à la place des gens.\nconst v = $('Valider l\\'inscription').first().json;\nconst jeton = $('Générer le jeton').first().json.jeton;\nconst base = $env.BETA_N8N_PUBLIC_URL || 'https://n8n.azy.education';\nconst lien = base + '/webhook/beta-confirmation?jeton=' + encodeURIComponent(jeton);\nconst echapper = (s) => String(s).replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));\nreturn [{ json: { email: v.email, nom: v.nom,\n  sujet: 'Confirmez votre inscription à la bêta d’Azy',\n  html: `<p>Bonjour ${echapper(v.nom)},</p>\n<p>Merci pour votre intérêt. Pour valider votre inscription, cliquez sur ce lien :</p>\n<p><a href=\"${lien}\">Confirmer mon inscription</a></p>\n<p>Ce lien est valable <strong>7 jours</strong>. Passé ce délai, votre demande sera effacée.</p>\n<p>Si vous n’êtes pas à l’origine de cette demande, ignorez ce message : sans confirmation, rien n’est conservé.</p>\n<p>— L’équipe Azy</p>` } }];"
+      },
+      "id": "composer-le-courriel",
+      "name": "Composer le courriel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "beta@azy.education",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.sujet }}",
+        "emailFormat": "html",
+        "html": "={{ $json.html }}",
+        "options": {}
+      },
+      "id": "envoyer-le-courriel",
+      "name": "Envoyer le courriel",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1760,
+        100
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "REMPLACER",
+          "name": "SMTP azy"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "déjà-inscrite-—-ne-rien-envoyer",
+      "name": "Déjà inscrite — ne rien envoyer",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "répondre-202",
+      "name": "Répondre 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.silencieux ? { ok: true } : { ok: false, erreurs: $json.erreurs }) }}",
+        "options": {
+          "responseCode": "={{ $json.silencieux ? 202 : 400 }}"
+        }
+      },
+      "id": "répondre-400",
+      "name": "Répondre 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        660,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Valider l'inscription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valider l'inscription": {
+      "main": [
+        [
+          {
+            "node": "Valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valide ?": {
+      "main": [
+        [
+          {
+            "node": "Générer le jeton",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Répondre 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Générer le jeton": {
+      "main": [
+        [
+          {
+            "node": "Empreinte du jeton",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Empreinte du jeton": {
+      "main": [
+        [
+          {
+            "node": "Enregistrer (en attente)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enregistrer (en attente)": {
+      "main": [
+        [
+          {
+            "node": "Nouvelle inscription ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nouvelle inscription ?": {
+      "main": [
+        [
+          {
+            "node": "Composer le courriel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Déjà inscrite — ne rien envoyer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Composer le courriel": {
+      "main": [
+        [
+          {
+            "node": "Envoyer le courriel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer le courriel": {
+      "main": [
+        [
+          {
+            "node": "Répondre 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Déjà inscrite — ne rien envoyer": {
+      "main": [
+        [
+          {
+            "node": "Répondre 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

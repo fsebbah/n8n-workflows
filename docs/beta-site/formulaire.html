@@ -1,0 +1,84 @@
+<!-- ==========================================================================
+     Bêta azy.education — formulaire d'inscription
+     À insérer dans la page. Aucun service extérieur : ni Formspree, ni reCAPTCHA.
+     ========================================================================== -->
+<form id="beta-form" novalidate>
+  <label for="nom">Votre nom</label>
+  <input type="text" id="nom" name="nom" required maxlength="120" autocomplete="name">
+
+  <label for="email">Votre adresse électronique</label>
+  <input type="email" id="email" name="email" required maxlength="254" autocomplete="email">
+
+  <label for="profil">Vous êtes</label>
+  <select id="profil" name="profil" required>
+    <option value="">Choisissez…</option>
+    <option value="parent">Un parent</option>
+    <option value="teacher">Un enseignant</option>
+    <option value="institution">Un établissement</option>
+  </select>
+  <!-- Pas d'option « élève » : c'est le parent qui inscrit l'enfant. Le serveur
+       refuse ce profil même si quelqu'un modifie cette page. -->
+
+  <!-- Pot de miel : invisible pour un visiteur, rempli par un robot.
+       Ne JAMAIS le masquer avec `display:none` seul — certains robots l'ignorent
+       alors. Le champ reste dans le flux, hors de l'écran, et non focalisable. -->
+  <div aria-hidden="true" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden">
+    <label for="site_web">Ne remplissez pas ce champ</label>
+    <input type="text" id="site_web" name="site_web" tabindex="-1" autocomplete="off">
+  </div>
+
+  <label>
+    <input type="checkbox" id="consentement" name="consentement" required>
+    <span id="consentement-texte">J'accepte d'être recontacté au sujet de la bêta d'Azy. Mes données ne sont
+    transmises à personne et je peux demander leur suppression à tout moment.</span>
+  </label>
+
+  <button type="submit">Je m'inscris</button>
+  <p id="beta-message" role="status" aria-live="polite"></p>
+</form>
+
+<script>
+  // Remplacez par l'adresse publique de votre n8n si elle diffère.
+  const BETA_WEBHOOK = 'https://n8n.azy.education/webhook/beta-inscription';
+
+  document.getElementById('beta-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const message = document.getElementById('beta-message');
+    const bouton = f.querySelector('button[type=submit]');
+    bouton.disabled = true;
+
+    // Le texte du consentement est envoyé AVEC la case cochée : c'est lui qui est
+    // conservé comme preuve. S'il change un jour, les preuves passées restent justes.
+    const donnees = {
+      nom: f.nom.value,
+      email: f.email.value,
+      profil: f.profil.value,
+      site_web: f.site_web.value,
+      consentement: f.consentement.checked,
+      consentement_texte: document.getElementById('consentement-texte').textContent.trim(),
+    };
+
+    try {
+      const r = await fetch(BETA_WEBHOOK, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(donnees),
+      });
+      // 202 dans tous les cas utiles : le message ne révèle jamais si l'adresse
+      // était déjà inscrite. Personne ne peut tester des adresses.
+      if (r.ok) {
+        f.reset();
+        message.textContent = 'Merci ! Vérifiez votre boîte : un courriel de confirmation vous attend. '
+          + 'Le lien est valable 7 jours.';
+      } else {
+        const d = await r.json().catch(() => ({}));
+        message.textContent = (d.erreurs && d.erreurs.length)
+          ? 'Vérifiez le formulaire : ' + d.erreurs.join(', ')
+          : 'Une erreur est survenue. Réessayez dans un instant.';
+      }
+    } catch {
+      message.textContent = 'Connexion impossible. Réessayez dans un instant.';
+    } finally {
+      bouton.disabled = false;
+    }
+  });
+</script>
