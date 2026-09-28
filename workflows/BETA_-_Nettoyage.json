@@ -1,0 +1,107 @@
+{
+  "name": "BETA - Nettoyage",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "pinData": {},
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## BÊTA — Nettoyage nocturne\n\nChaque nuit à 3 h : efface les demandes **jamais confirmées** dont le lien a expiré\n(plus de 7 jours). Les inscriptions confirmées ne sont pas touchées.\n\nC'est la contrepartie de la promesse faite dans le courriel : « sans confirmation,\nrien n'est conservé ». Sans ce ménage, la promesse serait fausse.\n\n⚠️ Durée de conservation des inscriptions **confirmées** : à décider et à écrire dans\nvotre politique de confidentialité (proposition : fin de la bêta + 3 mois). Aucune\nsuppression automatique n'est prévue ici — ce serait une décision, pas une technique.",
+        "height": 340,
+        "width": 520,
+        "color": 4
+      },
+      "id": "documentation",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3 * * *"
+            }
+          ]
+        }
+      },
+      "id": "chaque-nuit-à-3-h",
+      "name": "Chaque nuit à 3 h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM beta_inscriptions\n WHERE confirme_le IS NULL\n   AND jeton_expire_le < now()\nRETURNING id;",
+        "options": {}
+      },
+      "id": "effacer-les-demandes-expirées",
+      "name": "Effacer les demandes expirées",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        240,
+        300
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REMPLACER",
+          "name": "Postgres azy"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Trace volontairement anonyme : un COMPTE, jamais une adresse.\nconst lignes = $input.all().filter((x) => x.json && x.json.id);\nreturn [{ json: { efface: lignes.length, le: new Date().toISOString() } }];"
+      },
+      "id": "journal",
+      "name": "Journal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Chaque nuit à 3 h": {
+      "main": [
+        [
+          {
+            "node": "Effacer les demandes expirées",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Effacer les demandes expirées": {
+      "main": [
+        [
+          {
+            "node": "Journal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
