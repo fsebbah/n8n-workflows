@@ -54,8 +54,10 @@ verifier('première IP publique retenue pour la preuve', a.ip === '82.64.1.1', a
 const eleve = valider({ ...PARENT, profil: 'eleve' });
 verifier('profil « eleve » → refusé CÔTÉ SERVEUR',
   eleve.valide === false && (eleve.erreurs || []).includes('profil_eleve_refuse'), JSON.stringify(eleve.erreurs));
-verifier('« Élève » avec accent et majuscule → refusé aussi',
-  (valider({ ...PARENT, profil: 'Élève' }).erreurs || []).includes('profil_eleve_refuse'));
+for (const graphie of ['Élève', 'eleve', 'student']) {
+  verifier(`profil « ${graphie} » → refusé aussi`,
+    (valider({ ...PARENT, profil: graphie }).erreurs || []).includes('profil_eleve_refuse'));
+}
 
 const robot = valider({ ...PARENT, site_web: 'http://spam.example' });
 verifier('pot de miel rempli → refusé', robot.valide === false);
@@ -73,7 +75,9 @@ for (const [intitule, corps, attendu] of [
     r.valide === false && (r.erreurs || []).includes(attendu), JSON.stringify(r.erreurs));
 }
 verifier('profil inventé → refusé', valider({ ...PARENT, profil: 'directeur' }).valide === false);
-for (const p of ['parent', 'enseignant', 'etablissement']) {
+// Valeurs anglaises : vocabulaire du CHECK en base (équipe api), une seule langue
+// traverse la chaîne — les libellés français restent dans la page.
+for (const p of ['parent', 'teacher', 'institution']) {
   verifier(`profil « ${p} » accepté`, valider({ ...PARENT, profil: p }).valide === true);
 }
 verifier('aucun require ni process dans le code livré',
@@ -100,9 +104,16 @@ verifier('le jeton est généré par le nœud Crypto, pas par du code',
 verifier('l’empreinte SHA-256 est calculée avant l’insertion',
   noeud(INSC, 'Empreinte du jeton').parameters.type === 'SHA256');
 verifier('la requête insère jeton_empreinte et JAMAIS le jeton',
-  insertion.query.includes('jeton_empreinte') && !/\bjeton\b(?!_empreinte)/.test(insertion.query),
+  insertion.query.includes('token_hash') && !/\bjeton\b/.test(insertion.query),
   insertion.query.split('\n')[1]);
-verifier('l’insertion ne peut pas créer de doublon', insertion.query.includes('ON CONFLICT (email) DO NOTHING'));
+// L'unicité porte sur lower(email) : « Test@x.com » et « test@x.com » sont la même
+// inscription. Un UNIQUE brut sur email les aurait laissées passer toutes les deux.
+verifier('l’insertion ne peut pas créer de doublon, casse comprise',
+  insertion.query.includes('ON CONFLICT ((lower(email))) DO NOTHING'), insertion.query);
+verifier('la table et les colonnes suivent le schéma de l’api',
+  /INSERT INTO beta_signups/.test(insertion.query)
+  && ['email', 'name', 'profile', 'consent_text', 'consent_ip', 'token_hash', 'token_expires_at']
+       .every((c) => insertion.query.includes(c)), insertion.query);
 verifier('le lien du courriel porte le jeton EN CLAIR (la base ne l’a pas)',
   /encodeURIComponent\(jeton\)/.test(noeud(INSC, 'Composer le courriel').parameters.jsCode));
 verifier('l’adresse publique vient de $env, pas d’une constante',
@@ -111,10 +122,10 @@ verifier('l’adresse publique vient de $env, pas d’une constante',
 console.log('\nConfirmation : une seule requête, un seul usage');
 const maj = noeud(CONF, 'Confirmer si valide').parameters.query;
 for (const [intitule, motif] of [
-  ['le jeton doit correspondre', 'jeton_empreinte = $1'],
-  ['… ne pas avoir déjà servi', 'confirme_le IS NULL'],
-  ['… et ne pas avoir expiré', 'jeton_expire_le > now()'],
-  ['l’empreinte est effacée : lien à usage unique', 'jeton_empreinte = NULL'],
+  ['le jeton doit correspondre', 'token_hash = $1'],
+  ['… ne pas avoir déjà servi', 'confirmed_at IS NULL'],
+  ['… et ne pas avoir expiré', 'token_expires_at > now()'],
+  ['l’empreinte est effacée : lien à usage unique', 'token_hash = NULL'],
 ]) verifier(intitule, maj.includes(motif), maj);
 verifier('les trois conditions sont dans UNE requête (pas de fenêtre lecture/écriture)',
   (maj.match(/UPDATE/g) || []).length === 1 && !maj.includes('SELECT'));
@@ -131,14 +142,14 @@ console.log('\nAlerte Discord : livrée désactivée et anonyme');
 const discord = noeud(CONF, 'Alerte Discord (désactivée)');
 verifier('désactivée à la livraison', discord.disabled === true);
 verifier('n’envoie ni nom ni adresse', /profil/.test(discord.parameters.jsonBody)
-  && !/\.email|\.nom/.test(discord.parameters.jsonBody), discord.parameters.jsonBody);
+  && !/\.email|\.nom|\.name/.test(discord.parameters.jsonBody), discord.parameters.jsonBody);
 verifier('une panne Discord ne casse pas la confirmation', discord.onError === 'continueRegularOutput');
 
 console.log('\nNettoyage : la promesse du courriel est tenue');
 const suppr = noeud(NETT, 'Effacer les demandes expirées').parameters.query;
-verifier('ne supprime QUE les demandes jamais confirmées', suppr.includes('confirme_le IS NULL'));
-verifier('… et seulement après expiration', suppr.includes('jeton_expire_le < now()'));
-verifier('les inscriptions confirmées ne sont jamais touchées', !/DELETE[\s\S]*confirme_le IS NOT NULL/.test(suppr));
+verifier('ne supprime QUE les demandes jamais confirmées', suppr.includes('confirmed_at IS NULL'));
+verifier('… et seulement après expiration', suppr.includes('token_expires_at < now()'));
+verifier('les inscriptions confirmées ne sont jamais touchées', !/DELETE[\s\S]*confirmed_at IS NOT NULL/.test(suppr));
 verifier('la trace est anonyme : un compte, pas une adresse',
   !/email/.test(noeud(NETT, 'Journal').parameters.jsCode));
 

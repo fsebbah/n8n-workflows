@@ -17,7 +17,7 @@ qui expose le webhook.
 POST https://n8n.azy.education/webhook/beta-inscription
 Content-Type: application/json
 
-{ "nom": "…", "email": "…", "profil": "parent|enseignant|etablissement",
+{ "nom": "…", "email": "…", "profil": "parent|teacher|institution",
   "site_web": "",                       ← pot de miel : DOIT rester vide
   "consentement": true,
   "consentement_texte": "le texte exact affiché à la personne" }
@@ -40,7 +40,16 @@ tester des adresses pour savoir qui s'est inscrit.
    comme preuve. Si vous modifiez la phrase, changez-la dans le `<span>` : le code la lit
    dans la page, il n'y a rien à synchroniser ailleurs.
 
-3. **Ne pas ajouter d'option « élève » au menu.** Le serveur la refuse de toute façon,
+3. **Les valeurs du menu sont en anglais, les libellés en français.** `parent`, `teacher`,
+   `institution` — c'est le vocabulaire de la contrainte en base, décidé par l'équipe api.
+   Ce que voit le visiteur reste « Un parent », « Un enseignant », « Un établissement ».
+   Une seule langue traverse la chaîne : aucune table de traduction à maintenir.
+
+4. **Les adresses sont comparées sans tenir compte de la casse.** `Test@x.com` et
+   `test@x.com` sont la même inscription — l'unicité porte sur `lower(email)`. Inutile
+   de normaliser côté site, c'est fait en base et dans le workflow.
+
+5. **Ne pas ajouter d'option « élève » au menu.** Le serveur la refuse de toute façon,
    mais l'afficher promettrait quelque chose qui ne marchera pas.
 
 ## Ce qui n'est pas de notre ressort
