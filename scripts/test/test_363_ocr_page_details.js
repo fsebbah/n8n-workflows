@@ -274,9 +274,12 @@ async function hors_ligne() {
     const b = (pd(r)[0] || {}).blocks || [];
     controle('types normalisés, header ×2 et footer ×2 exclus, ordre conservé', b.map(x => x.block_type), ['figure', 'title', 'paragraph', 'paragraph', 'paragraph', 'paragraph', 'paragraph']);
     controle('bloc titre = exemple du contrat (bbox deux coins → x, y, largeur, hauteur)', b[1],
-      { block_type: 'title', text: '# Ki Teitzei', bbox: { x: 305, y: 171, width: 110, height: 26 }, confidence: null, table_html: null });
+      // azy.daily#363, 28/09 : `image_id` et la vraie `confidence` sont désormais transmis — deux
+    // champs que Mistral rend et que nous jetions. Sans `image_id`, un client ne peut pas savoir
+    // QUELLE image de images[] correspond à un bloc `figure` (demande desktop, bloquante).
+    { block_type: 'title', text: '# Ki Teitzei', bbox: { x: 305, y: 171, width: 110, height: 26 }, confidence: null, image_id: null, table_html: null });
     controle('paragraphe = contenu de Mistral, confidence null', [b[2] && b[2].text === M.p2.reponse.pages[0].blocks[4].content, b[2] && b[2].confidence], [true, null]);
-    controle('aucun bloc header/footer, clés exactes', [b.some(x => /header|footer/.test(x.block_type)), Object.keys(b[0] || {})], [false, ['block_type', 'text', 'bbox', 'confidence', 'table_html']]);
+    controle('aucun bloc header/footer, clés exactes', [b.some(x => /header|footer/.test(x.block_type)), Object.keys(b[0] || {})], [false, ['block_type', 'text', 'bbox', 'confidence', 'image_id', 'table_html']]);
     const html = await chaineSync({ ...BASE, include_blocks: true, table_format: 'html' }, reponse(M.p12Html));
     const tb = ((pd(html)[0] || {}).blocks || []).find(x => x.block_type === 'table') || {};
     controle('table_format html : bloc table avec table_html = HTML du tableau', [/^<table>/.test(tb.table_html || ''), tb.table_html === M.p12Html.reponse.pages[0].tables[0].content, tb.bbox], [true, true, { x: 143, y: 322, width: 437, height: 245 }]);
