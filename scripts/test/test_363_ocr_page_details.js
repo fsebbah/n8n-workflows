@@ -243,9 +243,11 @@ async function hors_ligne() {
   await section('3. page_details toujours présent (Shoftim p. 2, options par défaut)', async () => {
     const r = await chaineSync({ ...BASE, extract_header_footer: true }, reponse(M.p2));
     controle('succès 200', [r.json.success, r.code], [true, 200]);
-    controle('une entrée, clés exactes du contrat (sans blocks ni tables)', pd(r).map(p => Object.keys(p)),
+    // azy.daily#458, décision de Franck : « on ne jette rien, on restitue tout ». blocks,
+    // tables, hyperlinks et confidence ne dépendent plus d'une option — ils sont toujours là.
+    controle('une entrée, clés exactes du contrat (tout est restitué)', pd(r).map(p => Object.keys(p)),
       [['index', 'markdown', 'header', 'footer', 'page_width', 'page_height', 'dpi',
-        'images', 'detected_languages']]);
+        'images', 'detected_languages', 'blocks', 'tables', 'hyperlinks', 'confidence']]);
     const p = pd(r)[0] || {};
     controle('index 1 (Mistral compte depuis 0)', p.index, 1);
     controle('header et footer extraits', [p.header, p.footer], ['Aliyah 1\nKI TEITZEI ALIYAH 1 · ÉDITION BILINGUE', 'KI TEITZEI ALIYAH 1-ALIYAH 7\n2 / 21']);
@@ -269,17 +271,32 @@ async function hors_ligne() {
 
   await section('5. blocks', async () => {
     const sans = await chaineSync(BASE, reponse(M.p2));
-    controle('sans include_blocks : pas de blocks, alors que Mistral en renvoie 11', ['blocks' in (pd(sans)[0] || {}), M.p2.reponse.pages[0].blocks.length], [false, 11]);
+    // Inversé par azy.daily#458 : Mistral rend ces 11 blocs de toute façon, calculés et
+    // facturés avec la page. Les taire faute d'option demandée revenait à jeter du payé.
+    // Les 11 blocs de Mistral ressortent tous, header et footer compris : leur texte est
+    // déjà dans les champs de page, mais leur bbox n'existait nulle part ailleurs.
+    controle('les 11 blocs de Mistral sont restitués, header et footer compris',
+      [(pd(sans)[0] || {}).blocks.length, M.p2.reponse.pages[0].blocks.length], [11, 11]);
+    controle('les blocs header/footer portent leur type et leur position',
+      (pd(sans)[0] || {}).blocks.filter(b => ['header', 'footer'].includes(b.block_type))
+        .every(b => b.bbox && typeof b.bbox.x === 'number'), true);
     const r = await chaineSync({ ...BASE, include_blocks: true }, reponse(M.p2));
     const b = (pd(r)[0] || {}).blocks || [];
-    controle('types normalisés, header ×2 et footer ×2 exclus, ordre conservé', b.map(x => x.block_type), ['figure', 'title', 'paragraph', 'paragraph', 'paragraph', 'paragraph', 'paragraph']);
-    controle('bloc titre = exemple du contrat (bbox deux coins → x, y, largeur, hauteur)', b[1],
+    controle('types normalisés, header et footer INCLUS (azy.daily#458), ordre conservé', b.map(x => x.block_type), ['figure', 'header', 'title', 'header', 'paragraph', 'paragraph', 'paragraph', 'paragraph', 'paragraph', 'footer', 'footer']);
+    // Désigné par son type, pas par sa position : l'ordre a changé avec la réintégration
+    // des header/footer, et un index en dur aurait rendu ce contrôle fragile.
+    controle('bloc titre = exemple du contrat (bbox deux coins → x, y, largeur, hauteur)',
+      b.filter(x => x.block_type === 'title')[0],
       // azy.daily#363, 28/09 : `image_id` et la vraie `confidence` sont désormais transmis — deux
     // champs que Mistral rend et que nous jetions. Sans `image_id`, un client ne peut pas savoir
     // QUELLE image de images[] correspond à un bloc `figure` (demande desktop, bloquante).
     { block_type: 'title', text: '# Ki Teitzei', bbox: { x: 305, y: 171, width: 110, height: 26 }, confidence: null, image_id: null, table_html: null });
-    controle('paragraphe = contenu de Mistral, confidence null', [b[2] && b[2].text === M.p2.reponse.pages[0].blocks[4].content, b[2] && b[2].confidence], [true, null]);
-    controle('aucun bloc header/footer, clés exactes', [b.some(x => /header|footer/.test(x.block_type)), Object.keys(b[0] || {})], [false, ['block_type', 'text', 'bbox', 'confidence', 'image_id', 'table_html']]);
+    // Les indices se décalent : header et footer sont réintégrés (azy.daily#458). On désigne
+    // le paragraphe par son type plutôt que par sa position, ce qui ne dépend plus de l'ordre.
+    const para = b.filter(x => x.block_type === 'paragraph')[0];
+    controle('paragraphe = contenu de Mistral, confidence null',
+      [!!para && para.text === M.p2.reponse.pages[0].blocks[4].content, para && para.confidence], [true, null]);
+    controle('les blocs header/footer sont là (leur bbox n’existe nulle part ailleurs), clés exactes', [b.some(x => /header|footer/.test(x.block_type)), Object.keys(b[0] || {})], [true, ['block_type', 'text', 'bbox', 'confidence', 'image_id', 'table_html']]);
     const html = await chaineSync({ ...BASE, include_blocks: true, table_format: 'html' }, reponse(M.p12Html));
     const tb = ((pd(html)[0] || {}).blocks || []).find(x => x.block_type === 'table') || {};
     controle('table_format html : bloc table avec table_html = HTML du tableau', [/^<table>/.test(tb.table_html || ''), tb.table_html === M.p12Html.reponse.pages[0].tables[0].content, tb.bbox], [true, true, { x: 143, y: 322, width: 437, height: 245 }]);
@@ -288,8 +305,12 @@ async function hors_ligne() {
     controle('tableau en markdown : table_html null (Mistral ne donne pas de HTML), texte = markdown', [tm.table_html, /^\|/.test(tm.text || '')], [null, true]);
     const tw = await chaineSync({ ...BASE, include_blocks: true, table_format: 'html' }, reponse(M.tw3));
     const bw = (pd(tw)[0] || {}).blocks || [];
-    controle('Wellsprings p. 3 (deux colonnes) : 9 blocs, footers exclus, colonne gauche puis droite', [bw.length, bw.map(x => x.block_type).join(), bw.slice(3).map(x => x.bbox && x.bbox.x)],
-      [9, 'figure,title,paragraph,paragraph,paragraph,paragraph,paragraph,paragraph,paragraph', [57, 58, 59, 333, 359, 359]]);
+    // 11 blocs désormais : les 9 de contenu plus les 2 footers, réintégrés avec leur position.
+    // L'ordre de lecture (colonne gauche puis droite) reste vérifié sur les blocs de contenu.
+    const contenu = bw.filter(x => !['header', 'footer'].includes(x.block_type));
+    controle('Wellsprings p. 3 (deux colonnes) : 11 blocs dont 2 footers, ordre de lecture conservé',
+      [bw.length, contenu.map(x => x.block_type).join(), contenu.slice(3).map(x => x.bbox && x.bbox.x)],
+      [11, 'figure,title,paragraph,paragraph,paragraph,paragraph,paragraph,paragraph,paragraph', [57, 58, 59, 333, 359, 359]]);
     const inconnu = JSON.parse(JSON.stringify(M.p2));
     inconnu.reponse.pages[0].blocks = [{ type: 'marginalia', content: 'note', top_left_x: 1 }, { type: 'equation', content: '$x$', top_left_x: 10, top_left_y: 20, bottom_right_x: 30, bottom_right_y: 25 }];
     const ri = await chaineSync({ ...BASE, include_blocks: true }, reponse(inconnu));
@@ -305,9 +326,12 @@ async function hors_ligne() {
     controle('lien [tbl-0.html](tbl-0.html) dans le markdown, tableau absent du texte', [/\[tbl-0\.html\]\(tbl-0\.html\)/.test((p1 || {}).markdown), /\| Aliyah/.test((p1 || {}).markdown)], [true, false]);
     controle('page 2 sans tableau : tables vide', (p2 || {}).tables, []);
     const sans = await chaineSync(BASE, reponse(M.p12Html));
-    controle('sans table_format html : pas de tables, même si Mistral en rend', pd(sans).map(p => 'tables' in p), [false, false]);
+    controle('sans table_format html : tables restituées quand même (azy.daily#458)', pd(sans).map(p => 'tables' in p), [true, true]);
     const md = await chaineSync(BASE, reponse(M.p1Tableau));
-    controle('défaut (markdown) : tableau inline dans le markdown, pas de tables', [/\|  2 \| Aliyah 1  \|/.test((pd(md)[0] || {}).markdown), 'tables' in (pd(md)[0] || {})], [true, false]);
+    // Le tableau reste inline dans le markdown ET la liste `tables` est présente : le
+    // format demandé décide de la FORME, plus de l'existence de la donnée.
+    controle('défaut (markdown) : tableau inline dans le markdown ET liste tables présente',
+      [/\|  2 \| Aliyah 1  \|/.test((pd(md)[0] || {}).markdown), 'tables' in (pd(md)[0] || {})], [true, true]);
   });
 
   await section('7. Figures rendues, jamais transformées (décision PO du 21/09)', async () => {
@@ -326,6 +350,17 @@ async function hors_ligne() {
     controle('figure relayée VERBATIM, champ par champ', pd(avecFigure)[0].images,
       [{ id: 'img-0.jpeg', top_left_x: 68, top_left_y: 71, bottom_right_x: 930, bottom_right_y: 693,
          image_base64: 'data:image/jpeg;base64,/9j/4AAQ', image_annotation: null }]);
+
+    // azy.front : `OCRTable.id` est obligatoire côté client ET sert de clé (un bloc `table`
+    // y renvoie par `table_id`). Témoin positif : une table dont Mistral omet l'id doit
+    // recevoir un identifiant de POSITION, jamais ''. Une chaîne vide satisferait le type
+    // et ne relierait rien — le défaut serait invisible à un test de conformité.
+    const tablesSansId = await chaineSync({ ...BASE }, reponse({
+      ...M.p2, reponse: { ...M.p2.reponse, pages: [{ ...M.p2.reponse.pages[0],
+        tables: [{ id: 'tbl-0.html', format: 'html', content: '<table><tr><td>a</td></tr></table>' },
+                 { format: 'html', content: '<table><tr><td>b</td></tr></table>' }] }] } }));
+    controle('table sans id : identifiant de position, jamais une chaîne vide',
+      pd(tablesSansId)[0].tables.map(t => t.id), ['tbl-0', 'table-p1-1']);
   });
 
   await section('8. Relance page par page (Shoftim p. 2-3 : la p. 3 fait tomber Mistral)', async () => {
@@ -347,7 +382,7 @@ async function hors_ligne() {
 
     const opts = fauxMistral(i => (i === 0 ? M.pages0 : i === 1 ? M.pages1 : M.horsLimite));
     const ro = await chaineSync({ ...BASE, include_blocks: true, table_format: 'html' }, reponse(M.doc500), opts.helpers);
-    controle('options respectées après relance ; page en échec : blocks et tables vides', pd(ro).map(p => [p.blocks.length, p.tables.length]), [[7, 0], [0, 0]]);
+    controle('relance page par page : tout restitué ; page en échec : blocks et tables vides', pd(ro).map(p => [p.blocks.length, p.tables.length]), [[11, 0], [0, 0]]);
 
     const passager = fauxMistral((i, n) => (i === 0 ? M.pages0 : i === 1 ? (n === 0 ? M.pages1 : M.pages0) : M.horsLimite));
     const rp = await chaineSync(BASE, reponse(M.doc500), passager.helpers);
@@ -410,12 +445,13 @@ async function hors_ligne() {
     const d = s.data || {};
     controle('succès, page_details (index, header/footer, blocks, tables), warnings vide',
       [s.success, (d.page_details || []).map(p => [p.index, p.footer, p.blocks.length, p.tables.length]), d.warnings],
-      [true, [[1, 'KI TEITZEI ALIYAH 1-ALIYAH 7\n1 / 21', 4, 1], [2, 'KI TEITZEI ALIYAH 1-ALIYAH 7\n2 / 21', 7, 0]], []]);
+      [true, [[1, 'KI TEITZEI ALIYAH 1-ALIYAH 7\n1 / 21', 6, 1], [2, 'KI TEITZEI ALIYAH 1-ALIYAH 7\n2 / 21', 11, 0]], []]);
     controle('data.pages (Mistral brut) inchangé', JSON.stringify(d.pages) === JSON.stringify(M.p12Html.reponse.pages), true);
     const vd = await valider(IMG, { image_base64: 'iVBORw0KGgo=', mistral_api_key: CLE });
     const sd = await execCode(IMG, 'Format Response', { json: reponse(M.p2) }, { 'Validate Input': vd });
-    controle('défaut : ni blocks ni tables', Object.keys((sd.data.page_details || [])[0] || {}),
-      ['index', 'markdown', 'header', 'footer', 'page_width', 'page_height', 'dpi', 'images']);
+    controle('image-ocr : tout est restitué aussi (azy.daily#458)', Object.keys((sd.data.page_details || [])[0] || {}),
+      ['index', 'markdown', 'header', 'footer', 'page_width', 'page_height', 'dpi', 'images',
+       'blocks', 'tables', 'hyperlinks', 'confidence']);
     controle('MCP lirait la même forme', lectureMcp(sd).lu_dans, 'data');
     const se = await execCode(IMG, 'Format Response', { json: reponse(M.doc500) }, { 'Validate Input': vd });
     controle('500 sur une image : erreur relayée, pas de relance', [se.success, se.error && se.error.http_status], [false, 500]);
