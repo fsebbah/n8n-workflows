@@ -198,7 +198,8 @@ async function verifierNoeudEntier() {
   verifier('page_details[] porte le champ, en fin d\'objet (contrat #363 étendu, pas cassé)',
     JSON.stringify(Object.keys(r.data.page_details[0]))
       === JSON.stringify(['index', 'markdown', 'header', 'footer', 'page_width', 'page_height', 'dpi',
-        'images', 'detected_languages']),   // `images` ajouté depuis (figures, décision PO du 21/09)
+        'images', 'detected_languages', 'blocks', 'tables', 'hyperlinks', 'confidence']),
+      // azy.daily#458 : plus rien n'est conditionné à une option — on restitue tout.
     JSON.stringify(Object.keys(r.data.page_details[0])));
   verifier('même valeur dans page_details[] et dans pages[] (une seule vérité)',
     JSON.stringify(r.data.page_details[0].detected_languages)
