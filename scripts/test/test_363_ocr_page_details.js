@@ -350,6 +350,17 @@ async function hors_ligne() {
     controle('figure relayée VERBATIM, champ par champ', pd(avecFigure)[0].images,
       [{ id: 'img-0.jpeg', top_left_x: 68, top_left_y: 71, bottom_right_x: 930, bottom_right_y: 693,
          image_base64: 'data:image/jpeg;base64,/9j/4AAQ', image_annotation: null }]);
+
+    // azy.front : `OCRTable.id` est obligatoire côté client ET sert de clé (un bloc `table`
+    // y renvoie par `table_id`). Témoin positif : une table dont Mistral omet l'id doit
+    // recevoir un identifiant de POSITION, jamais ''. Une chaîne vide satisferait le type
+    // et ne relierait rien — le défaut serait invisible à un test de conformité.
+    const tablesSansId = await chaineSync({ ...BASE }, reponse({
+      ...M.p2, reponse: { ...M.p2.reponse, pages: [{ ...M.p2.reponse.pages[0],
+        tables: [{ id: 'tbl-0.html', format: 'html', content: '<table><tr><td>a</td></tr></table>' },
+                 { format: 'html', content: '<table><tr><td>b</td></tr></table>' }] }] } }));
+    controle('table sans id : identifiant de position, jamais une chaîne vide',
+      pd(tablesSansId)[0].tables.map(t => t.id), ['tbl-0', 'table-p1-1']);
   });
 
   await section('8. Relance page par page (Shoftim p. 2-3 : la p. 3 fait tomber Mistral)', async () => {
