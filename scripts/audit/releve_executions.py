@@ -53,7 +53,16 @@ from collections import defaultdict
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parent.parent.parent
-CSV = RACINE / "reports" / "releve_executions.csv"
+
+# Où s'accumule le relevé. Par défaut dans le dépôt, pratique pour un lancement manuel.
+#
+# ⚠️ MAIS PAS DANS UN RÉPERTOIRE DE DÉPLOIEMENT. Sur llm, n8n tourne depuis
+# `/storage4/n8n-workflows`, mis à jour par `git pull`. Un fichier SUIVI que le cron
+# réécrit chaque jour y rendrait l'arbre sale et bloquerait le prochain déploiement —
+# la tâche d'audit casserait la mise en production, ce qui serait le comble.
+#
+# D'où `RELEVE_CSV` : le cron de llm écrit hors du dépôt, et le fichier est ignoré par git.
+CSV = Path(os.environ.get("RELEVE_CSV") or (RACINE / "reports" / "releve_executions.csv"))
 COLONNES = ["date", "tool", "methode", "workflow", "actif", "expose", "executions",
             "derniere_execution", "sauve_succes", "dans_le_depot"]
 
@@ -284,7 +293,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--report", action="store_true", help="lire l'historique accumulé")
     ap.add_argument("--dry-run", action="store_true", help="relever sans écrire")
+    ap.add_argument("--csv", help="chemin du relevé (sinon $RELEVE_CSV, sinon reports/)")
     args = ap.parse_args()
+    if args.csv:
+        global CSV
+        CSV = Path(args.csv)
 
     if args.report:
         return rapport()
@@ -307,7 +320,11 @@ def main() -> int:
         print("--dry-run : rien n'est écrit")
         return 0
     ecrire(lignes)
-    print(f"→ {CSV.relative_to(RACINE)}")
+    try:
+        print(f"→ {CSV.relative_to(RACINE)}")
+    except ValueError:
+        # Le relevé vit hors du dépôt (cas du cron sur llm) : chemin absolu.
+        print(f"→ {CSV}")
     return 0
 
 
