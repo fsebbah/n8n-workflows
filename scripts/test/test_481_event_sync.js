@@ -70,6 +70,11 @@ console.log('\nContenu : tout réussi');
                      fail_count: 0, echecs: [] }, PARSE);
   verifier('flux et événement', [e.stream, e.fields.event],
     ['llm:results:stream', 'translation_complete']);
+  // azy.daily#481 — LE contrôle qui empêche un double débit. plugin-torah traite le
+  // synchrone en ligne (débit + notification sur place) ; sans `mode`, cet avis le
+  // ferait re-débiter un travail déjà facturé. Posé sur les DEUX chemins pour que son
+  // absence ne puisse jamais signifier « batch par défaut ».
+  verifier('mode = sync — sans quoi le client re-débiterait', e.fields.mode, 'sync');
   verifier('compteurs justes, en chaînes',
     [e.fields.total, e.fields.ok_count, e.fields.fail_count], ['12', '12', '0']);
   verifier('correlation_id relayé', e.fields.correlation_id, 'torah-trad-sync1');
@@ -112,6 +117,11 @@ console.log('\nLes deux chemins parlent le MÊME dialecte');
   const e = lancer({ jobId: 'j', total: 1, ok_count: 1, fail_count: 0, echecs: [] }, PARSE);
   const champsSync = Object.keys(e.fields).sort();
   verifier('jeu de champs identique au chemin batch', champsSync, champsBatch);
+  // Et la SEULE valeur qui doit différer est `mode`.
+  const codeBatch = noeud(cb, 'Préparer Événement').parameters.jsCode;
+  verifier('le chemin batch annonce mode = batch', /mode:\s*'batch'/.test(codeBatch), true);
+  verifier('`mode` fait partie du jeu commun, donc son absence ne veut rien dire',
+    champsBatch.includes('mode') && champsSync.includes('mode'), true);
 }
 
 console.log(`\nRésultat : ${ok} ok, ${ko} échec(s)\n`);
