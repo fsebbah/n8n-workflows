@@ -213,10 +213,20 @@ async function hors_ligne() {
     controle('sans option : extract_header_footer true, include_blocks false, table_format markdown',
       [v.valid, v.extractHeaderFooter, v.includeBlocks, v.tableFormat], [true, true, false, 'markdown']);
     const corps = b => JSON.parse(resoudre(nd(PDF, 'Mistral OCR (Sync)').parameters.jsonBody, b));
-    controle('défaut : extract_header + extract_footer, figures demandées, ni table_format ni include_blocks', corps(v), {
+    // Les blocs et les scores de confiance sont DEMANDÉS systématiquement, quelle que soit
+    // l'option du client (2026-10-01). Avant, `include_blocks` n'était envoyé que sur demande
+    // et on recevait les blocs quand même, grâce au défaut `true` de Mistral — un défaut que
+    // ses deux pages de doc se contredisent, et dont notre restitution dépendait sans le dire.
+    // `confidence_scores_granularity` n'était jamais envoyé : nous exposions un `confidence`
+    // à `null` sans jamais l'avoir demandé.
+    controle('défaut : en-tête, pied, figures, blocs ET scores demandés ; pas de table_format', corps(v), {
       model: 'mistral-ocr-latest', document: { type: 'document_url', document_url: BASE.file_url },
       include_image_base64: true, extract_header: true, extract_footer: true,
+      include_blocks: true, confidence_scores_granularity: 'block',
     });
+    controle('include_blocks: false du client ne désactive PLUS la demande à Mistral',
+      JSON.parse(resoudre(nd(PDF, 'Mistral OCR (Sync)').parameters.jsonBody,
+        await valider(PDF, { ...BASE, include_blocks: false }))).include_blocks, true);
     const avec = async o => valider(PDF, { ...BASE, ...o });
     const corpsSans = corps(await avec({ extract_header_footer: false }));
     controle('extract_header_footer: false → ni extract_header ni extract_footer', ['extract_header', 'extract_footer'].map(k => k in corpsSans), [false, false]);
@@ -237,7 +247,9 @@ async function hors_ligne() {
     const vi = await valider(IMG, { image_url: 'https://img.test/page.png', mistral_api_key: CLE, include_blocks: true });
     controle('image-ocr : image_url + mêmes options par défaut',
       JSON.parse(resoudre(nd(IMG, 'Mistral OCR').parameters.jsonBody, vi)),
-      { model: 'mistral-ocr-latest', document: { type: 'image_url', image_url: 'https://img.test/page.png' }, include_image_base64: true, extract_header: true, extract_footer: true, include_blocks: true });
+      { model: 'mistral-ocr-latest', document: { type: 'image_url', image_url: 'https://img.test/page.png' },
+        include_image_base64: true, extract_header: true, extract_footer: true,
+        include_blocks: true, confidence_scores_granularity: 'block' });
   });
 
   await section('3. page_details toujours présent (Shoftim p. 2, options par défaut)', async () => {
@@ -361,6 +373,28 @@ async function hors_ligne() {
                  { format: 'html', content: '<table><tr><td>b</td></tr></table>' }] }] } }));
     controle('table sans id : identifiant de position, jamais une chaîne vide',
       pd(tablesSansId)[0].tables.map(t => t.id), ['tbl-0', 'table-p1-1']);
+    // Les scores de confiance arrivent en DICT, pas en nombre : la référence d'API annonce
+    // `confidence_scores: dict|null` avec `average_page_confidence_score`. Lire ce champ avec
+    // un lecteur de nombre rendait `null` — donc activer `confidence_scores_granularity`
+    // n'aurait rien changé, et le champ aurait continué de mentir. Ce contrôle est le témoin.
+    const avecScores = await chaineSync({ ...BASE }, reponse({
+      ...M.p2, reponse: { ...M.p2.reponse, pages: [{ ...M.p2.reponse.pages[0],
+        confidence_scores: { average_page_confidence_score: 0.93, minimum_page_confidence_score: 0.41 },
+        blocks: [{ type: 'text', content: 'Un paragraphe',
+                   top_left_x: 10, top_left_y: 20, bottom_right_x: 110, bottom_right_y: 60,
+                   confidence_scores: { average_block_confidence_score: 0.88 } }] }] } }));
+    controle('confidence de PAGE lue depuis le dict', pd(avecScores)[0].confidence, 0.93);
+    controle('confidence de BLOC lue depuis le dict',
+      pd(avecScores)[0].blocks.map(b => b.confidence), [0.88]);
+
+    const scoreNu = await chaineSync({ ...BASE }, reponse({
+      ...M.p2, reponse: { ...M.p2.reponse, pages: [{ ...M.p2.reponse.pages[0],
+        confidence_scores: 0.77 }] } }));
+    controle('un nombre nu reste accepté (tolérance assumée)', pd(scoreNu)[0].confidence, 0.77);
+
+    const sansScore = await chaineSync({ ...BASE }, reponse(M.p2));
+    controle('absent → null, et le champ ne manque jamais',
+      [pd(sansScore)[0].confidence, 'confidence' in pd(sansScore)[0]], [null, true]);
   });
 
   await section('8. Relance page par page (Shoftim p. 2-3 : la p. 3 fait tomber Mistral)', async () => {
