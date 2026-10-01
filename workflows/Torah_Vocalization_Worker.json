@@ -872,6 +872,43 @@
         2172,
         208
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// PRÉPARER FIN VOCALISATION — azy.daily#476\n// ============================================================================\n//\n// La vocalisation ne publiait RIEN : ni `vocalization_complete`, ni aucun autre\n// événement. Le plugin ne pouvait que sonder le job, ce qui ne survit pas à la\n// fenêtre Discord de quinze minutes sur une boucle de 54 appels séquentiels.\n//\n// Ce nœud est alimenté par les TROIS points de fin du worker — `Complete Job`,\n// `Complete Job (Single)` et `Fail Job` — qui étaient jusqu'ici des fins de\n// branche. Les compteurs ne vivent au même endroit que sur le chemin « lot » :\n// `$('Merge Batch Results')` n'a pas tourné sur le chemin « élément unique », et\n// l'invoquer y lève une exception. D'où le try/catch, qui n'est pas une\n// négligence mais la forme que prend « ce nœud n'a pas été exécuté » en n8n.\n\nlet total = 1, erreurs = 0;\ntry {\n  const s = $('Merge Batch Results').first().json.summary || {};\n  total = Number(s.total) || 0;\n  erreurs = Number(s.errors) || 0;\n} catch (e) {\n  // Chemin élément unique : un seul item, et l'échec se lit sur l'entrée.\n  const entree = $input.first().json || {};\n  erreurs = (entree.success === false || entree.error) ? 1 : 0;\n}\nconst ok = Math.max(total - erreurs, 0);\n\nconst v = $('Validate Input').first().json;\n\nreturn [{ json: {\n  stream: 'llm:results:stream',\n  fields: {\n    event: 'vocalization_complete',\n    correlation_id: v.correlation_id,\n    // Même convention que `translation_complete` : TOUT est chaîne (champs de flux\n    // Redis), et `success` ne dit QUE « au moins un item est passé ». Le plugin\n    // compte sur ok_count / fail_count, jamais sur success.\n    success: String(ok > 0),\n    job_id: v.job_id || '',\n    total: String(total),\n    ok_count: String(ok),\n    fail_count: String(erreurs),\n    error_code: (erreurs === total && total > 0) ? 'ALL_FAILED' : '',\n    error_message: erreurs > 0 ? (erreurs + ' item(s) en erreur') : '',\n    completed_at: new Date().toISOString()\n  },\n  max_len: 5000\n}}];"
+      },
+      "id": "prep-fin-vocalisation",
+      "name": "Préparer Fin Vocalisation",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        2620,
+        300
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/xadd",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "pub-fin-vocalisation",
+      "name": "Publier Fin Vocalisation",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        2800,
+        300
+      ],
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     }
   ],
   "connections": {
@@ -1327,6 +1364,50 @@
         [
           {
             "node": "Extract GPT Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Job": {
+      "main": [
+        [
+          {
+            "node": "Préparer Fin Vocalisation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Job (Single)": {
+      "main": [
+        [
+          {
+            "node": "Préparer Fin Vocalisation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fail Job": {
+      "main": [
+        [
+          {
+            "node": "Préparer Fin Vocalisation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer Fin Vocalisation": {
+      "main": [
+        [
+          {
+            "node": "Publier Fin Vocalisation",
             "type": "main",
             "index": 0
           }
