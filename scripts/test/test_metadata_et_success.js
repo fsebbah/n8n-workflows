@@ -85,8 +85,11 @@ console.log('\nb · le succès exige désormais un identifiant\n');
   verifier('réponse normale avec translation_id : succès',
     [lancer({ translation_id: 't-1' }).success, lancer({ translation_id: 't-1' }).translation_id],
     [true, 't-1']);
-  verifier('tolérance assumée : un `id` nu est accepté et remonté',
-    [lancer({ id: 'x-1' }).success, lancer({ id: 'x-1' }).translation_id], [true, 'x-1']);
+  // L'équipe api a confirmé le 2026-10-01 : le champ est `translation_id`, identique
+  // dans les trois modes (segment, commentary, pending). Un `id` nu n'est donc PAS une
+  // réponse valide de torah.api — l'accepter masquerait une réponse inattendue.
+  verifier('un `id` nu n\'est PAS accepté (tolérance retirée)',
+    [lancer({ id: 'x-1' }).success, lancer({ id: 'x-1' }).translation_id], [false, null]);
   verifier('success: false explicite reste un échec, même avec un id',
     lancer({ success: false, translation_id: 't-1' }).success, false);
   verifier('le chemin d\'erreur n8n est intact',
