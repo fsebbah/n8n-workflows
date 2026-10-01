@@ -89,6 +89,22 @@ CRED_COMPTE_SERVICE = {"googleVertexAiApi", "googleApi", "googleServiceAccount"}
 # Stockage : signal de `acts_on`, jamais suffisant pour trancher user/tenant.
 TYPES_STOCKAGE = ("redis", "postgres", "mySql", "mongoDb")
 
+# `searches_web` (azy.daily#476) — dérivé de l'HÔTE EXTERNE appelé, jamais du nom de
+# l'outil. MCP cherchait `web_search_tool` / `google_searcher_tool` / `google_search` :
+# aucun n'est un identifiant de registre (les identifiants sont les chemins de webhook),
+# et ces noms venaient de leur sous-système `agent/`. La liste des moteurs de recherche
+# est courte, stable, et un outil ne peut pas interroger le web ouvert sans en appeler un.
+#
+# ⚠️ `youtube-searcher` (googleapis.com/youtube) et les corpus internes (`qdrant-search`,
+# `entity-search`, `torah-search`) n'y figurent PAS : chercher dans un catalogue ou dans
+# un corpus privé n'est pas chercher sur le web. `academic-searcher` y figure — décision
+# de MCP le 2026-10-01, la récupération web savante porte des URL.
+HOTES_RECHERCHE_WEB = re.compile(
+    r"serpapi\.com|gnews\.io|api\.semanticscholar\.org|search\.brave\.com"
+    r"|api\.tavily\.com|api\.exa\.ai|duckduckgo\.com|cse\.google|customsearch",
+    re.I,
+)
+
 # Surcharge curée, DÉCLARÉE DANS LE WORKFLOW pour qu'il n'y ait qu'une source de vérité :
 # une sticky note contenant `registre: acts_on=<valeur>`.
 RE_SURCHARGE = re.compile(r"registre\s*:\s*acts_on\s*=\s*([a-z_]+)", re.I)
@@ -215,6 +231,9 @@ def analyser() -> list[dict]:
             "oauth_usage": usage,
             "acts_on": acts_on,
             "acts_on_origine": origine,
+            # On cherche l'hôte dans les seuls nœuds d'appel SORTANT : une mention de
+            # serpapi dans une sticky note ne fait pas d'un outil un moteur de recherche.
+            "searches_web": bool(HOTES_RECHERCHE_WEB.search(http)),
         })
     return lignes
 
@@ -225,7 +244,7 @@ def analyser() -> list[dict]:
 # workflows en rate un, et ne sait pas lequel.
 # `--check` échoue si l'un bouge : soit un outil a changé de nature (à porter au registre),
 # soit la dérivation s'est mise à mentir. Dans les deux cas, quelqu'un doit regarder.
-REFERENCE = {"outils": 251, "user_oauth": 8, "credential_broker": 5}
+REFERENCE = {"outils": 251, "user_oauth": 8, "credential_broker": 5, "searches_web": 3}
 
 
 def compter(lignes: list[dict]) -> dict:
@@ -233,6 +252,7 @@ def compter(lignes: list[dict]) -> dict:
         "outils": len(lignes),
         "user_oauth": sum(1 for l in lignes if any(c.startswith("user_oauth") for c in l["credential"])),
         "credential_broker": sum(1 for l in lignes if "credential_broker" in l["credential"]),
+        "searches_web": sum(1 for l in lignes if l["searches_web"]),
     }
 
 
@@ -260,7 +280,8 @@ def main() -> int:
             return 1
         print(f"registre conforme — {comptes['outils']} outils, "
               f"{comptes['user_oauth']} OAuth utilisateur, "
-              f"{comptes['credential_broker']} courtier(s)")
+              f"{comptes['credential_broker']} courtier(s), "
+              f"{comptes['searches_web']} chercheur(s) web")
         return 0
 
     from collections import Counter
@@ -277,6 +298,10 @@ def main() -> int:
     for l in lignes:
         if any(c.startswith("user_oauth") for c in l["credential"]):
             print(f"   {l['tool']:<34} {l['credential'][0]:<22} {l['oauth_usage']}")
+    print("\nRecherche web (azy.daily#476 — dérivé de l'hôte appelé)")
+    for l in lignes:
+        if l["searches_web"]:
+            print(f"   {l['tool']}")
     print("\nCourtiers de credential (remettent un jeton à leur appelant)")
     for l in lignes:
         if "credential_broker" in l["credential"]:
