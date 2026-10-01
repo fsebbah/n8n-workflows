@@ -54,7 +54,7 @@ from pathlib import Path
 
 RACINE = Path(__file__).resolve().parent.parent.parent
 CSV = RACINE / "reports" / "releve_executions.csv"
-COLONNES = ["date", "tool", "workflow", "actif", "expose", "executions",
+COLONNES = ["date", "tool", "methode", "workflow", "actif", "expose", "executions",
             "derniere_execution", "sauve_succes", "dans_le_depot"]
 
 # Noms exclus du registre par `MCP - Tools - Registry` (`Build Registry`).
@@ -119,6 +119,23 @@ def chemin_webhook(wf: dict) -> str | None:
     return None
 
 
+def methode_webhook(wf: dict) -> str:
+    """Méthode HTTP du webhook. n8n enregistre par couple (MÉTHODE, chemin).
+
+    ⚠️ Deux workflows sur le même chemin ne sont PAS forcément en conflit : la première
+    version de ce script l'a cru et a signalé `config/help` et `config/branding` comme des
+    doublons. Mesuré ensuite : `CONFIG---Get-*` écoute en GET, `CONFIG---On-*-Update` en PUT.
+    Les deux coexistent, c'est du REST volontaire. Le conflit n'existe que si la méthode
+    ET le chemin coïncident.
+    """
+    for n in wf.get("nodes") or []:
+        if str(n.get("type", "")).endswith("webhook"):
+            p = n.get("parameters") or {}
+            if str(p.get("path") or ""):
+                return str(p.get("httpMethod") or "GET").upper()
+    return "GET"
+
+
 def relever() -> list[dict]:
     aujourdhui = dt.date.today().isoformat()
     du_depot = chemins_du_depot()
@@ -137,6 +154,7 @@ def relever() -> list[dict]:
         lignes.append({
             "date": aujourdhui,
             "tool": chemin,
+            "methode": methode_webhook(wf),
             "workflow": nom,
             "actif": int(bool(wf.get("active"))),
             "expose": int(expose),
@@ -190,7 +208,8 @@ def rapport() -> int:
         depot_dernier[r["tool"]] = max(depot_dernier.get(r["tool"], 0),
                                        int(r.get("dans_le_depot") or 0))
         if int(r["expose"]):
-            doublons[r["tool"]].append(r["workflow"])
+            # Clé = (MÉTHODE, chemin), l'unité d'enregistrement réelle de n8n.
+            doublons[f"{r.get('methode') or 'GET'} {r['tool']}"].append(r["workflow"])
     exposes = [t for t, e in expose_dernier.items() if e]
     jamais = sorted(t for t in exposes if not total[t])
     print(f"\nFenêtre observée : {len(jours)} jour(s) — du {jours[0]} au {jours[-1]}")
@@ -224,7 +243,7 @@ def rapport() -> int:
     # où le fichier du dépôt et le serveur ne désignaient pas le même gagnant.
     multiples = {t: w for t, w in doublons.items() if len(w) > 1}
     if multiples:
-        print(f"⚠️  {len(multiples)} chemin(s) servi(s) par PLUSIEURS workflows actifs :")
+        print(f"⚠️  {len(multiples)} route(s) servie(s) par PLUSIEURS workflows actifs :")
         for t, w in sorted(multiples.items()):
             print(f"   {t}")
             for nom in w:
