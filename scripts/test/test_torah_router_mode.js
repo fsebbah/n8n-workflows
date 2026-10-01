@@ -46,10 +46,37 @@ console.log('\ntorah-router — le mode est annoncé dans la réponse\n');
 console.log('Seuil : la bascule reste pilotée par la taille, pas par le client');
 {
   const code = noeud('Parse Input').parameters.jsCode;
-  verifier('useBatch dépend de segments.length > 50',
-    /useBatch:\s*\(Array\.isArray\(segments\)\s*&&\s*segments\.length\s*>\s*50\)/.test(code), true);
+  // azy.daily#481 — seuil abaissé de 50 à 10 le 2026-10-01. En dessous, l'utilisateur
+  // REGARDE l'écran (sélection de 1 à 10 commentaires qu'il vient de lire) ; au-delà, il
+  // ne regarde plus. La proposition initiale était de MONTER à 300 : à ~6 s par item,
+  // 300 items en synchrone font 30 min, le double de la fenêtre Discord — ça déplaçait
+  // la douleur de 54 items à 200 au lieu de la supprimer.
+  verifier('la constante du seuil vaut 10',
+    (code.match(/SEUIL_BATCH_481\s*=\s*(\d+)/) || [])[1], '10');
+  verifier('useBatch compare avec >= (dix ET PLUS part en lot)',
+    /useBatch:\s*\(Array\.isArray\(segments\)\s*&&\s*segments\.length\s*>=\s*SEUIL_BATCH_481\)/.test(code),
+    true);
+  verifier('plus aucune trace du seuil 50 en dur', /length\s*>\s*50/.test(code), false);
   verifier('aucun drapeau batch lu dans le corps de la requête',
     /body\.(use_)?batch\b/.test(code), false);
+
+  // Le comportement, pas seulement la forme : on exécute le nœud aux trois bornes.
+  const useBatch = (n) => {
+    const ctx = vm.createContext({
+      $input: { first: () => ({ json: { body: {
+        segments: Array.from({ length: n }, (_, i) => ({ id: 's' + i, text: 'x' })),
+        traite: 'Pesachim', page: '18a', target_language: 'fr', api_key: 'k',
+      } } }) },
+      console,
+    });
+    const r = vm.runInContext(`(function () {\n${code}\n})()`, ctx);
+    return (Array.isArray(r) ? r[0].json : r).useBatch;
+  };
+  verifier('9 segments → synchrone (l\'utilisateur attend)', useBatch(9), false);
+  verifier('10 segments → lot (la borne décidée)', useBatch(10), true);
+  verifier('54 segments → lot, comme avant', useBatch(54), true);
+  verifier('1 segment → synchrone, jamais des heures pour un clic unitaire',
+    useBatch(1), false);
 }
 
 console.log('\nChemin synchrone (≤ 50) : 200 et mode "sync"');
