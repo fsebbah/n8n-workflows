@@ -67,6 +67,12 @@ async function execCode(wf, nom, item, prev = {}, helpers = null) {
     const fn = vm.runInNewContext(`(async function(){${src}\n})`, {
       $input: { first: () => items[0], all: () => items },
       $: n => ({ first: () => ({ json: prev[n] }) }),
+      // `Buffer` est fourni par le Code node réel de n8n (mesuré) mais PAS par un
+      // contexte vm neuf : ce n'est pas un intrinsèque du langage, c'est un global
+      // Node. Sans lui, un `Buffer.from(...)` levait une ReferenceError ici et
+      // nulle part en production — le test exerçait un autre environnement que le
+      // vrai. Trouvé en ajoutant la lecture des octets de signature (azy.daily#488).
+      Buffer,
     }, { timeout: 5000 });
     const h = helpers || { httpRequest: async () => { throw new Error('helpers.httpRequest appelé sans être attendu'); } };
     const r = await fn.call({ helpers: h });
@@ -471,6 +477,55 @@ async function hors_ligne() {
     controle('ni file_url ni file_data → erreur de validation', [vRien.valid, vRien.errors.some(e => /file_url ou file_data/.test(e))], [false, true]);
     const vEspaces = await valider(PDF, { file_data: `${B64.slice(0, 8)}\n ${B64.slice(8)}`, mistral_api_key: 'K' });
     controle('sauts de ligne du base64 retirés', doc(vEspaces).document_url, `data:application/pdf;base64,${B64}`);
+  });
+
+  await section('11b. ⚠️ Le type du fichier est DÉDUIT des octets, jamais devin\u00e9 (azy.daily#488)', async () => {
+    // Avant : `if (!mimeFichier) mimeFichier = 'application/pdf'`. Un PNG envoyé en
+    // base64 sans `mime_type` était donc annoncé à Mistral dans une URI
+    // `data:application/pdf;base64,…` qui contenait une image. Signalé par desktop en
+    // relevant ce qu'elle nous envoie — le desktop passe toujours son mime_type, mais
+    // tout autre client qui l'omet était concerné.
+    //
+    // On lit les octets de signature, et on REFUSE quand on ne reconnaît pas : un 400
+    // se lit au premier essai, un fichier mal étiqueté produit un résultat inexplicable.
+    const b64De = (...octets) => Buffer.from(Buffer.from(octets)).toString('base64');
+    const PDF_B64 = b64De(0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34);           // %PDF-1.4
+    const PNG_B64 = b64De(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A);
+    const JPG_B64 = b64De(0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46);
+    const RIFF_WAV = b64De(0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x41, 0x56, 0x45); // RIFF…WAVE
+    const INCONNU = Buffer.from('coucou, je ne suis rien').toString('base64');
+    const doc = v => v.mistralRequest.document;
+
+    const vPdf = await valider(PDF, { file_data: PDF_B64, mistral_api_key: 'K' });
+    controle('signature %PDF → application/pdf', doc(vPdf).document_url.startsWith('data:application/pdf;base64,'), true);
+    const vPng = await valider(PDF, { file_data: PNG_B64, mistral_api_key: 'K' });
+    controle('LE CAS CORRIGÉ : un PNG n\'est plus annoncé comme un PDF',
+      doc(vPng).document_url.startsWith('data:image/png;base64,'), true);
+    const vJpg = await valider(PDF, { file_data: JPG_B64, mistral_api_key: 'K' });
+    controle('signature JPEG reconnue', doc(vJpg).document_url.startsWith('data:image/jpeg;base64,'), true);
+
+    const vInconnu = await valider(PDF, { file_data: INCONNU, mistral_api_key: 'K' });
+    controle('contenu non reconnu → REFUS, pas de repli',
+      [vInconnu.valid, (vInconnu.errors || []).some(e => /signature de fichier non reconnue/.test(e))], [false, true]);
+    // RIFF sert au WAV et à l'AVI autant qu'au WEBP : sans le marqueur, on ne devine pas.
+    const vRiff = await valider(PDF, { file_data: RIFF_WAV, mistral_api_key: 'K' });
+    controle('RIFF sans marqueur WEBP → refus, jamais « webp » au hasard', vRiff.valid, false);
+
+    const vExplicite = await valider(PDF, { file_data: PNG_B64, mime_type: 'image/tiff', mistral_api_key: 'K' });
+    controle('mime_type de l\'appelant l\'emporte sur la déduction',
+      doc(vExplicite).document_url.startsWith('data:image/tiff;base64,'), true);
+    const vUrlSeule = await valider(PDF, { file_url: 'https://b2.test/a.pdf', mistral_api_key: 'K' });
+    controle('file_url seule : rien à déduire, aucune erreur', [vUrlSeule.valid, doc(vUrlSeule).document_url],
+      [true, 'https://b2.test/a.pdf']);
+
+    // image-ocr : le repli était PIRE — « image/png » pour tout format inconnu.
+    const iPng = await valider(IMG, { image_base64: PNG_B64, mistral_api_key: CLE });
+    controle('image-ocr : PNG reconnu', iPng.imageUrl.startsWith('data:image/png;base64,'), true);
+    const iPdf = await valider(IMG, { image_base64: PDF_B64, mistral_api_key: CLE });
+    controle('image-ocr : un PDF est REFUSÉ explicitement, plus annoncé comme PNG',
+      [iPdf.valid, (iPdf.errors || []).some(e => /pdf-ocr/.test(e))], [false, true]);
+    const iInconnu = await valider(IMG, { image_base64: INCONNU, mistral_api_key: CLE });
+    controle('image-ocr : contenu inconnu → refus', iInconnu.valid, false);
   });
 
   await section('10. image-ocr rend la même forme', async () => {
