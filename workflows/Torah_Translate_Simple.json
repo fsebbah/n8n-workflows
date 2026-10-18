@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Translate Simple (Phase 2)\n\n**Endpoint:** `POST /webhook/torah-translate`\n\n**Responsabilite:** Traduire UN segment avec EN-pivot\n\n**Input:**\n```json\n{\n  \"job_id\": \"uuid\",\n  \"segment_id\": \"uuid\",\n  \"text\": \"...\",\n  \"reference_translation\": \"EN text or null\",\n  \"source_language\": \"he\",\n  \"target_language\": \"fr\",\n  \"api_key\": \"sk-ant-...\",\n  \"context\": { \"traite\": \"...\", \"page\": \"...\" }\n}\n```\n\n**Output (structured generation):**\n```json\n{\n  \"success\": true,\n  \"translation\": \"FR translation\",\n  \"english_pivot\": \"Generated EN\",\n  \"method\": \"structured_generation\",\n  \"generated_english\": true\n}\n```\n\n**Modes:**\n- `en_pivot`: reference_translation exists\n- `structured_generation`: EN+FR generated\n- `direct_fallback`: fallback HE->FR",
+        "content": "## Torah Translate Simple (Phase 2)\n\n**Endpoint:** `POST /webhook/torah-translate`\n\n**Responsabilite:** Traduire UN segment avec EN-pivot\n\n**Input:**\n```json\n{\n  \"job_id\": \"uuid\",\n  \"segment_id\": \"uuid\",\n  \"text\": \"...\",\n  \"reference_translation\": \"EN text or null\",\n  \"source_language\": \"he\",\n  \"target_language\": \"fr\",\n  \"api_key\": \"sk-ant-...\",\n  \"model\": \"claude-sonnet-4-6\",\n\n  \"verify\": true,\n  \"verify_provider\": \"anthropic | openai | mistral | google | ollama-cloud\",\n  \"verify_model\": \"claude-sonnet-4-6\",\n  \"verify_api_key\": \"requise SAUF si verify_provider vaut anthropic (api_key reutilisee)\",\n  \"context\": { \"traite\": \"...\", \"page\": \"...\" }\n}\n```\n\n**Output (structured generation):**\n```json\n{\n  \"success\": true,\n  \"translation\": \"FR translation\",\n  \"english_pivot\": \"Generated EN\",\n  \"method\": \"structured_generation\",\n  \"generated_english\": true\n}\n```\n\n### Verification de traduction (azy.daily#541)\n\nUn second modele relit la traduction via `llm-call-messages` — donc n'importe\nlequel des cinq fournisseurs. Active par defaut ; `verify: false` la coupe.\n\n⚠️ **Elle ANNOTE, elle ne substitue JAMAIS.** `translation` sort exactement\ncomme elle est entree, dans tous les cas. Raison : une divergence peut etre\nminuscule en caracteres et decisive en sens — le sens d'un terme, une negation,\nla portee d'une proposition. Aucun seuil calculable ici (longueur, similarite)\nne mesure le sens, donc aucun arbitrage automatique. Le desaccord est **conserve\net rendu visible**, pas tranche.\n\n```json\n\"verification\": {\n  \"provider\": \"anthropic\", \"model\": \"claude-sonnet-4-6\",\n  \"approved\": false, \"confidence\": 0.55,\n  \"issues\": [{ \"severite\": \"sens|style|forme\", \"extrait\": \"...\", \"explication\": \"...\" }],\n  \"suggestion\": \"la proposition du relecteur, JAMAIS promue en translation\",\n  \"notes\": \"...\", \"divergence\": true\n}\n```\n\n`verification` vaut `null` et `verify_skipped` porte le motif quand la relecture\nn'a pas eu lieu : `desactivee_par_appelant`, `aucune_cle_pour_<fournisseur>`,\n`traduction_absente`, `relecteur_http_<code>`, `relecteur_json_illisible`,\n`relecteur_reponse_vide`. Un relecteur en panne ne casse jamais la traduction.\n\n⚠️ La cle de traduction n'est **jamais** envoyee a un autre fournisseur : si\n`verify_provider` differe d'`anthropic` et qu'aucune cle n'est fournie, la\nrelecture est sautee.\n\n**Modes:**\n- `en_pivot`: reference_translation exists\n- `structured_generation`: EN+FR generated\n- `direct_fallback`: fallback HE->FR",
         "height": 380,
         "width": 340,
         "color": 5
@@ -37,7 +37,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse and validate input\n// Phase 2: EN-pivot with structured output generation\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\n\nif (!body.text) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_TEXT', message: 'text is required' }\n    }\n  }];\n}\n\nif (!body.api_key) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_API_KEY', message: 'api_key is required' }\n    }\n  }];\n}\n\nconst sourceLanguage = body.source_language || 'he';\nconst targetLanguage = body.target_language || 'fr';\nconst referenceTranslation = body.reference_translation || null;\nconst hasReferenceTranslation = !!referenceTranslation;\n\n// Phase 2: Determine translation strategy\n// - hasReferenceTranslation=true → use existing EN as pivot (Phase 1)\n// - hasReferenceTranslation=false AND target!='en' → generate EN+target structured\n// - target='en' → direct HE→EN translation\nconst needsStructuredGeneration = !hasReferenceTranslation && targetLanguage !== 'en' && sourceLanguage !== 'en';\nconst isDirectToEnglish = targetLanguage === 'en';\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    segmentId: body.segment_id || null,\n    text: body.text,\n    referenceTranslation: referenceTranslation,\n    hasReferenceTranslation: hasReferenceTranslation,\n    needsStructuredGeneration: needsStructuredGeneration,\n    isDirectToEnglish: isDirectToEnglish,\n    sourceLanguage: sourceLanguage,\n    sourceLangName: languageNames[sourceLanguage] || sourceLanguage,\n    targetLanguage: targetLanguage,\n    targetLangName: languageNames[targetLanguage] || targetLanguage,\n    apiKey: body.api_key,\n    model: body.model || 'claude-sonnet-4-6',\n    context: body.context || {},\n    metadata: body.metadata || {}\n  }\n}];"
+        "jsCode": "// Parse and validate input\n// Phase 2: EN-pivot with structured output generation\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\n\nif (!body.text) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_TEXT', message: 'text is required' }\n    }\n  }];\n}\n\nif (!body.api_key) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_API_KEY', message: 'api_key is required' }\n    }\n  }];\n}\n\nconst sourceLanguage = body.source_language || 'he';\nconst targetLanguage = body.target_language || 'fr';\nconst referenceTranslation = body.reference_translation || null;\nconst hasReferenceTranslation = !!referenceTranslation;\n\n// Phase 2: Determine translation strategy\n// - hasReferenceTranslation=true → use existing EN as pivot (Phase 1)\n// - hasReferenceTranslation=false AND target!='en' → generate EN+target structured\n// - target='en' → direct HE→EN translation\nconst needsStructuredGeneration = !hasReferenceTranslation && targetLanguage !== 'en' && sourceLanguage !== 'en';\nconst isDirectToEnglish = targetLanguage === 'en';\n\n// ── Vérification de traduction (azy.daily#541, décision du 2026-10-18) ──\n// La vérification ANNOTE, elle ne substitue jamais. Un modèle relit la\n// traduction et rend un avis ; le texte livré reste celui du traducteur.\n//\n// ⚠️ Pourquoi aucune substitution automatique : une divergence peut être\n// minuscule en caractères et décisive en sens (le sens d'un mot, une\n// nuance). Aucun seuil calculable ici — longueur, similarité — ne mesure\n// le sens. Trancher reviendrait à confier le texte final à un modèle dont\n// nous ne vérifions rien. On rend donc les deux versions visibles.\n//\n// BYOT : la vérification n'a lieu que si une clé est disponible pour son\n// fournisseur. Si verify_provider vaut le fournisseur de la traduction\n// (anthropic), on réutilise api_key — aucune seconde clé à fournir.\nconst verifyDemandee = body.verify !== false;\nconst verifyProvider = (body.verify_provider || 'anthropic').toLowerCase();\nconst verifyModel = body.verify_model || 'claude-sonnet-4-6';\nconst verifyCle = body.verify_api_key\n  || (verifyProvider === 'anthropic' ? body.api_key : null)\n  || body.plugin_context?.api_keys?.[verifyProvider]\n  || null;\nconst verifyActive = verifyDemandee && !!verifyCle;\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    segmentId: body.segment_id || null,\n    text: body.text,\n    referenceTranslation: referenceTranslation,\n    hasReferenceTranslation: hasReferenceTranslation,\n    needsStructuredGeneration: needsStructuredGeneration,\n    isDirectToEnglish: isDirectToEnglish,\n    sourceLanguage: sourceLanguage,\n    sourceLangName: languageNames[sourceLanguage] || sourceLanguage,\n    targetLanguage: targetLanguage,\n    targetLangName: languageNames[targetLanguage] || targetLanguage,\n    apiKey: body.api_key,\n    model: body.model || 'claude-sonnet-4-6',\n    context: body.context || {},\n    metadata: body.metadata || {},\n    verifyActive: verifyActive,\n    verifyProvider: verifyProvider,\n    verifyModel: verifyModel,\n    verifyCle: verifyCle,\n    verifySautee: verifyDemandee && !verifyCle ? 'aucune_cle_pour_' + verifyProvider : (verifyDemandee ? null : 'desactivee_par_appelant')\n  }\n}];"
       },
       "id": "parse-input",
       "name": "Parse Input",
@@ -310,6 +310,106 @@
         1552,
         400
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Préparer la vérification de traduction (azy.daily#541) ──────────────────\n// Converge les trois sorties (structured, fallback, direct) vers une relecture\n// par un second modèle, chez n'importe quel fournisseur via llm-call-messages.\n//\n// ⚠️ CETTE ÉTAPE N'ÉCRASE RIEN. Elle demande un avis et le joint au résultat.\n// La traduction livrée reste celle du traducteur. Raison : une divergence peut\n// être minuscule en caractères et décisive en sens — le sens d'un mot, une\n// nuance de registre. Aucun seuil calculable ici ne mesure le sens, donc nous\n// ne laissons pas un workflow arbitrer. Les deux versions sortent côte à côte.\nconst resultat = $input.first().json;\nconst pd = $('Parse Input').first().json;\n\n// Une traduction en échec ne se vérifie pas.\nif (resultat.success !== true || !resultat.translation) {\n  return [{ json: Object.assign({}, resultat, { verifyActive: false, verification: null,\n    verify_skipped: 'traduction_absente' }) }];\n}\nif (!pd.verifyActive) {\n  return [{ json: Object.assign({}, resultat, { verifyActive: false, verification: null,\n    verify_skipped: pd.verifySautee || 'desactivee' }) }];\n}\n\n// L'invite demande explicitement de signaler les écarts de SENS, y compris\n// ceux qui ne changent presque rien au texte — c'est le cas que nous voulons\n// voir, et celui qu'un contrôle automatique ne saurait pas détecter.\nconst instruction = [\n  'Tu relis une traduction de texte talmudique. Tu ne la remplaces pas.',\n  '',\n  'Signale en priorite les ecarts de SENS, meme minuscules en nombre de mots',\n  \"(sens d'un terme, nuance, registre, negation, portee d'une proposition).\",\n  'Un ecart court peut etre le plus grave. Ne te limite pas aux fautes visibles.',\n  '',\n  'Reponds UNIQUEMENT par un objet JSON, sans texte autour et sans balises de code :',\n  '{ \"approved\": true|false, \"confidence\": 0.0-1.0,',\n  '  \"issues\": [{ \"severite\": \"sens\"|\"style\"|\"forme\", \"extrait\": \"...\", \"explication\": \"...\" }],',\n  '  \"suggestion\": \"ta propre traduction, ou null si tu approuves\",',\n  '  \"notes\": \"...\" }'\n].join('\\n');\n\nconst corps = [\n  'Original (' + pd.sourceLangName + ') :',\n  pd.text,\n  '',\n  resultat.english_pivot ? 'Pivot anglais :\\n' + resultat.english_pivot + '\\n' : '',\n  'Traduction a relire (' + pd.targetLangName + ') :',\n  resultat.translation\n].filter(Boolean).join('\\n');\n\nreturn [{ json: Object.assign({}, resultat, {\n  verifyActive: true,\n  verify_skipped: null,\n  _verify: {\n    provider: pd.verifyProvider,\n    model: pd.verifyModel,\n    api_key: pd.verifyCle,\n    max_tokens: 2000,\n    temperature: 0,\n    system: instruction,\n    messages: [{ role: 'user', content: corps }]\n  }\n}) }];\n"
+      },
+      "id": "verif-preparer",
+      "name": "Préparer Vérification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2428,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "verif-active",
+              "leftValue": "={{ $json.verifyActive }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "verif-active",
+      "name": "Vérification active ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2648,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/llm-call-messages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json._verify) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "verif-appel",
+      "name": "Vérifier (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2868,
+        220
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Appliquer la vérification — ANNOTE, ne substitue jamais ─────────────────\n// Trois états possibles, et aucun ne modifie `translation` :\n//   verification = null   → non demandée, pas de clé, ou relecture indisponible\n//   approved true         → le relecteur est d'accord\n//   approved false        → DÉSACCORD CONSERVÉ : `verification.suggestion` porte\n//                           sa proposition, `issues` les écarts relevés.\n// L'appelant décide. C'est volontairement non résolu ici : un écart de sens\n// peut tenir à un mot, et aucun calcul local ne distingue une correction\n// décisive d'une réécriture abusive.\nconst entree = $input.first().json;\nconst prec = $('Préparer Vérification').first().json;\nconst base = Object.assign({}, prec);\ndelete base._verify;\n\nconst brut = entree.body !== undefined ? entree.body : entree;\nconst code = entree.statusCode || 200;\n\nconst vide = (raison) => [{ json: Object.assign({}, base, {\n  verification: null, verify_skipped: raison }) }];\n\nif (code >= 400) return vide('relecteur_http_' + code);\n\n// Le texte rendu par llm-call-messages, quel que soit le fournisseur.\nconst texte = brut && (brut.content || brut.text || brut.message || '');\nif (!texte || typeof texte !== 'string') return vide('relecteur_reponse_vide');\n\n// Analyse tolérante : aucun fournisseur ne garantit du JSON nu. On retire les\n// balises de code, puis on isole le premier objet. Un échec d'analyse n'est pas\n// une erreur de traduction — on rend la traduction sans avis.\nlet avis = null;\ntry {\n  let s = texte.trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\n  const d = s.indexOf('{'), fin = s.lastIndexOf('}');\n  if (d >= 0 && fin > d) s = s.slice(d, fin + 1);\n  avis = JSON.parse(s);\n} catch (e) {\n  return vide('relecteur_json_illisible');\n}\nif (!avis || typeof avis !== 'object') return vide('relecteur_json_illisible');\n\nconst approuve = avis.approved !== false;\nconst confiance = typeof avis.confidence === 'number' ? avis.confidence : null;\n\nreturn [{ json: Object.assign({}, base, {\n  // `translation` est intacte, et le reste ci-dessous ne fait que l'éclairer.\n  verification: {\n    provider: prec._verify.provider,\n    model: prec._verify.model,\n    approved: approuve,\n    confidence: confiance,\n    issues: Array.isArray(avis.issues) ? avis.issues : [],\n    // La proposition du relecteur n'est conservée QUE s'il désapprouve, et\n    // elle n'est jamais promue en `translation`.\n    suggestion: approuve ? null : (avis.suggestion || null),\n    notes: avis.notes || null,\n    // Vrai dès qu'il y a un désaccord : c'est le signal qu'une relecture\n    // humaine est utile. Personne ne l'arbitre automatiquement.\n    divergence: !approuve\n  },\n  verify_skipped: null\n}) }];\n"
+      },
+      "id": "verif-appliquer",
+      "name": "Appliquer Vérification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3088,
+        220
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "verif-sans",
+      "name": "Sortie sans vérification",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2868,
+        400
+      ]
     }
   ],
   "connections": {
@@ -431,6 +531,79 @@
         [
           {
             "node": "Output Direct",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Structured": {
+      "main": [
+        [
+          {
+            "node": "Préparer Vérification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Fallback": {
+      "main": [
+        [
+          {
+            "node": "Préparer Vérification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Direct": {
+      "main": [
+        [
+          {
+            "node": "Préparer Vérification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer Vérification": {
+      "main": [
+        [
+          {
+            "node": "Vérification active ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vérification active ?": {
+      "main": [
+        [
+          {
+            "node": "Vérifier (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sortie sans vérification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vérifier (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Appliquer Vérification",
             "type": "main",
             "index": 0
           }
