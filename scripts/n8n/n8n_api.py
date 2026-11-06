@@ -1417,9 +1417,30 @@ def main():
                       f"fichier-liste.")
                 print("Un fichier-liste contient un nom de workflow par ligne "
                       "(le STEM du fichier, avec des underscores).")
+
+                # Suggestion. ⚠️ Ne PAS se contenter du voisin de même nom : le
+                # 2026-11-06 le script a justement été renommé pour ne plus
+                # ressembler à sa liste, ce qui a fait disparaître la suggestion
+                # au moment précis où elle servait. On propose donc les listes
+                # réellement présentes à côté.
                 voisin = os.path.splitext(target)[0] + '.txt'
                 if os.path.exists(voisin):
                     print(f"\nVouliez-vous dire : {voisin} ?")
+                else:
+                    dossier = os.path.dirname(target) or '.'
+                    listes = sorted(f for f in os.listdir(dossier)
+                                    if f.endswith('.txt'))
+                    if listes:
+                        print(f"\nFichiers-listes présents dans {dossier}/ :")
+                        for f in listes[-8:]:
+                            print(f"   {os.path.join(dossier, f)}")
+
+                # Et si le fichier passé est un script exécutable, c'est
+                # probablement LUI qu'il fallait lancer, pas le passer ici.
+                if suffixe == '.sh' and os.access(target, os.X_OK):
+                    print(f"\nSi « {os.path.basename(target)} » est le script "
+                          f"d'orchestration du lot, lancez-le directement :")
+                    print(f"   {target}")
                 sys.exit(1)
 
             # Même résolution que batch_reimport_single / batch_reimport.
