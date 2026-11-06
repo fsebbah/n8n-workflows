@@ -2,10 +2,16 @@
 #
 # Réimport du lot « dette & observabilité » du 2026-11-06 — PR #553 → #558.
 #
-#     scripts/n8n/reimport_dette_20261106.sh            # blanc, puis demande confirmation
-#     scripts/n8n/reimport_dette_20261106.sh --verifier  # vérifications seules, rien n'est écrit
+#     scripts/n8n/lancer_lot_dette_20261106.sh            # blanc, puis confirmation
+#     scripts/n8n/lancer_lot_dette_20261106.sh --verifier  # vérifications seules
 #
-# Sept workflows, un seul passage. Le réimport est un UPDATE EN PLACE par nom
+# ⚠️ CE FICHIER EST LE SCRIPT, PAS LA LISTE. Ne jamais le passer à
+#    `batch-reimport` : il attend `reimport-dette-20261106.txt`, le fichier-liste.
+#    Erreur commise le 2026-11-06 quand les deux s'appelaient presque pareil —
+#    192 lignes de bash prises pour des noms de workflow. Sans dégât, et
+#    désormais refusé d'emblée par le garde-fou de la PR #561.
+#
+# Huit workflows, un seul passage. Le réimport est un UPDATE EN PLACE par nom
 # (`batch_reimport_single` → PUT), donc les IDs et les activations sont préservés.
 #
 # ⚠️ AUCUN redémarrage de Docker n'est nécessaire — vérifié le 2026-11-06 :
@@ -94,6 +100,11 @@ ATTENDU = {
     'GUILD - Server Sync': [
         ('Validate Data',   r'valid: false'),
         ('Format Réponse',  r'statutReel442'),
+    ],
+    # n8n-workflows#560 : le `=` d'expression retiré du verbe, que le registre
+    # publiait verbatim à MCP sous la forme `method: "=POST"`.
+    'Torah Result Store': [
+        ('POST Store', r'"httpMethod": "POST"'),
     ],
 }
 
