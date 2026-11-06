@@ -60,6 +60,26 @@ async function lancer(pages, { cleApi = 'k-1' } = {}) {
 const wfs = (n, decalage = 0) =>
   Array.from({ length: n }, (_, i) => ({ id: `w${i + decalage}`, name: `W${i + decalage}` }));
 
+/** Comme `wfs`, mais des workflows que `Build Registry` retient réellement comme outils. */
+const wfsOutils = (n, decalage = 0) =>
+  wfs(n, decalage).map((w) => Object.assign(w, {
+    active: true,
+    nodes: [{ type: 'n8n-nodes-base.webhook', parameters: { path: `p-${w.id}`, httpMethod: 'POST' } }],
+  }));
+
+/** Exécute `Build Registry` sur la sortie (simulée ou réelle) du nœud amont. */
+function lancerRegistre(sortieAmont, { hote = 'llm.local:5678' } = {}) {
+  const ctx = vm.createContext({
+    $input: { first: () => ({ json: sortieAmont }) },
+    $: () => ({ first: () => ({ json: { headers: { host: hote } } }) }),
+    $env: {},
+    console,
+  });
+  const r = vm.runInContext(
+    `(function () {\n${noeud('Build Registry').parameters.jsCode}\n})()`, ctx);
+  return r.json;
+}
+
 (async () => {
   console.log('\nRegistre — pagination du curseur\n');
 
@@ -117,6 +137,58 @@ const wfs = (n, decalage = 0) =>
     verifier('le type de nœud est bien un Code node',
       noeud('Get Active Workflows').type, 'n8n-nodes-base.code');
     verifier('la boucle sur le curseur est présente', /nextCursor/.test(code), true);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // LE SECOND DÉFAUT : le diagnostic était calculé, mais il n'arrivait nulle part.
+  //
+  // `Get Active Workflows` posait `_pagination` depuis #543. `Build Registry` ne le
+  // recopiait pas : la réponse ne portait que tools/total_tools/updated_at/version.
+  // Mesuré à la source le 2026-11-06 sur le registre en service — `_pagination: None`.
+  // Le garde-fou existait et personne ne pouvait le lire. Ces contrôles exigent qu'il
+  // traverse le second nœud, pas seulement qu'il soit calculé dans le premier.
+  // ──────────────────────────────────────────────────────────────────────────
+  console.log('\nLe diagnostic traverse `Build Registry` jusqu\'à la réponse');
+  {
+    const amont = { data: wfsOutils(3), _pagination: { pages: 1, workflows: 3, tronque: false } };
+    const rep = lancerRegistre(amont);
+    verifier('_pagination présent dans la réponse',
+      rep._pagination, { pages: 1, workflows: 3, tronque: false });
+    verifier('total_tools reste calculé sur les outils', rep.total_tools, 3);
+    verifier('les clés de la réponse incluent _pagination',
+      Object.keys(rep).sort(),
+      ['_pagination', 'tools', 'total_tools', 'updated_at', 'version'].sort());
+  }
+
+  console.log('\nLe cas qui compte : tronque=true doit être LISIBLE par l\'appelant');
+  {
+    const amont = { data: wfsOutils(5), _pagination: { pages: 20, workflows: 5000, tronque: true } };
+    const rep = lancerRegistre(amont);
+    verifier('tronque=true remonté tel quel', (rep._pagination || {}).tronque, true);
+    verifier('pages remonté', (rep._pagination || {}).pages, 20);
+    // ⚠️ C'est tout l'intérêt : total_tools PARAÎT normal alors que le catalogue ment.
+    // Sans `_pagination`, rien dans la réponse ne distingue ce cas du précédent.
+    verifier('total_tools ne trahit rien à lui seul', rep.total_tools, 5);
+  }
+
+  console.log('\nUn amont sans diagnostic ne casse pas la réponse');
+  {
+    const rep = lancerRegistre({ data: wfsOutils(2) });
+    verifier('_pagination vaut null, pas undefined', rep._pagination, null);
+    verifier('la réponse reste exploitable', rep.total_tools, 2);
+  }
+
+  console.log('\nDe bout en bout : les deux nœuds enchaînés, sans simulation du milieu');
+  {
+    const { sortie } = await lancer([
+      { data: wfsOutils(250), next: 'c2' },
+      { cursor: 'c2', data: wfsOutils(8, 250), next: null },
+    ]);
+    const rep = lancerRegistre(sortie);
+    verifier('258 outils publiés après pagination', rep.total_tools, 258);
+    verifier('workflows comptés par l\'amont et relayés', (rep._pagination || {}).workflows, 258);
+    verifier('tronque=false sur un parc complet', (rep._pagination || {}).tronque, false);
+    verifier('pages relayé depuis l\'amont', (rep._pagination || {}).pages, 2);
   }
 
   console.log(`\nRésultat : ${ok} ok, ${ko} échec(s)\n`);
