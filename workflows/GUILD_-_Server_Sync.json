@@ -21,7 +21,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract and validate data from webhook body\nconst body = $input.first().json.body;\n\n// Required fields\nif (!body.guild_id) {\n  throw new Error('guild_id is required');\n}\nif (!body.bot_id) {\n  throw new Error('bot_id is required');\n}\n\n// Backend connection (passed by plugin)\nconst backendApiUrl = body.backend_api_url;\nconst backendServiceToken = body.backend_service_token;\n\nif (!backendApiUrl) {\n  throw new Error('backend_api_url is required');\n}\nif (!backendServiceToken) {\n  throw new Error('backend_service_token is required');\n}\n\n// Parse integer fields (default to 0 if null/undefined)\nconst memberCount = parseInt(body.member_count, 10) || 0;\nconst channelCount = parseInt(body.channel_count, 10) || 0;\nconst botCount = parseInt(body.bot_count, 10) || 0;\n\nreturn {\n  guild_id: body.guild_id,\n  bot_id: body.bot_id,\n  guild_name: body.guild_name || null,\n  guild_icon: body.guild_icon || null,\n  guild_description: body.guild_description || null,\n  member_count: memberCount,\n  channel_count: channelCount,\n  bot_count: botCount,\n  sync_source: body.sync_source || 'plugin',\n  synced_by: body.synced_by || 'unknown',\n  backend_api_url: backendApiUrl,\n  backend_service_token: backendServiceToken\n};"
+        "jsCode": "// ── #467 — NE PLUS LEVER AVANT D'AVOIR RÉPONDU ───────────────────────────────\n//\n// Ce nœud levait sur chaque champ manquant. Or le webhook est en\n// `responseMode: responseNode` : un nœud qui lève interrompt le workflow AVANT\n// qu'un `respondToWebhook` soit atteint, et n8n ferme alors la requête avec\n// **200 et un corps vide**. Pour l'appelant, indiscernable d'un succès sans\n// résultat — et aucune trace de son côté.\n//\n// On rend donc un verdict que l'IF en aval sait router vers une vraie réponse 400.\n// Les messages sont CONSERVÉS tels quels : un appelant qui les cherchait dans un\n// journal les retrouve dans le corps de la réponse.\nconst body = ($input.first().json || {}).body || {};\nconst erreurs = [];\nif (!body.guild_id) erreurs.push('guild_id is required');\nif (!body.bot_id) erreurs.push('bot_id is required');\nif (!body.backend_api_url) erreurs.push('backend_api_url is required');\nif (!body.backend_service_token) erreurs.push('backend_service_token is required');\nif (erreurs.length > 0) {\n  return [{ json: { valid: false, errors: erreurs } }];\n}\n\n// Parse integer fields (default to 0 if null/undefined)\nconst memberCount = parseInt(body.member_count, 10) || 0;\nconst channelCount = parseInt(body.channel_count, 10) || 0;\nconst botCount = parseInt(body.bot_count, 10) || 0;\n\nreturn [{ json: {\n  valid: true,\n  guild_id: body.guild_id,\n  bot_id: body.bot_id,\n  guild_name: body.guild_name || null,\n  guild_icon: body.guild_icon || null,\n  guild_description: body.guild_description || null,\n  member_count: memberCount,\n  channel_count: channelCount,\n  bot_count: botCount,\n  sync_source: body.sync_source || 'plugin',\n  synced_by: body.synced_by || 'unknown',\n  // ⚠️ Lus directement du corps : en réécrivant l'en-tête de ce nœud j'avais retiré\n  // les deux `const` intermédiaires en laissant leurs références ici. `node --check`\n  // ne voit pas une référence non résolue — seul le test l'a attrapée. En production\n  // ça aurait levé, donc produit exactement le 200 vide que ce correctif supprime.\n  backend_api_url: body.backend_api_url,\n  backend_service_token: body.backend_service_token\n} }];\n"
       },
       "id": "validate-data",
       "name": "Validate Data",
@@ -53,7 +53,13 @@
         "specifyBody": "json",
         "jsonBody": "={\n  \"guild_id\": \"{{ $json.guild_id }}\",\n  \"bot_id\": \"{{ $json.bot_id }}\",\n  \"guild_name\": {{ $json.guild_name ? '\"' + $json.guild_name + '\"' : 'null' }},\n  \"guild_icon\": {{ $json.guild_icon ? '\"' + $json.guild_icon + '\"' : 'null' }},\n  \"guild_description\": {{ $json.guild_description ? '\"' + $json.guild_description + '\"' : 'null' }},\n  \"member_count\": {{ $json.member_count }},\n  \"channel_count\": {{ $json.channel_count }},\n  \"bot_count\": {{ $json.bot_count }},\n  \"sync_source\": \"{{ $json.sync_source }}\",\n  \"synced_by\": \"{{ $json.synced_by }}\"\n}",
         "options": {
-          "timeout": 10000
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 20000
         }
       },
       "id": "call-backend",
@@ -63,13 +69,26 @@
       "position": [
         700,
         300
-      ]
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: $json.ok || $json.synced, guild_id: $('Validate Data').item.json.guild_id, synced: true }) }}",
-        "options": {}
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.error ? (Number($json.error.code) || 502) : 200 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
       },
       "id": "respond-success",
       "name": "Respond Success",
@@ -78,6 +97,76 @@
       "position": [
         920,
         300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valide",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "guild-sync-valide-0001",
+      "name": "Données valides ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Parade #442/#467 — lire le STATUT RÉEL, jamais `|| 200` ──────────────────\n//\n// Le nœud HTTP porte désormais `fullResponse: true` + `neverError: true` : il émet\n// { statusCode, body, headers } et ne lève plus sur un statut d'erreur. Reste le\n// transport (délai, DNS, service éteint), où `onError: continueRegularOutput` fait\n// émettre un objet d'erreur SANS statusCode — le statut réel n'existe alors que\n// dans le message, sous la forme « 404 - {...} ».\nfunction statutReel442(entree) {\n  if (typeof entree.statusCode === 'number') return entree.statusCode;\n  const brut = String((entree.error && entree.error.message) || entree.message || '');\n  const m = brut.match(/(\\d{3})\\s*-\\s*/);\n  if (m) return parseInt(m[1], 10);\n  return (entree.error || entree.code) ? 502 : 200;\n}\n// Le corps JSON de l'API, quand n8n l'a enfermé dans la chaîne du message d'erreur\n// (doublement échappé). Sans ça le message reste `404 - \"{\\\"detail\\\":…\"`.\nfunction corpsDansMessage442(entree) {\n  const brut = String((entree.error && entree.error.message) || entree.message || '');\n  const i = brut.indexOf('{'), j = brut.lastIndexOf('}');\n  if (i < 0 || j <= i) return null;\n  const bloc = brut.slice(i, j + 1);\n  for (const essai of [bloc, bloc.replace(/\\\\\"/g, '\"').replace(/\\\\\\\\/g, '\\\\')]) {\n    try { const o = JSON.parse(essai); if (o && typeof o === 'object') return o; } catch (e) { /* suivant */ }\n  }\n  return null;\n}\n// `detail` de FastAPI : parfois une chaîne, parfois une liste d'objets de validation.\nfunction messageApi442(corps, defaut) {\n  if (!corps) return defaut;\n  const d = corps.detail;\n  if (typeof d === 'string' && d) return d;\n  if (Array.isArray(d) && d.length) {\n    return d.map((e) => (e && e.msg) || JSON.stringify(e)).join(' ; ').slice(0, 300);\n  }\n  if (typeof corps.message === 'string' && corps.message) return corps.message;\n  if (typeof corps.error === 'string' && corps.error) return corps.error;\n  if (corps.error && typeof corps.error.message === 'string') return corps.error.message;\n  return defaut;\n}\n\n// ── #467 — restituer l'échec au lieu de répondre 200 à vide ──────────────────\n//\n// `Sync to Backend` n'avait NI onError NI fullResponse. Un backend indisponible\n// faisait donc lever le nœud, le workflow s'interrompait, et n8n fermait la requête\n// avec 200 et rien dedans.\n//\n// ⚠️ Et le second défaut, sur le chemin NOMINAL : `Respond Success` calculait\n// `success: $json.ok || $json.synced`. Sans `fullResponse`, `$json` était le corps\n// du backend ; si celui-ci ne rendait ni `ok` ni `synced`, le champ valait\n// `undefined` et **JSON.stringify le supprimait purement**. L'appelant recevait\n// `{ guild_id, synced: true }` — sans `success`, et avec un `synced: true` écrit en\n// dur qui affirmait la réussite quoi qu'il arrive.\nconst reponse = $input.first().json;\nconst demande = $('Validate Data').first().json;\nconst statut = statutReel442(reponse);\nconst corpsApi = (reponse.body !== undefined && reponse.body !== null)\n  ? reponse.body\n  : (corpsDansMessage442(reponse) || {});\n\nif (statut >= 400 || reponse.error) {\n  return [{ json: {\n    success: false,\n    guild_id: demande.guild_id || null,\n    synced: false,\n    error: {\n      code: statut,\n      message: messageApi442(corpsApi, 'synchronisation refusee par le backend'),\n      status: 'SYNC_FAILED'\n    },\n    _trace: { service_response: corpsApi, http_status: statut }\n  } }];\n}\n\n// Succès : `synced` reflète la réponse du backend, il n'est plus affirmé.\nreturn [{ json: {\n  success: true,\n  guild_id: demande.guild_id || null,\n  synced: true,\n  http_status: statut\n} }];\n"
+      },
+      "id": "guild-sync-format-0001",
+      "name": "Format Réponse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, errors: $json.errors, error: { code: 400, message: ($json.errors || []).join('; '), status: 'VALIDATION_ERROR' } }) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "guild-sync-respond-err-1",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        460
       ]
     }
   ],
@@ -97,7 +186,7 @@
       "main": [
         [
           {
-            "node": "Sync to Backend",
+            "node": "Données valides ?",
             "type": "main",
             "index": 0
           }
@@ -105,6 +194,35 @@
       ]
     },
     "Sync to Backend": {
+      "main": [
+        [
+          {
+            "node": "Format Réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Données valides ?": {
+      "main": [
+        [
+          {
+            "node": "Sync to Backend",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Réponse": {
       "main": [
         [
           {
