@@ -1394,8 +1394,54 @@ def main():
             with open(target) as fh:
                 stems = [ln.strip() for ln in fh
                          if ln.strip() and not ln.strip().startswith('#')]
+
+            # ── Garde-fou : un fichier-liste n'est pas n'importe quel fichier ─────
+            #
+            # Le 2026-11-06, le script d'orchestration `reimport_dette_20261106.sh`
+            # a été passé ici à la place de sa liste `reimport-dette-20261106.txt`
+            # (deux noms trop proches, ma faute). Résultat : 192 lignes de bash
+            # interprétées comme des noms de workflow, « LISTE — 0/192 OK ».
+            #
+            # Aucun dégât cette fois, parce que chaque entrée a échoué au stade
+            # « JSON file not found », avant tout appel à l'API. Mais c'est de la
+            # chance : un fichier dont la MOITIÉ des lignes se résout aurait été
+            # traité à moitié, et `batch_reimport_single` fait PUT puis, en cas
+            # d'échec, DELETE + IMPORT. Un réimport partiel, décidé par le hasard
+            # d'un nom de fichier, n'est pas une opération acceptable.
+            #
+            # On résout donc TOUT avant de toucher à quoi que ce soit, et on
+            # abandonne si une seule entrée manque : tout ou rien.
+            suffixe = os.path.splitext(target)[1].lower()
+            if suffixe in ('.sh', '.py', '.js', '.yaml', '.yml', '.json'):
+                print(f"Erreur : « {target} » a l'extension {suffixe} — ce n'est pas un "
+                      f"fichier-liste.")
+                print("Un fichier-liste contient un nom de workflow par ligne "
+                      "(le STEM du fichier, avec des underscores).")
+                voisin = os.path.splitext(target)[0] + '.txt'
+                if os.path.exists(voisin):
+                    print(f"\nVouliez-vous dire : {voisin} ?")
+                sys.exit(1)
+
+            # Même résolution que batch_reimport_single / batch_reimport.
+            dossier_wf = Path(__file__).parent.parent.parent / "workflows"
+            manquants = [st for st in stems if not (dossier_wf / f"{st}.json").exists()]
+            if manquants:
+                print(f"Erreur : {len(manquants)} entrée(s) sur {len(stems)} ne "
+                      f"correspondent à aucun fichier de workflows/ — rien n'a été "
+                      f"importé.")
+                for st in manquants[:10]:
+                    print(f"   • {st!r}")
+                if len(manquants) > 10:
+                    print(f"   … et {len(manquants) - 10} autre(s)")
+                print("\nUn fichier-liste attend le STEM du nom de fichier, un par ligne :")
+                print("   MCP_-_PDF_OCR          ✅")
+                print("   MCP - PDF OCR          ❌  (nom d'affichage, pas le stem)")
+                print("   workflows/X.json       ❌  (chemin, pas le stem)")
+                sys.exit(1)
+
             mode = 'DELETE + IMPORT (force-new)' if force_new else 'UPDATE IN PLACE'
-            print(f"[INFO] Liste: {len(stems)} workflow(s) — mode {mode}\n")
+            print(f"[INFO] Liste: {len(stems)} workflow(s) — mode {mode}")
+            print(f"[INFO] Les {len(stems)} fichiers existent tous dans workflows/\n")
             ok, failed = [], []
             for stem in stems:
                 res = batch_reimport_single(stem, dry_run=dry_run,
