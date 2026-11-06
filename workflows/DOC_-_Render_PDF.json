@@ -261,6 +261,21 @@
         660,
         580
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================================\n// TRACER L'ÉCHEC — branche latérale, azy.daily#355 / mémoire « export PDF : angle mort »\n// ============================================================================\n//\n// POURQUOI CE NŒUD EXISTE\n//\n// Ce workflow ne laissait AUCUNE TRACE d'un échec. Deux réglages s'additionnaient :\n//\n//   settings.saveDataSuccessExecution = 'none'   ← les succès ne sont pas enregistrés\n//   gotenberg.api  onError: continueErrorOutput  ← un 400 part en branche d'erreur,\n//                                                  est mis en forme, et l'exécution\n//                                                  se termine en statut `success`\n//\n// Donc un export PDF, qu'il réussisse OU qu'il échoue proprement, ne laissait rien.\n// « torah-pdf : 0 exécution sur 15 relevés » ne disait rien du trafic réel — j'en ai\n// conclu deux fois de travers en deux jours, dont une fois que l'appelant ne passait\n// pas par nous.\n//\n// ET LE RÉGLAGE EST JUSTIFIÉ : aucun N8N_DEFAULT_BINARY_DATA_MODE n'est défini dans\n// le conteneur, donc n8n stocke les binaires EN BASE avec l'exécution. Ce workflow\n// rend un PDF (responseFormat: file) — 258 Ko mesurés pour une page de Talmud.\n// Enregistrer les succès persisterait chaque PDF dans PostgreSQL. On garde `none`.\n//\n// La trace est donc publiée par un EFFET, pas par l'enregistrement : un nœud\n// s'exécute même quand le dossier d'exécution est jeté. Seul le dossier est jeté,\n// pas l'effet.\n//\n// CE QUI EST PUBLIÉ, ET CE QUI NE L'EST JAMAIS\n//\n//   publié     : template, filename, format, error_code, http_status, message tronqué\n//   JAMAIS     : le binaire, les données du document (`corps.data`), aucune clé\n//\n// `corps.data` est le contenu du document : il peut être volumineux et porter du\n// texte d'utilisateur. Un diagnostic n'a pas besoin du contenu, seulement de sa forme.\n//\n// ⚠️ Branche LATÉRALE, placée APRÈS `Respond Error` : la réponse est déjà partie\n// quand ce nœud s'exécute. L'appelant n'attend jamais Redis. Et tout est enveloppé\n// dans un try/catch : une panne du service de trace ne doit pas transformer un échec\n// expliqué en échec inexpliqué.\n\nconst erreur = $input.first().json || {};\n\n// Contexte de la demande. ⚠️ `Normalize Error` est atteignable depuis TROIS amonts\n// (Validate Input, gotenberg.api, Préparer catalogue) : référencer un nœud qui n'a\n// pas tourné lève dans n8n. D'où le try/catch, et pas un `?.`.\nlet demande = {};\ntry { demande = $('Validate Input').first().json || {}; } catch (e) { demande = {}; }\n\nconst url = $env.REDIS_XADD_SERVICE_URL;\nif (!url) {\n  // Rien à faire, et surtout rien à casser. On le dit dans le journal du nœud.\n  console.log('REDIS_XADD_SERVICE_URL absent : trace non publiée');\n  return [];\n}\n\n// Les champs d'un stream Redis sont des chaînes (convention azy.daily#225).\nconst champs = {\n  event: 'document_render_failed',\n  workflow: 'DOC - Render PDF',\n  error_code: String(erreur.error_code || 'UNKNOWN'),\n  http_status: String(erreur.http_status || 0),\n  // Tronqué : un message d'erreur n'est pas un journal, et `Normalize Error` l'a\n  // déjà borné à 500. 300 suffit à identifier la famille de panne.\n  error_message: String(erreur.error || '').slice(0, 300),\n  template: String((demande.corps && demande.corps.template) || ''),\n  filename: String((demande.corps && demande.corps.filename) || ''),\n  // Le format est le dernier segment de l'URL de rendu (/render/pdf, /render/epub).\n  format: String((demande.url || '').split('/').pop() || ''),\n  failed_at: new Date().toISOString(),\n};\n\n// ⚠️ `correlation_id` n'est posé QUE s'il existe. Un repli `|| ''` publierait du vide\n// qui a l'air présent — un consommateur croirait tenir un identifiant d'appariement\n// et n'apparierait rien. L'absence du champ se voit ; une chaîne vide, non.\nif (demande.correlation_id) champs.correlation_id = String(demande.correlation_id);\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: String(url).replace(/\\/+$/, '') + '/xadd',\n    headers: { 'Content-Type': 'application/json' },\n    body: { stream: 'n8n:errors:stream', fields: champs, max_len: 5000 },\n    json: true,\n    timeout: 5000,\n  });\n} catch (e) {\n  // Volontairement avalé : voir l'avertissement en tête de nœud.\n  console.log('trace non publiée : ' + String((e && e.message) || e).slice(0, 200));\n}\n\nreturn [];\n",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "trace-erreur-export-pdf-0001",
+      "name": "Tracer l'échec",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        660
+      ],
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -374,6 +389,17 @@
         [
           {
             "node": "Normalize Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Error": {
+      "main": [
+        [
+          {
+            "node": "Tracer l'échec",
             "type": "main",
             "index": 0
           }
