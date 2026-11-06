@@ -82,7 +82,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const apiResult = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\n// Vérifier statut HTTP\nif (apiResult.statusCode && apiResult.statusCode !== 200) {\n  const errorBody = apiResult.body || {};\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: apiResult.statusCode,\n        message: errorBody.detail || 'API error',\n        status: 'API_ERROR'\n      }\n    }\n  }];\n}\n\n// Succès\nconst responseBody = apiResult.body || {};\nreturn [{\n  json: {\n    success: true,\n    message: 'Project registered successfully',\n    project: {\n      project_id: responseBody.project_id || inputData.project_id,\n      display_name: responseBody.display_name || inputData.display_name,\n      environment: responseBody.environment\n    }\n  }\n}];\n"
+        "jsCode": "// ── Parade #442/#467 — lire le STATUT RÉEL, jamais `|| 200` ──────────────────\n//\n// Le nœud HTTP porte désormais `fullResponse: true` + `neverError: true` : il émet\n// { statusCode, body, headers } et ne lève plus sur un statut d'erreur. Reste le\n// transport (délai, DNS, service éteint), où `onError: continueRegularOutput` fait\n// émettre un objet d'erreur SANS statusCode — le statut réel n'existe alors que\n// dans le message, sous la forme « 404 - {...} ».\nfunction statutReel442(entree) {\n  if (typeof entree.statusCode === 'number') return entree.statusCode;\n  const brut = String((entree.error && entree.error.message) || entree.message || '');\n  const m = brut.match(/(\\d{3})\\s*-\\s*/);\n  if (m) return parseInt(m[1], 10);\n  return (entree.error || entree.code) ? 502 : 200;\n}\n// Le corps JSON de l'API, quand n8n l'a enfermé dans la chaîne du message d'erreur\n// (doublement échappé). Sans ça le message reste `404 - \"{\\\"detail\\\":…\"`.\nfunction corpsDansMessage442(entree) {\n  const brut = String((entree.error && entree.error.message) || entree.message || '');\n  const i = brut.indexOf('{'), j = brut.lastIndexOf('}');\n  if (i < 0 || j <= i) return null;\n  const bloc = brut.slice(i, j + 1);\n  for (const essai of [bloc, bloc.replace(/\\\\\"/g, '\"').replace(/\\\\\\\\/g, '\\\\')]) {\n    try { const o = JSON.parse(essai); if (o && typeof o === 'object') return o; } catch (e) { /* suivant */ }\n  }\n  return null;\n}\n// `detail` de FastAPI : parfois une chaîne, parfois une liste d'objets de validation.\nfunction messageApi442(corps, defaut) {\n  if (!corps) return defaut;\n  const d = corps.detail;\n  if (typeof d === 'string' && d) return d;\n  if (Array.isArray(d) && d.length) {\n    return d.map((e) => (e && e.msg) || JSON.stringify(e)).join(' ; ').slice(0, 300);\n  }\n  if (typeof corps.message === 'string' && corps.message) return corps.message;\n  if (typeof corps.error === 'string' && corps.error) return corps.error;\n  if (corps.error && typeof corps.error.message === 'string') return corps.error.message;\n  return defaut;\n}\n\nconst apiResult = $input.first().json;\nconst inputData = $('Validate Input').first().json;\n\nconst statut = statutReel442(apiResult);\n\n// ⚠️ DÉFAUT CORRIGÉ LE 2026-11-06 — `Call API Admin` n'avait PAS `fullResponse`.\n// Le nœud émettait donc le CORPS directement, et :\n//   • `apiResult.statusCode` valait toujours undefined → le test\n//     `if (apiResult.statusCode && apiResult.statusCode !== 200)` ne pouvait\n//     JAMAIS être vrai. Un garde-fou inatteignable, comme #543.\n//   • `apiResult.body` valait undefined → `responseBody` tombait à `{}` → la\n//     réponse renvoyait `project_id` et `display_name` DE LA REQUÊTE, et\n//     `environment: undefined`. Nous RECOPIONS la demande en la présentant comme\n//     la réponse de l'API. Sur un workflow à 105 exécutions relevées.\n// Les deux défauts étaient invisibles : la réponse avait exactement la forme\n// attendue, et ses valeurs étaient celles que l'appelant venait d'envoyer.\nconst corpsApi = (apiResult.body !== undefined && apiResult.body !== null)\n  ? apiResult.body\n  : (corpsDansMessage442(apiResult) || {});\n\nif (statut >= 400 || apiResult.error) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: statut,\n        message: messageApi442(corpsApi, 'API error'),\n        status: 'API_ERROR'\n      },\n      _trace: { service_response: corpsApi, http_status: statut }\n    }\n  }];\n}\n\n// Succès. Les replis sur `inputData` restent, mais ce sont désormais de VRAIS\n// replis : le corps de l'API est lu en premier, et il existe.\nconst responseBody = (corpsApi && typeof corpsApi === 'object') ? corpsApi : {};\nreturn [{\n  json: {\n    success: true,\n    message: 'Project registered successfully',\n    project: {\n      project_id: responseBody.project_id || inputData.project_id,\n      display_name: responseBody.display_name || inputData.display_name,\n      environment: responseBody.environment !== undefined ? responseBody.environment : null\n    }\n  }\n}];\n"
       },
       "id": "format-success",
       "name": "Format Success",
@@ -98,7 +98,7 @@
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 200,
+          "responseCode": "={{ $json.error ? (Number($json.error.code) || 500) : 200 }}",
           "responseHeaders": {
             "entries": [
               {
@@ -163,7 +163,15 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ project_id: $json.project_id, stripe_key: $json.stripe_key,webhook_secret: $json.webhook_secret, display_name: $json.display_name, tenant_id:$json.tenant_id }) }}",
-        "options": {}
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 20000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
@@ -172,7 +180,10 @@
         208
       ],
       "id": "902679a6-abc4-413b-9d72-a98c649452b6",
-      "name": "Call API Admin"
+      "name": "Call API Admin",
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2
     }
   ],
   "connections": {
