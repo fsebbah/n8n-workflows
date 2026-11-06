@@ -150,25 +150,54 @@ def list_workflows_from_db():
             conn.close()
         return []
 
-def list_workflows():
-    """List all workflows (tries API first, falls back to DB)"""
-    response = api_request('GET', '/workflows')
-    if response and response.status_code == 200:
+def iter_all_workflows(limit=250):
+    """Yield EVERY workflow, following the API cursor.
+
+    L'API n8n plafonne à 250 par page (`limit=500` → 400) et rend un
+    `nextCursor`. Un GET unique n'en voit qu'une page : c'est exactement le
+    défaut de n8n-workflows#543, où le registre publiait 218 outils au lieu
+    de 226 sans aucune erreur. La boucle vivait ici dans la seule
+    `find_workflow_by_name` (#386) ; elle est extraite pour que tout appelant
+    en bénéficie au lieu de la réécrire.
+
+    Lève RuntimeError sur échec d'API : un appelant ne doit pas pouvoir
+    confondre « aucun workflow » et « l'API n'a pas répondu ».
+    """
+    cursor = None
+    while True:
+        endpoint = f'/workflows?limit={limit}' + (f'&cursor={cursor}' if cursor else '')
+        response = api_request('GET', endpoint)
+        if not response or response.status_code != 200:
+            raise RuntimeError(
+                f"API n8n : {response.status_code if response else 'aucune réponse'}")
         data = response.json()
         for w in data.get('data', []):
+            yield w
+        cursor = data.get('nextCursor')
+        if not cursor:
+            return
+
+
+def list_workflows():
+    """List all workflows (tries API first, falls back to DB)"""
+    try:
+        total = 0
+        for w in iter_all_workflows():
+            status = '✅' if w['active'] else '❌'
+            print(f"{status} {w['id']}: {w['name']}")
+            total += 1
+        print(f"\n{total} workflows (liste entière, curseur suivi)")
+        return
+    except RuntimeError as erreur:
+        print(f"API unavailable ({erreur}), falling back to PostgreSQL...")
+
+    workflows = list_workflows_from_db()
+    if workflows:
+        for w in workflows:
             status = '✅' if w['active'] else '❌'
             print(f"{status} {w['id']}: {w['name']}")
     else:
-        print(f"API unavailable, falling back to PostgreSQL...")
-        workflows = list_workflows_from_db()
-        if workflows:
-            for w in workflows:
-                status = '✅' if w['active'] else '❌'
-                print(f"{status} {w['id']}: {w['name']}")
-        else:
-            print(f"Error: No workflows found")
-            if response:
-                print(response.text)
+        print("Error: No workflows found")
 
 def get_workflow(workflow_id):
     """Get workflow details"""
@@ -428,19 +457,17 @@ def find_workflow_by_name(name):
     shared DB, that silently missed existing workflows and batch-reimport
     created duplicates (webhook 409 conflicts).
     """
-    cursor = None
-    while True:
-        endpoint = '/workflows?limit=100' + (f'&cursor={cursor}' if cursor else '')
-        response = api_request('GET', endpoint)
-        if not response or response.status_code != 200:
-            return None
-        data = response.json()
-        for w in data.get('data', []):
+    # ⚠️ Rend le PREMIER homonyme, dans l'ordre de l'API — comportement
+    # volontaire : batch-reimport met à jour cet exemplaire-là, et un doublon
+    # obsolète qui survit a déjà fait croire à un réimport raté (2026-07-28).
+    # Le générateur préserve cet ordre et s'arrête au premier trouvé.
+    try:
+        for w in iter_all_workflows(limit=100):
             if w['name'] == name:
                 return w
-        cursor = data.get('nextCursor')
-        if not cursor:
-            return None
+    except RuntimeError:
+        return None
+    return None
 
 
 def get_db_connection():

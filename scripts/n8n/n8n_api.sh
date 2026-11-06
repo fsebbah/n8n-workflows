@@ -4,7 +4,15 @@
 
 # Load configuration from .env.local
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="$SCRIPT_DIR/../.env.local"
+# ⚠️ DEUX niveaux : ce script vit dans scripts/n8n/, le .env.local est à la racine.
+# `5bbb9147 chore(scripts): organize scripts by category` a déplacé ce fichier de
+# scripts/ vers scripts/n8n/ sans corriger le `../` — il cherchait donc
+# scripts/.env.local, qui n'existe pas. Le `if [ -f ]` avale l'absence en silence,
+# et l'erreur qui sortait trois lignes plus bas accusait la clé :
+# « N8N_API_KEY not configured in .env.local » — faux deux fois, la clé était là et
+# ce fichier n'avait pas été lu. Vérifié le 2026-11-06.
+# Le pendant Python (n8n_api.py:23) fait bien `parent.parent.parent`.
+ENV_FILE="$SCRIPT_DIR/../../.env.local"
 
 if [ -f "$ENV_FILE" ]; then
     export $(grep -v '^#' "$ENV_FILE" | grep -E '^N8N_' | xargs)
@@ -48,13 +56,27 @@ case "$1" in
             ENCODED_NAME=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$2'))")
             n8n_api GET "/workflows?name=${ENCODED_NAME}&limit=100"
         else
-            n8n_api GET "/workflows?limit=500"
+            # ⚠️ 250 est le PLAFOND de l'API : limit=500 rend
+            # 400 {\"message\":\"request/query/limit must be <= 250\"} — et le filtre
+            # ci-dessous l'avalait en silence (pas de clé 'data' → boucle vide → sortie 0).
+            # Défaut invisible jusqu'au 2026-11-06 parce que le contrôle de clé échouait
+            # avant d'arriver ici. La ligne 158 (action search) était déjà à 250.
+            n8n_api GET "/workflows?limit=250"
         fi | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-for w in data.get('data', []):
+# Une erreur d'API est un objet SANS 'data' : la dire, plutôt que de rendre une liste vide.
+if 'data' not in data:
+    print(f\"Erreur API n8n : {data.get('message', data)}\", file=sys.stderr)
+    sys.exit(1)
+for w in data['data']:
     status = '✅' if w['active'] else '❌'
     print(f\"{status} {w['id']}: {w['name']}\")
+# Le parc dépasse 250 workflows : ne jamais laisser croire que la liste est entière.
+# C'est le défaut de n8n-workflows#543, où 8 outils étaient invisibles sans aucun signal.
+if data.get('nextCursor'):
+    print(f\"\n⚠️  LISTE TRONQUÉE : {len(data['data'])} affichés, l'API a rendu un curseur.\"
+          f\"\n   Pour la liste entière : python3 scripts/n8n/n8n_api.py list\", file=sys.stderr)
 "
         ;;
 
