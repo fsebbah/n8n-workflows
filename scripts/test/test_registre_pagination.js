@@ -191,6 +191,83 @@ function lancerRegistre(sortieAmont, { hote = 'llm.local:5678' } = {}) {
     verifier('pages relayé depuis l\'amont', (rep._pagination || {}).pages, 2);
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // CE QUI ENTRE AU CATALOGUE — règle de Franck du 2026-11-06 :
+  // « tous les outils sont récupérés en dehors de torah-corpus-* ».
+  //
+  // Le filtre précédent (`!name.includes('TORAH')`) était SENSIBLE À LA CASSE : il
+  // cachait 14 workflows `TORAH - …` et publiait les 27 `Torah …`, dont les trois
+  // torah-corpus-* qui portent 88 % du trafic du parc. Une frontière de catalogue
+  // ne doit pas dépendre d'une graphie — ces contrôles exigent qu'elle dépende du
+  // CHEMIN DE WEBHOOK, qui est le contrat.
+  // ──────────────────────────────────────────────────────────────────────────
+  const outilWf = (id, chemin, { nom = null, methode = 'POST' } = {}) => ({
+    id, active: true, name: nom || `W ${id}`,
+    nodes: [{ type: 'n8n-nodes-base.webhook', parameters: { path: chemin, httpMethod: methode } }],
+  });
+
+  console.log('\nLes torah-corpus-* sortent du catalogue, par le CHEMIN');
+  {
+    const rep = lancerRegistre({ data: [
+      outilWf('a', 'torah-corpus', { nom: 'Torah Corpus' }),
+      outilWf('b', 'torah-corpus-sedarim', { nom: 'Torah Corpus Sedarim' }),
+      outilWf('c', 'torah-corpus-traites', { nom: 'Torah Corpus Traites' }),
+      outilWf('d', 'torah-get-page', { nom: 'TORAH - Get Page' }),
+      outilWf('e', 'torah-translate', { nom: 'Torah Translate Simple' }),
+    ] });
+    verifier('les 3 torah-corpus-* sont absents',
+      Object.keys(rep.tools).sort(), ['torah-get-page', 'torah-translate']);
+    verifier('total_tools suit', rep.total_tools, 2);
+  }
+
+  console.log('\nLa casse du NOM ne décide plus de rien');
+  {
+    // C'était tout le défaut : `TORAH - Get Page` caché, `Torah Get Page Translations`
+    // publié, pour la seule raison que l'un criait et l'autre pas.
+    const rep = lancerRegistre({ data: [
+      outilWf('a', 'torah-get-page', { nom: 'TORAH - Get Page' }),
+      outilWf('b', 'torah-get-page-translations', { nom: 'Torah Get Page Translations' }),
+      outilWf('c', 'torah-document-callback', { nom: 'TORAH---Document-Callback' }),
+    ] });
+    verifier('les trois sont publiés, quelle que soit la graphie',
+      Object.keys(rep.tools).sort(),
+      ['torah-document-callback', 'torah-get-page', 'torah-get-page-translations']);
+  }
+
+  console.log('\nL\'exclusion est ANCRÉE au début du chemin, pas « contient »');
+  {
+    const rep = lancerRegistre({ data: [
+      outilWf('a', 'torah-corpus-futur-variant'),   // préfixe → exclu
+      outilWf('b', 'autre-torah-corpus'),           // contient, mais ne commence pas → gardé
+      outilWf('c', 'torah-corpusculaire'),          // ⚠️ préfixe aussi → exclu, et c'est assumé
+    ] });
+    verifier('un futur torah-corpus-* est exclu sans y toucher',
+      Object.keys(rep.tools), ['autre-torah-corpus']);
+  }
+
+  console.log('\nLes Registry restent exclus, eux');
+  {
+    const rep = lancerRegistre({ data: [
+      outilWf('a', 'mcp/tools/registry', { nom: 'MCP - Tools - Registry' }),
+      outilWf('b', 'torah-registry', { nom: 'Torah - Registry' }),
+      outilWf('c', 'utile', { nom: 'MCP - Quelque Chose' }),
+    ] });
+    verifier('le registre ne se publie pas lui-même', Object.keys(rep.tools), ['utile']);
+  }
+
+  console.log('\nNon-régression structurelle du filtre');
+  {
+    const src = noeud('Build Registry').parameters.jsCode;
+    // On juge le CODE, pas les commentaires — qui citent l'ancien filtre exprès.
+    const sansCommentaires = src.split('\n').map((l) => l.split('//')[0]).join('\n');
+    verifier('plus aucun filtre sur le nom « TORAH »',
+      /includes\('TORAH'\)/.test(sansCommentaires), false);
+    verifier('l\'exclusion est une ancre de début de chemin',
+      /EXCLU_DU_CATALOGUE\s*=\s*\/\^torah-corpus\//.test(sansCommentaires), true);
+    verifier('elle est appliquée au chemin, pas au nom',
+      /EXCLU_DU_CATALOGUE\.test\(String\(webhookPath/.test(sansCommentaires), true);
+  }
+
   console.log(`\nRésultat : ${ok} ok, ${ko} échec(s)\n`);
   process.exit(ko === 0 ? 0 : 1);
 })();
