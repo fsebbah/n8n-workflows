@@ -532,9 +532,14 @@ async function hors_ligne() {
     const v = await valider(IMG, { image_url: 'https://img.test/page.png', mistral_api_key: CLE, include_blocks: true, table_format: 'html' });
     const s = await execCode(IMG, 'Format Response', { json: reponse(M.p12Html) }, { 'Validate Input': v });
     const d = s.data || {};
-    controle('succès, page_details (index, header/footer, blocks, tables), warnings vide',
+    // ⚠️ Attente changée le 2026-11-06 : `warnings` n'est plus vide sur ce chemin.
+    // Ce webhook n'accepte que des images, donc aucune couche texte ne peut exister et
+    // `INPUT_IMAGE` y est posé inconditionnellement (azy.daily#488). Ce n'est pas une
+    // tolérance ajoutée pour faire passer un test : la valeur attendue est la NOUVELLE
+    // valeur exacte, et le contrat de forme (les clés de page_details) est inchangé.
+    controle('succès, page_details (index, header/footer, blocks, tables), warnings = INPUT_IMAGE',
       [s.success, (d.page_details || []).map(p => [p.index, p.footer, p.blocks.length, p.tables.length]), d.warnings],
-      [true, [[1, 'KI TEITZEI ALIYAH 1-ALIYAH 7\n1 / 21', 6, 1], [2, 'KI TEITZEI ALIYAH 1-ALIYAH 7\n2 / 21', 11, 0]], []]);
+      [true, [[1, 'KI TEITZEI ALIYAH 1-ALIYAH 7\n1 / 21', 6, 1], [2, 'KI TEITZEI ALIYAH 1-ALIYAH 7\n2 / 21', 11, 0]], ['INPUT_IMAGE']]);
     controle('data.pages (Mistral brut) inchangé', JSON.stringify(d.pages) === JSON.stringify(M.p12Html.reponse.pages), true);
     const vd = await valider(IMG, { image_base64: 'iVBORw0KGgo=', mistral_api_key: CLE });
     const sd = await execCode(IMG, 'Format Response', { json: reponse(M.p2) }, { 'Validate Input': vd });
