@@ -268,6 +268,97 @@ function lancerRegistre(sortieAmont, { hote = 'llm.local:5678' } = {}) {
       /EXCLU_DU_CATALOGUE\.test\(String\(webhookPath/.test(sansCommentaires), true);
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // `**Surfaces:**` et `**Requires:**` — azy.daily#631
+  //
+  // ⚠️ Avant ce parseur, poser `**Surfaces:** chat` dans une sticky n'avait AUCUN
+  // effet : le nœud ne lisait que Description, InputSchema, Analyzable, Category.
+  // C'est le symétrique du défaut de `category`, qui était lisible et vide ; celui-ci
+  // aurait été saisi et non lu. Même résultat — un champ inutile sans que personne
+  // s'en aperçoive. D'où le contrôle le plus bête de cette section, et le plus utile.
+  // ──────────────────────────────────────────────────────────────────────────
+  const outilSticky = (chemin, contenu) => ({
+    id: chemin, active: true, name: `W ${chemin}`,
+    nodes: [
+      { type: 'n8n-nodes-base.webhook', parameters: { path: chemin, httpMethod: 'POST' } },
+      { type: 'n8n-nodes-base.stickyNote', parameters: { content: contenu } },
+    ],
+  });
+
+  console.log('\nLe parseur lit les deux champs, et rend des TABLEAUX');
+  {
+    const rep = lancerRegistre({ data: [
+      outilSticky('a', '## A\n\n**Surfaces:** chat, email\n**Requires:** files_in'),
+    ] });
+    verifier('surfaces en tableau', rep.tools.a.surfaces, ['chat', 'email']);
+    verifier('requires en tableau', rep.tools.a.requires, ['files_in']);
+  }
+
+  console.log('\nTolérances de saisie : casse, espaces, séparateur');
+  {
+    const rep = lancerRegistre({ data: [
+      outilSticky('a', '**surfaces:**  CHAT ,  Voice_Realtime ,,  AGENDA '),
+      outilSticky('b', '**SURFACES:** chat'),
+    ] });
+    verifier('minusculé, détrimé, vides ignorés',
+      rep.tools.a.surfaces, ['chat', 'voice_realtime', 'agenda']);
+    verifier('étiquette insensible à la casse', rep.tools.b.surfaces, ['chat']);
+  }
+
+  console.log('\n⚠️ ABSENT et [] ne veulent pas dire la même chose');
+  {
+    const rep = lancerRegistre({ data: [
+      outilSticky('a', '## Sans rien'),
+      outilSticky('b', '**Surfaces:**'),
+      outilSticky('c', '**Surfaces:**   '),
+      outilSticky('d', '**Surfaces:** chat\n**Requires:**'),
+    ] });
+    // `absent` = personne n'a tranché. `[]` serait une décision « nulle part » que
+    // personne n'a prise — la fabriquer est le défaut retiré de #557.
+    verifier('aucune étiquette → champ ABSENT, pas []', 'surfaces' in rep.tools.a, false);
+    verifier('étiquette vide → absent aussi (saisie inachevée)', 'surfaces' in rep.tools.b, false);
+    verifier('étiquette blanche → absent', 'surfaces' in rep.tools.c, false);
+    verifier('un champ absent n\'empêche pas l\'autre',
+      [rep.tools.d.surfaces, 'requires' in rep.tools.d], [['chat'], false]);
+  }
+
+  console.log('\nAucune validation : une surface inconnue passe telle quelle');
+  {
+    // Même règle que les modèles LLM : pas de liste blanche côté n8n. Sinon ajouter
+    // une surface au vocabulaire imposerait un réimport de tout le parc.
+    const rep = lancerRegistre({ data: [
+      outilSticky('a', '**Surfaces:** chat, telepathie, email'),
+    ] });
+    verifier('surface inconnue relayée', rep.tools.a.surfaces, ['chat', 'telepathie', 'email']);
+  }
+
+  console.log('\nLe parseur ne perturbe rien d\'autre');
+  {
+    const rep = lancerRegistre({ data: [
+      outilSticky('a', '## A\n\n**Description:**\nFait des choses\n\n**Category:** torah\n**Surfaces:** chat'),
+    ] });
+    verifier('Category toujours lue', rep.tools.a.category, 'torah');
+    verifier('Description toujours lue', rep.tools.a.description, 'Fait des choses');
+    verifier('et Surfaces en plus', rep.tools.a.surfaces, ['chat']);
+  }
+
+  console.log('\nNon-régression : AUCUNE dérivation automatique de requires');
+  {
+    const src = noeud('Build Registry').parameters.jsCode;
+    const code = src.split('\n').map((l) => l.split('//')[0]).join('\n');
+    // Les deux dérivations proposées étaient fausses : `responseFormat: file` vit sur
+    // des httpRequest qui TÉLÉCHARGENT (1 seul workflow rend vraiment un binaire), et
+    // 11 outils acceptent octets OU url donc ne requièrent rien. Un examen du JSON ne
+    // distingue pas entrée et sortie. Si quelqu'un réintroduit une dérivation, ce
+    // contrôle doit rougir et le commentaire du nœud explique pourquoi.
+    verifier('aucune dérivation depuis responseFormat',
+      /responseFormat/.test(code), false);
+    verifier('aucune dérivation depuis respondWith',
+      /respondWith/.test(code), false);
+    verifier('requires vient UNIQUEMENT de la sticky',
+      /const requires = listeStickyNote631\('Requires'\)/.test(code), true);
+  }
+
   console.log(`\nRésultat : ${ok} ok, ${ko} échec(s)\n`);
   process.exit(ko === 0 ? 0 : 1);
 })();
