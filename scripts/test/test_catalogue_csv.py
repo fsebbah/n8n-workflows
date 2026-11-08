@@ -81,11 +81,49 @@ verifier("toutes les lignes du lot ont des exécutions",
          all(int(l["executions_cumulees"]) > 0 for l in trafic), True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-print("\n⚠️ Les colonnes de DÉCISION restent vides")
-remplies = [l["outil"] for l in complet if l["surfaces"] or l["requires"]]
-# Si ce contrôle rougit un jour, c'est que quelqu'un a rempli le CSV — ce qui est
-# le but. Il faudra alors le déplacer vers « le CSV généré », distinct du rempli.
-verifier("aucune surface pré-remplie par le générateur", remplies, [])
+print("\n⚠️ Le générateur n'INVENTE aucune décision")
+# Le contrôle d'origine exigeait que `surfaces` soit vide partout. Il a rougi le
+# 2026-11-08, dès le premier arbitrage — c'était prévu, et son commentaire le disait.
+# L'invariant n'est pas « vide » mais « jamais inventé » : toute valeur présente dans
+# le CSV doit se retrouver dans la PREMIÈRE sticky du workflow, donc avoir été posée
+# par l'injecteur et non fabriquée par le générateur.
+import json as _json
+par_nom = {}
+for _f in (RACINE / "workflows").iterdir():
+    if _f.suffix != ".json":
+        continue
+    try:
+        _wf = _json.loads(_f.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if _wf.get("name"):
+        par_nom[_wf["name"]] = _wf
+
+inventees = []
+for l in complet:
+    if not (l["surfaces"] or l["requires"]):
+        continue
+    wf = par_nom.get(l["workflow"])
+    stickies = [n for n in (wf or {}).get("nodes", [])
+                if n["type"] == "n8n-nodes-base.stickyNote"]
+    contenu = stickies[0]["parameters"].get("content", "") if stickies else ""
+    for champ, col in (("Surfaces", "surfaces"), ("Requires", "requires")):
+        if not l[col]:
+            continue
+        m = re.search(rf"\*\*{champ}:\*\*\s*([^\n*]+)", contenu, re.I)
+        pose = ", ".join(v.strip().lower() for v in m.group(1).split(",") if v.strip()) if m else None
+        if pose != l[col]:
+            inventees.append((l["outil"], col, l[col], pose))
+verifier("toute valeur du CSV vient de la sticky du workflow", inventees, [])
+
+# Et la reprise fonctionne dans les DEUX sens : ce qui est posé en sticky remonte
+# dans le CSV, et ce qui est saisi dans le CSV n'est pas effacé à la régénération.
+verifier("lu_dans_sticky lit une étiquette posée",
+         gen.lu_dans_sticky("## X\n\n**Surfaces:** Chat, EMAIL\n"),
+         {"surfaces": "chat, email"})
+verifier("…et rend vide quand il n'y en a pas", gen.lu_dans_sticky("## X\n"), {})
+verifier("une étiquette vide n'est pas reprise",
+         gen.lu_dans_sticky("## X\n\n**Surfaces:**\n"), {})
 
 # ─────────────────────────────────────────────────────────────────────────────
 print("\nLa provenance de chaque description est dite")
