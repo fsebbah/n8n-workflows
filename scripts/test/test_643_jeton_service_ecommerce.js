@@ -205,6 +205,66 @@ const panne = (msg) => ({ error: { message: msg } });
     verifier('aucun ne garde continueErrorOutput (branche morte)', mauvais, []);
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // ⚠️ L'EN-TÊTE NE SUFFIT PAS : MCP filtre par le SCHÉMA déclaré
+  //
+  // MCP construit les paramètres d'appel avec `_build_from_schema` : un champ NON
+  // déclaré dans l'InputSchema de l'outil est SUPPRIMÉ avant d'atteindre n8n, même
+  // si le plugin le fournit. Les 12 n'avaient AUCUN schéma publié — l'en-tête
+  // `X-Service-Token` serait donc parti VIDE, quoi qu'envoie l'appelant.
+  //
+  // ⚠️ ET LE RISQUE EST SYMÉTRIQUE : déclarer un schéma là où il n'y en avait pas
+  // FAIT filtrer. Un schéma incomplet casserait l'outil en silence — le champ
+  // oublié deviendrait simplement absent. D'où le contrôle « tout champ lu est
+  // déclaré », qui est le plus important de cette section.
+  // ──────────────────────────────────────────────────────────────────────────
+  console.log('\n⚠️ Le SCHÉMA déclare le jeton — sans quoi MCP le supprime');
+  {
+    const schema = (c) => {
+      const st = parChemin.get(c).wf.nodes.find((n) => n.type === 'n8n-nodes-base.stickyNote');
+      const m = /\*\*InputSchema:\*\*\s*```json\s*([\s\S]*?)```/i.exec((st || {parameters:{}}).parameters.content || '');
+      return m ? JSON.parse(m[1]) : null;
+    };
+    const sans = CIBLES.filter((c) => !schema(c));
+    verifier('les 12 publient un InputSchema', sans, []);
+    const sansJeton = CIBLES.filter((c) => !(schema(c).properties || {}).backend_service_token);
+    verifier('les 12 y déclarent backend_service_token', sansJeton, []);
+    // Le jeton n'est PAS requis : l'exiger ferait refuser l'appel avant même
+    // qu'api ne l'exige, et la phase 1 d'api accepte les appels sans jeton.
+    const exige = CIBLES.filter((c) => (schema(c).required || []).includes('backend_service_token'));
+    verifier('…sans le rendre requis', exige, []);
+  }
+
+  console.log('\n⚠️ Tout champ LU par le code est DÉCLARÉ — sinon MCP le supprime');
+  {
+    const manques = [];
+    for (const c of CIBLES) {
+      const { wf } = parChemin.get(c);
+      const st = wf.nodes.find((n) => n.type === 'n8n-nodes-base.stickyNote');
+      const m = /\*\*InputSchema:\*\*\s*```json\s*([\s\S]*?)```/i.exec(st.parameters.content);
+      const declares = new Set(Object.keys(JSON.parse(m[1]).properties || {}));
+      const code = noeud(wf, 'Validate Input').parameters.jsCode;
+      const lus = new Set([...code.matchAll(/(?:body|query)\.([a-z_][a-z0-9_]*)/g)].map((x) => x[1]));
+      for (const champ of lus) if (!declares.has(champ)) manques.push(`${c}.${champ}`);
+    }
+    verifier('aucun champ lu mais non déclaré', manques, []);
+  }
+
+  console.log('\nLa sticky créée est utilisable, pas un artefact');
+  {
+    // Une sticky qui ne porterait qu'un schéma serait illisible, et publierait un
+    // outil sans description de plus — 170 du catalogue sont déjà dans ce cas.
+    const sansDesc = CIBLES.filter((c) => {
+      const st = parChemin.get(c).wf.nodes.find((n) => n.type === 'n8n-nodes-base.stickyNote');
+      return !/\*\*Description[:\s]*\*\*\s*\n?\S/.test(st.parameters.content);
+    });
+    verifier('les 12 portent une **Description:**', sansDesc, []);
+    const pasEnTete = CIBLES.filter((c) =>
+      parChemin.get(c).wf.nodes[0].type !== 'n8n-nodes-base.stickyNote');
+    // `Build Registry` fait nodes.find(stickyNote) : la nôtre doit être la première.
+    verifier('la sticky est le PREMIER nœud (seule lue par le registre)', pasEnTete, []);
+  }
+
   console.log(`\nRésultat : ${ok} ok, ${echecs.length} échec(s)\n`);
   if (echecs.length) { echecs.forEach((e) => console.log(`  - ${e}`)); process.exit(1); }
 })();
