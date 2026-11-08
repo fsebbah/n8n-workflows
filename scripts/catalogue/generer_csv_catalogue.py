@@ -222,7 +222,44 @@ def jet_description(w, chemin, appels):
     return "JET — " + " ; ".join(morceaux)
 
 
-def ligne(w, chemin, cum):
+def deja_arbitre(chemin_csv):
+    """Les `surfaces` / `requires` déjà saisis dans un CSV précédent, par outil.
+
+    ⚠️ DÉFAUT CORRIGÉ LE 2026-11-08. Ces deux fichiers sont GÉNÉRÉS : sans cette
+    reprise, régénérer après une saisie EFFAÇAIT les arbitrages. Un fichier qui
+    mêle des faits produits par un script et des décisions prises par un humain
+    doit préserver les secondes — sinon le script détruit le seul travail qu'il
+    ne sait pas refaire.
+    """
+    out = {}
+    if not Path(chemin_csv).exists():
+        return out
+    with open(chemin_csv, encoding="utf-8") as fh:
+        for l in csv.DictReader(x for x in fh if not x.startswith("#")):
+            garde = {c: (l.get(c) or "").strip() for c in ("surfaces", "requires")}
+            if any(garde.values()):
+                out[l["outil"]] = garde
+    return out
+
+
+def lu_dans_sticky(sticky):
+    """Les étiquettes `**Surfaces:**` / `**Requires:**` déjà POSÉES dans la sticky.
+
+    Après injection, la sticky est la SOURCE DE VÉRITÉ : c'est elle que lit
+    `Build Registry`. Les relire ici rend le CSV auto-cohérent — il reflète ce qui
+    est réellement publié, et non ce qu'on avait saisi un jour dans un tableur.
+    """
+    out = {}
+    for champ in ("Surfaces", "Requires"):
+        m = re.search(rf"\*\*{champ}:\*\*\s*([^\n*]+)", sticky, re.I)
+        if m:
+            vals = [v.strip().lower() for v in m.group(1).split(",") if v.strip()]
+            if vals:
+                out[champ.lower()] = ", ".join(vals)
+    return out
+
+
+def ligne(w, chemin, cum, repris=None):
     sticky = premiere_sticky(w)
     webhooks = [n for n in w["nodes"] if n["type"] == "n8n-nodes-base.webhook"]
     brut = json.dumps(w, ensure_ascii=False)
@@ -235,6 +272,7 @@ def ligne(w, chemin, cum):
 
     m = re.search(r"\*\*Category:\*\*\s*([^\n*]+)", sticky, re.I)
     categorie = m.group(1).strip().lower() if m else ""
+    pose = lu_dans_sticky(sticky)
 
     appels = services_appeles(w)
     if fonction is None:
@@ -268,8 +306,11 @@ def ligne(w, chemin, cum):
         "a_trafic": "oui" if n_exec > 0 else "non",
         # Renseigné après coup : voir `marquer_collisions`.
         "collision_de_chemin": "",
-        "surfaces": "",
-        "requires": "",
+        # Priorité : ce qui est POSÉ dans la sticky (donc publié) ; à défaut, ce qui
+        # a été saisi dans le CSV précédent mais pas encore injecté. Jamais vide par
+        # écrasement — voir `deja_arbitre`.
+        "surfaces": pose.get("surfaces") or (repris or {}).get("surfaces", ""),
+        "requires": pose.get("requires") or (repris or {}).get("requires", ""),
     }
 
 
@@ -310,11 +351,15 @@ def ecrire(chemin_fichier, lignes, entete):
 def main():
     env = config()
     cum = executions()
+    # Reprise des arbitrages des DEUX fichiers : on peut avoir saisi dans l'un.
+    repris = {}
+    for f in (SORTIE / "catalogue-complet.csv", SORTIE / "outils-a-trafic.csv"):
+        repris.update(deja_arbitre(f))
     lignes = []
     for w in workflows_actifs(env):
         chemin = chemin_outil(w)
         if chemin:
-            lignes.append(ligne(w, chemin, cum))
+            lignes.append(ligne(w, chemin, cum, repris.get(chemin)))
     # Trafic décroissant d'abord : on décide des outils qui servent avant les autres.
     lignes.sort(key=lambda l: (-l["executions_cumulees"], l["outil"]))
     n_collisions = marquer_collisions(lignes)
@@ -355,6 +400,9 @@ def main():
            commun + ["", f"VUE D'ENSEMBLE : les {len(lignes)} outils publiés au catalogue.",
                      f"Dont {len(a_trafic)} ont servi ; les {len(lignes)-len(a_trafic)} autres sont à zéro sur 5 semaines."])
 
+    arbitres = [l["outil"] for l in lignes if l["surfaces"] or l["requires"]]
+    if arbitres:
+        print(f"\n  {len(arbitres)} arbitrage(s) repris (sticky ou CSV précédent) — aucun n'est perdu")
     sans_desc = [l["outil"] for l in a_trafic if l["fonction_source"] == "jet"]
     print(f"\n  {len(a_trafic)} outils à trafic, dont {len(sans_desc)} sans description (jet à relire)")
     print(f"  {len(lignes)} lignes pour {chemins} chemins distincts "
