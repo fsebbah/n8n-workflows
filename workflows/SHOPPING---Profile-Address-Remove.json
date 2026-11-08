@@ -21,7 +21,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// VALIDATION INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extraction Project ID ---\nconst projectId = headers['x-project-id'] \n  || headers['X-Project-ID'] \n  || headers['X-Project-Id']\n  || 'unknown';\n\n// --- Validation discord_user_id ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis'\n  };\n}\n\n// --- Validation address_id ---\nif (!body.address_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_ADDRESS_ID',\n    message: 'Le champ \"address_id\" est requis'\n  };\n}\n\n// --- Retour des donnees validees ---\nreturn {\n  error: false,\n  data: {\n    discord_user_id: body.discord_user_id,\n    address_id: body.address_id,\n    project_id: projectId\n  }\n};"
+        "jsCode": "// ============================================\n// VALIDATION INPUT\n// ============================================\n\nconst input = $input.first().json;\nconst body = input.body || {};\nconst headers = input.headers || {};\n\n// --- Extraction Project ID ---\nconst projectId = headers['x-project-id'] \n  || headers['X-Project-ID'] \n  || headers['X-Project-Id']\n  || 'unknown';\n\n// --- Validation discord_user_id ---\nif (!body.discord_user_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_USER_ID',\n    message: 'Le champ \"discord_user_id\" est requis'\n  };\n}\n\n// --- Validation address_id ---\nif (!body.address_id) {\n  return {\n    error: true,\n    error_code: 'MISSING_ADDRESS_ID',\n    message: 'Le champ \"address_id\" est requis'\n  };\n}\n\n// --- Retour des donnees validees ---\nreturn {\n  error: false,\n  data: {\n    // azy.daily#643 — le jeton de service TRANSITE, il n'est pas exigé.\n    //\n    // Le rendre obligatoire ici casserait les 13 outils AVANT que la route d'api ne\n    // l'exige. On le laisse donc passer tel quel, `null` s'il est absent — et c'est\n    // précisément ce que l'essai conjoint doit révéler : si MCP ne le relaie pas,\n    // `jeton_transmis` vaudra false et api verra un appel sans jeton.\n    //\n    // ⚠️ AUCUN repli sur `$env`. Trois workflows du parc font\n    // `body.backend_service_token || $env.BACKEND_SERVICE_TOKEN` : ce repli ferait\n    // MENTIR l'essai, qui réussirait même si rien ne traverse la chaîne.\n    backend_service_token: body.backend_service_token || null,\n    discord_user_id: body.discord_user_id,\n    address_id: body.address_id,\n    project_id: projectId\n  }\n};"
       },
       "id": "addr-rm-0002",
       "name": "Validate Input",
@@ -72,13 +72,23 @@
         "headerParameters": {
           "parameters": [
             {
+              "name": "X-Service-Token",
+              "value": "={{ $json.data.backend_service_token }}"
+            },
+            {
               "name": "X-Project-ID",
               "value": "={{ $json.data.project_id }}"
             }
           ]
         },
         "options": {
-          "timeout": 10000
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
         }
       },
       "id": "addr-rm-0004",
@@ -89,11 +99,11 @@
         672,
         208
       ],
-      "onError": "continueErrorOutput"
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// FORMAT SUCCESS RESPONSE\n// ============================================\n\nconst apiResponse = $input.first().json;\nconst validationData = $('Validate Input').first().json;\n\n// --- Check API errors ---\nif (apiResponse.error || apiResponse.success === false) {\n  return {\n    success: false,\n    error: {\n      code: apiResponse.error?.code || 'API_ERROR',\n      message: apiResponse.error?.message || 'Erreur API',\n      http_status: apiResponse.error?.http_status || 500\n    }\n  };\n}\n\n// --- Success response ---\nreturn {\n  success: true,\n  message: 'Adresse supprimee',\n  deleted_address_id: validationData.data.address_id\n};"
+        "jsCode": "// ============================================\n// FORMAT SUCCESS RESPONSE\n// ============================================\n\n\n// ── azy.daily#643 — lire le STATUT RÉEL, pour que l'essai puisse CONCLURE ─────\n//\n// Avant : le nœud HTTP portait `onError: continueErrorOutput` et sa sortie\n// d'erreur n'était BRANCHÉE NULLE PART. Un échec interrompait donc le workflow\n// avant tout `respondToWebhook`, et n8n fermait la requête avec 200 et un corps\n// VIDE (n8n-workflows#467). Mesuré sur les 13 outils e-commerce.\n//\n// ⚠️ Conséquence pour l'essai conjoint avec api : le jour où leur route exige un\n// jeton, un 401 serait ressorti en « 200 sans rien ». L'essai « est-ce que ça\n// passe ? » aurait répondu OUI sur un refus. Il fallait corriger ceci AVANT de\n// tester, pas après.\n//\n// Le nœud porte maintenant fullResponse + neverError (il émet { statusCode, body }),\n// et onError: continueRegularOutput pour les pannes de transport, où n8n n'émet\n// AUCUN statusCode — le statut réel n'existe alors que dans le message, sous la\n// forme « 401 - {...} ».\nfunction statutReel643(entree) {\n  if (typeof entree.statusCode === 'number') return entree.statusCode;\n  const brut = String((entree.error && entree.error.message) || entree.message || '');\n  const m = brut.match(/(\\d{3})\\s*-\\s*/);\n  if (m) return parseInt(m[1], 10);\n  return (entree.error || entree.code) ? 502 : 200;\n}\nfunction corpsApi643(entree) {\n  if (entree.body !== undefined && entree.body !== null) return entree.body;\n  const brut = String((entree.error && entree.error.message) || entree.message || '');\n  const i = brut.indexOf('{'), j = brut.lastIndexOf('}');\n  if (i < 0 || j <= i) return {};\n  const bloc = brut.slice(i, j + 1);\n  for (const essai of [bloc, bloc.replace(/\\\\\"/g, '\"').replace(/\\\\\\\\/g, '\\\\')]) {\n    try { const o = JSON.parse(essai); if (o && typeof o === 'object') return o; } catch (e) {}\n  }\n  return {};\n}\nfunction messageApi643(corps, defaut) {\n  if (!corps) return defaut;\n  const d = corps.detail;\n  if (typeof d === 'string' && d) return d;\n  if (Array.isArray(d) && d.length) return d.map(e => (e && e.msg) || JSON.stringify(e)).join(' ; ').slice(0, 300);\n  if (typeof corps.message === 'string' && corps.message) return corps.message;\n  if (typeof corps.error === 'string' && corps.error) return corps.error;\n  if (corps.error && typeof corps.error.message === 'string') return corps.error.message;\n  return defaut;\n}\n\nconst enveloppe = $input.first().json;\nconst validationData = $('Validate Input').first().json;\nconst statut643 = statutReel643(enveloppe);\nconst apiResponse = corpsApi643(enveloppe);\nconst jetonTransmis643 = !!validationData.data.backend_service_token;\n\n// --- Check API errors ---\nif (statut643 >= 400 || enveloppe.error || apiResponse.error || apiResponse.success === false) {\n  return {\n    success: false,\n    error: {\n      code: statut643 === 401 || statut643 === 403 ? 'SERVICE_TOKEN_REJECTED'\n            : (apiResponse.error?.code || 'API_ERROR'),\n      message: messageApi643(apiResponse, apiResponse.error?.message || 'Erreur API'),\n      http_status: statut643 >= 400 ? statut643 : (apiResponse.error?.http_status || 502)\n    },\n    // Témoin d'essai : dit si NOUS avons transmis un jeton. Sans lui, un 401 ne\n    // distinguerait pas « MCP ne l'a pas relayé » de « api l'a refusé ».\n    jeton_transmis: jetonTransmis643,\n    _trace: { http_status: statut643 }\n  };\n}\n\n// --- Success response ---\nreturn {\n  success: true,\n  message: 'Adresse supprimee',\n  deleted_address_id: validationData.data.address_id\n};"
       },
       "id": "addr-rm-0005",
       "name": "Format Success Response",
@@ -122,7 +132,7 @@
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": 200
+          "responseCode": "={{ $json.error ? (Number($json.error.http_status) || 502) : 200 }}"
         }
       },
       "id": "addr-rm-0007",
