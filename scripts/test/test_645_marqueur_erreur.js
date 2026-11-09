@@ -125,6 +125,35 @@ for (const [fichier, nbRegles] of CAS) {
   ok('repli qualifié → ne porte toujours pas le jeton',
      !JSON.stringify(rRepli).includes('ya29.'));
 
+  // ── 6 bis · `error_code` à la racine, pour MCP ───────────────────────────
+  // MCP lit un `error_code` À PLAT dans son `_normalize_response`. Le code est donc
+  // publié aux deux endroits, depuis la MÊME variable : `error.code` pour la
+  // structure, `error_code` à la racine pour ce qu'ils lisent déjà. Les deux ne
+  // peuvent pas diverger — et ces contrôles le prouvent sur CHAQUE classe d'erreur,
+  // car une divergence ferait remonter chez eux un code faux, pire qu'un générique.
+  const CLASSES = [
+    ['Unknown message operation: getAll', 'TOOL_OPERATION_UNKNOWN'],
+    ['Authorization failed - please check your credentials', 'GOOGLE_AUTH_REJECTED'],
+    ['404 - not found', 'GOOGLE_NOT_FOUND'],
+    ['429 rate limit exceeded', 'GOOGLE_RATE_LIMITED'],
+    ['socket hang up', 'GOOGLE_API_ERROR'],
+  ];
+  for (const [msg, attendu] of CLASSES) {
+    const r = executer(q, { error: msg });
+    egal(`${attendu} → error_code à la racine`, r.error_code, attendu);
+    ok(`${attendu} → racine et error.code identiques`, r.error_code === r.error.code,
+       `${r.error_code} vs ${r.error.code}`);
+  }
+  const rRepli2 = executer(q, executer(ri, { body: { resource: 'x', operation: 'y' } }));
+  egal('repli → error_code à la racine', rRepli2.error_code, 'TOOL_ROUTE_UNKNOWN');
+  // Sur succès, la clé est PRÉSENTE et nulle : la forme ne change pas selon l'issue,
+  // sinon un appelant qui teste `'error_code' in corps` conclurait au hasard.
+  const rOk = executer(q, reponseGoogle);
+  ok('succès → error_code présent', 'error_code' in rOk);
+  egal('succès → error_code nul', rOk.error_code, null);
+  ok('succès → error_code survit à la sérialisation',
+     'error_code' in JSON.parse(JSON.stringify(rOk)));
+
   // ── 7 · `JSON.stringify` et les clés indéfinies ───────────────────────────
   // ⚠️ `JSON.stringify` LAISSE TOMBER les clés valant `undefined` : c'est ainsi que
   // GUILD - Server Sync avait perdu son champ `success`. Le répondeur sérialise
