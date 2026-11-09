@@ -55,7 +55,8 @@ for (const [fichier, nbRegles] of CAS) {
   const reponseGoogle = { kind: 'calendar#calendarList', items: [{ id: 'a@b.c', accessRole: 'owner' }] };
   const r1 = executer(q, reponseGoogle);
   egal('succès → success=true', r1.success, true);
-  egal('succès → error=null', r1.error, null);
+  ok('succès → aucune clé error (détection par présence sûre)', !('error' in r1),
+     JSON.stringify(r1));
   egal('succès → http_status 200', r1._trace.http_status, 200);
   ok('succès → data rendu INTACT',
      JSON.stringify(r1.data) === JSON.stringify(reponseGoogle),
@@ -146,27 +147,53 @@ for (const [fichier, nbRegles] of CAS) {
   }
   const rRepli2 = executer(q, executer(ri, { body: { resource: 'x', operation: 'y' } }));
   egal('repli → error_code à la racine', rRepli2.error_code, 'TOOL_ROUTE_UNKNOWN');
-  // Sur succès, la clé est PRÉSENTE et nulle : la forme ne change pas selon l'issue,
-  // sinon un appelant qui teste `'error_code' in corps` conclurait au hasard.
+  // ⚠️ Sur succès, les deux clés sont ABSENTES, et c'est le contrôle qui compte.
+  // MCP discrimine erreur/succès sur la PRÉSENCE de la clé
+  // (`"error" in data or "error_code" in data`), en recevant l'enveloppe entière
+  // non déballée. Un `error: null` présent classerait donc tout SUCCÈS en erreur.
+  // Absentes, les clés satisfont la détection par présence ET par valeur.
   const rOk = executer(q, reponseGoogle);
-  ok('succès → error_code présent', 'error_code' in rOk);
-  egal('succès → error_code nul', rOk.error_code, null);
-  ok('succès → error_code survit à la sérialisation',
-     'error_code' in JSON.parse(JSON.stringify(rOk)));
+  ok('succès → PAS de clé error_code', !('error_code' in rOk), JSON.stringify(rOk));
+  ok('succès → PAS de clé error', !('error' in rOk), JSON.stringify(rOk));
+  const serialiseOk = JSON.parse(JSON.stringify(rOk));
+  ok('succès → absence maintenue après sérialisation',
+     !('error' in serialiseOk) && !('error_code' in serialiseOk));
+  ok('succès → le signal positif reste explicite',
+     serialiseOk.success === true && serialiseOk._trace.http_status === 200);
+  // La détection par présence, rejouée telle que MCP la fait.
+  const commeMcp = (corps) => ('error' in corps) || ('error_code' in corps);
+  ok('détection « à la MCP » → succès classé SUCCÈS', commeMcp(rOk) === false);
+  ok('détection « à la MCP » → échec classé ÉCHEC',
+     commeMcp(executer(q, { error: 'Unknown message operation: getAll' })) === true);
+  // Et la détection par valeur, pour ceux qui testent la valeur.
+  ok('détection par valeur → succès', !rOk.error);
+  ok('détection par valeur → échec', !!executer(q, { error: 'socket hang up' }).error);
 
   // ── 7 · `JSON.stringify` et les clés indéfinies ───────────────────────────
   // ⚠️ `JSON.stringify` LAISSE TOMBER les clés valant `undefined` : c'est ainsi que
   // GUILD - Server Sync avait perdu son champ `success`. Le répondeur sérialise
   // `$json`, donc toute clé indéfinie DISPARAÎTRAIT de la réponse.
-  for (const [etiquette, entree] of [['succès', reponseGoogle],
-                                     ['échec', { error: 'Unknown message operation: x' }]]) {
+  for (const [etiquette, entree, attendError] of
+       [['succès', reponseGoogle, false],
+        ['échec', { error: 'Unknown message operation: x' }, true]]) {
     const r = executer(q, entree);
     const serialise = JSON.parse(JSON.stringify(r));
     ok(`${etiquette} → « success » survit à la sérialisation`, 'success' in serialise);
-    ok(`${etiquette} → « error » survit à la sérialisation`, 'error' in serialise);
     ok(`${etiquette} → « data » survit à la sérialisation`, 'data' in serialise);
     ok(`${etiquette} → « _trace.http_status » survit`,
        serialise._trace && typeof serialise._trace.http_status === 'number');
+    // Sur ÉCHEC, les clés d'erreur doivent survivre — `JSON.stringify` laisse
+    // tomber les `undefined`, et c'est ainsi que GUILD - Server Sync avait perdu
+    // son champ `success`. Sur SUCCÈS, elles doivent rester absentes.
+    egal(`${etiquette} → présence de « error » conforme`, 'error' in serialise, attendError);
+    egal(`${etiquette} → présence de « error_code » conforme`,
+         'error_code' in serialise, attendError);
+    if (attendError) {
+      ok(`${etiquette} → error.message non vide`,
+         typeof serialise.error.message === 'string' && serialise.error.message.length > 0);
+      ok(`${etiquette} → http_status cohérent entre error et _trace`,
+         serialise.error.http_status === serialise._trace.http_status);
+    }
   }
 
   // ── 8 · Le câblage ────────────────────────────────────────────────────────
