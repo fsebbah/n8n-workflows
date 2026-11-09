@@ -15,7 +15,7 @@
         "resource": "message",
         "operation": "addLabels",
         "messageId": "={{ $json.body.message_id }}",
-        "labelIds": "={{ $json.body.label_ids }}"
+        "labelIds": "={{ Array.isArray($json.body.label_ids) ? $json.body.label_ids.join(',') : ($json.body.label_ids || '') }}"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
@@ -65,14 +65,10 @@
       "parameters": {
         "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "message",
-        "operation": "getAll",
-        "returnAll": "={{ $json.body.return_all || false }}",
-        "filters": {
-          "q": "={{ $json.body.query || \"\" }}",
-          "sender": "={{ $json.body.sender || \"\" }}",
-          "receivedAfter": "={{ $json.body.received_after || \"\" }}",
-          "receivedBefore": "={{ $json.body.received_before || \"\" }}"
-        }
+        "operation": "search",
+        "query": "={{ $json.body.query || '' }}",
+        "maxResults": "={{ $json.body.max_results || 10 }}",
+        "includeFullMessage": "={{ $json.body.include_full_message || false }}"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
@@ -88,7 +84,7 @@
       "parameters": {
         "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "message",
-        "operation": "markAsRead",
+        "operation": "markRead",
         "messageId": "={{ $json.body.message_id }}"
       },
       "typeVersion": 1,
@@ -105,7 +101,7 @@
       "parameters": {
         "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "message",
-        "operation": "markAsUnread",
+        "operation": "markUnread",
         "messageId": "={{ $json.body.message_id }}"
       },
       "typeVersion": 1,
@@ -124,11 +120,8 @@
         "resource": "message",
         "operation": "reply",
         "messageId": "={{ $json.body.message_id }}",
-        "message": "={{ $json.body.message }}",
-        "options": {
-          "ccList": "={{ $json.body.cc || \"\" }}",
-          "bccList": "={{ $json.body.bcc || \"\" }}"
-        }
+        "to": "={{ $json.body.to || '' }}",
+        "body": "={{ $json.body.body || $json.body.message || '' }}"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
@@ -146,7 +139,7 @@
         "resource": "message",
         "operation": "removeLabels",
         "messageId": "={{ $json.body.message_id }}",
-        "labelIds": "={{ $json.body.label_ids }}"
+        "labelIds": "={{ Array.isArray($json.body.label_ids) ? $json.body.label_ids.join(',') : ($json.body.label_ids || '') }}"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
@@ -162,7 +155,7 @@
       "parameters": {
         "width": 660,
         "height": 460,
-        "content": "## Message Tools\n\n**Description:**\nServeur Gmail : lire, envoyer et classer les messages, fils et brouillons du compte Google de l'utilisateur. Le jeton OAuth voyage dans le corps.\n\n**InputSchema:**\n```json\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"operation\"\n  ],\n  \"properties\": {\n    \"attachments\": {\n      \"type\": \"array\"\n    },\n    \"bcc\": {\n      \"type\": \"string\"\n    },\n    \"body\": {\n      \"type\": \"string\"\n    },\n    \"cc\": {\n      \"type\": \"string\"\n    },\n    \"draft_id\": {\n      \"type\": \"string\"\n    },\n    \"include_spam_trash\": {\n      \"type\": \"boolean\"\n    },\n    \"label_id\": {\n      \"type\": \"string\"\n    },\n    \"label_ids\": {\n      \"type\": \"array\"\n    },\n    \"label_name\": {\n      \"type\": \"string\"\n    },\n    \"message\": {\n      \"type\": \"string\"\n    },\n    \"message_id\": {\n      \"type\": \"string\"\n    },\n    \"oauth_token\": {\n      \"type\": \"string\",\n      \"description\": \"jeton OAuth Google (nom émis par MCP)\"\n    },\n    \"operation\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"addLabels\",\n        \"create\",\n        \"delete\",\n        \"get\",\n        \"getAll\",\n        \"removeLabels\",\n        \"reply\",\n        \"send\"\n      ]\n    },\n    \"query\": {\n      \"type\": \"string\"\n    },\n    \"received_after\": {\n      \"type\": \"string\"\n    },\n    \"received_before\": {\n      \"type\": \"string\"\n    },\n    \"resource\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"draft\",\n        \"label\",\n        \"message\",\n        \"thread\"\n      ],\n      \"description\": \"injecté par MCP pour ce serveur ; à fournir par les appelants directs\"\n    },\n    \"return_all\": {\n      \"type\": \"boolean\"\n    },\n    \"sender\": {\n      \"type\": \"string\"\n    },\n    \"subject\": {\n      \"type\": \"string\"\n    },\n    \"thread_id\": {\n      \"type\": \"string\"\n    },\n    \"to\": {\n      \"type\": \"string\"\n    },\n    \"access_token\": {\n      \"type\": \"string\",\n      \"description\": \"jeton OAuth Google (nom historique, équivalent)\"\n    }\n  }\n}\n```\n\n_Schéma déclaré le 2026-11-09 (azy.daily#645). Avant cela ce serveur publiait un\nschéma VIDE, et le `_build_from_schema` de MCP retirait `operation` avant qu'il\nn'atteigne le `Switch` : l'outil était déclaré au catalogue mais **inappelable**.\nAucune exécution n'était possible, pas seulement aucune observée._\n\n_⚠️ Toute évolution qui lit un nouveau champ du corps doit l'ajouter ICI AUSSI,\nsinon MCP le supprimera et il n'arrivera jamais. Les champs ci-dessus sont relevés\nsur les expressions `$json.body.X` de ce workflow._\n\n_⚠️ Le jeton OAuth est accepté sous `oauth_token` (nom émis par MCP) **ou**\n`access_token` (nom historique, utilisé par les appelants directs). Les nœuds lisent\n`oauth_token || access_token` : un seul des deux suffit. Jamais de `$env`._\n\n**Paires `resource` / `operation` appelables** (les routes non implémentées en sont volontairement absentes) :\n\n| resource | operation |\n|---|---|\n| `message` | `get` |\n| `message` | `delete` |\n| `message` | `reply` |\n| `message` | `send` |\n| `message` | `addLabels` |\n| `message` | `removeLabels` |\n| `thread` | `get` |\n| `thread` | `getAll` |\n| `label` | `get` |\n| `label` | `getAll` |\n| `label` | `create` |\n| `label` | `delete` |\n| `draft` | `get` |\n| `draft` | `getAll` |\n| `draft` | `create` |\n| `draft` | `delete` |\n"
+        "content": "## Message Tools\n\n**Description:**\nServeur Gmail : lire, chercher, envoyer, classer les messages, fils et brouillons du compte Google de l'utilisateur.\n\n**InputSchema:**\n```json\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"operation\"\n  ],\n  \"properties\": {\n    \"message_id\": {\n      \"type\": \"string\"\n    },\n    \"include_full_message\": {\n      \"type\": \"boolean\"\n    },\n    \"max_results\": {\n      \"type\": \"integer\"\n    },\n    \"query\": {\n      \"type\": \"string\"\n    },\n    \"body\": {\n      \"type\": \"string\"\n    },\n    \"message\": {\n      \"type\": \"string\"\n    },\n    \"to\": {\n      \"type\": \"string\"\n    },\n    \"label_ids\": {\n      \"type\": \"array\"\n    },\n    \"label_id\": {\n      \"type\": \"string\"\n    },\n    \"label_name\": {\n      \"type\": \"string\"\n    },\n    \"attachments\": {\n      \"type\": \"array\"\n    },\n    \"bcc\": {\n      \"type\": \"string\"\n    },\n    \"cc\": {\n      \"type\": \"string\"\n    },\n    \"subject\": {\n      \"type\": \"string\"\n    },\n    \"draft_id\": {\n      \"type\": \"string\"\n    },\n    \"thread_id\": {\n      \"type\": \"string\"\n    },\n    \"operation\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"addLabels\",\n        \"create\",\n        \"delete\",\n        \"get\",\n        \"getAll\",\n        \"markAsRead\",\n        \"markAsUnread\",\n        \"removeLabels\",\n        \"reply\",\n        \"send\"\n      ],\n      \"description\": \"opération à exécuter\"\n    },\n    \"resource\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"draft\",\n        \"label\",\n        \"message\",\n        \"thread\"\n      ],\n      \"description\": \"ressource visée ; MCP fournit un défaut pour ce serveur, le déclarer permet de l'écraser\"\n    },\n    \"oauth_token\": {\n      \"type\": \"string\",\n      \"description\": \"jeton OAuth Google (nom émis par MCP)\"\n    },\n    \"access_token\": {\n      \"type\": \"string\",\n      \"description\": \"jeton OAuth Google (nom historique, équivalent)\"\n    }\n  }\n}\n```\n\n_Généré le 2026-11-09 par `scripts/audit/generer_schemas_google.py` depuis la matrice\ndu câblage réel (azy.daily#642 / #645). **Ne pas modifier à la main** : régénérer._\n\n_Ne figurent ici que les champs qu'une opération SAINE honore RÉELLEMENT. Un champ\nque le nœud ignore est volontairement absent : le déclarer ferait croire à un\nfiltrage qui n'a pas lieu — la même panne silencieuse, un cran plus loin._\n\n_⚠️ MCP retire tout champ hors schéma. Toute évolution du workflow qui lit un\nnouveau champ du corps doit être suivie d'une régénération, sinon le champ\nn'arrivera jamais._\n\n_⚠️ Jeton OAuth accepté sous `oauth_token` (nom émis par MCP) **ou** `access_token`\n(nom historique des appelants directs). Les nœuds lisent `oauth_token ||\naccess_token`. Jamais de `$env`._\n\n**Paires appelables** — champs honorés, et si l'opération FILTRE :\n\n| resource | operation | champs honorés | listing |\n|---|---|---|---|\n| `message` | `get` | `message_id` | liste-seule |\n| `message` | `getAll` | `include_full_message`, `max_results`, `query` | **cherchable** |\n| `message` | `delete` | `message_id` | liste-seule |\n| `message` | `reply` | `body`, `message`, `message_id`, `to` | liste-seule |\n| `message` | `markAsRead` | `message_id` | liste-seule |\n| `message` | `markAsUnread` | `message_id` | liste-seule |\n| `message` | `addLabels` | `label_ids`, `message_id` | liste-seule |\n| `message` | `removeLabels` | `label_ids`, `message_id` | liste-seule |\n| `label` | `getAll` | — | liste-seule |\n| `label` | `get` | `label_id` | liste-seule |\n| `label` | `create` | `label_name` | liste-seule |\n| `label` | `delete` | `label_id` | liste-seule |\n| `draft` | `create` | `attachments`, `bcc`, `body`, `cc`, `message`, `subject`, `to` | liste-seule |\n| `draft` | `get` | `draft_id` | liste-seule |\n| `draft` | `getAll` | `max_results` | liste-seule |\n| `draft` | `delete` | `draft_id` | liste-seule |\n| `thread` | `getAll` | `max_results` | liste-seule |\n| `thread` | `get` | `thread_id` | liste-seule |\n| `thread` | `addLabels` | `label_ids`, `thread_id` | liste-seule |\n| `message` | `send` | `attachments`, `bcc`, `body`, `cc`, `subject`, `to` | liste-seule |\n\n**Non offertes par ce serveur** (absentes de l'enum, un agent ne peut pas les demander) : `thread/reply`, `thread/removeLabels`.\n"
       },
       "typeVersion": 1
     },
@@ -177,8 +170,7 @@
       "parameters": {
         "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "label",
-        "operation": "getAll",
-        "returnAll": "={{ $json.body.return_all || true }}"
+        "operation": "getAll"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
@@ -229,8 +221,8 @@
         "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "label",
         "operation": "create",
-        "name": "={{ $json.body.label_name }}",
-        "options": {}
+        "options": {},
+        "labelName": "={{ $json.body.label_name }}"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
@@ -263,7 +255,7 @@
         "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "draft",
         "operation": "delete",
-        "messageId": "={{ $json.body.draft_id }}"
+        "draftId": "={{ $json.body.draft_id }}"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
@@ -280,12 +272,12 @@
         "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "draft",
         "operation": "create",
-        "subject": "={{ $json.body.subject }}",
-        "message": "={{ $json.body.message }}",
-        "options": {
-          "ccList": "={{ $json.body.cc || \"\" }}",
-          "bccList": "={{ $json.body.bcc || \"\" }}"
-        }
+        "subject": "={{ $json.body.subject || '' }}",
+        "to": "={{ $json.body.to || '' }}",
+        "body": "={{ $json.body.body || $json.body.message || '' }}",
+        "cc": "={{ $json.body.cc || '' }}",
+        "bcc": "={{ $json.body.bcc || '' }}",
+        "attachments": "={{ $json.body.attachments || [] }}"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
@@ -302,8 +294,8 @@
         "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "draft",
         "operation": "get",
-        "messageId": "={{ $json.body.draft_id }}",
-        "options": {}
+        "options": {},
+        "draftId": "={{ $json.body.draft_id }}"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
@@ -320,10 +312,7 @@
         "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "draft",
         "operation": "getAll",
-        "returnAll": "={{ $json.body.return_all || false }}",
-        "options": {
-          "includeSpamTrash": "={{ $json.body.include_spam_trash || false }}"
-        }
+        "maxResults": "={{ $json.body.max_results || 10 }}"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
@@ -356,12 +345,7 @@
         "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "thread",
         "operation": "getAll",
-        "returnAll": "={{ $json.body.return_all || false }}",
-        "filters": {
-          "q": "={{ $json.body.query || \"\" }}",
-          "receivedAfter": "={{ $json.body.received_after || \"\" }}",
-          "receivedBefore": "={{ $json.body.received_before || \"\" }}"
-        }
+        "maxResults": "={{ $json.body.max_results || 10 }}"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
@@ -397,9 +381,9 @@
       "parameters": {
         "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "thread",
-        "operation": "addLabels",
+        "operation": "modify",
         "threadId": "={{ $json.body.thread_id }}",
-        "labelIds": "={{ $json.body.label_ids }}"
+        "labelIds": "={{ Array.isArray($json.body.label_ids) ? $json.body.label_ids.join(',') : ($json.body.label_ids || '') }}"
       },
       "typeVersion": 1,
       "onError": "continueRegularOutput"
