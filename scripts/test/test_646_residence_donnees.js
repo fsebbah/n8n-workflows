@@ -33,6 +33,20 @@ const EXIGENCES = {
     interdit: 'api.mathpix.com',
     motif: 'OCR de copies d\'élèves — décision de Franck du 2026-11-10',
   },
+  // ⚠️ AJOUTÉ LE 2026-11-10 APRÈS COUP, et c'est l'oubli qui compte.
+  // J'avais corrigé `MCP - Mathpix` (0 exécution en 41 jours) et MANQUÉ celui-ci, qui
+  // en a 45 — c'est-à-dire le seul des deux qui serve réellement. L'équipe desktop l'a
+  // trouvé en lisant le code de la chaîne : chat.api `/api/ocr/math` → MCP → `/webhook/
+  // mathpix` pour une image, `/webhook/pdf-ocr` avec `provider=mathpix` pour un PDF.
+  //
+  // Et j'en avais tiré la mauvaise conclusion : voyant 0 exécution sur `mathpix`, j'ai
+  // écrit que leur chaîne « ne passait pas par nous ». Zéro trafic ne dit RIEN du
+  // câblage — c'est l'erreur que je corrigeais chez les autres depuis ce matin.
+  'MCP_-_PDF_OCR.json': {
+    attendu: 'eu.api.mathpix.com',
+    interdit: 'api.mathpix.com',
+    motif: 'PDF de copies d\'élèves, 45 exécutions sur 41 jours — le chemin réellement emprunté',
+  },
 };
 
 for (const [fichier, ex] of Object.entries(EXIGENCES)) {
