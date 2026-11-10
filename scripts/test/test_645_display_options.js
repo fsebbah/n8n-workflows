@@ -130,5 +130,40 @@ console.log(`  (${clauses} clause(s) \`hide\` examinée(s) dans ${fichiers.lengt
   }
 }
 
+// ── `thread/removeLabels` : elle doit RETIRER, et n8n doit rendre son `threadId` ─────
+// Elle était MORTE (absente du nœud) alors que le workflow l'appelait. Deux pièges,
+// chacun suffisant à la faire échouer d'une manière différente :
+//  • la mapper sur `modify` l'aurait fait AJOUTER les étiquettes au lieu de les retirer,
+//    car `threads.modify` n'envoyait que `addLabelIds` ;
+//  • sans `removeLabels` dans les `displayOptions` de `threadId`, n8n refuse de rendre
+//    le paramètre et la route meurt sur « Could not get parameter » — la panne des 11
+//    routes Classroom, invisible à toute analyse du câblage.
+{
+  const f = path.join(RACINE, 'custom-nodes', 'n8n-nodes-gmail-dynamic',
+                      'nodes', 'GmailToolDynamic', 'GmailToolDynamic.node.ts');
+  const src = fs.readFileSync(f, 'utf8');
+  const bloc = src.match(/case 'removeLabels': \{[\s\S]*?\n    \}/g) || [];
+  const fils = bloc.filter(b => b.includes('threadId'));
+  ok('gmail → `thread/removeLabels` est implémentée', fils.length === 1,
+     `${fils.length} implémentation(s) trouvée(s)`);
+  if (fils.length === 1) {
+    ok('gmail → elle envoie `removeLabelIds` (elle RETIRE)',
+       fils[0].includes('removeLabelIds'));
+    ok('gmail → elle n\'envoie PAS `addLabelIds` (sinon elle AJOUTERAIT)',
+       !fils[0].includes('addLabelIds'), fils[0].slice(0, 200));
+    ok('gmail → elle poste bien sur /threads/.../modify',
+       /\/threads\/\$\{threadId\}\/modify/.test(fils[0]));
+  }
+  // La visibilité, sans quoi tout le reste est inutile.
+  const dThread = src.match(/name: 'threadId'[\s\S]{0,900}?displayOptions:\s*\{([\s\S]*?)\n        \},/);
+  ok('gmail → `threadId` est OFFERT à `removeLabels`',
+     !!dThread && dThread[1].includes("'removeLabels'"),
+     dThread ? dThread[1].replace(/\s+/g, ' ').slice(0, 200) : 'introuvable');
+  // Et l'opération doit figurer dans la liste offerte pour la ressource `thread`.
+  const liste = src.match(/show: \{ resource: \['thread'\] \},[\s\S]{0,900}?options: \[([\s\S]*?)\],/);
+  ok('gmail → `removeLabels` figure dans les opérations de la ressource `thread`',
+     !!liste && liste[1].includes("value: 'removeLabels'"));
+}
+
 console.log(`\n${reussis} contrôles réussis, ${echoues} échoués`);
 process.exit(echoues ? 1 : 0);
