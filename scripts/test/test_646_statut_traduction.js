@@ -122,5 +122,43 @@ const noeud = (n) => wf.nodes.find((x) => x.name === n);
      /NE SONT PAS conservées/.test((sticky || {}).parameters?.content || ''));
 }
 
+
+// ── 5 · `document-job-status` : lecture échouée ≠ job en échec ──────────────
+// MESURÉ LE 2026-11-10, juste après avoir appris à `Mark Complete` à écrire 'failed' :
+//     GET /webhook/document-job-status?job_id=…
+//     → {"success":false,"status":null,"error":{"code":200,
+//        "message":"Aucune page traduite : …","status":"JOB_NOT_FOUND"}}
+// Le message était le NÔTRE — le job avait donc bien été lu — mais la réponse disait
+// `status: null` et JOB_NOT_FOUND, c'est-à-dire « je ne trouve pas ce job ».
+// Cause : `if (code >= 400 || !data || data.error)` confondait l'échec de la LECTURE
+// avec un job qui PORTE une erreur. Le défaut existait depuis le début et restait
+// invisible : aucun job ne portait d'`error` avant ce correctif. Corriger un maillon
+// révèle les hypothèses du suivant.
+{
+  const js = JSON.parse(fs.readFileSync(
+    path.join(RACINE, 'workflows', 'DOCUMENT_-_Job_Status.json'), 'utf8'));
+  const n = (nom) => js.nodes.find((x) => x.name === nom).parameters.jsCode;
+  const ex = n('Examiner Statut');
+  ok('`Examiner Statut` ne confond plus lecture échouée et job en échec',
+     !ex.includes('|| !data || data.error)'),
+     'un job `status: failed` ressortirait en JOB_NOT_FOUND avec status: null');
+  ok('`Examiner Statut` reconnaît un job `failed`', ex.includes("data.status === 'failed'"));
+  ok('`Examiner Statut` conserve `status`, `progress` et `output` d\'un job en échec',
+     /status: data\.status \|\| 'failed'/.test(ex) && /progress: data\.progress/.test(ex)
+     && /output: data\.output/.test(ex));
+  ok('`Examiner Statut` relaie le code sémantique du job, pas JOB_NOT_FOUND',
+     /status: data\?\.error\?\.code \|\| 'JOB_FAILED'/.test(ex));
+
+  const ec = n('En Cours');
+  // ⚠️ MCP discrimine sur la PRÉSENCE de la clé `error`, pas sur sa valeur : poser
+  // `error: null` sur un job sain le faisait lire comme un échec. Même défaut que le
+  // `Respond Success` de Classroom (#645).
+  ok('`En Cours` ne pose plus `error: null` inconditionnellement',
+     !/error: j\.error \|\| null/.test(ec) && /if \(j\.error\) reponse\.error/.test(ec));
+  ok('`En Cours` conserve `output` (translation_status, pages_translated, pages_failed)',
+     /output: j\.output/.test(ec),
+     'sans lui, « failed » ne dit pas combien de pages ont échoué');
+}
+
 console.log(`\n${reussis} contrôles réussis, ${echoues} échoués`);
 process.exit(echoues ? 1 : 0);
