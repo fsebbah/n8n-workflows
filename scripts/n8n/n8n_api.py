@@ -406,6 +406,27 @@ def update_workflow(workflow_id, json_file, activate_after=True):
     with open(json_file) as f:
         workflow_data = json.load(f)
 
+    # ── azy.daily#646 — NE PAS RÉACTIVER CE QUE LE FICHIER DIT INACTIF ──────────
+    #
+    # `activate_after` valait True inconditionnellement, et `batch_reimport` le passe
+    # toujours à True. Un réimport tentait donc d'activer un workflow même quand son
+    # fichier le déclare inactif — et l'échec d'activation est NORMAL dans ce cas.
+    #
+    # Vécu le 2026-11-10 sur `Torah Translation Orchestrator` : son fichier porte
+    # `active: true` et le webhook `POST /webhook/torah-translate-batch`, mais ce chemin
+    # a été RÉATTRIBUÉ à `Torah Batch Dispatcher` (PR #409), qui est actif. n8n refuse —
+    # à juste titre — d'activer un second workflow sur la même paire (méthode, chemin).
+    # Le réimport semblait donc échouer alors qu'il faisait exactement ce qu'il devait.
+    #
+    # ⚠️ LE DÉFAUT PAR DÉFAUT EST `True`, ET C'EST VITAL. 13 fichiers du dépôt n'ont
+    # AUCUNE clé `active` — dont `Torah Batch Dispatcher`, qui est actif en production.
+    # Mettre False par défaut les désactiverait au prochain réimport. On n'honore donc
+    # qu'un `active: false` EXPLICITE. Mesuré : 3 fichiers seulement, les trois
+    # `BETA - *`, et aucun n'est actif sur l'instance.
+    if workflow_data.get('active') is False and activate_after:
+        print("   ⏸️  le fichier déclare `active: false` — pas de réactivation")
+        activate_after = False
+
     # Remove properties that shouldn't be in PUT request
     # NOTE: 'active' is READ-ONLY on PUT - must use /activate endpoint instead
     properties_to_remove = [
