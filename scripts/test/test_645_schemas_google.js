@@ -60,7 +60,25 @@ const FICHIERS = {
   'mcp-calendar': 'MCP_-_Google_Calendar_Server.json',
   'mcp-contacts': 'MCP_-_Google_Contacts_Server.json',
   'mcp-drive': 'MCP_-_Google_Drive_Server.json',
+  // Classroom a rejoint la liste le 2026-11-10. Il en était absent parce que ses 33
+  // paires étaient classées « indéterminées, source du nœud hors dépôt » : faux, le
+  // résolveur découpait `CUSTOM.classroomToolDynamic` sur le point et cherchait un
+  // répertoire `CUSTOM`. Corrigé, la matrice rend 33 SAINES.
+  'mcp-classroom': 'MCP_-_Google_Classroom_Server.json',
 };
+
+// ⚠️ Le canal du jeton N'EST PAS le même partout, et l'uniformiser dans le test
+// aurait fait échouer Classroom à tort. Lui seul lit l'en-tête `x-google-access-token`
+// (nœud `Extract Token (RFC-089)`), qu'il hisse à la racine de l'item : ses nœuds
+// lisent donc `$json.access_token`, pas `$json.body.*`. Les quatre autres ne
+// connaissent que le corps.
+const LECTURE_JETON = {
+  'mcp-classroom': [
+    "$json.headers['x-google-access-token'] || $json.body.oauth_token || $json.body.access_token",
+    '$json.access_token',
+  ],
+};
+const LECTURE_JETON_DEFAUT = ['$json.body.oauth_token || $json.body.access_token'];
 
 for (const [chemin, fichier] of Object.entries(FICHIERS)) {
   const wf = JSON.parse(fs.readFileSync(path.join(RACINE, 'workflows', fichier), 'utf8'));
@@ -112,8 +130,9 @@ for (const [chemin, fichier] of Object.entries(FICHIERS)) {
 
   // ── 4 · Le jeton, lu en tolérant, et jamais depuis $env ──────────────────
   const brut = JSON.stringify(wf);
-  ok(`${chemin} → lecture \`oauth_token || access_token\``,
-     brut.includes('$json.body.oauth_token || $json.body.access_token'));
+  for (const attendu of (LECTURE_JETON[chemin] || LECTURE_JETON_DEFAUT)) {
+    ok(`${chemin} → lecture du jeton : \`${attendu}\``, brut.includes(attendu));
+  }
   ok(`${chemin} → aucun \`$env\` porteur de jeton`, !/\$env\.[A-Z_]*(TOKEN|KEY)/.test(brut));
 }
 

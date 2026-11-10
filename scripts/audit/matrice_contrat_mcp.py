@@ -35,8 +35,18 @@ import sys
 RACINE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TABLEAUX = {"attendees", "label_ids", "resource_names", "attachments", "person_fields"}
 BOOLEENS = {"all_day", "single_events", "return_all", "include_spam_trash",
-            "include_images", "include_full_message"}
-ENTIERS = {"max_results", "page_size", "limit", "max_files", "max_points", "imap_port"}
+            "include_images", "include_full_message",
+            # additif Agenda du 2026-11-10 (#645)
+            "add_google_meet", "use_default_reminders"}
+ENTIERS = {"max_results", "page_size", "limit", "max_files", "imap_port",
+           # additif Agenda du 2026-11-10 (#645) — des minutes, des comptes
+           "reminder_email", "reminder_popup", "recurrence_count"}
+# ⚠️ DISTINCTS DES ENTIERS, et c'est mesuré, pas supposé : le nœud Classroom lit
+# `assignedGrade`/`draftGrade`/`maxPoints` `as number`, et l'API Google les typent
+# `double` — une note sur 20 vaut 9,5. Le schéma écrit à la main déclarait
+# `assigned_grade` et `draft_grade` en `string` : un agent envoyait "15", le nœud
+# le passait tel quel, et une note arrivait en chaîne. Troisième classe de défaut.
+NOMBRES = {"assigned_grade", "draft_grade", "max_points"}
 # Params du nœud qui dénotent une RECHERCHE : s'ils sont honorés, l'opération filtre.
 PARAMS_DE_RECHERCHE = {"query", "q", "filters", "searchQuery"}
 IGNORE = {"accessToken", "resource", "operation"}
@@ -45,6 +55,7 @@ IGNORE = {"accessToken", "resource", "operation"}
 def typer(c: str) -> str:
     if c in TABLEAUX: return "array"
     if c in BOOLEENS: return "boolean"
+    if c in NOMBRES: return "number"
     if c in ENTIERS: return "integer"
     return "string"
 
@@ -136,9 +147,26 @@ def champs_du_corps(expression) -> list:
 
 
 def source_du_noeud(type_noeud: str):
-    paquet = type_noeud.split(".")[0]
+    """Fichier .node.ts d'un type de nœud, y compris les types préfixés `CUSTOM.`.
+
+    ⚠️ CE QUI RENDAIT CLASSROOM « INDÉTERMINÉ » (corrigé le 2026-11-10)
+    n8n nomme `CUSTOM` le paquet des nœuds chargés depuis son répertoire custom
+    (`N8N_CUSTOM_EXTENSIONS`), au lieu du nom du paquet npm. Le type vaut donc
+    `CUSTOM.classroomToolDynamic` et non `n8n-nodes-classroom-dynamic.classroomToolDynamic`.
+    Découper sur le point donnait « CUSTOM », un répertoire qui n'existe pas — et les
+    33 paires de Classroom étaient déclarées non vérifiables alors que leur source EST
+    dans le dépôt. On retombe alors sur le nom du nœud (`xToolDynamic` -> `XToolDynamic`).
+    """
+    paquet, _, nom = type_noeud.partition(".")
     t = glob.glob(os.path.join(RACINE, "custom-nodes", paquet, "nodes", "*", "*.node.ts"))
-    return t[0] if t else None
+    if t:
+        return t[0]
+    if nom:
+        attendu = nom[0].upper() + nom[1:] + ".node.ts"
+        t = glob.glob(os.path.join(RACINE, "custom-nodes", "*", "nodes", "*", attendu))
+        if t:
+            return t[0]
+    return None
 
 
 def matrice(chemin_wf: str):

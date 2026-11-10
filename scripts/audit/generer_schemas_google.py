@@ -31,10 +31,117 @@ DESCRIPTIONS = {
                     "les fiches de contact du compte Google de l'utilisateur.",
     "mcp-drive": "Serveur Google Drive : lister, chercher, lire, créer, déplacer et partager "
                  "les fichiers et dossiers du compte Google de l'utilisateur.",
+    "mcp-classroom": "Serveur Google Classroom : cours, devoirs, copies rendues, notes, "
+                     "élèves, enseignants, annonces et thèmes du compte Google de "
+                     "l'utilisateur.",
 }
-# Classroom est volontairement absent : ses 33 paires sont INDÉTERMINÉES (nœud
-# `CUSTOM.classroomToolDynamic` hors dépôt). Générer un schéma pour des paires non
-# vérifiées reviendrait à promettre ce qu'on ne sait pas tenir.
+# ⚠️ CLASSROOM A REJOINT LE GÉNÉRATEUR LE 2026-11-10, et voici pourquoi il en était sorti.
+# Ses 33 paires étaient classées INDÉTERMINÉES « nœud hors dépôt ». C'était faux : la
+# source EST dans le dépôt (`n8n-nodes-classroom-dynamic`), mais son type de nœud vaut
+# `CUSTOM.classroomToolDynamic` — n8n nomme `CUSTOM` le paquet des nœuds chargés depuis
+# son répertoire custom — et le résolveur découpait sur le point. Corrigé : 33 SAINES,
+# zéro morte, zéro mal câblée. C'est le serveur le mieux raccordé des cinq.
+#
+# Son schéma existait, mais ÉCRIT À LA MAIN, avec trois types faux que la matrice
+# contredit : `state` en `boolean` quand le nœud le lit `as string` (PUBLISHED/DRAFT),
+# `assigned_grade` et `draft_grade` en `string` quand le nœud les lit `as number`.
+# Il déclarait aussi `google_account_id`, que SEUL le nœud `Extract Token` pose et que
+# PLUS AUCUN nœud ne lit : un sélecteur de compte promis, jamais branché. Le compte est
+# déterminé par le jeton, et par lui seul — fait à retenir pour #645/#646. Généré, le
+# schéma ne le déclare plus : la matrice ne voit que ce qui est réellement honoré.
+
+# ⚠️ VOCABULAIRE FERMÉ ET UNITÉS — sans quoi l'additif est inutilisable.
+# La matrice sait QUELS champs sont honorés et de quel TYPE. Elle ne sait pas que
+# `recurrence` n'accepte que quatre mots, ni que `reminder_email` compte des MINUTES.
+# Un champ déclaré `string` sans liste fermée oblige l'agent à deviner : il écrira
+# « every day », le workflow traduira en '' et l'événement sortira non récurrent,
+# SANS erreur. C'est la panne silencieuse habituelle, déplacée d'un cran dans le LLM.
+#
+# Les listes ci-dessous sont relevées sur les `options` du nœud (CalendarToolDynamic
+# lignes ~240-370) et sur la table de traduction posée par le workflow : l'agent parle
+# en mots (`daily`, `tomato`), l'expression du workflow les convertit en RRULE et en
+# identifiant de couleur Google. Toute modification de l'une doit suivre l'autre.
+ENUMS_CHAMPS = {
+    "mcp-calendar": {
+        "recurrence": ["daily", "weekly", "monthly", "yearly"],
+        "visibility": ["default", "public", "private", "confidential"],
+        "status": ["confirmed", "tentative", "cancelled"],
+        "color_id": ["lavender", "sage", "grape", "flamingo", "banana", "tangerine",
+                     "peacock", "graphite", "blueberry", "basil", "tomato"],
+        "order_by": ["startTime", "updated"],
+    },
+    "mcp-classroom": {
+        # Lues sur le nœud : `courseWorkState`/`announcementState` partagent `state`.
+        "state": ["PUBLISHED", "DRAFT"],
+        "course_state": ["ACTIVE", "ARCHIVED", "PROVISIONED", "DECLINED", "SUSPENDED"],
+        "work_type": ["ASSIGNMENT", "SHORT_ANSWER_QUESTION", "MULTIPLE_CHOICE_QUESTION"],
+    },
+}
+
+DESCRIPTIONS_CHAMPS = {
+    "mcp-calendar": {
+        "recurrence": "répétition de l'événement ; pour un cas non couvert, utiliser "
+                      "`recurrence_rule` à la place",
+        "recurrence_rule": "règle RRULE brute (RFC 5545), p. ex. "
+                           "`RRULE:FREQ=WEEKLY;BYDAY=MO,TH` ; prime sur `recurrence`",
+        "recurrence_count": "nombre d'occurrences ; 0 = sans fin. Ignoré avec "
+                            "`recurrence_rule`, qui porte déjà son propre COUNT",
+        "use_default_reminders": "laisser les rappels par défaut de l'agenda (vrai par "
+                                 "défaut). Poser `reminder_email` ou `reminder_popup` "
+                                 "le bascule automatiquement à faux",
+        "reminder_email": "rappel par courriel, en MINUTES avant le début (1440 = la "
+                          "veille). 0 = pas de rappel courriel",
+        "reminder_popup": "rappel à l'écran, en MINUTES avant le début. 0 = aucun",
+        "color_id": "couleur de l'événement ; le nom ou l'identifiant Google (1 à 11)",
+        "visibility": "visibilité de l'événement pour les autres membres de l'agenda",
+        "status": "statut de l'événement. UNIQUEMENT en `update` : omis, le statut "
+                  "actuel est conservé",
+        "add_google_meet": "créer une visioconférence Google Meet et l'attacher à "
+                           "l'événement. UNIQUEMENT en `create`",
+        "all_day": "événement sur la journée entière ; `start` et `end` sont alors "
+                   "ramenés à leur date, l'heure est ignorée",
+        "timezone": "fuseau IANA, p. ex. `Europe/Paris` ; ignoré si `all_day`",
+        "start": "début, en ISO 8601 (`2026-11-12T14:00:00+01:00`)",
+        "end": "fin, en ISO 8601",
+        "attendees": "adresses des participants",
+        "time_min": "borne basse de la recherche, en ISO 8601",
+        "time_max": "borne haute de la recherche, en ISO 8601",
+        "calendar_id": "identifiant de l'agenda ; `primary` par défaut",
+    },
+    "mcp-classroom": {
+        "assigned_grade": "note DÉFINITIVE, visible de l'élève. Décimale acceptée",
+        "draft_grade": "note PROVISOIRE, invisible de l'élève tant qu'elle n'est pas "
+                       "rendue (`studentSubmission/return`). Décimale acceptée",
+        "max_points": "barème du devoir ; 0 = devoir non noté",
+        "state": "`PUBLISHED` est visible des élèves, `DRAFT` ne l'est pas",
+        "due_date": "date d'échéance, `AAAA-MM-JJ`",
+        "due_time": "heure d'échéance, `HH:MM` ; sans `due_date`, sans effet",
+        "scheduled_time": "publication différée, en ISO 8601 ; exige `state: DRAFT`",
+        "return_all": "rendre tous les résultats, en paginant ; `limit` est alors ignoré",
+        "limit": "nombre maximal de résultats quand `return_all` est faux",
+    },
+}
+
+# Le canal du jeton n'est pas le même partout — le dire au lieu de le supposer.
+NOTES_JETON = {
+    None: """
+_⚠️ Jeton OAuth accepté sous `oauth_token` (nom émis par MCP) **ou** `access_token`
+(nom historique des appelants directs). Les nœuds lisent `oauth_token ||
+access_token`. Jamais de `$env`._
+""",
+    "mcp-classroom": """
+_⚠️ Jeton OAuth accepté par TROIS canaux, dans cet ordre de priorité (nœud
+`Extract Token (RFC-089)`) : en-tête **`x-google-access-token`**, puis
+`body.oauth_token`, puis `body.access_token`. L'en-tête est le canal prévu par
+RFC-089 ; le corps est marqué `body_deprecated` par le workflow lui-même, mais
+reste accepté. Ce serveur est le SEUL des cinq à lire l'en-tête : gmail, agenda,
+contacts et drive ne lisent que le corps. Jamais de `$env`._
+
+_⚠️ `google_account_id` n'est volontairement PAS déclaré : le workflow le recopie mais
+aucun nœud ne le lit. Le compte Google visé est déterminé par le jeton, et par lui
+seul — aucun champ du corps ne permet de choisir un compte (azy.daily#645)._
+""",
+}
 
 ENTETE = """
 **Description:**
@@ -45,7 +152,7 @@ ENTETE = """
 {SCHEMA}
 ```
 
-_Généré le 2026-11-09 par `scripts/audit/generer_schemas_google.py` depuis la matrice
+_Généré le 2026-11-10 par `scripts/audit/generer_schemas_google.py` depuis la matrice
 du câblage réel (azy.daily#642 / #645). **Ne pas modifier à la main** : régénérer._
 
 _Ne figurent ici que les champs qu'une opération SAINE honore RÉELLEMENT. Un champ
@@ -56,10 +163,28 @@ _⚠️ MCP retire tout champ hors schéma. Toute évolution du workflow qui lit
 nouveau champ du corps doit être suivie d'une régénération, sinon le champ
 n'arrivera jamais._
 
-_⚠️ Jeton OAuth accepté sous `oauth_token` (nom émis par MCP) **ou** `access_token`
-(nom historique des appelants directs). Les nœuds lisent `oauth_token ||
-access_token`. Jamais de `$env`._
-{TABLEAU}"""
+{JETON}{TABLEAU}"""
+
+
+def enrichir(path, props):
+    """Pose les listes fermées et les unités sur les champs qui en ont une.
+
+    ⚠️ Garde-fou : une entrée qui ne correspond à AUCUN champ honoré est une erreur,
+    pas un oubli bénin. Elle signifierait que le workflow a cessé de poser ce champ et
+    que la table de vocabulaire décrit un contrat disparu — exactement le mensonge que
+    ce générateur existe pour empêcher.
+    """
+    inconnus = []
+    for table, cle in ((ENUMS_CHAMPS, "enum"), (DESCRIPTIONS_CHAMPS, "description")):
+        for champ, valeur in (table.get(path) or {}).items():
+            if champ not in props:
+                inconnus.append(f"{champ} ({cle})")
+                continue
+            props[champ][cle] = valeur
+    if inconnus:
+        raise ValueError(f"{path}: vocabulaire décrit pour des champs NON honorés : "
+                         + ", ".join(sorted(inconnus)))
+    return props
 
 
 def construire(path, lignes):
@@ -81,7 +206,8 @@ def construire(path, lignes):
                             "description": "jeton OAuth Google (nom émis par MCP)"}
     props["access_token"] = {"type": "string",
                              "description": "jeton OAuth Google (nom historique, équivalent)"}
-    schema = {"type": "object", "required": ["operation"], "properties": props}
+    schema = {"type": "object", "required": ["operation"],
+              "properties": enrichir(path, props)}
 
     # Le tableau par opération : c'est lui qui dit QUOI envoyer, et s'il filtre.
     corps = "\n".join(
@@ -127,6 +253,7 @@ for path, nom, lignes in M.toutes_les_matrices(set(DESCRIPTIONS)):
         erreurs.append(f"{path}: aucune sticky note"); continue
     texte = ENTETE.replace("{DESC}", DESCRIPTIONS[path]) \
                   .replace("{SCHEMA}", json.dumps(schema, ensure_ascii=False, indent=2)) \
+                  .replace("{JETON}", NOTES_JETON.get(path) or NOTES_JETON[None]) \
                   .replace("{TABLEAU}", bloc)
     stickies[0]["parameters"]["content"] = remplacer_schema(
         stickies[0]["parameters"].get("content") or f"## {wf['name']}\n", texte)
