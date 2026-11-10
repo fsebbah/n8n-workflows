@@ -129,7 +129,15 @@ for (const [chemin, fichier] of Object.entries(FICHIERS)) {
   }
 
   // ── 4 · Le jeton, lu en tolérant, et jamais depuis $env ──────────────────
-  const brut = JSON.stringify(wf);
+  // ⚠️ `wf.nodes` SEULEMENT, jamais le fichier entier (mesuré le 2026-11-10).
+  // 250 des 269 workflows du dépôt portent un `activeVersion` : un INSTANTANÉ COMPLET
+  // du workflow, souvent périmé de plusieurs lots (youtube-extract : 23 nœuds contre 28
+  // dans `nodes`). `import_workflow` et `update_workflow` le retirent avant l'appel à
+  // l'API, donc il n'est jamais déployé — mais sérialiser le fichier entier le fait
+  // entrer dans la mesure. Les deux contrôles ci-dessous portent sur une ABSENCE, et
+  // c'est exactement celle qu'une copie périmée fait mentir : elle peut contenir
+  // l'ancien `$env` retiré depuis, ou l'inverse. On ne lit que le câblage vivant.
+  const brut = JSON.stringify(wf.nodes);
   for (const attendu of (LECTURE_JETON[chemin] || LECTURE_JETON_DEFAUT)) {
     ok(`${chemin} → lecture du jeton : \`${attendu}\``, brut.includes(attendu));
   }

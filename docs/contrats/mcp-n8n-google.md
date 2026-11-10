@@ -1,6 +1,6 @@
 # Contrat MCP↔n8n — services Google
 
-Généré par `scripts/audit/matrice_contrat_mcp.py` le 2026-11-09 (azy.daily#642 / #645 / #646).
+Généré par `scripts/audit/matrice_contrat_mcp.py` le 2026-11-10 (azy.daily#642 / #645 / #646).
 
 ## Socle commun
 
@@ -9,6 +9,55 @@ Généré par `scripts/audit/matrice_contrat_mcp.py` le 2026-11-09 (azy.daily#64
 - **Routage** : `body.resource` + `body.operation`, tous deux déclarés au schéma.
 - **Réponse** : succès → `error`/`error_code` ABSENTS. Échec → présents, code stable (`TOOL_OPERATION_UNKNOWN` 501, `GOOGLE_AUTH_REJECTED` 401, `TOOL_ROUTE_UNKNOWN` 400, `GOOGLE_NOT_FOUND` 404, `GOOGLE_RATE_LIMITED` 429, `GOOGLE_API_ERROR` 502).
 - **Les schémas ne déclarent QUE les champs honorés.** Un champ que le nœud ignore est volontairement absent : le déclarer ferait croire à un filtrage qui n'a pas lieu.
+
+### Ce qui a changé le 2026-11-10
+
+**Classroom n'était pas invérifiable — le résolveur de la matrice était faux.** Ses 33 paires
+étaient classées « indéterminées, source du nœud hors dépôt ». La source EST dans le dépôt :
+le type de nœud vaut `CUSTOM.classroomToolDynamic`, n8n nommant `CUSTOM` le paquet des nœuds
+chargés depuis son répertoire custom, et le résolveur découpait sur le point. Corrigé :
+**33 SAINES, 0 morte, 0 mal câblée** — le serveur le mieux raccordé des cinq. Son schéma,
+écrit à la main, portait trois types que la matrice contredit (`state` boolean → string,
+`assigned_grade` et `draft_grade` string → number) ; il est désormais généré.
+
+**Classroom est le SEUL des cinq à accepter le jeton en en-tête.** Son nœud
+`Extract Token (RFC-089)` lit, dans cet ordre : en-tête `x-google-access-token`, puis
+`body.oauth_token`, puis `body.access_token`, et hisse le résultat à la racine de l'item.
+Les quatre autres ne lisent que le corps. Si MCP veut converger sur l'en-tête, c'est une
+modification des quatre autres, pas une correction — à décider, pas à supposer.
+
+**Aucun champ du corps ne permet de choisir un compte Google.** `google_account_id` était
+déclaré au schéma de Classroom : seul `Extract Token` le recopie, plus aucun nœud ne le lit.
+De même, `provider_account_ids` n'est lu par AUCUN workflow du parc. Le compte visé est
+déterminé par le jeton, et par lui seul. Fait à verser à #645/#646.
+
+**Agenda : les options dormantes sont exposées.** `event/create` gagne 9 champs et
+`event/update` 6 — récurrence, rappels, couleur, visibilité, Google Meet, statut. Le nœud
+les lisait déjà ; le workflow ne les posait pas. Deux pièges à connaître côté MCP :
+`recurrence` accepte quatre mots (`daily`/`weekly`/`monthly`/`yearly`) que le workflow
+traduit en RRULE, ou une règle RFC 5545 brute via `recurrence_rule` ; et les rappels
+s'expriment en MINUTES avant le début, le drapeau `use_default_reminders` basculant tout
+seul dès qu'un rappel est posé. `event/update` ne lit NI la récurrence NI le Meet.
+
+**Correction silencieuse levée sur `event/update`** : le nœud lit `status` avec le défaut
+`confirmed` et le posait à chaque appel. Modifier le lieu d'un événement « provisoire » le
+CONFIRMAIT. Le workflow pose désormais `''` (la requête est un PATCH : champ omis = champ
+conservé) et expose `status` à qui veut le changer exprès.
+
+### Question ouverte à MCP, et elle est la seule qui nous bloque
+
+Les schémas déclarent `oauth_token` et `access_token`. Si `_build_from_schema` filtre
+AVANT que `client.py` n'injecte le jeton, ces déclarations sont indispensables. Si
+l'injection a lieu APRÈS le filtrage, elles sont inutiles — et surtout **néfastes** : un
+champ déclaré est un champ que le LLM peut POSER. Un contenu hostile lu par l'agent (le
+corps d'un courriel rendu par `message/get`, par exemple) pourrait lui faire appeler un
+outil Google avec le jeton d'un tiers, et écrire les données de l'utilisateur dans le
+compte de l'attaquant.
+
+Nous ne retirons rien tant que ce n'est pas tranché : si l'injection précède le filtrage,
+retirer la déclaration casserait les cinq serveurs d'un coup. **Une seule réponse suffit :
+l'injection du jeton a-t-elle lieu avant ou après `_build_from_schema` ?** Si c'est après,
+nous retirons les deux champs des cinq schémas — sans aucune modification chez vous.
 
 ## Matrices par service
 
@@ -24,55 +73,51 @@ Généré par `scripts/audit/matrice_contrat_mcp.py` le 2026-11-09 (azy.daily#64
 
 | resource | operation | champs HONORÉS | listing | champs IGNORÉS |
 |---|---|---|---|---|
-| `event` | `create` | `all_day`:boolean, `attendees`:array, `calendar_id`:string, `description`:string, `end`:string, `location`:string, `start`:string, `summary`:string, `timezone`:string | liste-seule | — |
+| `event` | `create` | `add_google_meet`:boolean, `all_day`:boolean, `attendees`:array, `calendar_id`:string, `color_id`:string, `description`:string, `end`:string, `location`:string, `recurrence`:string, `recurrence_count`:integer, `recurrence_rule`:string, `reminder_email`:integer, `reminder_popup`:integer, `start`:string, `summary`:string, `timezone`:string, `use_default_reminders`:boolean, `visibility`:string | liste-seule | — |
 | `event` | `get` | `calendar_id`:string, `event_id`:string | liste-seule | — |
 | `event` | `getAll` | `calendar_id`:string, `max_results`:integer, `order_by`:string, `query`:string, `single_events`:boolean, `time_max`:string, `time_min`:string | **cherchable** | — |
-| `event` | `update` | `all_day`:boolean, `attendees`:array, `calendar_id`:string, `description`:string, `end`:string, `event_id`:string, `location`:string, `start`:string, `summary`:string, `timezone`:string | liste-seule | — |
+| `event` | `update` | `all_day`:boolean, `attendees`:array, `calendar_id`:string, `color_id`:string, `description`:string, `end`:string, `event_id`:string, `location`:string, `reminder_email`:integer, `reminder_popup`:integer, `start`:string, `status`:string, `summary`:string, `timezone`:string, `use_default_reminders`:boolean, `visibility`:string | liste-seule | — |
 | `event` | `delete` | `calendar_id`:string, `event_id`:string | liste-seule | — |
 | `calendar` | `getAll` | — | liste-seule | — |
 
-**Options que le nœud sait lire mais que le corps n'expose pas** (l'opération FONCTIONNE ; ce sont des fonctionnalités dormantes) :
-- `event/create` — `addGoogleMeet`, `colorId`, `customRecurrence`, `recurrence`, `recurrenceCount`, `reminderEmail`, `reminderPopup`, `useDefaultReminders`, `visibility`
-- `event/update` — `colorId`, `reminderEmail`, `reminderPopup`, `status`, `useDefaultReminders`, `visibility`
-
 ## `mcp-classroom` — MCP - Google Classroom Server
-0 SAINE(S) · 0 MAL CÂBLÉE(S) · 0 MORTE(S) · 33 INDÉTERMINÉE(S)
+33 SAINE(S) · 0 MAL CÂBLÉE(S) · 0 MORTE(S) · 0 INDÉTERMINÉE(S)
 
-
-**INDÉTERMINÉES** — ne pas déclarer au schéma :
-- `course/create` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `course/get` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `course/getAll` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `course/update` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `course/delete` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `course/archive` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `courseWork/create` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `courseWork/get` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `courseWork/getAll` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `courseWork/update` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `courseWork/delete` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `studentSubmission/get` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `studentSubmission/getAll` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `studentSubmission/grade` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `studentSubmission/return` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `student/create` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `student/get` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `student/getAll` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `student/delete` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `teacher/create` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `teacher/get` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `teacher/getAll` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `teacher/delete` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `announcement/create` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `announcement/get` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `announcement/getAll` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `announcement/update` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `announcement/delete` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `topic/create` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `topic/get` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `topic/getAll` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `topic/update` — INDÉTERMINÉ (source du nœud hors dépôt)
-- `topic/delete` — INDÉTERMINÉ (source du nœud hors dépôt)
+| resource | operation | champs HONORÉS | listing | champs IGNORÉS |
+|---|---|---|---|---|
+| `course` | `create` | `description`:string, `name`:string, `owner_id`:string, `room`:string, `section`:string | liste-seule | — |
+| `course` | `get` | `course_id`:string | liste-seule | — |
+| `course` | `getAll` | `course_state`:string, `limit`:integer, `return_all`:boolean | liste-seule | — |
+| `course` | `update` | `course_id`:string, `course_state`:string, `description`:string, `name`:string, `room`:string, `section`:string | liste-seule | — |
+| `course` | `delete` | `course_id`:string | liste-seule | — |
+| `course` | `archive` | `course_id`:string | liste-seule | — |
+| `courseWork` | `create` | `course_id`:string, `description`:string, `due_date`:string, `due_time`:string, `max_points`:number, `state`:string, `title`:string, `topic_id`:string, `work_type`:string | liste-seule | — |
+| `courseWork` | `get` | `course_id`:string, `coursework_id`:string | liste-seule | — |
+| `courseWork` | `getAll` | `course_id`:string, `limit`:integer, `return_all`:boolean | liste-seule | — |
+| `courseWork` | `update` | `course_id`:string, `coursework_id`:string, `description`:string, `due_date`:string, `due_time`:string, `max_points`:number, `state`:string, `title`:string, `topic_id`:string | liste-seule | — |
+| `courseWork` | `delete` | `course_id`:string, `coursework_id`:string | liste-seule | — |
+| `studentSubmission` | `get` | `course_id`:string, `coursework_id`:string, `submission_id`:string | liste-seule | — |
+| `studentSubmission` | `getAll` | `course_id`:string, `coursework_id`:string, `limit`:integer, `return_all`:boolean | liste-seule | — |
+| `studentSubmission` | `grade` | `assigned_grade`:number, `course_id`:string, `coursework_id`:string, `draft_grade`:number, `submission_id`:string | liste-seule | — |
+| `studentSubmission` | `return` | `course_id`:string, `coursework_id`:string, `submission_id`:string | liste-seule | — |
+| `student` | `create` | `course_id`:string, `user_id`:string | liste-seule | — |
+| `student` | `get` | `course_id`:string, `user_id`:string | liste-seule | — |
+| `student` | `getAll` | `course_id`:string, `limit`:integer, `return_all`:boolean | liste-seule | — |
+| `student` | `delete` | `course_id`:string, `user_id`:string | liste-seule | — |
+| `teacher` | `create` | `course_id`:string, `user_id`:string | liste-seule | — |
+| `teacher` | `get` | `course_id`:string, `user_id`:string | liste-seule | — |
+| `teacher` | `getAll` | `course_id`:string, `limit`:integer, `return_all`:boolean | liste-seule | — |
+| `teacher` | `delete` | `course_id`:string, `user_id`:string | liste-seule | — |
+| `announcement` | `create` | `course_id`:string, `scheduled_time`:string, `state`:string, `text`:string | liste-seule | — |
+| `announcement` | `get` | `announcement_id`:string, `course_id`:string | liste-seule | — |
+| `announcement` | `getAll` | `course_id`:string, `limit`:integer, `return_all`:boolean | liste-seule | — |
+| `announcement` | `update` | `announcement_id`:string, `course_id`:string, `scheduled_time`:string, `state`:string, `text`:string | liste-seule | — |
+| `announcement` | `delete` | `announcement_id`:string, `course_id`:string | liste-seule | — |
+| `topic` | `create` | `course_id`:string, `name`:string | liste-seule | — |
+| `topic` | `get` | `course_id`:string, `topic_id`:string | liste-seule | — |
+| `topic` | `getAll` | `course_id`:string, `limit`:integer, `return_all`:boolean | liste-seule | — |
+| `topic` | `update` | `course_id`:string, `name`:string, `topic_id`:string | liste-seule | — |
+| `topic` | `delete` | `course_id`:string, `topic_id`:string | liste-seule | — |
 
 ## `mcp-contacts` — MCP - Google Contacts Server
 13 SAINE(S) · 0 MAL CÂBLÉE(S) · 0 MORTE(S) · 0 INDÉTERMINÉE(S)
