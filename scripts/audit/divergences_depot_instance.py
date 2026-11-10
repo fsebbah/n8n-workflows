@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import glob
 import hashlib
+import re
 import json
 import os
 import subprocess
@@ -49,10 +50,67 @@ sys.path.insert(0, os.path.join(RACINE, "scripts", "n8n"))
 import n8n_api as A  # noqa: E402
 
 
+# ⚠️ CONSTATS D'INSPECTION — ce que l'outil ne peut PAS déduire seul.
+# Le tableau dit QU'il y a divergence et dans quel SENS ; il ne dit pas si réimporter
+# est sûr. Ces trois cas ont été ouverts à la main le 2026-11-10, et deux d'entre eux
+# rendraient un réimport NUISIBLE. Les laisser dans la masse serait exactement l'erreur
+# que le débruitage corrige : noyer ce qui compte.
+REMARQUES = {
+    "Stripe - Subscription Renewal":
+        "⛔ **NE PAS réimporter en l'état.** Le fichier du dépôt pose "
+        "`\"{{ $env.API_URL }}/api/subscribers/...\"` **sans le préfixe `=`** sur "
+        "`Get Subscriber` et `Add Credits`. Sans `=`, n8n traite la valeur comme une "
+        "CHAÎNE LITTÉRALE : l'URL appelée serait littéralement `{{ $env.API_URL }}/...` "
+        "et le crédit de renouvellement d'abonnement échouerait. L'instance, elle, a "
+        "bien `=`. C'est le dépôt qui est cassé — exporter depuis llm, pas réimporter.",
+    "MCP - Mathpix":
+        "⚠️ L'instance appelle `eu.api.mathpix.com`, le dépôt `api.mathpix.com`. "
+        "Réimporter déplacerait l'OCR hors de l'UE. Le point d'accès européen a toute "
+        "l'apparence d'un choix de résidence des données : à confirmer avant de toucher.",
+    "Torah Translation Orchestrator":
+        "⚠️ Divergence RÉELLE, et unique : le modèle de traduction par défaut. Dépôt "
+        "`claude-haiku-4-5-20251001`, instance `claude-sonnet-4-20250514`. Le dépôt est "
+        "plus récent (commit du 2026-07-16) mais jamais déployé. Réimporter change la "
+        "qualité ET le coût des traductions par défaut — une décision, pas un correctif. "
+        "Ces deux identifiants sont par ailleurs anciens tous les deux.",
+    "DISCORD - Get Credits":
+        "Cosmétique, vérifié : des espaces à l'intérieur des `{{ }}`. Aucun effet.",
+    "Stripe - Subscription Success":
+        "Cosmétique, vérifié : un espace en tête de `jsonBody`. Aucun effet.",
+}
+
+
+def _sans_bruit(valeur):
+    """Retire ce que l'ÉDITEUR n8n ajoute et qui ne change aucun comportement.
+
+    ⚠️ MESURÉ LE 2026-11-10, et sans ça l'outil crie au loup.
+    La première version signalait 23 divergences. En les ouvrant une à une, 20 n'étaient
+    que du bruit de sauvegarde :
+      • `conditions.options.version` : n8n estampille une version dans les options d'un
+        nœud IF à chaque fois qu'on l'ouvre dans l'interface. Présente sur l'instance,
+        absente du fichier exporté avant cette estampille. Aucun effet sur l'évaluation.
+      • des espaces à l'intérieur des `{{ }}` et dans un `jsonBody`.
+    Un inventaire qui mélange ce bruit à de vraies divergences ne sert à rien : on cesse
+    de le lire. Les deux divergences RÉELLES qu'il restait (un `=` manquant et un point
+    d'accès Mathpix) seraient passées inaperçues au milieu de vingt faux positifs.
+    """
+    if isinstance(valeur, dict):
+        return {k: _sans_bruit(v) for k, v in valeur.items() if k != "version"}
+    if isinstance(valeur, list):
+        return [_sans_bruit(v) for v in valeur]
+    if isinstance(valeur, str):
+        # Normalise l'intérieur des expressions et les espaces de bord, SANS toucher
+        # au préfixe `=` : c'est lui qui distingue une expression d'une chaîne littérale,
+        # et son absence est précisément l'un des deux vrais défauts trouvés.
+        return re.sub(r"\s+", " ", valeur).strip()
+    return valeur
+
+
 def empreinte(wf) -> str:
     noeuds = sorted(
         (n.get("name"), n.get("type"),
-         json.dumps(n.get("parameters") or {}, sort_keys=True, ensure_ascii=False),
+         json.dumps(_sans_bruit(n.get("parameters") or {}), sort_keys=True,
+                    ensure_ascii=False),
          n.get("onError") or "")
         for n in (wf.get("nodes") or []))
     conns = json.dumps(wf.get("connections") or {}, sort_keys=True, ensure_ascii=False)
@@ -128,6 +186,16 @@ def main():
         for nom, rel, a, b, g, u, sens in sorted(div, key=lambda x: x[6]):
             ecart = f"{a} / {b}" + (" ⚠️" if a != b else "")
             e(f"| `{nom}` | {ecart} | {g} | {u} | {sens} |")
+        inspectes = [(n, r) for n, r in REMARQUES.items() if any(d[0] == n for d in div)]
+        if inspectes:
+            e("\n### Constats d'inspection\n")
+            e("Ce que le tableau ne peut pas déduire : si réimporter est SÛR.\n")
+            for nom, remarque in inspectes:
+                e(f"- **`{nom}`** — {remarque}")
+        orphelines = [n for n in REMARQUES if not any(d[0] == n for d in div)]
+        if orphelines:
+            e("\n⚠️ Remarques décrivant des divergences qui n'existent plus "
+              "(réimportées depuis ?) : " + ", ".join(f"`{n}`" for n in orphelines) + ".")
         if abs_:
             e("\n## Présents au dépôt, absents de l'instance\n")
             e("| workflow | dernier commit |")

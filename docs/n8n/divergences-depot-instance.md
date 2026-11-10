@@ -6,8 +6,8 @@ Généré par `scripts/audit/divergences_depot_instance.py` — instance `http:/
 
 - instance : **2372** workflows, 1328 noms distincts
 - dépôt : **269** fichiers comparés
-  - identiques au déployé : **242**
-  - divergents : **23**
+  - identiques au déployé : **243**
+  - divergents : **22**
   - absents de l'instance : **4**
   - noms en doublon sur l'instance : **2**
 
@@ -16,7 +16,7 @@ Généré par `scripts/audit/divergences_depot_instance.py` — instance `http:/
 | workflow | nœuds dépôt / instance | dernier commit | updatedAt | à faire |
 |---|---|---|---|---|
 | `Claude - Call Stream With Skills` | 11 / 11 | 2026-07-16 | 2026-05-15 | dépôt EN AVANCE → à réimporter |
-| `DISCORD - Registry` | 5 / 5 | 2026-06-29 | 2026-02-03 | dépôt EN AVANCE → à réimporter |
+| `DISCORD - Registry` | 5 / 5 | 2026-11-10 | 2026-02-03 | dépôt EN AVANCE → à réimporter |
 | `MCP - Documents Save` | 11 / 11 | 2026-11-09 | 2026-02-02 | dépôt EN AVANCE → à réimporter |
 | `MCP - Email IMAP` | 6 / 6 | 2026-11-10 | 2026-02-02 | dépôt EN AVANCE → à réimporter |
 | `MCP - Gmail Server (All-in-One)` | 32 / 30 ⚠️ | 2026-11-10 | 2026-02-02 | dépôt EN AVANCE → à réimporter |
@@ -35,9 +35,18 @@ Généré par `scripts/audit/divergences_depot_instance.py` — instance `http:/
 | `MCP - Mathpix` | 9 / 9 | 2026-06-29 | 2026-08-04 | llm EN AVANCE → à exporter vers le dépôt |
 | `Stripe - Subscription Renewal` | 15 / 15 | 2026-06-29 | 2026-08-16 | llm EN AVANCE → à exporter vers le dépôt |
 | `DISCORD - Get Credits` | 10 / 10 | 2026-08-16 | 2026-08-16 | même jour → à inspecter |
-| `Stripe - Subscription Payment Failure` | 12 / 12 | 2026-08-16 | 2026-08-16 | même jour → à inspecter |
 | `Stripe - Subscription Success` | 11 / 11 | 2026-08-16 | 2026-08-16 | même jour → à inspecter |
 | `Torah Translation Orchestrator` | 13 / 13 | 2026-07-16 | 2026-07-16 | même jour → à inspecter |
+
+### Constats d'inspection
+
+Ce que le tableau ne peut pas déduire : si réimporter est SÛR.
+
+- **`Stripe - Subscription Renewal`** — ⛔ **NE PAS réimporter en l'état.** Le fichier du dépôt pose `"{{ $env.API_URL }}/api/subscribers/..."` **sans le préfixe `=`** sur `Get Subscriber` et `Add Credits`. Sans `=`, n8n traite la valeur comme une CHAÎNE LITTÉRALE : l'URL appelée serait littéralement `{{ $env.API_URL }}/...` et le crédit de renouvellement d'abonnement échouerait. L'instance, elle, a bien `=`. C'est le dépôt qui est cassé — exporter depuis llm, pas réimporter.
+- **`MCP - Mathpix`** — ⚠️ L'instance appelle `eu.api.mathpix.com`, le dépôt `api.mathpix.com`. Réimporter déplacerait l'OCR hors de l'UE. Le point d'accès européen a toute l'apparence d'un choix de résidence des données : à confirmer avant de toucher.
+- **`Torah Translation Orchestrator`** — ⚠️ Divergence RÉELLE, et unique : le modèle de traduction par défaut. Dépôt `claude-haiku-4-5-20251001`, instance `claude-sonnet-4-20250514`. Le dépôt est plus récent (commit du 2026-07-16) mais jamais déployé. Réimporter change la qualité ET le coût des traductions par défaut — une décision, pas un correctif. Ces deux identifiants sont par ailleurs anciens tous les deux.
+- **`DISCORD - Get Credits`** — Cosmétique, vérifié : des espaces à l'intérieur des `{{ }}`. Aucun effet.
+- **`Stripe - Subscription Success`** — Cosmétique, vérifié : un espace en tête de `jsonBody`. Aucun effet.
 
 ## Présents au dépôt, absents de l'instance
 
