@@ -359,6 +359,55 @@ function lancerRegistre(sortieAmont, { hote = 'llm.local:5678' } = {}) {
       /const requires = listeStickyNote631\('Requires'\)/.test(code), true);
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // `**Tags:**` en sticky note — azy.daily#643
+  //
+  // ⚠️ POURQUOI PAS LES TAGS n8n : les 268 fichiers du dépôt portent `tags: []`,
+  // et l'instance n'en a AUCUN (mesuré). Un tag posé dans l'UI serait donc EFFACÉ
+  // au prochain réimport, qui pousse `tags: []`. Un tag qui disparaît à chaque
+  // déploiement ne peut pas porter une décision de sécurité.
+  //
+  // MCP applique un filtre DENY-BY-DEFAULT sur ce champ : un outil tagué
+  // `needs_service_token` est REFUSÉ si l'appel ne porte pas de jeton. Donc un tag
+  // posé à tort bloque un outil qui marchait — d'où les contrôles d'union.
+  // ──────────────────────────────────────────────────────────────────────────
+  const outilTag = (chemin, contenu, tagsN8n) => ({
+    id: chemin, active: true, name: `W ${chemin}`, tags: tagsN8n,
+    nodes: [
+      { type: 'n8n-nodes-base.webhook', parameters: { path: chemin, httpMethod: 'POST' } },
+      { type: 'n8n-nodes-base.stickyNote', parameters: { content: contenu } },
+    ],
+  });
+
+  console.log('\nLes tags viennent de la sticky note, et survivent au réimport');
+  {
+    const rep = lancerRegistre({ data: [
+      outilTag('a', '## A\n\n**Tags:** needs_service_token', undefined),
+      outilTag('b', '## B\n\n**tags:**  NEEDS_SERVICE_TOKEN , autre ,, ', undefined),
+      outilTag('c', '## C\n\nrien', undefined),
+    ] });
+    verifier('tag lu depuis la sticky', rep.tools.a.tags, ['needs_service_token']);
+    verifier('casse et espaces normalisés, vides ignorés',
+      rep.tools.b.tags, ['needs_service_token', 'autre']);
+    verifier('aucun tag → tableau vide, pas absent', rep.tools.c.tags, []);
+  }
+
+  console.log('\nUnion avec les tags n8n — l\'un n\'écrase pas l\'autre');
+  {
+    const rep = lancerRegistre({ data: [
+      outilTag('a', '**Tags:** needs_service_token', [{ name: 'depuis-n8n' }]),
+      outilTag('b', '## sans Tags', [{ name: 'depuis-n8n' }]),
+    ] });
+    verifier('les deux sources coexistent',
+      rep.tools.a.tags.sort(), ['depuis-n8n', 'needs_service_token']);
+    verifier('un tag n8n seul passe toujours', rep.tools.b.tags, ['depuis-n8n']);
+    const dbl = lancerRegistre({ data: [
+      outilTag('a', '**Tags:** needs_service_token', [{ name: 'needs_service_token' }]),
+    ] });
+    verifier('dédoublonné si présent des deux côtés',
+      dbl.tools.a.tags, ['needs_service_token']);
+  }
+
   console.log(`\nRésultat : ${ok} ok, ${ko} échec(s)\n`);
   process.exit(ko === 0 ? 0 : 1);
 })();
