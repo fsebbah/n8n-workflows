@@ -133,6 +133,7 @@ export class GmailToolDynamic implements INodeType {
           { name: 'Get', value: 'get', description: 'Get a thread by ID' },
           { name: 'Get Many', value: 'getMany', description: 'Get multiple threads' },
           { name: 'Modify', value: 'modify', description: 'Modify thread labels' },
+          { name: 'Remove Labels', value: 'removeLabels', description: 'Remove labels from a thread' },
           { name: 'Search', value: 'search', description: 'Search threads using Gmail query syntax' },
           { name: 'Untrash', value: 'untrash', description: 'Restore a thread from trash' },
         ],
@@ -380,7 +381,11 @@ export class GmailToolDynamic implements INodeType {
         type: 'string',
         required: true,
         displayOptions: {
-          show: { resource: ['thread'], operation: ['get', 'delete', 'modify', 'untrash'] },
+          // ⚠️ `removeLabels` ajouté le 2026-11-10 : sans lui, n8n ne rend pas
+          // `threadId` pour cette opération et la route meurt sur « Could not get
+          // parameter ». C'est la panne des 11 routes Classroom — invisible au
+          // contrôle du câblage, car le nœud « lit » bien le paramètre.
+          show: { resource: ['thread'], operation: ['get', 'delete', 'modify', 'removeLabels', 'untrash'] },
         },
         default: '',
         description: 'The ID of the thread',
@@ -1079,6 +1084,19 @@ async function executeThreadOperation(
       const labelIds = (this.getNodeParameter('labelIds', itemIndex) as string).split(',').map(s => s.trim());
       return gmailRequest.call(this, accessToken, 'POST', `/threads/${threadId}/modify`, {
         addLabelIds: labelIds,
+      });
+    }
+
+    // ── azy.daily#645 — `thread/removeLabels` était MORTE, et le workflow l'appelait
+    // ⚠️ NE PAS la confondre avec `modify` : `modify` n'envoie que `addLabelIds`, donc
+    // la mapper dessus AJOUTERAIT les étiquettes au lieu de les retirer — un test du
+    // dépôt l'interdit nommément. L'API Google `threads.modify` accepte les DEUX
+    // champs ; il ne manquait que le second. Calqué sur `message/removeLabels`.
+    case 'removeLabels': {
+      const threadId = this.getNodeParameter('threadId', itemIndex) as string;
+      const labelIds = (this.getNodeParameter('labelIds', itemIndex) as string).split(',').map(s => s.trim());
+      return gmailRequest.call(this, accessToken, 'POST', `/threads/${threadId}/modify`, {
+        removeLabelIds: labelIds,
       });
     }
 

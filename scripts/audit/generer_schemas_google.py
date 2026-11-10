@@ -107,6 +107,16 @@ DESCRIPTIONS_CHAMPS = {
         "time_min": "borne basse de la recherche, en ISO 8601",
         "time_max": "borne haute de la recherche, en ISO 8601",
         "calendar_id": "identifiant de l'agenda ; `primary` par défaut",
+        # Les 5 opérations routées le 2026-11-10 : elles étaient implémentées par le
+        # nœud et absentes du Switch, donc inatteignables.
+        "attendee_email": "adresse du participant à ajouter ou retirer. UNIQUEMENT en "
+                          "`addAttendee` / `removeAttendee`",
+        "destination_calendar_id": "agenda vers lequel déplacer l'événement. UNIQUEMENT "
+                                   "en `move`",
+        "text": "l'événement décrit en une phrase, que Google interprète lui-même "
+                "(« Déjeuner avec Marie jeudi 13h »). UNIQUEMENT en `quickAdd`",
+        "calendars": "agendas dont on interroge la disponibilité ; `primary` par défaut. "
+                     "UNIQUEMENT en `freeBusy`",
     },
     "mcp-classroom": {
         "assigned_grade": "note DÉFINITIVE, visible de l'élève. Décimale acceptée",

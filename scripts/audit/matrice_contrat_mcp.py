@@ -33,7 +33,11 @@ import re
 import sys
 
 RACINE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-TABLEAUX = {"attendees", "label_ids", "resource_names", "attachments", "person_fields"}
+TABLEAUX = {"attendees", "label_ids", "resource_names", "attachments", "person_fields",
+            # `freeBusyCalendars` est lu `as string` puis `.split(',')` : un tableau
+            # lèverait `split is not a function`. L'expression du workflow convertit,
+            # donc le schéma peut le déclarer `array` — ce qu'un agent fournit.
+            "calendars"}
 BOOLEENS = {"all_day", "single_events", "return_all", "include_spam_trash",
             "include_images", "include_full_message",
             # additif Agenda du 2026-11-10 (#645)

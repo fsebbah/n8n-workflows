@@ -40,7 +40,11 @@ function executer(js, entree) {
 
 const CAS = [
   ['MCP_-_Gmail_Server_(All-in-One).json', 22],
-  ['MCP_-_Google_Calendar_Server.json', 6],
+  // 6 → 11 le 2026-11-10 : les 5 opérations que le nœud implémentait sans que le
+  // Switch les route (addAttendee, removeAttendee, move, quickAdd, freeBusy) ont été
+  // câblées. Ce nombre est un GARDE-FOU volontairement figé : le dériver du workflow
+  // ferait passer sans bruit un ajout ou une perte de route.
+  ['MCP_-_Google_Calendar_Server.json', 11],
   // Classroom a rejoint le lot le 2026-11-10. Son CÂBLAGE était déjà sain (33 paires
   // sur 33) ; ce qui lui manquait, c'était exactement ce marqueur :
   //  • `options.fallbackOutput` ABSENT du Switch, alors que la 34ᵉ sortie était DÉJÀ

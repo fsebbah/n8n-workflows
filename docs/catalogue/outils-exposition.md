@@ -2,7 +2,7 @@
 
 > Document pour **azy.daily#642**. Généré par `scripts/catalogue/generer_doc_exposition.py`, régénérable.
 
-**237 outils** publiés au catalogue `mcp/tools/registry`. Trafic cumulé sur **39 relevés quotidiens**.
+**237 outils** publiés au catalogue `mcp/tools/registry`. Trafic cumulé sur **41 relevés quotidiens**.
 
 ## Ce que ce document fait, et ne fait pas
 
@@ -22,15 +22,15 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 
 | exposition | n |
 |---|---:|
-| **OUI** | 167 |
+| **OUI** | 169 |
 | **À TRANCHER** | 2 |
-| **NON** | 68 |
+| **NON** | 66 |
 
 ### Détail des `NON`
 
 | classe | n | pourquoi |
 |---|---:|---|
-| plomberie | 26 | appelé par Torah Router |
+| plomberie | 24 | appelé par Torah Router |
 | brique technique | 11 | composant interne, jamais choisi par un agent |
 | configuration | 8 | lit ou écrit de la configuration |
 | notification émise | 7 | le système émet, personne n'appelle |
@@ -54,9 +54,12 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 | `torah-book-commentators` | GET | appelle /api/books/…/…/commentators… ; étapes : Lire Paramètres, Paramètres Valides ?, Lister (API), Répondre *(déduite)* | lecture seule | synchrone | chat, voice_realtime | 48 |
 | `pdf-ocr` | POST | Extraction de texte depuis PDF/images via OCR multi-providers | lecture seule | callback | chat, email | 45 |
 | `torah-translate-page` | POST | appelle /api/talmud/page/…/…/segments…, /api/v2/jobs, outil torah-router ; étapes : Check Existing Translations, Analyze Existing, Needs Translation?, *(déduite)* | lecture seule | synchrone | chat | 9 |
+| `torah-vocalization` | POST | appelle /api/v2/jobs, outil torah-vocalization-worker ; étapes : Has Items?, Create Job, Launch Worker (async), Build Error Response *(déduite)* | lecture seule | synchrone | — | 9 |
+| `mcp-gmail` | POST | aucun appel sortant ; étapes : addLabels, delete, get, search *(déduite)* | lecture seule | synchrone | — | 8 |
 | `discord-get-balance` | POST | appelle /api/ecommerce/webhook/account ; étapes : Call Credits API, API Success? *(déduite)* | lecture seule | synchrone | chat | 2 |
 | `llm-intention` | POST | Analyse l'intention utilisateur via LLM et propose des actions appropriees. | lecture seule | synchrone | — | 2 |
 | `office-extractor` | POST | appelle …, http://webs.local:9998/tika, http://webs.local:9998/unpack ; étapes : Download File, Tika Extract, Has Base64?, Decode Base64 *(déduite)* | lecture seule | synchrone | chat, email | 2 |
+| `mcp-calendar` | POST | aucun appel sortant ; étapes : Route by Operation, createEvent, getEvent, getAllEvents *(déduite)* | lecture seule | synchrone | — | 1 |
 | `academic-searcher` | POST | appelle /v1/paper/search ; étapes : Error: No Query, Semantic Scholar Search *(déduite)* | lecture seule | synchrone | — | 0 |
 | `analyze-feedback` | POST | Analyse le feedback utilisateur pour extraire des insights actionnables et ajuster le comportement de l'assistant IA. | lecture seule | synchrone | — | 0 |
 | `analyze-message` | POST | Analyse complète d'un message (sentiment, intentions, entités, priorité, langue) | lecture seule | synchrone | — | 0 |
@@ -140,12 +143,11 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 | `linkedin` | POST | aucun appel sortant ; étapes : Route Action, Post Text, Post with Image, Error: Invalid Action *(déduite)* | lecture seule | synchrone | — | 0 |
 | `llm-call-stream` | POST | Streaming LLM multi-provider avec pattern callback asynchrone. | lecture seule | callback | — | 0 |
 | `llm-summarizer` | POST | Summarizes text using multiple LLM providers (Anthropic, OpenAI, Mistral). | lecture seule | synchrone | — | 0 |
+| `llm-url-extractor` | POST | Extracts structured information from a URL using LLM analysis. | lecture seule | synchrone | — | 0 |
 | `mathpix` | POST | OCR mathematique via Mathpix API. Convertit images de formules/equations en LaTeX, MathML, AsciiMath. | lecture seule | synchrone | — | 0 |
-| `mcp-calendar` | POST | aucun appel sortant ; étapes : Route by Operation, createEvent, getEvent, getAllEvents *(déduite)* | lecture seule | synchrone | — | 0 |
 | `mcp-classroom` | POST | aucun appel sortant ; étapes : Extract Token (RFC-089), Route by Resource + Operation, course_create, course_get *(déduite)* | lecture seule | synchrone | — | 0 |
 | `mcp-contacts` | POST | aucun appel sortant ; étapes : Route by Operation, createContact, getContact, getAllContacts *(déduite)* | lecture seule | synchrone | — | 0 |
 | `mcp-drive` | POST | aucun appel sortant ; étapes : Route by Operation, listFiles, getFile, downloadFile *(déduite)* | lecture seule | synchrone | — | 0 |
-| `mcp-gmail` | POST | aucun appel sortant ; étapes : addLabels, delete, get, search *(déduite)* | lecture seule | synchrone | — | 0 |
 | `mcp-google-maps` | POST | appelle /api/geocode/json, /api/directions/json, /api/place/textsearch/json, /api/place/details/json, /v1/currentConditions:lookup ; étapes : Route Op *(déduite)* | lecture seule | synchrone | — | 0 |
 | `mcp-test-echo` | POST | aucun appel sortant *(déduite)* | lecture seule | synchrone | — | 0 |
 | `member-join` | POST | appelle /api/ecommerce/webhook/credits/init ; étapes : Check Validation Error, Call API Init Credits, API Success? *(déduite)* | lecture seule | synchrone | — | 0 |
@@ -236,13 +238,12 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 | `server-sync` | cron / sync | appelle /api/discord/webhook/server-sync ; étapes : Sync to Backend, Données valides ? *(déduite)* | déclenché par une horloge | lecture seule | 90 |
 | `torah-translate` | plomberie | appelle /v1/messages, outil llm-call-messages ; étapes : Needs Structured?, Claude Structured, Extract Structu *(déduite)* | appelé par Torah Review and Validation, Torah Ro | lecture seule | 48 |
 | `credits-debit` | plomberie | appelle /api/ecommerce/subscription/credits/…/debit ; étapes : Debit Credits, Build Response *(déduite)* | appelé par DISCORD - Credits Debit | écrit | 36 |
-| `llm-call-messages` | plomberie | Appel LLM synchrone multi-provider avec pattern BYOT (Bring Your Own Token). | appelé par Torah Translate Simple, YOUTUBE - Tra | lecture seule | 28 |
+| `llm-call-messages` | plomberie | Appel LLM synchrone multi-provider avec pattern BYOT (Bring Your Own Token). | appelé par Torah Translate Simple, YOUTUBE - Tra | lecture seule | 29 |
 | `torah-router` | plomberie | appelle /api/v2/jobs, /api/v2/jobs/…, outil torah-chunk, outil torah-translate, outil torah-save ; étapes : Ne *(déduite)* | appelé par Torah Translate Page | lecture seule | 21 |
 | `claude-call-with-skills` | plomberie | Appel Claude avec Skills API via Batch Processing. | appelé par Torah Batch Dispatcher | lecture seule | 17 |
 | `torah-translate-batch` | plomberie | appelle /api/v2/jobs, outil claude-call-with-skills, /api/v2/jobs/… ; étapes : Create Job, Build Requests, Sub *(déduite)* | appelé par Torah Router | lecture seule | 17 |
 | `torah-translation-callback` | plomberie | appelle /api/v2/jobs/…, /api/v10/channels/…/messages, /api/translations/save-batch, …/xadd ; étapes : Split Re *(déduite)* | appelé par Torah Batch Dispatcher | poste sur Discord, écrit | 16 |
 | `mcp-tenant-resolve` | brique technique | Resolves Discord guild_id to tenant_id + package + models (RFC-079). | composant interne, jamais choisi par un agent | lecture seule | 13 |
-| `torah-vocalization` | plomberie | appelle /api/v2/jobs, outil torah-vocalization-worker ; étapes : Has Items?, Create Job, Launch Worker (async) *(déduite)* | appelé par Torah Vocalization Worker | lecture seule | 9 |
 | `torah-vocalization-worker` | plomberie | appelle /api/vocalization/search, /v1/chat/completions, /api/vocalization/save, /api/commentaries/nekudot, /ap *(déduite)* | appelé par Torah Vocalization (Nekudot) | écrit | 9 |
 | `torah-result-store` | plomberie | aucun appel sortant ; étapes : POST Store, GET Retrieve, Store Result, Retrieve Result *(déduite)* | appelé par Torah Translate Worker | lecture seule | 6 |
 | `plugin-config-get` | configuration | appelle /api/guilds/…/plugin-config ; étapes : Get Plugin Config from API, Success? *(déduite)* | lit ou écrit de la configuration | lecture seule | 4 |
@@ -272,7 +273,6 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 | `lichess-auth-start` | oauth / redirect | appelle /api/n8n/oauth/store ; étapes : Store Pending Auth, Build Auth URL, Generate Verifier, Hash Challenge *(déduite)* | redirection de navigateur, pas un outil | lecture seule | 0 |
 | `lichess-oauth-callback` | callback entrant | Workflow OAuth complet pour Lichess | un service externe nous appelle | lecture seule | 0 |
 | `llm-request-validator` | brique technique | Validates user requests against a domain context using LLM (RFC-044). | composant interne, jamais choisi par un agent | lecture seule | 0 |
-| `llm-url-extractor` | plomberie | Extracts structured information from a URL using LLM analysis. | appelé par LLM - URL Extractor | lecture seule | 0 |
 | `mcp/dataset/generate` | administration | Generer automatiquement des datasets de test pour l'analyse d'intentions | provisionne ou configure la plateforme | lecture seule | 0 |
 | `mcp/tools/notify` | notification émise | appelle …/tools/notify ; étapes : Redis XADD Service, Response *(déduite)* | le système émet, personne n'appelle | lecture seule | 0 |
 | `metadata-extractor` | brique technique | appelle … ; étapes : Error: No Data, Check Source Type, Fetch URL, Prepare HTML *(déduite)* | composant interne, jamais choisi par un agent | lecture seule | 0 |
