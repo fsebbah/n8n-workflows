@@ -60,7 +60,15 @@ const formater = (reponse, params = { name: 'Shoftim' }) =>
 
 console.log('\n1. paramètre — obligatoire, jamais normalisé');
 {
-  controle('name fourni', lire({ name: 'Shoftim' }), { valide: true, name: 'Shoftim' });
+  // ⚠️ `target_language` et `requete` ont été AJOUTÉS par le correctif 69138cda
+  // (« relayer target_language — le picker recevait les comptes de la mauvaise
+  // langue »), dont ce test n'avait pas suivi. On ne relâche donc pas l'assertion :
+  // on exige le relais, puisque c'est l'objet du correctif. `untranslated` dépend de
+  // la langue, et data précise que français et anglais sont quasi inversés.
+  controle('name fourni', lire({ name: 'Shoftim' }),
+    { valide: true, name: 'Shoftim', target_language: null, requete: '' });
+  controle('target_language relayé en query (correctif 69138cda)',
+    lire({ name: 'Shoftim', target_language: 'fr' }).requete, '?target_language=fr');
   controle('espaces retirés', lire({ name: '  Shoftim  ' }).name, 'Shoftim');
   const vide = lire({});
   controle('name absent → refus 400', [vide.valide, vide.erreur.code], [false, 400]);
@@ -125,7 +133,8 @@ console.log('\n4. câblage');
   const co = WF.connections;
   controle('webhook', noeud('Webhook Trigger').parameters.path, 'torah-tanakh-parasha-commentators');
   controle('URL cible', noeud('Lister (API)').parameters.url,
-    '={{ $env.TORAH_API_URL }}/api/torah/parashiyot/{{ encodeURIComponent($json.name) }}/commentators');
+    '={{ $env.TORAH_API_URL }}/api/torah/parashiyot/{{ encodeURIComponent($json.name) }}'
+    + '/commentators{{ $json.requete }}');
   controle('appel en onError, pour désencapsuler le statut',
     noeud('Lister (API)').onError, 'continueRegularOutput');
   controle('paramètre invalide → réponse dédiée',

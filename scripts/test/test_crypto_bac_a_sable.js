@@ -16,7 +16,11 @@ const vm = require('vm');
 const RACINE = path.resolve(__dirname, '../..');
 const STEMS = [
   'Books_Commentary_Worker', 'Books_Translation_Worker', 'Document_Translate_Worker',
-  'LLM_-_URL_Extractor', 'MCP_-_Documents_Process', 'MCP_-_Image_Generator',
+  // ⚠️ `LLM_-_URL_Extractor` a été SUPPRIMÉ le 2026-11-10 : il servait le même
+  // chemin de webhook que `MCP - LLM URL Extractor`, qui est l'actif. Deux
+  // workflows sur la même paire (méthode, chemin) et n8n refuse d'activer le
+  // second. C'est le survivant qu'il faut contrôler.
+  'MCP_-_LLM_URL_Extractor', 'MCP_-_Documents_Process', 'MCP_-_Image_Generator',
   'MCP_-_Lichess_Auth_Start', 'MCP_-_Lichess_Auth_Callback', 'MCP_-_Table_Extractor',
   'MCP_-_Tools_Enricher', 'MCP_Veo_Video',
 ];

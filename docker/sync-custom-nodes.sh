@@ -11,9 +11,18 @@
 # de host2 la « source de vérité » des nœuds entretenait un détour sans raison.
 #
 # La source est désormais CE DÉPÔT, buildé sur place :
-#   • le `dist/` de chaque paquet est SUIVI PAR GIT (vérifié : `git ls-files` le liste ;
-#     la règle `dist/` du .gitignore racine appartient à son bloc Python et ne
-#     s'applique pas aux fichiers déjà indexés) ;
+#   • `npm run build` est lancé ici, donc ce qui part vers llm est TOUJOURS fraîchement
+#     compilé, que le `dist/` soit dans un commit ou non ;
+#
+# ⚠️ CORRECTION DU 2026-11-10 (après-midi) : la version précédente de ce commentaire
+#    affirmait que « le `dist/` de chaque paquet est suivi par git ». MESURÉ, c'est
+#    FAUX pour 11 paquets sur 13 — `git ls-files 'custom-nodes/*/dist/*'` n'en rend que
+#    6 fichiers, tous de `n8n-nodes-classroom-dynamic`. La règle `dist/` du .gitignore
+#    racine s'applique bien aux autres ; seul classroom échappe, ses fichiers ayant été
+#    indexés avant. J'avais généralisé depuis le seul paquet que je venais de corriger.
+#    Conséquence pratique : le garde-fou ci-dessous ne peut détecter un dist périmé QUE
+#    pour classroom. Pour les autres, la seule garantie est le build fait ici — et c'est
+#    suffisant, à condition de ne jamais pousser depuis un dépôt non à jour ;
 #   • `npm run build` reproduit le `dist/` du commit à l'octet près (tsc 5.3.3) ;
 #   • les nœuds buildés ne requièrent, à l'exécution, que `n8n-workflow` — fourni par
 #     n8n — et `n8n-nodes-google-genai-core`, interne au dépôt.
