@@ -121,15 +121,56 @@ const plugin = (cles) => ({ plugin_context: { plugin_id: 'p-381', api_keys: cles
 const toutesCles = [...Object.values(EXPL), ...Object.values(PLUG), ...Object.values(ENV)];
 const contientCle = (v, cles = toutesCles) => { const s = JSON.stringify(v === undefined ? null : v); return cles.some(c => s.includes(c)); };
 
-/** Contrôles communs : ni nouveau $env, ni credential, activeVersion intacte. */
+/** Contrôles communs : ni nouveau $env, ni credential, pas de retour d'activeVersion. */
 function hygiene(wf, av) {
   const compte = (s, re) => (s.match(re) || []).length;
   controle('aucune credential n8n sur les nœuds', wf.W.nodes.filter(n => n.credentials).map(n => n.name), []);
   if (!av) { console.log(`  ⏭  ${AVANT} illisible — comparaisons historiques sautées`); return; }
-  // activeVersion peut garder l'instantané d'un ancien nœud (Transcriber : Vertex AI) : on ne l'a pas touché.
-  controle(`nombre de blocs credentials identique à ${AVANT}`, compte(wf.brut, /"credentials"\s*:/g), compte(av.brut, /"credentials"\s*:/g));
-  controle(`nombre de $env identique à ${AVANT}`, compte(wf.brut, /\$env/g), compte(av.brut, /\$env/g));
-  controle(`activeVersion identique à ${AVANT}`, wf.W.activeVersion, av.W.activeVersion);
+  // ⚠️ ON COMPTE DANS `nodes`, PLUS DANS LE FICHIER SÉRIALISÉ — et c'est ce test qui
+  // l'a appris à ses dépens. Ces trois comparaisons lisaient `wf.brut`, donc AUSSI la
+  // copie `activeVersion` : un instantané périmé du workflow, présent dans 250 fichiers
+  // sur 269. Chaque `$env` y était compté DEUX fois, une dans le câblage réel et une
+  // dans la vieille copie. Quand `activeVersion` a été retiré du dépôt le 2026-11-10
+  // (−98 865 lignes, aucun effet au déploiement puisque l'import le retire déjà), le
+  // compte est passé de 8 à 4 et ce test est devenu rouge — alors que RIEN du câblage
+  // n'avait changé. Il mesurait le doublon, pas le workflow.
+  const sansSnapshot = (x) => JSON.stringify(x.W.nodes);
+  controle(`nombre de blocs credentials identique à ${AVANT}`,
+           compte(sansSnapshot(wf), /"credentials"\s*:/g), compte(sansSnapshot(av), /"credentials"\s*:/g));
+  // ⚠️ ON COMPTE LES CLÉS, PAS LES $env. Le sujet de ce test est « aucune clé de
+  // fournisseur ne doit venir de $env » (BYOT). Un compte brut de `$env` confond une
+  // clé d'API avec une URL d'infra, et il est devenu rouge le 2026-11-10 pour une
+  // raison parfaitement légitime : `Prepare Qdrant` lit désormais
+  // `$env.WEBHOOK_URL || 'http://llm.local:5678/'`.
+  //
+  // ⚠️ ET MESURÉ : `WEBHOOK_URL` N'EST DÉFINI NULLE PART — ni dans `.env.local` (qui
+  // n'a qu'un `STRIPE_WEBHOOK_URL`), ni dans le conteneur n8n sur llm. C'est donc
+  // TOUJOURS le repli qui s'applique, et c'est lui qu'il faut lire. À signaler à MCP :
+  // écrire un hôte en dur dans la charge Qdrant est ce qui a tué l'ancien registre
+  // `mcp-registry` en 401 — l'hôte joignable est celui de l'en-tête Host.
+  const clesEnv = (x) => (sansSnapshot(x).match(/\$env\.([A-Z_0-9]+)/g) || [])
+    .filter((v) => /API_KEY|TOKEN|SECRET|PASSWORD/.test(v)).sort();
+  controle(`clés de fournisseur en $env identiques à ${AVANT}`, clesEnv(wf), clesEnv(av));
+  // Les $env d'INFRA restent surveillés, mais nommément : ce qui s'ajoute doit être
+  // décidé, pas découvert.
+  const infraEnv = (x) => [...new Set((sansSnapshot(x).match(/\$env\.([A-Z_0-9]+)/g) || [])
+    .filter((v) => !/API_KEY|TOKEN|SECRET|PASSWORD/.test(v)))].sort();
+  // La règle, formulée dans les deux sens plutôt qu'en égalité : `hygiene` tourne sur
+  // plusieurs workflows et `WEBHOOK_URL` n'appartient qu'à `Tools Enricher` — l'exiger
+  // partout était ma propre erreur.
+  //   • rien ne doit DISPARAÎTRE : un $env d'infra retiré casse un déploiement ;
+  //   • tout AJOUT doit figurer dans la liste nommée ci-dessous.
+  const AJOUTS_DECIDES = ['$env.WEBHOOK_URL'];
+  const perdus = infraEnv(av).filter((v) => !infraEnv(wf).includes(v));
+  const apparus = infraEnv(wf).filter((v) => !infraEnv(av).includes(v));
+  controle('aucun $env d\'infra disparu depuis ' + AVANT, perdus, []);
+  controle('tout $env d\'infra apparu est décidé (liste nommée)',
+           apparus.filter((v) => !AJOUTS_DECIDES.includes(v)), []);
+  // L'intention d'origine était « on n'a pas touché à activeVersion ». Elle est devenue
+  // « activeVersion ne doit PAS revenir » : un export n8n la rapporte à chaque fois, et
+  // elle fait rendre à `grep`/`sed` l'ANCIEN câblage.
+  controle('activeVersion absente (retirée volontairement du dépôt)',
+           wf.W.activeVersion === undefined, true);
   controle(`connexions identiques à ${AVANT}`, wf.W.connections, av.W.connections);
 }
 
@@ -381,8 +422,17 @@ console.log('\n5. MCP - Tools Enricher (anthropic, openai ; repli $env historiqu
   }
   if (av) {
     controle(`garde #459 : GPT Validate (corps JSON) identique à ${AVANT}`, wf.nd('GPT Validate').parameters.jsonBody, av.nd('GPT Validate').parameters.jsonBody);
-    controle(`n8n et Qdrant : Get Workflows / Get Indexed identiques à ${AVANT}`,
-      [wf.nd('Get Workflows').parameters, wf.nd('Get Indexed').parameters], [av.nd('Get Workflows').parameters, av.nd('Get Indexed').parameters]);
+    // ⚠️ `pi6.local:5678` EST NORMALISÉ SUR LA RÉFÉRENCE, et c'est volontaire.
+    // La référence b4fa755d est antérieure au 2026-11-10, jour où `pi6.local:5678` a
+    // été retiré du circuit : n8n ne tourne que sur `llm.local:5678`. Le repli de
+    // `$env.N8N_API_URL` a donc changé d'hôte — un correctif, pas une dérive. Comparer
+    // à l'identique ferait de ce garde-fou un verrou contre sa propre correction.
+    // Tout le RESTE du nœud continue d'être comparé à l'octet.
+    const sansHoteMort = (o) => JSON.parse(JSON.stringify(o)
+      .split('pi6.local:5678').join('llm.local:5678'));
+    controle(`n8n et Qdrant : Get Workflows / Get Indexed identiques à ${AVANT} (hôte normalisé)`,
+      [wf.nd('Get Workflows').parameters, wf.nd('Get Indexed').parameters],
+      [sansHoteMort(av.nd('Get Workflows').parameters), sansHoteMort(av.nd('Get Indexed').parameters)]);
   }
 
   // (e) La sortie formatée : réponse finale, rappel, ACK, erreur de validation.

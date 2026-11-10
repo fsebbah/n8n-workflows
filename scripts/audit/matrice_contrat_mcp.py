@@ -103,6 +103,25 @@ def _blocs_par_operation(src: str):
         for j, (op, p_op) in enumerate(bornes_op):
             fin_op = bornes_op[j + 1][1] if j + 1 < len(bornes_op) else len(bloc_res)
             blocs[(ressource.lower(), op)] = bloc_res[p_op:fin_op]
+    if blocs:
+        return blocs, True
+
+    # Troisième style : AUCUNE dimension `resource`, routage sur la seule `operation`
+    #   if (operation === 'list_folders') { … } else if (operation === 'search') { … }
+    # C'est celui d'`EmailImapToolDynamic` : IMAP n'a pas de « ressource » à choisir,
+    # seulement une action. La ressource est alors la chaîne VIDE, et `matrice()` lit
+    # pareil l'absence de paramètre `resource` sur le nœud — les deux doivent rester
+    # d'accord, sinon toutes les routes ressortent « opération absente du nœud ».
+    bornes_op = [(m.group(1), m.start()) for m in re.finditer(r"operation === '(\w+)'", src)]
+    # ⚠️ ON PRÉFIXE LE PRÉAMBULE, comme le fait le premier style avec
+    # `split("switch (operation)")[0]`. Les paramètres de CONNEXION (imap_server,
+    # imap_password…) sont lus une fois pour toutes AVANT le routage : sans le
+    # préambule, l'audit les déclarait « IGNORÉS par le nœud » alors qu'ils sont la
+    # première chose qu'il lit. Un rapport qui accuse à tort se fait ignorer.
+    preambule = src[:bornes_op[0][1]] if bornes_op else ""
+    for j, (op, p_op) in enumerate(bornes_op):
+        fin_op = bornes_op[j + 1][1] if j + 1 < len(bornes_op) else len(src)
+        blocs[("", op)] = preambule + src[p_op:fin_op]
     return blocs, bool(blocs)
 
 
@@ -200,9 +219,19 @@ def matrice(chemin_wf: str):
     cache, lignes = {}, []
     for i, regle in enumerate(sw["parameters"]["rules"]["values"]):
         paire = tuple(c.get("rightValue") for c in regle["conditions"]["conditions"])
+        # ⚠️ UN SWITCH N'A PAS FORCÉMENT DEUX CONDITIONS, et le supposer faisait LEVER
+        # tout le script (IndexError) dès qu'un workflow routait sur une seule clé.
+        # `email-imap` route sur la seule `body.action` : il n'y a pas de ressource à
+        # choisir en IMAP. Une seule condition = l'opération, ressource « — ».
+        if len(paire) == 1:
+            res_regle, op_regle = "—", paire[0]
+        elif len(paire) >= 2:
+            res_regle, op_regle = paire[0], paire[1]
+        else:
+            res_regle, op_regle = "—", "?"
         cible = conns[i][0]["node"] if i < len(conns) and conns[i] else None
         n = noeuds.get(cible or "")
-        base = {"resource": paire[0], "operation": paire[1], "noeud": cible,
+        base = {"resource": res_regle, "operation": op_regle, "noeud": cible,
                 "honores": [], "ignores": [], "manquants": [], "cherchable": None}
         if n is None:
             lignes.append({**base, "statut": "MORTE (nœud cible absent)"}); continue
@@ -210,7 +239,11 @@ def matrice(chemin_wf: str):
         if ts is None:
             lignes.append({**base, "statut": "INDÉTERMINÉ (source du nœud hors dépôt)"}); continue
         lus_par_op, exiges_par_op, attribuable = cache.setdefault(ts, analyse_noeud(ts))
-        res_n = str(n["parameters"].get("resource")).lower()
+        # ⚠️ `.get("resource")` rendait None, que `str()` transforme en « none » —
+        # une ressource qui ne correspond à aucune clé, donc « opération absente du
+        # nœud » pour les trois routes d'un nœud parfaitement sain. La chaîne vide est
+        # la clé que `_blocs_par_operation` pose pour un nœud sans ressource.
+        res_n = str(n["parameters"].get("resource") or "").lower()
         op_n = str(n["parameters"].get("operation"))
         if not attribuable:
             lignes.append({**base, "statut": "INDÉTERMINÉ (params non attribuables)"}); continue

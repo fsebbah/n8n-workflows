@@ -69,19 +69,6 @@
       }
     },
     {
-      "id": "process-imap",
-      "name": "Process IMAP",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        700,
-        200
-      ],
-      "parameters": {
-        "jsCode": "// ── azy.daily#645 — CE WORKFLOW NE SE CONNECTE À AUCUN IMAP, ET LE DISAIT MAL ──\n//\n// MESURÉ LE 2026-11-10, en l'appelant avec un serveur qui n'existe pas :\n//     POST /webhook/email-imap  {action:\"search\", imap_host:\"imap.exemple.invalid\", …}\n//     → HTTP 200  {\"success\": true, \"data\": {\"emails\": [], \"count\": 0}}\n//\n// Il acceptait un mot de passe pour un hôte inexistant et répondait « boîte vide,\n// 0 message non lu ». Un agent relaie cela tel quel : l'utilisateur s'entend dire\n// qu'il n'a pas de courrier, avec aplomb. C'est la pire panne possible — pire qu'une\n// erreur, car rien ne la signale.\n//\n// Les trois branches rendaient des structures FABRIQUÉES, et le code d'origine le\n// disait dans ses propres commentaires : « n8n IMAP node requires pre-configured\n// credentials / For dynamic IMAP, a custom implementation would be needed / This\n// returns the expected response structure ».\n//\n// POURQUOI CE N'EST PAS RÉPARABLE ICI, et pas une question de schéma\n// Il n'y a aucun client IMAP dans cette chaîne, et on ne peut pas en ajouter dans un\n// nœud Code : le bac à sable n8n interdit `require()`, donc ni `imapflow` ni\n// `node-imap`. Le nœud IMAP natif de n8n est un DÉCLENCHEUR qui relève une boîte par\n// scrutation, et il exige une credential configurée d'avance — donc une boîte unique,\n// fixée dans n8n, l'inverse d'un accès par utilisateur. Un IMAP par utilisateur\n// demanderait un nœud maison, comme ceux de Gmail et de l'Agenda.\n//\n// EN ATTENDANT : échouer franchement. On conserve la validation de `action`, qui est\n// juste, et on remplace les fausses données par un refus explicite, à un code que\n// l'appelant peut tester. Rien n'est inventé, donc rien n'est cru à tort.\n//\n// ⚠️ Le mot de passe reçu n'est NI utilisé, NI journalisé, NI renvoyé. L'ancienne\n// réponse recopiait déjà `imap_host` et `imap_user` dans `meta` ; on n'y touche pas\n// pour le mot de passe, qui n'y figurait pas et n'y figurera pas.\n\nconst body = $('Webhook').first().json.body || {};\nconst action = body.action;\n\nconst ACTIONS = ['list_folders', 'search', 'fetch_email'];\nif (!ACTIONS.includes(action)) {\n  return [{ json: {\n    success: false,\n    error_code: 'TOOL_ACTION_UNKNOWN',\n    error: {\n      code: 'TOOL_ACTION_UNKNOWN',\n      message: 'Action inconnue : ' + JSON.stringify(action === undefined ? null : action)\n               + '. Attendu : ' + ACTIONS.join(', '),\n      http_status: 400,\n    },\n    _trace: { http_status: 400, noeud: 'Process IMAP' },\n  } }];\n}\n\nreturn [{ json: {\n  success: false,\n  error_code: 'TOOL_NOT_IMPLEMENTED',\n  error: {\n    code: 'TOOL_NOT_IMPLEMENTED',\n    message: \"L'accès IMAP n'est pas implémenté : ce service ne se connecte à aucun \"\n             + \"serveur de courrier. Il rendait auparavant une boîte VIDE avec \"\n             + \"success:true, ce qui se lisait « aucun message ». Aucune donnée de \"\n             + \"courrier ne peut être obtenue par ce chemin aujourd'hui.\",\n    http_status: 501,\n  },\n  _trace: { http_status: 501, noeud: 'Process IMAP' },\n} }];\n"
-      }
-    },
-    {
       "id": "respond-success",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
@@ -109,10 +96,196 @@
       ],
       "parameters": {
         "color": 6,
-        "width": 650,
-        "height": 320,
-        "content": "## MCP - Email IMAP — ⚠️ NON IMPLÉMENTÉ\n\n**Endpoint:** POST /webhook/email-imap\n\n**Description:**\n⚠️ **Ce service ne se connecte à AUCUN serveur de courrier.** Il rend `501\nTOOL_NOT_IMPLEMENTED` sur ses trois actions (`list_folders`, `search`, `fetch_email`).\nAucune donnée de courrier ne peut être obtenue par ce chemin.\n\n_Jusqu'au 2026-11-10 il rendait des structures FABRIQUÉES avec `success: true` :\n`{\"emails\": [], \"count\": 0}` pour n'importe quel hôte, même inexistant — mesuré avec\n`imap.exemple.invalid`. Cela se lisait « votre boîte est vide », et un agent le relayait\ntel quel. Les branches rendaient des gabarits, comme le disaient les commentaires du code\nd'origine. Il échoue désormais franchement._\n\n**Pourquoi ce n'est pas réparable dans ce workflow**\nIl n'y a aucun client IMAP dans la chaîne, et on ne peut pas en ajouter dans un nœud\nCode : le bac à sable n8n interdit `require()`, donc ni `imapflow` ni `node-imap`. Le\nnœud IMAP natif de n8n est un DÉCLENCHEUR par scrutation et exige une credential\nconfigurée d'avance — une boîte unique, fixée dans n8n, l'inverse d'un accès par\nutilisateur. Un IMAP par utilisateur demanderait un **nœud maison**, comme ceux de Gmail\net de l'Agenda.\n\n**Aucun `InputSchema` n'est publié, et c'est VOLONTAIRE**\n`_build_from_schema` de MCP retire tout champ non déclaré : sans schéma, `action` elle-même\nn'arrive pas, donc aucun agent ne peut appeler ce service. En déclarer un rendrait\n`imap_password` posable par un LLM, pour un service incapable d'en faire quoi que ce soit.\n\n**À trancher par Franck (azy.daily#642)** : exclure cet outil du catalogue, ou financer un\nnœud IMAP maison. Un mot de passe de boîte n'est pas un jeton OAuth — il ne s'annule pas,\nn'expire pas, et ouvre la boîte entière. La question de sa garde ne se pose qu'après la\ndécision de construire le nœud, pas avant.\n"
+        "width": 620,
+        "height": 1100,
+        "content": "## MCP - Email IMAP\n\n**Endpoint :** POST /webhook/email-imap\n\nAccès IMAP à une boîte quelconque. Les identifiants sont fournis **par requête** (BYOT) :\nce service ne stocke aucun compte et n'a aucune credential n8n.\n\n**Identifiants attendus dans le corps** — noms alignés sur le magasin d'api\n(`provider_settings.imap` + `credentials`, chiffré au repos) :\n\n| champ | type | défaut |\n|---|---|---|\n| `imap_server` | string | — (requis) |\n| `imap_port` | number | `993` |\n| `imap_use_ssl` | boolean | `true` |\n| `imap_username` | string | — (requis) |\n| `imap_password` | string | — (requis) |\n| `connection_timeout` | number | `15000` ms |\n\n⚠️ **Ces six champs ne sont PAS déclarés dans l'InputSchema publié, et c'est voulu.**\n`_build_from_schema` de MCP retire tout champ non déclaré, donc le relais les réinjecte\nhors schéma — exactement comme `oauth_token` pour les services Google. Un champ déclaré\nest un champ que le LLM remplit, dans un registre publié sans authentification et\nvectorisé dans Qdrant. Un mot de passe de boîte ne périme pas et autorise aussi l'envoi.\n\n**Trois actions**\n\n`action: \"list_folders\"` — les dossiers du compte.\n→ `{ folders: [{path, name, delimiter, special_use, subscribed, flags}], count }`\n\n`action: \"search\"` — les messages d'un dossier, **du plus récent au plus ancien**.\nCritères nommés, combinés en ET ; aucun critère = tout le dossier.\n```json\n{ \"action\": \"search\", \"folder\": \"INBOX\", \"unseen_only\": true,\n  \"from\": \"contains\", \"subject\": \"contains\", \"since\": \"2026-11-01\", \"limit\": 20 }\n```\n→ `{ folder, emails: [{uid, subject, from[], to[], date, message_id, size, flags, seen}],\n     count, total_matched, truncated }`\n\n`action: \"fetch_email\"` — un message, analysé (MIME décodé).\n```json\n{ \"action\": \"fetch_email\", \"folder\": \"INBOX\", \"uid\": 4213,\n  \"include_attachment_content\": false }\n```\n→ `{ uid, subject, from[], to[], cc[], date, message_id, in_reply_to, text, html,\n     attachments: [{filename, content_type, size, content_id}], attachments_count }`\n`include_attachment_content` ajoute `content_base64` — **coupé par défaut** : une seule\npièce jointe peut dépasser ce qu'une réponse de webhook transporte.\n\n**Réponses d'erreur**\n| statut | `error_code` | cause |\n|---|---|---|\n| 400 | `BAD_REQUEST` | `action` absente |\n| 400 | `TOOL_ROUTE_UNKNOWN` | `action` fournie mais inconnue |\n| 401 | `IMAP_AUTH_REJECTED` | identifiants refusés par le serveur |\n| 502 | `IMAP_UPSTREAM_ERROR` | hôte injoignable, TLS refusé, délai dépassé, UID absent |\n\nSur succès, la réponse ne porte **ni `error` ni `error_code`** : MCP discrimine sur la\nprésence de la clé, pas sur sa valeur.\n\n**Historique — pourquoi ce service a changé deux fois le 2026-11-10**\nIl rendait `HTTP 200 {\"success\":true,\"emails\":[],\"count\":0}` pour `imap.exemple.invalid`,\nun hôte qui ne résout pas : une boîte vide FABRIQUÉE, que l'agent relayait en « vous n'avez\npas de courrier ». Les trois branches rendaient des gabarits, comme le disaient les\ncommentaires du code d'origine. Il est passé en `501 TOOL_NOT_IMPLEMENTED` le matin, puis\nsur le nœud maison `EmailImapToolDynamic` (imapflow + mailparser) l'après-midi.\n\nPourquoi un nœud maison était la seule issue : le bac à sable du nœud Code interdit\n`require()` ; `helpers.httpRequest` ne parle pas IMAP ; et le nœud natif `EmailReadImap`\nse déclare `group: ['trigger']` — il ne peut que démarrer un workflow et lit ses\nidentifiants dans les credentials n8n, ce qui contredit le BYOT.\n\n⚠️ **Le mot de passe est retiré de toute erreur avant qu'elle remonte** — n8n conserve les\ndonnées d'exécution, et un secret y reste relisible via\n`GET /executions/<id>?includeData=true`. Garde-fou : `scripts/test/test_646_email_imap_dynamic.js`.\n"
       }
+    },
+    {
+      "parameters": {
+        "imap_server": "={{ $json.body.imap_server }}",
+        "imap_port": "={{ Number($json.body.imap_port) || 993 }}",
+        "imap_use_ssl": "={{ $json.body.imap_use_ssl !== false }}",
+        "imap_username": "={{ $json.body.imap_username }}",
+        "imap_password": "={{ $json.body.imap_password }}",
+        "connectionTimeout": "={{ Number($json.body.connection_timeout) || 15000 }}",
+        "operation": "list_folders"
+      },
+      "type": "n8n-nodes-email-imap-dynamic.emailImapToolDynamic",
+      "typeVersion": 1,
+      "position": [
+        920,
+        120
+      ],
+      "id": "imap-list-folders-645",
+      "name": "listFolders",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "imap_server": "={{ $json.body.imap_server }}",
+        "imap_port": "={{ Number($json.body.imap_port) || 993 }}",
+        "imap_use_ssl": "={{ $json.body.imap_use_ssl !== false }}",
+        "imap_username": "={{ $json.body.imap_username }}",
+        "imap_password": "={{ $json.body.imap_password }}",
+        "connectionTimeout": "={{ Number($json.body.connection_timeout) || 15000 }}",
+        "operation": "search",
+        "folder": "={{ $json.body.folder || 'INBOX' }}",
+        "searchUnseen": "={{ $json.body.unseen_only === true }}",
+        "searchFrom": "={{ $json.body.from || '' }}",
+        "searchSubject": "={{ $json.body.subject || '' }}",
+        "searchSince": "={{ $json.body.since || '' }}",
+        "limit": "={{ Number($json.body.limit) || 20 }}"
+      },
+      "type": "n8n-nodes-email-imap-dynamic.emailImapToolDynamic",
+      "typeVersion": 1,
+      "position": [
+        920,
+        300
+      ],
+      "id": "imap-search-645",
+      "name": "searchEmails",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "imap_server": "={{ $json.body.imap_server }}",
+        "imap_port": "={{ Number($json.body.imap_port) || 993 }}",
+        "imap_use_ssl": "={{ $json.body.imap_use_ssl !== false }}",
+        "imap_username": "={{ $json.body.imap_username }}",
+        "imap_password": "={{ $json.body.imap_password }}",
+        "connectionTimeout": "={{ Number($json.body.connection_timeout) || 15000 }}",
+        "operation": "fetch_email",
+        "folder": "={{ $json.body.folder || 'INBOX' }}",
+        "uid": "={{ $json.body.uid }}",
+        "includeAttachmentContent": "={{ $json.body.include_attachment_content === true }}"
+      },
+      "type": "n8n-nodes-email-imap-dynamic.emailImapToolDynamic",
+      "typeVersion": 1,
+      "position": [
+        920,
+        480
+      ],
+      "id": "imap-fetch-email-645",
+      "name": "fetchEmail",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "list_folders",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-list_folders-0",
+                    "leftValue": "={{ $json.body.action }}",
+                    "rightValue": "list_folders",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "search",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-search-1",
+                    "leftValue": "={{ $json.body.action }}",
+                    "rightValue": "search",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "fetch_email",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-fetch_email-2",
+                    "leftValue": "={{ $json.body.action }}",
+                    "rightValue": "fetch_email",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        700,
+        300
+      ],
+      "id": "router-action-645",
+      "name": "Router action"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Traduit la sortie du nœud IMAP en enveloppe de réponse. #645\n//\n// ⚠️ SUR SUCCÈS, NI `error` NI `error_code` : MCP discrimine sur la PRÉSENCE de la clé,\n// pas sur sa valeur. Poser `error: null` fait lire un échec (mesuré sur Classroom).\nconst d = $input.first().json || {};\n\nif (Object.prototype.hasOwnProperty.call(d, 'error')) {\n  // Le nœud a nettoyé le message de tout secret avant de nous le passer.\n  const auth = d.auth_failed === true;\n  const code = auth ? 401 : 502;\n  const statut = auth ? 'IMAP_AUTH_REJECTED' : 'IMAP_UPSTREAM_ERROR';\n  return [{ json: {\n    success: false,\n    error_code: statut,\n    error: { code, message: String(d.error), status: statut },\n    meta: { provider: 'imap', imap_code: d.imap_code || null },\n    _trace: { http_status: code, noeud: 'Qualifier la réponse' },\n  } }];\n}\n\nreturn [{ json: {\n  success: true,\n  data: d,\n  meta: { provider: 'imap' },\n  _trace: { http_status: 200, noeud: 'Qualifier la réponse' },\n} }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        300
+      ],
+      "id": "qualifier-la-reponse-645",
+      "name": "Qualifier la réponse"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Repli du Switch : `action` fournie mais non reconnue. #645\n//\n// ⚠️ Cette branche doit rester ATTEINGNABLE. Sur `Category Detect`, le nœud équivalent\n// est câblé mais inatteignable parce que la variable testée ne prend que deux valeurs —\n// et un ruleset inconnu y ressort en `500 PARSE_ERROR` au lieu du message utile.\nconst action = $input.first().json?.body?.action;\nreturn [{ json: {\n  success: false,\n  error_code: 'TOOL_ROUTE_UNKNOWN',\n  error: {\n    code: 400,\n    message: `action inconnue : ${JSON.stringify(action)}. Attendu : list_folders, search, fetch_email.`,\n    status: 'TOOL_ROUTE_UNKNOWN',\n  },\n  meta: { provider: 'imap' },\n  _trace: { http_status: 400, noeud: 'Route inconnue' },\n} }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        660
+      ],
+      "id": "route-inconnue-645",
+      "name": "Route inconnue"
     }
   ],
   "connections": {
@@ -131,7 +304,7 @@
       "main": [
         [
           {
-            "node": "Process IMAP",
+            "node": "Router action",
             "type": "main",
             "index": 0
           }
@@ -145,7 +318,83 @@
         ]
       ]
     },
-    "Process IMAP": {
+    "Router action": {
+      "main": [
+        [
+          {
+            "node": "listFolders",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "searchEmails",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "fetchEmail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route inconnue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "listFolders": {
+      "main": [
+        [
+          {
+            "node": "Qualifier la réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "searchEmails": {
+      "main": [
+        [
+          {
+            "node": "Qualifier la réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "fetchEmail": {
+      "main": [
+        [
+          {
+            "node": "Qualifier la réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualifier la réponse": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route inconnue": {
       "main": [
         [
           {
