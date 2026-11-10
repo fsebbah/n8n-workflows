@@ -500,6 +500,36 @@ def find_workflow_by_name(name):
 
     if not homonymes:
         return None
+
+    # ── azy.daily#646 — NE JAMAIS ÉCRIRE DANS UN WORKFLOW ARCHIVÉ ───────────────
+    #
+    # Archiver dans l'UI n8n est le geste par lequel on RETIRE un workflow du service
+    # sans le détruire. Y écrire ensuite est forcément une erreur : soit on ressuscite
+    # ce qu'on vient de ranger, soit on corrige quelque chose qui ne sert plus.
+    #
+    # Vécu le 2026-11-10 : Franck archive `Torah Translation Orchestrator` (inactif
+    # depuis le 22/07, son chemin ayant été réattribué à `Torah Batch Dispatcher` par
+    # la PR #409), et cette fonction le retourne encore — donc un réimport de la liste
+    # qui le contient aurait écrit dedans sans rien signaler.
+    #
+    # ⚠️ Le cas n'est pas théorique au-delà de celui-là : 12 workflows sont archivés
+    # sur llm, dont plusieurs copies de `MCP - Gmail Server (All-in-One)`. Si sa copie
+    # active n'avait pas existé, la sélection par homonyme aurait pu viser une archive.
+    # C'est la même famille de défaut que « le premier homonyme », un cran plus loin.
+    vivants = [w for w in homonymes if not w.get('isArchived')]
+    archives = [w for w in homonymes if w.get('isArchived')]
+    if archives and not vivants:
+        print(f"   ❌ {name!r} n'existe plus qu'ARCHIVÉ sur l'instance "
+              f"({', '.join(w['id'] for w in archives)}).")
+        print("      Refus d'écrire dans une archive. Deux issues :")
+        print("      • retirer le fichier du dépôt et de sa liste de réimport ;")
+        print("      • ou le désarchiver dans l'UI n8n si c'est une erreur.")
+        return None
+    if archives:
+        print(f"   ⚠️  {len(archives)} exemplaire(s) archivé(s) de {name!r} ignoré(s) : "
+              f"{', '.join(w['id'] for w in archives)}")
+    homonymes = vivants
+
     if len(homonymes) == 1:
         return homonymes[0]
 
