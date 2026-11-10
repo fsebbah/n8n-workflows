@@ -164,8 +164,37 @@ const cheminDe = (wf) => {
        /`video_url` OU `query`|Exige `google_api_key`/.test(props[champ].description || ''),
        props[champ].description);
   }
-  ok('extract → `google_api_key` dit qu\'il est requis AVEC `query`',
-     /REQUISE avec `query`/.test(props.google_api_key.description || ''));
+  // ⚠️ RENVERSÉ LE 2026-11-10 : `google_api_key` devait être déclaré, il ne doit plus
+  // l'être. MCP injecte les clés sous `plugin_context.api_keys.<fournisseur>`, APRÈS son
+  // filtrage et pour tout outil, dès que l'appelant fournit des clés BYOT. Elles
+  // arrivent donc qu'on les déclare ou non — et une clé déclarée est une clé que le LLM
+  // peut POSER. Même raisonnement que pour le jeton OAuth des serveurs Google.
+  for (const champ of ['google_api_key', 'gemini_api_key', 'anthropic_api_key',
+                       'openai_api_key']) {
+    ok(`extract → \`${champ}\` PAS déclaré (MCP l'injecte hors schéma)`,
+       !(champ in props), 'déclarée, le LLM pourrait la poser');
+  }
+  for (const g of ['transcription', 'extraction']) {
+    ok(`extract → \`${g}.api_key\` PAS déclaré`,
+       !('api_key' in ((props[g] || {}).properties || {})));
+  }
+  // Mais le workflow doit CONTINUER à les lire : les appelants directs (api, chat.api)
+  // ne passent pas par le filtre de MCP et les fournissent à plat.
+  for (const champ of ['google_api_key', 'gemini_api_key', 'anthropic_api_key',
+                       'openai_api_key', 'youtube_api_key']) {
+    ok(`extract → le workflow LIT toujours \`${champ}\` dans le corps`,
+       code.includes(`'${champ}'`), 'les appelants directs le fournissent à plat');
+  }
+  // Et il doit lire le coffre de MCP.
+  ok('extract → lit `plugin_context.api_keys`', /plugin_context/.test(code));
+  // ⚠️ L'ORDRE compte : une clé Gemini n'est pas une clé YouTube Data API v3. Chercher
+  // `google` avant `youtube` donnerait un 403 « API not enabled » sur une clé valide.
+  const iY = code.indexOf("cle('youtube'");
+  ok('extract → `youtube` cherché AVANT `google` pour la recherche', iY > 0,
+     'une clé Gemini n\'est pas une clé YouTube Data API v3');
+  ok('extract → BYOT strict : aucun repli d\'environnement sur une clé',
+     !/\$env\.[A-Z_]*(KEY|TOKEN|SECRET)/.test(JSON.stringify(wf.nodes).replace(/N8N_WEBHOOK_SECRET/g, 'X')),
+     'décision de Franck du 2026-11-10');
 
   // ── Les objets imbriqués portent leur forme, sinon l'agent ne peut pas les remplir
   for (const g of ['transcription', 'extraction']) {

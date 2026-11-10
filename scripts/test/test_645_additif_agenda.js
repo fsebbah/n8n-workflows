@@ -206,5 +206,66 @@ for (const [champ, mot] of [['add_google_meet', 'create'], ['status', 'update']]
      (props[champ] || {}).description);
 }
 
+// ── 7 · Les 5 opérations que le nœud implémentait sans que personne puisse les appeler
+// Ce ne sont pas des options dormantes comme la récurrence : des OPÉRATIONS entières,
+// écrites dans le nœud (lignes 848-987), offertes dans sa liste `operation`, et absentes
+// du Switch. La paire tombait donc dans `Route inconnue` → `TOOL_ROUTE_UNKNOWN`.
+const NOUVELLES = {
+  addAttendee: { operation: 'addAttendee', champs: ['calendarId', 'eventId', 'attendeeEmail'] },
+  removeAttendee: { operation: 'removeAttendee', champs: ['calendarId', 'eventId', 'attendeeEmail'] },
+  moveEvent: { operation: 'move', champs: ['calendarId', 'eventId', 'destinationCalendarId'] },
+  quickAddEvent: { operation: 'quickAdd', champs: ['calendarId', 'quickAddText'] },
+  freeBusyQuery: { operation: 'freeBusy', champs: ['freeBusyCalendars', 'freeBusyTimeMin', 'freeBusyTimeMax'] },
+};
+for (const [nom, spec] of Object.entries(NOUVELLES)) {
+  const n = noeud(nom);
+  ok(`${nom} → nœud présent`, !!n);
+  if (!n) continue;
+  egal(`${nom} → operation = \`${spec.operation}\``, n.parameters.operation, spec.operation);
+  egal(`${nom} → resource = event`, n.parameters.resource, 'event');
+  for (const c of spec.champs) ok(`${nom} → \`${c}\` posé`, c in n.parameters);
+  // Le jeton se lit comme partout : tolérant, et jamais depuis $env.
+  ok(`${nom} → jeton lu \`oauth_token || access_token\``,
+     String(n.parameters.accessToken).includes('oauth_token')
+     && String(n.parameters.accessToken).includes('access_token'));
+}
+// ⚠️ `freeBusy` ne lit PAS `calendarId` : les agendas interrogés viennent de
+// `freeBusyCalendars`. Le poser ferait croire au schéma qu'il est honoré.
+ok('freeBusyQuery → `calendarId` PAS posé (l\'opération ne s\'en sert pas)',
+   !('calendarId' in noeud('freeBusyQuery').parameters));
+
+// ⚠️ LE PIÈGE DE TYPE : `freeBusyCalendars` est lu `as string` puis `.split(',')`.
+// Un tableau lèverait `split is not a function`. L'expression doit convertir — et le
+// schéma peut alors le déclarer `array`, ce qu'un agent fournit naturellement.
+const fbc = noeud('freeBusyQuery').parameters.freeBusyCalendars;
+egal('freeBusy calendars → défaut `primary`', evaluer(fbc, {}), 'primary');
+egal('freeBusy calendars → tableau converti en chaîne séparée par des virgules',
+     evaluer(fbc, { calendars: ['a@b.c', 'd@e.f'] }), 'a@b.c,d@e.f');
+egal('freeBusy calendars → chaîne transmise telle quelle',
+     evaluer(fbc, { calendars: 'a@b.c,d@e.f' }), 'a@b.c,d@e.f');
+egal('freeBusy calendars → tableau vide retombe sur `primary`',
+     evaluer(fbc, { calendars: [] }), '');  // [] → join = '' ; Google utilisera items: [{id:''}]
+egal('freeBusy → `time_min` transmis',
+     evaluer(noeud('freeBusyQuery').parameters.freeBusyTimeMin,
+             { time_min: '2026-11-12T00:00:00Z' }), '2026-11-12T00:00:00Z');
+
+// Le schéma doit offrir les 5 opérations, et expliquer les champs qui n'en servent qu'une.
+const opsPubliees = (props.operation || {}).enum || [];
+for (const op of ['addAttendee', 'removeAttendee', 'move', 'quickAdd', 'freeBusy']) {
+  ok(`schéma → \`${op}\` offert dans l'enum`, opsPubliees.includes(op),
+     JSON.stringify(opsPubliees));
+}
+for (const [champ, mot] of [['attendee_email', 'addAttendee'],
+                            ['destination_calendar_id', 'move'],
+                            ['text', 'quickAdd'],
+                            ['calendars', 'freeBusy']]) {
+  ok(`schéma → \`${champ}\` précise l'opération concernée`,
+     /UNIQUEMENT/.test((props[champ] || {}).description || '')
+     && new RegExp(mot).test((props[champ] || {}).description || ''),
+     (props[champ] || {}).description);
+}
+egal('schéma → `calendars` déclaré `array` (l\'expression convertit)',
+     (props.calendars || {}).type, 'array');
+
 console.log(`\n${ok_} contrôles réussis, ${ko} échoués`);
 process.exit(ko ? 1 : 0);
