@@ -125,23 +125,41 @@ DESCRIPTIONS_CHAMPS = {
 # Le canal du jeton n'est pas le même partout — le dire au lieu de le supposer.
 NOTES_JETON = {
     None: """
-_⚠️ Jeton OAuth accepté sous `oauth_token` (nom émis par MCP) **ou** `access_token`
-(nom historique des appelants directs). Les nœuds lisent `oauth_token ||
-access_token`. Jamais de `$env`._
+_⚠️ **Le jeton OAuth n'est volontairement PAS déclaré ci-dessus.** MCP l'injecte APRÈS
+son filtrage par schéma (`client.py:104`, valeur venue de Redis), donc il arrive qu'il
+soit déclaré ou non — mesuré le 2026-11-09 : un champ non déclaré est bien arrivé sur
+`llm-call-messages`. Le déclarer serait inutile, et surtout néfaste : un champ déclaré
+est un champ que le LLM peut POSER, ce qui lui permettrait d'agir sur le compte d'un
+tiers si un contenu hostile le lui soufflait._
+
+_Les nœuds lisent `oauth_token || access_token` dans le CORPS, et c'est inchangé : c'est
+le contrat des appelants directs (chat.api), qui ne passent pas par le filtre de MCP.
+Jamais de `$env`._
 """,
     "mcp-classroom": """
-_⚠️ Jeton OAuth accepté par TROIS canaux, dans cet ordre de priorité (nœud
-`Extract Token (RFC-089)`) : en-tête **`x-google-access-token`**, puis
-`body.oauth_token`, puis `body.access_token`. L'en-tête est le canal prévu par
-RFC-089 ; le corps est marqué `body_deprecated` par le workflow lui-même, mais
-reste accepté. Ce serveur est le SEUL des cinq à lire l'en-tête : gmail, agenda,
-contacts et drive ne lisent que le corps. Jamais de `$env`._
+_⚠️ **Le jeton OAuth n'est volontairement PAS déclaré ci-dessus** — voir la note des
+autres serveurs : MCP l'injecte après son filtrage, donc le déclarer n'apporte rien et
+offrirait au LLM la possibilité de le poser._
+
+_Ce serveur accepte le jeton par TROIS canaux, dans cet ordre (nœud `Extract Token
+(RFC-089)`) : en-tête `x-google-access-token`, puis `body.oauth_token`, puis
+`body.access_token`. **MCP n'émet QUE `body.oauth_token`** — jamais d'en-tête, jamais
+plusieurs noms, par posture de sécurité (confirmé le 2026-11-10). L'en-tête et
+`access_token` restent donc là pour les appelants directs. Aucune convergence sur
+l'en-tête n'est prévue : les quatre autres serveurs ne liront pas l'en-tête. Jamais de
+`$env`._
+
+_⚠️ `resource` EST déclaré ici, contrairement aux quatre autres : les `STATIC_MAPPINGS`
+de MCP l'injectent pour gmail, calendar, contacts et drive, mais pas pour classroom._
 
 _⚠️ `google_account_id` n'est volontairement PAS déclaré : le workflow le recopie mais
 aucun nœud ne le lit. Le compte Google visé est déterminé par le jeton, et par lui
 seul — aucun champ du corps ne permet de choisir un compte (azy.daily#645)._
 """,
 }
+
+# Les serveurs dont MCP n'injecte PAS `resource` (hors `STATIC_MAPPINGS`).
+RESOURCE_A_DECLARER = {"mcp-classroom"}
 
 ENTETE = """
 **Description:**
@@ -198,14 +216,38 @@ def construire(path, lignes):
     props["operation"] = {"type": "string",
                           "enum": sorted({l["operation"] for l in saines}),
                           "description": "opération à exécuter"}
-    props["resource"] = {"type": "string",
-                         "enum": sorted({l["resource"] for l in saines}),
-                         "description": "ressource visée ; MCP fournit un défaut pour "
-                                        "ce serveur, le déclarer permet de l'écraser"}
-    props["oauth_token"] = {"type": "string",
-                            "description": "jeton OAuth Google (nom émis par MCP)"}
-    props["access_token"] = {"type": "string",
-                             "description": "jeton OAuth Google (nom historique, équivalent)"}
+    # ⚠️ `resource` N'EST DÉCLARÉ QUE LÀ OÙ MCP NE LE FOURNIT PAS (2026-11-10).
+    # Leurs `STATIC_MAPPINGS` injectent `resource` pour gmail, calendar, contacts et
+    # drive — mais PAS pour classroom. Le déclarer chez les quatre premiers n'apporte
+    # donc rien, et un champ déclaré est un champ que le LLM peut POSER : autant ne pas
+    # lui offrir d'écraser le routage que MCP a déjà choisi. Classroom, lui, en a besoin.
+    if path in RESOURCE_A_DECLARER:
+        props["resource"] = {"type": "string",
+                             "enum": sorted({l["resource"] for l in saines}),
+                             "description": "ressource visée ; ce serveur ne reçoit pas "
+                                            "de défaut, il faut la fournir"}
+    # ⚠️ LE JETON N'EST PLUS DÉCLARÉ, ET C'EST MESURÉ, PAS SUPPOSÉ (2026-11-10).
+    #
+    # Il l'était, avec pour justification « le déclarer permet de l'écraser ». C'était
+    # la mauvaise lecture : pouvoir l'écraser est le DANGER, pas la fonctionnalité.
+    #
+    # MCP a tracé l'ordre exact chez eux : `param_builder.build()` filtre par schéma,
+    # PUIS `client.py:104` fait `body["oauth_token"] = access_token` avec un jeton venu
+    # de Redis — après le filtrage et hors schéma. Le jeton arrive donc que nous le
+    # déclarions ou non. Vérifié indépendamment de leur dire : le 2026-11-09, MCP a
+    # appelé `llm-call-messages` et le champ `reasoning`, NON déclaré au registre, est
+    # bien arrivé dans le corps. L'injection hors schéma est réelle.
+    #
+    # Conséquence : déclarer les deux noms était inutile ET néfaste. Un champ déclaré
+    # est un champ que le LLM peut poser, et `_build_from_schema` le laisserait passer.
+    # Un contenu hostile lu par l'agent — le corps d'un courriel rendu par
+    # `message/get`, par exemple — pourrait lui faire appeler un outil Google avec le
+    # jeton d'un tiers, et écrire les données de l'utilisateur chez l'attaquant.
+    #
+    # ⚠️ Les WORKFLOWS continuent de lire `oauth_token || access_token` dans le corps,
+    # et il ne faut PAS y toucher : c'est le contrat des appelants DIRECTS (chat.api),
+    # qui ne passent pas par le filtre de MCP. Ne plus le déclarer retire au LLM la
+    # possibilité de le poser ; cela n'empêche personne de l'envoyer.
     schema = {"type": "object", "required": ["operation"],
               "properties": enrichir(path, props)}
 

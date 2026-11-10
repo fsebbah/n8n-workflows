@@ -59,6 +59,72 @@ retirer la déclaration casserait les cinq serveurs d'un coup. **Une seule répo
 l'injection du jeton a-t-elle lieu avant ou après `_build_from_schema` ?** Si c'est après,
 nous retirons les deux champs des cinq schémas — sans aucune modification chez vous.
 
+### Le jeton n'est plus déclaré — question tranchée le 2026-11-10
+
+MCP a tracé l'ordre exact : `param_builder.build()` filtre par schéma, **puis**
+`client.py:104` fait `body["oauth_token"] = access_token` avec une valeur venue de Redis.
+L'injection est donc **après** le filtrage et **hors** schéma : le jeton arrive qu'il soit
+déclaré ou non.
+
+Vérifié indépendamment de leur dire, parce qu'un contrat ne se fige pas sur une
+description : le 2026-11-09 MCP a appelé `llm-call-messages` (`user-agent
+python-httpx/0.28.1`, en-têtes `x-tenant-id`/`x-user-id`/`x-correlation-id`), et le champ
+`reasoning` — **absent du registre** — est bien arrivé dans le corps. L'injection hors
+schéma est réelle.
+
+`oauth_token`, `access_token` et `google_access_token` sont donc **retirés des cinq
+schémas**. Je les avais posés en écrivant « le déclarer permet de l'écraser » : c'était la
+mauvaise lecture, pouvoir l'écraser est le danger. Un champ déclaré est un champ que le LLM
+peut POSER, et un contenu hostile lu par l'agent — le corps d'un courriel rendu par
+`message/get` — pourrait lui faire appeler un outil Google avec le jeton d'un **tiers**,
+et écrire les données de l'utilisateur chez l'attaquant.
+
+⚠️ **Les workflows continuent de lire `oauth_token || access_token` dans le corps, et il
+ne faut pas y toucher** : c'est le contrat des appelants DIRECTS (chat.api), qui ne passent
+pas par le filtre de MCP. Ne plus le déclarer retire au LLM la possibilité de le poser ;
+cela n'empêche personne de l'envoyer.
+
+### `resource` : déclaré seulement là où MCP ne le fournit pas
+
+Leurs `STATIC_MAPPINGS` injectent `resource` pour gmail, calendar, contacts et drive —
+**pas pour classroom**. Il n'est donc plus déclaré que sur `mcp-classroom`. Même raison que
+pour le jeton : inutile ailleurs, et un champ de moins que le LLM peut poser.
+
+### Le canal du jeton reste le CORPS
+
+MCP n'émet que `body["oauth_token"]` — jamais d'en-tête Google, jamais plusieurs noms, par
+posture de sécurité. Notre lecture tolérante `oauth_token || access_token` dans le corps
+**est** le contrat. Classroom lit en plus l'en-tête `x-google-access-token` (RFC-089) pour
+ses appelants directs ; aucune convergence n'est prévue, et les quatre autres serveurs ne
+seront pas modifiés pour cela.
+
+### ⚠️ La forme du registre : NE PAS la changer, et voici pourquoi
+
+MCP a signalé que leur `_build_from_schema` attend `parameters.required` et
+`parameters.optional` comme des **dicts clés-par-nom**, et prévenu qu'un `required` en
+LISTE lèverait une `AttributeError`. Le registre publie, lui, du JSON-Schema :
+`parameters: {type, required: [...], properties: {...}}` — mesuré sur les **237** outils,
+`required` est une liste dans 237 cas sur 237, et la clé `optional` n'existe nulle part.
+
+**La mesure contredit l'avertissement.** `llm-call-messages` publie exactement cette forme
+— `required` en liste de 4 noms, champs sous `properties` — et l'appel MCP du 2026-11-09 a
+**réussi**, avec 8 des 13 champs déclarés arrivés, dont les 4 requis. Reformer le registre
+en dicts `required`/`optional` aurait donc cassé les **41** schémas déployés, dont le seul
+dont on puisse prouver qu'il fonctionne.
+
+Rien n'est changé côté registre. Si MCP durcit son filtre sur la forme attendue, c'est ce
+chemin-là qui casse : la question leur est posée.
+
+### Question ouverte, du même type que celle du jeton
+
+Les contrats YouTube déclarent `google_api_key`, `gemini_api_key`, `anthropic_api_key` et
+`openai_api_key`. Si MCP les injecte hors schéma comme le jeton OAuth — leur
+`plugin_context.api_keys`, cité par `MCP - Transcriber` —, il faut les retirer pour la même
+raison. Mais `youtube-extract` n'est pas dans leurs `STATIC_MAPPINGS`, et nous ne savons pas
+si l'injection des clés de fournisseur couvre les outils qui n'y sont pas. **Ne pas
+déclarer risquerait de rendre l'outil inappelable ; déclarer est une exposition mineure.**
+Nous gardons donc la déclaration jusqu'à leur réponse — le choix qui ne casse rien.
+
 ## Matrices par service
 
 ## `email-imap` — MCP - Email IMAP

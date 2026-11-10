@@ -96,8 +96,30 @@ for (const [chemin, fichier] of Object.entries(FICHIERS)) {
   if (!svc) continue;
 
   egal(`${chemin} → \`operation\` requis`, (schema.required || []).includes('operation'), true);
-  ok(`${chemin} → \`oauth_token\` déclaré`, 'oauth_token' in props);
-  ok(`${chemin} → \`access_token\` déclaré`, 'access_token' in props);
+
+  // ⚠️ RENVERSÉ LE 2026-11-10 : ces deux champs devaient être déclarés, ils ne doivent
+  // plus l'être. Je les avais posés en écrivant « le déclarer permet de l'écraser » —
+  // or pouvoir l'écraser est le DANGER, pas la fonctionnalité.
+  //
+  // MCP a tracé l'ordre chez eux : leur `param_builder` filtre par schéma, PUIS
+  // `client.py:104` fait `body["oauth_token"] = access_token` avec un jeton venu de
+  // Redis. L'injection est donc APRÈS le filtrage et HORS schéma. Vérifié sans leur
+  // code : le 2026-11-09, MCP a appelé `llm-call-messages` et le champ `reasoning`,
+  // ABSENT du registre, est bien arrivé dans le corps.
+  //
+  // Un champ déclaré est un champ que le LLM peut POSER. Déclaré, `oauth_token`
+  // permettrait à un contenu hostile lu par l'agent — le corps d'un courriel rendu par
+  // `message/get` — de lui faire appeler un outil Google avec le jeton d'un TIERS.
+  for (const champ of ['oauth_token', 'access_token', 'google_access_token']) {
+    ok(`${chemin} → \`${champ}\` PAS déclaré (MCP l'injecte hors schéma)`,
+       !(champ in props),
+       'déclaré, le LLM pourrait le poser et agir sur le compte d\'un tiers');
+  }
+
+  // `resource` : déclaré SEULEMENT là où MCP ne l'injecte pas. Leurs `STATIC_MAPPINGS`
+  // couvrent gmail, calendar, contacts et drive — pas classroom.
+  egal(`${chemin} → \`resource\` déclaré uniquement si MCP ne le fournit pas`,
+       'resource' in props, chemin === 'mcp-classroom');
 
   // ── 1 · Tout champ HONORÉ est déclaré, sinon MCP le supprime ──────────────
   for (const p of svc.saines) {
