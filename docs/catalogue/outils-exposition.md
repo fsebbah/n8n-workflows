@@ -42,7 +42,7 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 ## Ce qu'il faut savoir avant de se positionner
 
 - **38 outils effectuent un appel réellement mutant** — jugé sur le verbe **et** un chemin de mutation, jamais sur le simple POST. *(Beaucoup de nos lectures sont en POST : compter les POST donnait 148 et c'était faux.)*
-- ⚠️ **182 outils sur 237 n'ont aucune description écrite.** Leur explication ci-dessous est **déduite du code** (services appelés, étapes) et marquée *(déduite)*. Elle décrit la **mécanique**, pas l'**intention** — à relire par l'équipe qui connaît l'outil. C'est le vrai obstacle du chantier : on ne peut pas décider d'exposer un outil dont personne ne sait ce qu'il fait.
+- ⚠️ **162 outils sur 237 n'ont aucune description écrite.** Leur explication ci-dessous est **déduite du code** (services appelés, étapes) et marquée *(déduite)*. Elle décrit la **mécanique**, pas l'**intention** — à relire par l'équipe qui connaît l'outil. C'est le vrai obstacle du chantier : on ne peut pas décider d'exposer un outil dont personne ne sait ce qu'il fait.
 - ⚠️ **Je ne peux pas dire lesquels exigent un secret de l'appelant.** Quatre tentatives, quatre résultats faux : `subscription-checkout-create` lit sa clé Stripe dans `$json.stripe_key` (donc BYOT) et aucune détection ne l'a vu. Un examen du JSON d'un workflow ne dit pas ce qui est **vérifié**. **Question ouverte pour api :** pour chaque appel mutant, votre backend exige-t-il quelque chose ?
 
 ## Les outils proposés à l'exposition
@@ -55,11 +55,11 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 | `pdf-ocr` | POST | Extraction de texte depuis PDF/images via OCR multi-providers | lecture seule | callback | chat, email | 45 |
 | `torah-translate-page` | POST | appelle /api/talmud/page/…/…/segments…, /api/v2/jobs, outil torah-router ; étapes : Check Existing Translations, Analyze Existing, Needs Translation?, *(déduite)* | lecture seule | synchrone | chat | 9 |
 | `torah-vocalization` | POST | appelle /api/v2/jobs, outil torah-vocalization-worker ; étapes : Has Items?, Create Job, Launch Worker (async), Build Error Response *(déduite)* | lecture seule | synchrone | — | 9 |
-| `mcp-gmail` | POST | aucun appel sortant ; étapes : addLabels, delete, get, search *(déduite)* | lecture seule | synchrone | — | 8 |
+| `mcp-gmail` | POST | Serveur Gmail : lire, chercher, envoyer, classer les messages, fils et brouillons du compte Google de l'utilisateur. | lecture seule | synchrone | — | 8 |
 | `discord-get-balance` | POST | appelle /api/ecommerce/webhook/account ; étapes : Call Credits API, API Success? *(déduite)* | lecture seule | synchrone | chat | 2 |
 | `llm-intention` | POST | Analyse l'intention utilisateur via LLM et propose des actions appropriees. | lecture seule | synchrone | — | 2 |
 | `office-extractor` | POST | appelle …, http://webs.local:9998/tika, http://webs.local:9998/unpack ; étapes : Download File, Tika Extract, Has Base64?, Decode Base64 *(déduite)* | lecture seule | synchrone | chat, email | 2 |
-| `mcp-calendar` | POST | aucun appel sortant ; étapes : Route by Operation, createEvent, getEvent, getAllEvents *(déduite)* | lecture seule | synchrone | — | 1 |
+| `mcp-calendar` | POST | Serveur Google Agenda : lister les agendas de l'utilisateur et créer, lire, chercher, modifier ou supprimer ses événements. | lecture seule | synchrone | — | 1 |
 | `academic-searcher` | POST | appelle /v1/paper/search ; étapes : Error: No Query, Semantic Scholar Search *(déduite)* | lecture seule | synchrone | — | 0 |
 | `analyze-feedback` | POST | Analyse le feedback utilisateur pour extraire des insights actionnables et ajuster le comportement de l'assistant IA. | lecture seule | synchrone | — | 0 |
 | `analyze-message` | POST | Analyse complète d'un message (sentiment, intentions, entités, priorité, langue) | lecture seule | synchrone | — | 0 |
@@ -69,16 +69,16 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 | `books-translate` | POST | appelle /api/books/…/…, /api/v2/jobs, outil books-translation-worker ; étapes : Fetch Chapter, Extract Verses, Verses to Translate?, Create Job (API) *(déduite)* | lecture seule | synchrone | — | 0 |
 | `books-translate-commentaries` | POST | appelle /api/books/…/…/commentaries, /api/jobs, outil books-commentary-worker ; étapes : Fetch Commentaries, Extract Commentaries, To Translate?, Crea *(déduite)* | lecture seule | synchrone | — | 0 |
 | `bulk-url-processor` | POST | appelle … ; étapes : Error: No URLs, Split URLs, Prepare Batch, Fetch URLs *(déduite)* | lecture seule | synchrone | — | 0 |
-| `cart-add` | POST | appelle /api/ecommerce/cart/…/add ; étapes : Check Validation Error, Call API Add Items *(déduite)* | écrit | synchrone | — | 0 |
-| `cart-apply-coupon` | POST | appelle /api/ecommerce/cart/…/coupon ; étapes : Check Validation Error, Call API Apply Coupon *(déduite)* | lecture seule | synchrone | — | 0 |
-| `cart-checkout` | POST | appelle /api/ecommerce/checkout/… ; étapes : Check Validation Error, Call API Create Checkout *(déduite)* | écrit | synchrone | — | 0 |
+| `cart-add` | POST | Ajoute des produits au panier d'un utilisateur Discord. | écrit | synchrone | — | 0 |
+| `cart-apply-coupon` | POST | Applique un code de réduction au panier d'un utilisateur Discord. | lecture seule | synchrone | — | 0 |
+| `cart-checkout` | POST | Crée une session de paiement Stripe pour le panier d'un utilisateur Discord. | écrit | synchrone | — | 0 |
 | `cart-checkout-cancel` | POST | appelle /api/ecommerce/branding/… ; étapes : Extract Params, Has Branding Params?, Get Branding, Generate Cancel HTML With Branding *(déduite)* | lecture seule | synchrone | — | 0 |
 | `cart-checkout-success` | POST | appelle /api/ecommerce/checkout/confirm, /api/discord/send-dm ; étapes : Extract Session ID, Check Error, Call API Confirm Checkout, Check API Error *(déduite)* | écrit | synchrone | — | 0 |
-| `cart-clear` | POST | appelle /api/ecommerce/cart/… ; étapes : Check Validation Error, Call API Clear Cart *(déduite)* | DELETE | synchrone | — | 0 |
-| `cart-get` | POST | appelle /api/ecommerce/cart/… ; étapes : Check Validation Error, Call API Get Cart *(déduite)* | lecture seule | synchrone | — | 0 |
-| `cart-remove` | POST | appelle /api/ecommerce/cart/…/remove ; étapes : Check Validation Error, Call API Remove Items *(déduite)* | DELETE | synchrone | — | 0 |
-| `cart-remove-coupon` | POST | appelle /api/ecommerce/cart/…/coupon ; étapes : Check Validation Error, Call API Remove Coupon *(déduite)* | DELETE | synchrone | — | 0 |
-| `cart-update` | POST | appelle /api/ecommerce/cart/…/items/… ; étapes : Check Validation Error, Call API Update Item *(déduite)* | lecture seule | synchrone | — | 0 |
+| `cart-clear` | POST | Vide entièrement le panier d'un utilisateur Discord. | DELETE | synchrone | — | 0 |
+| `cart-get` | POST | Lit le contenu du panier d'un utilisateur Discord. | lecture seule | synchrone | — | 0 |
+| `cart-remove` | POST | Retire des articles du panier d'un utilisateur Discord. | DELETE | synchrone | — | 0 |
+| `cart-remove-coupon` | POST | Retire le code de réduction appliqué au panier. | DELETE | synchrone | — | 0 |
+| `cart-update` | POST | Modifie la quantité d'un article du panier. | lecture seule | synchrone | — | 0 |
 | `category-detect` | POST | appelle /v1/messages ; étapes : Ruleset Type?, JSON Mapping Detection, LLM Classification *(déduite)* | lecture seule | synchrone | — | 0 |
 | `chart-generator` | POST | appelle https://quickchart.io/chart ; étapes : Error: No Data, Build Chart Config, Generate Chart *(déduite)* | lecture seule | synchrone | — | 0 |
 | `claude-call-stream-with-skills` | POST | Streaming Claude avec Skills API - le plus complexe des 4 webhooks. | lecture seule | callback | — | 0 |
@@ -109,7 +109,7 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 | `documents/save` | POST | appelle /v3/files ; étapes : Error: Invalid Input, Prepare File, Has Google Auth?, Error: No Auth *(déduite)* | lecture seule | synchrone | — | 0 |
 | `documents/validate` | POST | aucun appel sortant *(déduite)* | lecture seule | synchrone | — | 0 |
 | `docx-extractor` | POST | Extrait le contenu textuel de fichiers DOCX avec support pour differents formats de sortie. | lecture seule | synchrone | — | 0 |
-| `email-imap` | POST | aucun appel sortant ; étapes : Error: No Action, Process IMAP *(déduite)* | lecture seule | synchrone | — | 0 |
+| `email-imap` | POST | ⚠️ | lecture seule | synchrone | — | 0 |
 | `entity-comment` | POST | Manages comments on entities (recipes, documents, courses, etc.) stored in PostgreSQL. | lecture seule | synchrone | — | 0 |
 | `entity-extractor` | POST | aucun appel sortant ; étapes : Error: No Text, OpenAI Extract Entities *(déduite)* | lecture seule | synchrone | — | 0 |
 | `entity-list` | POST | appelle 
@@ -145,9 +145,9 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 | `llm-summarizer` | POST | Summarizes text using multiple LLM providers (Anthropic, OpenAI, Mistral). | lecture seule | synchrone | — | 0 |
 | `llm-url-extractor` | POST | Extracts structured information from a URL using LLM analysis. | lecture seule | synchrone | — | 0 |
 | `mathpix` | POST | OCR mathematique via Mathpix API. Convertit images de formules/equations en LaTeX, MathML, AsciiMath. | lecture seule | synchrone | — | 0 |
-| `mcp-classroom` | POST | aucun appel sortant ; étapes : Extract Token (RFC-089), Route by Resource + Operation, course_create, course_get *(déduite)* | lecture seule | synchrone | — | 0 |
-| `mcp-contacts` | POST | aucun appel sortant ; étapes : Route by Operation, createContact, getContact, getAllContacts *(déduite)* | lecture seule | synchrone | — | 0 |
-| `mcp-drive` | POST | aucun appel sortant ; étapes : Route by Operation, listFiles, getFile, downloadFile *(déduite)* | lecture seule | synchrone | — | 0 |
+| `mcp-classroom` | POST | Serveur Google Classroom : cours, devoirs, copies rendues, notes, élèves, enseignants, annonces et thèmes du compte Google de l'utilisateur. | lecture seule | synchrone | — | 0 |
+| `mcp-contacts` | POST | Serveur Google Contacts : lire, créer, modifier, chercher et grouper les fiches de contact du compte Google de l'utilisateur. | lecture seule | synchrone | — | 0 |
+| `mcp-drive` | POST | Serveur Google Drive : lister, chercher, lire, créer, déplacer et partager les fichiers et dossiers du compte Google de l'utilisateur. | lecture seule | synchrone | — | 0 |
 | `mcp-google-maps` | POST | appelle /api/geocode/json, /api/directions/json, /api/place/textsearch/json, /api/place/details/json, /v1/currentConditions:lookup ; étapes : Route Op *(déduite)* | lecture seule | synchrone | — | 0 |
 | `mcp-test-echo` | POST | aucun appel sortant *(déduite)* | lecture seule | synchrone | — | 0 |
 | `member-join` | POST | appelle /api/ecommerce/webhook/credits/init ; étapes : Check Validation Error, Call API Init Credits, API Success? *(déduite)* | lecture seule | synchrone | — | 0 |
@@ -159,10 +159,10 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 | `private-channel-request` | POST | Vérifie si un channel privé existe, sinon le crée via Discord API et l'enregistre dans api-backend. | poste sur Discord | synchrone | — | 0 |
 | `product-discovery` | POST | appelle /v1/chat/completions ; étapes : Check Validation Error, LLM Batch Reasoning, Check Parse Error, Search Products (Parallel) *(déduite)* | lecture seule | synchrone | — | 0 |
 | `products-persist` | POST | appelle /api/ecommerce/products/bulk-create ; étapes : Check Validation Error, Call API Bulk Create *(déduite)* | lecture seule | synchrone | — | 0 |
-| `profile-address-add` | POST | appelle /api/ecommerce/addresses/… ; étapes : Check Validation Error, Call API Add Address *(déduite)* | lecture seule | synchrone | — | 0 |
-| `profile-address-remove` | POST | appelle /api/ecommerce/addresses/…/… ; étapes : Check Validation Error, Call API Remove Address *(déduite)* | DELETE | synchrone | — | 0 |
-| `profile-address-set-default` | POST | appelle /api/ecommerce/addresses/…/…/default ; étapes : Check Validation Error, Call API Set Default Address *(déduite)* | lecture seule | synchrone | — | 0 |
-| `profile-address-update` | POST | appelle /api/ecommerce/addresses/…/… ; étapes : Check Validation Error, Call API Update Address *(déduite)* | lecture seule | synchrone | — | 0 |
+| `profile-address-add` | POST | Ajoute une adresse de livraison au profil d'un utilisateur Discord. | lecture seule | synchrone | — | 0 |
+| `profile-address-remove` | POST | Supprime une adresse de livraison du profil. | DELETE | synchrone | — | 0 |
+| `profile-address-set-default` | POST | Définit une adresse de livraison comme adresse par défaut. | lecture seule | synchrone | — | 0 |
+| `profile-address-update` | POST | Modifie une adresse de livraison existante. | lecture seule | synchrone | — | 0 |
 | `profile-get` | POST | appelle /api/ecommerce/profile/… ; étapes : Check Validation Error, Call API Get Profile *(déduite)* | lecture seule | synchrone | — | 0 |
 | `profile-update` | POST | appelle /api/ecommerce/profile/… ; étapes : Check Validation Error, Call API Update Profile *(déduite)* | lecture seule | synchrone | — | 0 |
 | `progress-delete` | POST | appelle /api/n8n/progress/delete ; étapes : API Delete User Data *(déduite)* | écrit | synchrone | — | 0 |
@@ -217,8 +217,8 @@ Les deux questions — *que proposer* et *qui peut déclencher* — sont distinc
 | `torah-validate-text` | POST | appelle /api/sefaria/texts/search ; étapes : Search Torah API *(déduite)* | lecture seule | synchrone | — | 0 |
 | `veo-video` | POST | appelle … ; étapes : Has required input?, Error: Missing Input, Has Callback URL?, Store Callback Info *(déduite)* | lecture seule | callback | — | 0 |
 | `web-search` | POST | Performs web search using multiple LLM providers with grounding. | lecture seule | synchrone | — | 0 |
-| `youtube-extract` | POST | appelle /v3/search, …, outil video-transcription, outil llm-call-messages ; étapes : Error: Validation, Has Callback URL?, Store Job Context, Search Y *(déduite)* | lecture seule | callback | — | 0 |
-| `youtube-searcher` | POST | appelle /v3/search ; étapes : Error: No Query, YouTube Search *(déduite)* | lecture seule | synchrone | — | 0 |
+| `youtube-extract` | POST | Transcrit une vidéo YouTube — fournie par URL ou trouvée par recherche — puis, facultativement, en extrait une information structurée selon une consig | lecture seule | callback | — | 0 |
+| `youtube-searcher` | POST | Cherche des vidéos, chaînes ou playlists sur YouTube et rend leurs métadonnées (titre, description, chaîne, date, vignette). | lecture seule | synchrone | — | 0 |
 
 ## ⚠️ À trancher
 
