@@ -43,23 +43,25 @@ LISTE = RACINE / "docs" / "catalogue" / "outils-production.txt"
 RELEVE_DISTANT = "llm.local:/storage4/releve/executions.csv"
 
 SOCLE = ["description", "execution", "surfaces", "scope", "requires", "result_kind",
-         "livraison", "estimated_time", "cout", "irreversible", "limites_entree",
-         "sort_du_perimetre"]
+         "delivery", "estimated_time", "cost", "irreversible", "input_limits",
+         "leaves_perimeter"]
 SPECIFIQUES = {
-    "extraction": ["accepte", "taille_max_pages_max", "langues", "perd", "sortie_tronquee"],
-    "recherche": ["nb_resultats", "cite_ses_sources", "fraicheur", "langue_zone", "cache"],
-    "media": ["dimensions_duree", "formats_sortie", "recuperation", "duree_de_vie",
-              "choix_disponibles", "droit_usage"],
-    "connecteur": ["compte_requis", "scopes", "lit", "ecrit", "quota", "portee_des_donnees"],
-    "llm": ["modele", "entree_max", "forme_de_sortie", "stable"],
-    "asynchrone": ["suivi", "annulable", "duree_de_vie_du_resultat", "idempotent"],
-    "vocal": ["enonciation", "differer_vers_historique"],
+    "extraction": ["accepts", "max_size_or_pages", "languages", "loses", "output_truncated"],
+    "search": ["result_count", "cites_sources", "freshness", "language_region", "cache"],
+    "media": ["dimensions_or_duration", "output_formats", "retrieval_mode", "lifetime",
+              "available_choices", "usage_rights"],
+    "connector": ["account_required", "scopes", "reads", "writes", "quota", "data_scope"],
+    "llm": ["model", "max_input", "output_shape", "deterministic"],
+    "async": ["status_endpoint", "cancellable", "result_lifetime", "idempotent"],
+    "voice": ["spoken_form", "defer_to_history"],
 }
-COLONNES = (["outil", "workflow", "methode", "famille", "domaine",
-            "service_tiers", "service_heberge", "appele_par"] + SOCLE
-            + [c for f in ("extraction", "recherche", "media", "connecteur", "llm",
-                           "asynchrone", "vocal") for c in SPECIFIQUES[f]]
-            + ["executions_41j", "champs_renseignes"])
+COLONNES = (["tool", "workflow", "method", "family", "domain",
+            "third_party_service", "self_hosted_service", "called_by"] + SOCLE
+            + [c for f in ("extraction", "search", "media", "connector", "llm",
+                           "async", "voice") for c in SPECIFIQUES[f]]
+            + ["declared_enums", "required_inputs", "input_fields",
+               "output_keys", "endpoints_called",
+               "executions_41d", "fields_filled"])
 
 HOTES_INTERNES = re.compile(r"(localhost|127\.0\.0\.1|\.local\b|^$)", re.I)
 # ⚠️ Espaces réservés de DOCUMENTATION, jamais appelés. Les compter comme des tiers
@@ -330,16 +332,16 @@ def requires(w):
     t = tout_le_texte(w)
     r = []
     if champs & {"oauth_token", "access_token", "google_access_token"}:
-        r.append("compte Google connecté (jeton dans le corps)")
+        r.append("connected Google account (OAuth token in request body)")
     if champs & {"imap_password", "imap_username"}:
-        r.append("identifiants IMAP (fournis par api)")
+        r.append("IMAP credentials (supplied by chat.api)")
     for p in sorted(set(re.findall(r"api_keys\.([a-z_]+)", t))):
-        r.append(f"clé fournisseur {p} (plugin_context.api_keys.{p})")
+        r.append(f"provider key {p} (plugin_context.api_keys.{p})")
     if champs & {"file_id", "folder_id", "document", "file_url", "image_url", "pdf_url",
                  "audio_url", "video_url", "url"}:
-        r.append("fichier ou URL en entrée")
+        r.append("file or URL as input")
     for m in sorted(set(re.findall(r"errors\.push\(\s*['\"]([^'\"]{3,70})['\"]", t)))[:4]:
-        r.append(f"validé: {m}")
+        r.append(f"validated: {m}")
     return " ; ".join(r)
 
 
@@ -460,16 +462,19 @@ def irreversible(w):
     # sur le compte de l'utilisateur. Les ignorer rendait `mcp-gmail` « inconnu ».
     lit_m, ecrit_m, inconnues_m = lectures_ecritures_maison(w)
     if ecrit_m:
-        return "oui — opérations d'écriture sur le compte : " + ", ".join(ecrit_m[:8])
+        return "yes — write operations on the account: " + ", ".join(ecrit_m[:8])
     if inconnues_m:
-        return "à vérifier — opérations non classées : " + ", ".join(inconnues_m[:6])
+        return "to verify — unclassified operations: " + ", ".join(inconnues_m[:6])
     if lit_m:
-        return "non (opérations de lecture seule : " + ", ".join(lit_m[:6]) + ")"
+        return "no (read-only operations: " + ", ".join(lit_m[:6]) + ")"
 
     par_m = methodes_sortantes(w)
     ecritures = {m: h for m, h in par_m.items() if m in ("POST", "PUT", "PATCH", "DELETE")}
     if not ecritures:
-        return "non (aucun appel sortant en écriture)" if par_m else ""
+        # ⚠️ Aucun appel sortant du tout = calcul local. C'est une RÉPONSE, pas une
+        # inconnue : laisser vide faisait croire à un défaut de mesure sur 15 outils.
+        return ("no (no outbound write call)" if par_m
+                else "no (no outbound HTTP call at all — local computation only)")
     externes = set(hotes_externes(w))
     cibles = sorted({h for hs in ecritures.values() for h in hs if h in externes})
     # ⚠️ Un POST vers une API de GÉNÉRATION (LLM, image) n'écrit rien chez le client :
@@ -486,10 +491,21 @@ def irreversible(w):
                   "aiplatform.googleapis.com"}
     ecrit_client = [c for c in cibles if c not in generation]
     if ecrit_client:
-        return "oui — écrit chez : " + ", ".join(ecrit_client)
+        return "yes — writes to: " + ", ".join(ecrit_client)
     if cibles:
-        return "non (appels sortants = génération, pas d'écriture chez l'utilisateur)"
-    return "à vérifier — écriture vers une cible en expression"
+        return "no (outbound calls are generation/processing, not writes to the user account)"
+    # ⚠️ Une cible en EXPRESSION reste une cible. `entity-rating` POSTe une note vers
+    # `{{ $json.backend_api_url }}/api/n8n/entities/…/rate` : l'hôte est fourni à
+    # l'appel, mais l'écriture est certaine. Rendre « à vérifier » laissait croire à une
+    # inconnue là où le verbe et le chemin disent tout.
+    chemins = sorted({re.sub(r"\{\{[^{}]*\}\}", "…", u.lstrip("=")).strip()
+                      for n, u in urls(w)
+                      if str((n.get("parameters") or {}).get("method") or "GET").upper()
+                      in ("POST", "PUT", "PATCH", "DELETE")})
+    if chemins:
+        return ("yes — write calls to a target supplied at call time: "
+                + ", ".join(c[:60] for c in chemins[:3]))
+    return "to verify — no outbound method could be determined"
 
 
 def limites_entree(w):
@@ -509,7 +525,7 @@ def limites_entree(w):
     fmts = sorted(set(re.findall(r"\b(pdf|docx|xlsx|pptx|png|jpe?g|webp|mp3|wav|m4a|mp4|csv|html|epub)\b",
                                  t, re.I)))
     if fmts:
-        bornes.append("formats cités: " + ",".join(f.lower() for f in fmts[:10]))
+        bornes.append("formats mentioned: " + ",".join(f.lower() for f in fmts[:10]))
     return " ; ".join(bornes)
 
 
@@ -519,10 +535,10 @@ def cout(w):
     parts = []
     mods, _ = modeles_llm(w)
     if re.search(r"api\.(anthropic|openai|mistral|deepseek)\.com|generativelanguage", t):
-        parts.append("jetons (1000 jetons)" + (f" — modèle(s): {','.join(mods[:3])}" if mods else ""))
-    for h, unite in (("mathpix", "page"), ("quickchart", "appel"),
-                     ("googleapis.com/youtube", "quota YouTube (unités)"),
-                     ("elevenlabs", "caractère"), ("api.lichess", "appel")):
+        parts.append("tokens (per 1k tokens)" + (f" — model(s): {','.join(mods[:3])}" if mods else ""))
+    for h, unite in (("mathpix", "page"), ("quickchart", "call"),
+                     ("googleapis.com/youtube", "YouTube quota units"),
+                     ("elevenlabs", "character"), ("api.lichess", "call")):
         if h in t:
             parts.append(f"{unite} ({h})")
     if not parts:
@@ -542,7 +558,7 @@ def familles(w, kind, exec_mode, nom_outil):
     if re.search(r"api\.(anthropic|openai|mistral|deepseek)\.com|generativelanguage", t):
         f.append("llm")
     if any(m in t for m in MOTEURS_RECHERCHE) or re.search(r"customsearch|/search\b", t):
-        f.append("recherche")
+        f.append("search")
     # ⚠️ RESSERRÉ : un `re.search("extract")` sur tout le JSON classait 51 outils sur
     # 110 en « extraction », simplement parce qu'un commentaire ou un nom de variable
     # contenait le mot. Une famille qui attrape la moitié du parc ne renseigne rien.
@@ -565,10 +581,10 @@ def familles(w, kind, exec_mode, nom_outil):
         f.append("media")
     if set(champs_du_corps(w)) & {"oauth_token", "access_token", "google_access_token",
                                   "imap_password"}:
-        f.append("connecteur")
+        f.append("connector")
     if exec_mode == "async":
-        f.append("asynchrone")
-    return f or ["autre"]
+        f.append("async")
+    return f or ["other"]
 
 
 def champs_extraction(w):
@@ -577,14 +593,14 @@ def champs_extraction(w):
                                  t, re.I)))
     langues = sorted(set(re.findall(r"['\"](?:fr|en|he|ar|es|de|it|pt|ru|zh)['\"]", t)))
     return {
-        "accepte": ",".join(f.lower() for f in fmts[:12]),
-        "taille_max_pages_max": limites_entree(w).split(" ; formats")[0] or "",
-        "langues": ",".join(l.strip("'\"") for l in langues[:12]),
+        "accepts": ",".join(f.lower() for f in fmts[:12]),
+        "max_size_or_pages": limites_entree(w).split(" ; formats")[0] or "",
+        "languages": ",".join(l.strip("'\"") for l in langues[:12]),
         # `perd` et `sortie_tronquee` ne se déduisent pas du code : savoir qu'un OCR
         # abandonne la mise en page demande de comparer entrée et sortie sur un vrai
         # document. À remplir après mesure, pas par supposition.
-        "perd": "",
-        "sortie_tronquee": "oui (max_tokens posé)" if re.search(r"max_tokens", t) else "",
+        "loses": "",
+        "output_truncated": "yes (max_tokens is set)" if re.search(r"max_tokens", t) else "",
     }
 
 
@@ -592,11 +608,11 @@ def champs_recherche(w):
     t = tout_le_texte(w)
     nb = re.findall(r"(?:num|count|limit|max_results|numResults)\"?\s*[:=]\s*\"?(\d+)", t)
     return {
-        "nb_resultats": max(nb, key=lambda x: int(x)) if nb else "",
-        "cite_ses_sources": "oui" if re.search(r"\burl\b|\blink\b|source", t, re.I) else "",
-        "fraicheur": "paramétrable" if re.search(r"dateRestrict|freshness|sortBy|published", t) else "",
-        "langue_zone": "paramétrable" if re.search(r"\b(hl|gl|lr|country|language)\b", t) else "",
-        "cache": "aucun cache dans le workflow" if "cache" not in t.lower() else "",
+        "result_count": max(nb, key=lambda x: int(x)) if nb else "",
+        "cites_sources": "yes" if re.search(r"\burl\b|\blink\b|source", t, re.I) else "",
+        "freshness": "configurable" if re.search(r"dateRestrict|freshness|sortBy|published", t) else "",
+        "language_region": "configurable" if re.search(r"\b(hl|gl|lr|country|language)\b", t) else "",
+        "cache": "no cache in workflow" if "cache" not in t.lower() else "",
     }
 
 
@@ -613,16 +629,16 @@ def champs_media(w, kind):
     types = sorted(set(re.findall(r"\b(bar|line|pie|doughnut|radar|polarArea)\b", t)))
     _, liv = result_kind_et_livraison(w)
     return {
-        "dimensions_duree": ",".join(dims[:6]),
-        "formats_sortie": ",".join(f.lower() for f in fmts[:8]),
-        "recuperation": {"url_tiers": "public (URL tiers)", "data_uri": "usage_unique (data URI)",
-                         "binaire": "flux", "url_chat_api": "jeton_chat_api",
+        "dimensions_or_duration": ",".join(dims[:6]),
+        "output_formats": ",".join(f.lower() for f in fmts[:8]),
+        "retrieval_mode": {"url_tiers": "public (third-party URL)", "data_uri": "single_use (data URI)",
+                         "binaire": "stream", "url_chat_api": "chat_api_token",
                          "inline": "inline"}.get(liv, ""),
         # La durée de vie d'une URL tiers n'est pas dans notre code : elle est fixée par
         # le fournisseur. Ne pas l'inventer.
-        "duree_de_vie": "1 h (dépôt interne)" if "document-result" in t else "",
-        "choix_disponibles": ",".join((voix + types)[:8]),
-        "droit_usage": "",
+        "lifetime": "1 h (internal result store)" if "document-result" in t else "",
+        "available_choices": ",".join((voix + types)[:8]),
+        "usage_rights": "",
     }
 
 
@@ -637,23 +653,23 @@ def champs_connecteur(w):
     ecrit = ecrit_m or sorted({h for m in ("POST", "PUT", "PATCH", "DELETE") for h in par_m.get(m, [])
                                if not HOTES_INTERNES.search(h)})
     if inconnues_m:
-        ecrit = ecrit + [f"(non classées: {','.join(inconnues_m[:4])})"]
+        ecrit = ecrit + [f"(unclassified: {','.join(inconnues_m[:4])})"]
     compte = ""
     if champs & {"oauth_token", "access_token", "google_access_token"}:
-        compte = "Google (jeton OAuth dans le corps — BYOT)"
+        compte = "Google (OAuth token in request body — BYOT)"
     elif "imap_password" in champs:
-        compte = "boîte IMAP (identifiants dans le corps — BYOT)"
+        compte = "IMAP mailbox (credentials in request body — BYOT)"
     return {
-        "compte_requis": compte,
+        "account_required": compte,
         # ⚠️ Les scopes ne sont PAS dans nos workflows : le jeton arrive déjà émis par
         # chat.api, qui seul connaît les scopes demandés au consentement. Vide ici est
         # la vérité ; les remplir au jugé tromperait sur ce que l'outil peut faire.
         "scopes": ",".join(s.rsplit("/", 1)[-1] for s in scopes) if scopes else "",
-        "lit": ",".join(lit[:10]),
-        "ecrit": ",".join(ecrit[:10]),
+        "reads": ",".join(lit[:10]),
+        "writes": ",".join(ecrit[:10]),
         "quota": "",
-        "portee_des_donnees": "le compte que le jeton désigne (aucun sélecteur de compte dans le corps)"
-        if compte.startswith("Google") else ("la boîte désignée par imap_server/imap_username"
+        "data_scope": "whichever account the token designates (no account selector in the body)"
+        if compte.startswith("Google") else ("the mailbox designated by imap_server/imap_username"
                                              if compte else ""),
     }
 
@@ -672,25 +688,25 @@ def champs_llm(w):
     temps = sorted(set(re.findall(r"temperature\"?\s*:\s*([0-9.]+)", t)))
     stable = ""
     if temps:
-        stable = ("oui (temperature=0)" if all(float(x) == 0 for x in temps)
-                  else f"non (temperature={','.join(temps)})")
+        stable = ("yes (temperature=0)" if all(float(x) == 0 for x in temps)
+                  else f"no (temperature={','.join(temps)})")
     elif mods:
-        stable = "non (temperature par défaut du fournisseur)"
+        stable = "no (provider default temperature)"
     return {
-        "modele": ",".join(mods[:3]) + (" (pilotable par le corps)" if pilotable else ""),
-        "entree_max": f"max_tokens={max(entree, key=lambda x: int(x))}" if entree else "",
-        "forme_de_sortie": forme,
-        "stable": stable,
+        "model": ",".join(mods[:3]) + (" (overridable from the request body)" if pilotable else ""),
+        "max_input": f"max_tokens={max(entree, key=lambda x: int(x))}" if entree else "",
+        "output_shape": forme,
+        "deterministic": stable,
     }
 
 
 def champs_async(w):
     t = tout_le_texte(w)
     return {
-        "suivi": ("document-job-status" if "document-job-status" in t
+        "status_endpoint": ("document-job-status" if "document-job-status" in t
                   else ("job-status" if "job-status" in t or "job_status" in t else "")),
-        "annulable": "document-cancel" if "document-cancel" in t else "",
-        "duree_de_vie_du_resultat": "1 h" if "document-result" in t else "",
+        "cancellable": "document-cancel" if "document-cancel" in t else "",
+        "result_lifetime": "1 h" if "document-result" in t else "",
         # L'idempotence demande de rejouer le MÊME appel et de comparer. Pas déductible.
         "idempotent": "",
     }
@@ -716,12 +732,12 @@ SERVICE_TIERS = [
     (r"/youtube/v3", "YouTube (API Data)"),
     (r"/customsearch/v1", "Google Search (Custom Search)"),
     (r"/gmail/v1", "Gmail"),
-    (r"/calendar/v3", "Google Agenda"),
+    (r"/calendar/v3", "Google Calendar"),
     (r"/classroom/v1", "Google Classroom"),
     (r"/language/v1|/v1/documents:analyze", "Google Cloud Natural Language"),
     (r"upload/drive|drive\.google\.com|/drive/v3|driveToolDynamic|googleapis\.com \(Drive\)", "Google Drive"),
     (r"gmailToolDynamic|googleapis\.com \(Gmail\)|gmail/v1", "Gmail"),
-    (r"calendarToolDynamic|googleapis\.com \(Calendar\)|calendar/v3", "Google Agenda"),
+    (r"calendarToolDynamic|googleapis\.com \(Calendar\)|calendar/v3", "Google Calendar"),
     (r"classroomToolDynamic|googleapis\.com \(Classroom\)|classroom/v1", "Google Classroom"),
     (r"people\.googleapis", "Google Contacts"),
     (r"customsearch|google-?searcher|cse\.google", "Google Search (Custom Search)"),
@@ -739,13 +755,13 @@ SERVICE_TIERS = [
     # que la page PUBLIQUE, qui est un accès différent (et sans clé d'API).
     # La page publique est un accès DIFFÉRENT de l'API Data : pas de clé, pas de quota,
     # et des conditions d'utilisation distinctes. Les deux peuvent coexister sur un outil.
-    (r"www\.youtube\.com", "YouTube (page publique)"),
+    (r"www\.youtube\.com", "YouTube (public page)"),
     (r"api\.anthropic\.com", "Anthropic (Claude)"),
     (r"api\.openai\.com", "OpenAI"),
     (r"api\.mistral\.ai", "Mistral"),
     (r"api\.deepseek", "DeepSeek"),
-    (r"eu\.api\.mathpix\.com", "Mathpix (point d'accès UE)"),
-    (r"(?<!eu\.)api\.mathpix\.com", "Mathpix (HORS UE)"),
+    (r"eu\.api\.mathpix\.com", "Mathpix (EU endpoint)"),
+    (r"(?<!eu\.)api\.mathpix\.com", "Mathpix (NON-EU endpoint)"),
     (r"quickchart\.io", "QuickChart"),
     (r"api\.assemblyai\.com", "AssemblyAI"),
     (r"elevenlabs", "ElevenLabs"),
@@ -755,23 +771,23 @@ SERVICE_TIERS = [
     (r"learn\.microsoft\.com", "Microsoft Learn"),
     # Les données vont à SerpAPI, qui interroge Google pour nous. Nommer les deux :
     # le destinataire réel est SerpAPI, et c'est lui qui compte pour la confidentialité.
-    (r"serpapi\.com", "SerpAPI (relais de recherche Google)"),
+    (r"serpapi\.com", "SerpAPI (Google search relay)"),
     (r"semanticscholar\.org", "Semantic Scholar"),
     (r"gnews\.io", "GNews"),
-    (r"backblazeb2\.com", "Backblaze B2 (stockage)"),
-    (r"serveur IMAP", "serveur IMAP du client (hôte fourni à l'appel)"),
+    (r"backblazeb2\.com", "Backblaze B2 (object storage)"),
+    (r"serveur IMAP", "client IMAP server (host supplied per call)"),
 ]
 
 # NOS services. L'hôte est interne, donc `hotes_externes()` les écarte : on les cherche
 # donc dans le texte brut du workflow.
 SERVICE_HEBERGE = [
-    (r"webs\.local:3100|gotenberg", "Gotenberg — génération PDF/EPUB (webs.local:3100)"),
-    (r"host2\.local:3031|TORAH_API_URL", "torah.api — corpus (host2.local:3031)"),
-    (r"host3\.local:20001|QDRANT|qdrant", "Qdrant — base vectorielle (host3.local:20001)"),
+    (r"webs\.local:3100|gotenberg", "Gotenberg — PDF/EPUB rendering (webs.local:3100)"),
+    (r"host2\.local:3031|TORAH_API_URL", "torah.api — corpus service (host2.local:3031)"),
+    (r"host3\.local:20001|QDRANT|qdrant", "Qdrant — vector database (host3.local:20001)"),
     (r"host3\.local:638|REDIS_HOST|n8n-nodes-base\.redis", "Redis (host3.local:6381)"),
     (r"databases\.local|DB_POSTGRESDB", "PostgreSQL (databases.local)"),
-    (r"BACKEND_API_URL|backend_api_url", "chat.api — backend (URL fournie dans le corps)"),
-    (r"llm\.local:5678/webhook|N8N_WEBHOOK|/webhook/", "n8n — autre workflow du parc (llm.local:5678)"),
+    (r"BACKEND_API_URL|backend_api_url", "chat.api — backend (URL supplied in request body)"),
+    (r"llm\.local:5678/webhook|N8N_WEBHOOK|/webhook/", "n8n — another workflow in the fleet (llm.local:5678)"),
 ]
 
 # Domaine produit. Déduit du PRÉFIXE du chemin, qui est notre convention de nommage.
@@ -780,33 +796,33 @@ SERVICE_HEBERGE = [
 # `entity-social-actions`, ['recipes','translations','trainings','articles','posts'].
 # Le marquer « recettes » ferait refuser un outil qui sert aussi les cours et les quiz.
 DOMAINE = [
-    (r"^recipes-", "recettes"),
-    (r"^games-|^lichess-", "échecs (Lichess)"),
+    (r"^recipes-", "recipes"),
+    (r"^games-|^lichess-", "chess (Lichess)"),
     (r"^torah-|^books-|^scriptorium-", "Torah / corpus"),
-    (r"^learning-|^quiz-|^syllabus-|^progress-|^job-status/", "apprentissage"),
-    (r"^discord/|^member-|^mention$|^guild|^private-channel", "Discord / communauté"),
+    (r"^learning-|^quiz-|^syllabus-|^progress-|^job-status/", "learning"),
+    (r"^discord/|^member-|^mention$|^guild|^private-channel", "Discord / community"),
     (r"^documents?/|^document-|^docx-|^office-|^pdf-|^mathpix$|^table-|^html-|^csv-|^google-drive-ocr$|^document-structure-extract$", "documents"),
-    (r"^entity-", "transverse (entités : recipe, document, course, quiz, flashcard)"),
-    (r"^orders-|^products-|^product-|^profile-|^credits-", "commerce / compte"),
+    (r"^entity-", "cross-domain (entity types differ per tool — see declared_enums)"),
+    (r"^orders-|^products-|^product-|^profile-|^credits-", "commerce / account"),
     # ⚠️ `^mcp-g` attrapait `mcp-google-maps`, qui n'est PAS un compte connecté :
     # c'est une API publique à clé. L'ordre des règles compte, celle-ci passe avant.
-    (r"^mcp-google-maps$", "données géographiques (API publique)"),
+    (r"^mcp-google-maps$", "geo data (public API)"),
     (r"^mcp-gmail$|^mcp-calendar$|^mcp-contacts$|^mcp-drive$|^mcp-classroom$|^email-imap$",
-     "comptes connectés (Google, IMAP)"),
-    (r"^llm-|^claude-|^anthropic-|^text-generator$|^summarizer$|^code-generator$", "LLM générique"),
+     "connected accounts (Google, IMAP)"),
+    (r"^llm-|^claude-|^anthropic-|^text-generator$|^summarizer$|^code-generator$", "generic LLM"),
     (r"^web-search$|^news-searcher$|^academic-searcher$|^google-searcher$|^microsoft-learn$",
-     "recherche d'information"),
+     "information retrieval"),
     (r"^image-generator$|^gemini-image$|^veo-video$|^chart-generator$|^text-to-speech$",
-     "génération de média"),
+     "media generation"),
     (r"^audio-transcription$|^speaker-identifier$|^language-detector$|^script-detector$",
-     "traitement audio / langue"),
+     "audio / language processing"),
     (r"^knowledge-graph$|^data-lookup-enrich$|^json-transformer$|^csv-processor$",
-     "traitement de données"),
+     "data processing"),
     (r"^analyze-|^content-analyzer$|^text-classifier$|^category-detect$|^llm-intention$",
-     "analyse de contenu"),
-    (r"^youtube-", "vidéo (YouTube)"),
-    (r"^linkedin$", "réseaux sociaux"),
-    (r"^mcp-test-echo$", "diagnostic (outil de test)"),
+     "content analysis"),
+    (r"^youtube-", "video (YouTube)"),
+    (r"^linkedin$", "social networks"),
+    (r"^mcp-test-echo$", "diagnostics (test tool)"),
 ]
 
 
@@ -868,7 +884,92 @@ def domaine(outil, w):
     for motif, nom in DOMAINE:
         if re.search(motif, outil):
             return nom
-    return "générique (aucun domaine produit)"
+    return "generic (no product domain)"
+
+
+# ═══ PRÉCISION : CE QUE L'OUTIL ACCEPTE, REFUSE ET REND ══════════════════════
+def enums_declares(w):
+    """Les listes de valeurs autorisées DÉCLARÉES dans le code.
+
+    ⚠️ C'EST L'INFORMATION QUI MANQUAIT, et Franck l'a dit : dire qu'`entity-rating`
+    accepte 5 types d'entités sans dire LESQUELS, ni que `entity-social-actions` est
+    limité à TROIS projets nommés (`bot-appetit`, `torah-bot`, `torah-fun`), laisse
+    croire à un outil générique alors qu'il est borné.
+
+    ⚠️ ET L'ABSENCE DE LISTE EST UNE INFORMATION AUSSI : un outil sans énumération
+    accepte n'importe quelle valeur. Mesuré : `entity-list` ne valide que la PRÉSENCE
+    de `entity_type`, jamais sa valeur — là où `entity-rating` la restreint à cinq.
+    Deux outils de la même famille, deux contrats différents.
+    """
+    t = tout_le_texte(w)
+    out = []
+    for nom, vals in re.findall(
+            r"(?:const|let|var)\s+(valid[A-Za-z]*|[A-Za-z]*Types?|[A-Za-z]*Actions?|"
+            r"[A-Za-z]*Methods?|[A-Za-z]*Projects?)\s*=\s*\[([^\]]{0,300})\]", t):
+        valeurs = [v.strip().strip("'\"") for v in vals.split(",") if v.strip()]
+        valeurs = [v for v in valeurs if v and "{" not in v and len(v) < 40]
+        if valeurs:
+            out.append(f"{nom}=[{','.join(valeurs[:12])}]")
+    return " ; ".join(dict.fromkeys(out))
+
+
+def entrees_requises(w):
+    """Les messages de validation : ce que l'outil REFUSE, dans ses propres mots."""
+    t = tout_le_texte(w)
+    msgs = re.findall(r"errors\.push\(\s*['\"`]([^'\"`]{3,90})", t)
+    msgs += re.findall(r"message:\s*['\"`](Missing[^'\"`]{3,80})", t)
+    propres = []
+    for m in dict.fromkeys(msgs):
+        m = re.sub(r"\$\{[^}]*\}", "…", m).strip()
+        if m and m not in propres:
+            propres.append(m)
+    return " ; ".join(propres[:8])
+
+
+def champs_entree(w):
+    """Tous les champs du corps réellement LUS. Le contrat d'entrée observable."""
+    return ",".join(champs_du_corps(w)[:30])
+
+
+def cles_sortie(w):
+    """Les clés que les nœuds de réponse et leurs constructeurs POSENT."""
+    morceaux = []
+    for n in noeuds(w):
+        p = n.get("parameters") or {}
+        if n.get("type") == "n8n-nodes-base.respondToWebhook":
+            morceaux.append(str(p.get("responseBody") or ""))
+        elif n.get("type") == "n8n-nodes-base.code":
+            morceaux.append(str(p.get("jsCode") or ""))
+    t = " ".join(morceaux).replace("\\n", "\n")
+    # Clés d'objet littérales, hors mots-clés JS courants.
+    BRUIT = {"json", "const", "return", "function", "if", "else", "for", "let", "var",
+             "type", "name", "value", "options", "parameters", "position", "id", "node",
+             "main", "index", "typeVersion", "default", "case", "break", "try", "catch"}
+    cles = [c for c in dict.fromkeys(re.findall(r"^\s{2,}([a-z][a-z0-9_]{2,30}):\s", t, re.M))
+            if c not in BRUIT]
+    return ",".join(cles[:28])
+
+
+def points_appeles(w):
+    """Les points d'accès exacts, expressions neutralisées. Plus précis qu'un hôte."""
+    vus = []
+    for _, u in urls(w):
+        propre = u.lstrip("=")
+        precedent = None
+        while precedent != propre:
+            precedent = propre
+            propre = re.sub(r"\{\{[^{}]*\}\}", "…", propre)
+        coupe = propre.find("{")
+        if coupe >= 0:
+            propre = propre[:coupe].rstrip("&?") + "…"
+        propre = re.sub(r"…{2,}", "…", propre).strip()
+        if propre and propre not in vus:
+            vus.append(propre)
+    for o in operations_maison(w):
+        n = f"node op: {o}"
+        if n not in vus:
+            vus.append(n)
+    return " ; ".join(vus[:8])
 
 
 # ═══ ASSEMBLAGE ═══════════════════════════════════════════════════════════════
@@ -888,14 +989,14 @@ def fiche(outil, w, cum, appelants):
 
     r = {c: "" for c in COLONNES}
     r.update({
-        "outil": outil,
+        "tool": outil,
         "workflow": w["name"],
-        "methode": methode or "(non posé — ambigu)",
-        "famille": "|".join(fams),
-        "domaine": domaine(outil, w),
-        "service_tiers": services_tiers(w),
-        "service_heberge": services_heberges(w),
-        "appele_par": appelants.get(outil, ""),
+        "method": methode or "(not set — ambiguous)",
+        "family": "|".join(fams),
+        "domain": domaine(outil, w),
+        "third_party_service": services_tiers(w),
+        "self_hosted_service": services_heberges(w),
+        "called_by": appelants.get(outil, ""),
         "description": description(w),
         "execution": exec_mode,
         # ⚠️ VIDE À DESSEIN : 231 arbitrations appartiennent à Franck (azy.daily#642).
@@ -903,30 +1004,35 @@ def fiche(outil, w, cum, appelants):
         "scope": scope(w),
         "requires": requires(w),
         "result_kind": kind,
-        "livraison": liv,
-        "estimated_time": f"<= {plafond} s (plafond des timeouts)" if plafond else "",
-        "cout": cout(w),
+        "delivery": liv,
+        "estimated_time": f"<= {plafond} s (timeout ceiling)" if plafond else "",
+        "cost": cout(w),
         "irreversible": irreversible(w),
-        "limites_entree": limites_entree(w),
-        "sort_du_perimetre": ("oui — " + ", ".join(tiers)) if tiers else "non (aucun hôte tiers appelé)",
-        "executions_41j": cum.get(outil, ""),
+        "input_limits": limites_entree(w),
+        "leaves_perimeter": ("yes — " + ", ".join(tiers)) if tiers else "no (no third-party host called)",
+        "declared_enums": enums_declares(w),
+        "required_inputs": entrees_requises(w),
+        "input_fields": champs_entree(w),
+        "output_keys": cles_sortie(w),
+        "endpoints_called": points_appeles(w),
+        "executions_41d": cum.get(outil, ""),
     })
     if "extraction" in fams:
         r.update(champs_extraction(w))
-    if "recherche" in fams:
+    if "search" in fams:
         r.update(champs_recherche(w))
     if "media" in fams:
         r.update(champs_media(w, kind))
-    if "connecteur" in fams:
+    if "connector" in fams:
         r.update(champs_connecteur(w))
     if "llm" in fams:
         r.update(champs_llm(w))
-    if "asynchrone" in fams:
+    if "async" in fams:
         r.update(champs_async(w))
     # Combien de cases ce que nous savons remplit-il réellement ? Chiffre honnête,
     # qui rend visible ce qui reste à décider ou à mesurer.
     pertinents = SOCLE + [c for f in fams if f in SPECIFIQUES for c in SPECIFIQUES[f]]
-    r["champs_renseignes"] = f"{sum(1 for c in pertinents if r[c])}/{len(pertinents)}"
+    r["fields_filled"] = f"{sum(1 for c in pertinents if r[c])}/{len(pertinents)}"
     return r
 
 
@@ -957,7 +1063,7 @@ def main():
             continue
         a = [nom for nom, t in textes.items()
              if nom != w["name"] and re.search(r"/webhook/" + re.escape(o) + r"\b", t)]
-        appelants[o] = ("interne — appelé par " + ", ".join(a)) if a else ""
+        appelants[o] = ("internal — called by " + ", ".join(a)) if a else ""
 
     lignes, absents = [], []
     for o in outils:
@@ -970,27 +1076,29 @@ def main():
     SORTIE.mkdir(parents=True, exist_ok=True)
     cible = SORTIE / "fiche-outils-production.csv"
     with open(cible, "w", newline="", encoding="utf-8") as fh:
-        fh.write("# Fiche des outils de production — 43 informations (azy.daily#642). "
-                 "Généré par scripts/catalogue/generer_fiche_outils.py depuis l'INSTANCE llm.\n")
-        fh.write("# Une case VIDE signifie « non mesurable depuis le code » ou « en attente "
-                 "d'arbitrage » — JAMAIS une valeur devinée. Voir fiche-outils-README.md.\n")
+        fh.write("# Production tool sheet (azy.daily#642). Generated by "
+                 "scripts/catalogue/generer_fiche_outils.py from the LIVE llm instance.\n")
+        fh.write("# An EMPTY cell means \"not derivable from the code\" or \"awaiting a "
+                 "decision\" — NEVER a guessed value. See fiche-outils-README.md.\n")
+        fh.write("# `required_inputs` quotes the validation messages VERBATIM from the "
+                 "workflow code, in whatever language that code uses.\n")
         wr = csv.DictWriter(fh, fieldnames=COLONNES)
         wr.writeheader()
         wr.writerows(lignes)
 
-    print(f"   {len(lignes)} outils décrits → {cible}")
+    print(f"   {len(lignes)} tools described → {cible}")
     if absents:
-        print(f"   ⚠️ {len(absents)} outil(s) sans webhook actif sur llm : {', '.join(absents)}")
+        print(f"   ⚠️ {len(absents)} tool(s) with no active webhook on llm: {', '.join(absents)}")
     # Taux de remplissage par colonne : ce qui est vide est ce qui reste à faire.
-    print("\n   remplissage par colonne (sur les outils concernés) :")
+    print("\n   fill rate per column (over the tools concerned):")
     for c in SOCLE:
         n = sum(1 for l in lignes if l[c])
         print(f"     {c:22} {n:3}/{len(lignes)}")
     for f, cols in SPECIFIQUES.items():
-        concernes = [l for l in lignes if f in l["famille"].split("|")]
+        concernes = [l for l in lignes if f in l["family"].split("|")]
         if not concernes:
             continue
-        print(f"     ── {f} ({len(concernes)} outils)")
+        print(f"     ── {f} ({len(concernes)} tools)")
         for c in cols:
             n = sum(1 for l in concernes if l[c])
             print(f"        {c:22} {n:3}/{len(concernes)}")
