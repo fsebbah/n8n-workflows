@@ -1176,7 +1176,23 @@ def batch_reimport_single(workflow_name, workflows_dir=None, dry_run=False, dele
             for w in existing_workflows:
                 print(f"[DRY RUN] Would deactivate: {w['name']} (ID: {w['id']})")
             print(f"[DRY RUN] Would import: {json_file.name}")
-        print(f"[DRY RUN] Would activate workflow")
+        # ⚠️ LE DRY-RUN DOIT PRÉDIRE LE VRAI, SINON IL NE SERT À RIEN.
+        # Il annonçait « Would activate workflow » inconditionnellement, alors que
+        # `update_workflow` n'active plus un workflow dont le fichier porte
+        # `active: false` (#646). Franck a lu « Would activate » sur
+        # `Torah Translation Orchestrator`, puis constaté qu'il restait inactif : le
+        # réimport avait raison, c'est l'ESSAI À BLANC qui mentait. Un dry-run qui
+        # annonce autre chose que ce qui va se passer est pire qu'absent — on cesse de
+        # le croire, ou on croit un défaut qui n'existe pas.
+        try:
+            with open(json_file) as _f:
+                _inactif = json.load(_f).get('active') is False
+        except Exception:
+            _inactif = False
+        if _inactif:
+            print(f"[DRY RUN] Would NOT activate — le fichier déclare `active: false`")
+        else:
+            print(f"[DRY RUN] Would activate workflow")
         if delete_old and len(existing_workflows) > 1:
             print(f"[DRY RUN] Would prompt to delete {len(existing_workflows) - 1} duplicate workflow(s)")
         return True
