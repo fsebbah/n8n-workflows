@@ -108,3 +108,67 @@ source .env.local && N8N_API_KEY="$N8N_API_KEY" python3 scripts/catalogue/genere
 La liste des outils de production est dans `outils-production.txt` (une ligne par outil).
 Le script affiche le taux de remplissage par colonne : **ce qui est vide est ce qui reste
 à décider ou à mesurer.**
+
+## Les quatre colonnes ajoutées après le premier tour (demande de Franck)
+
+Un nom d'hôte n'est pas une réponse. `www.googleapis.com` ne dit pas s'il s'agit de Drive,
+de Gmail ou de Maps ; et un appel à **notre** Gotenberg n'est pas une sortie de périmètre,
+mais c'est une dépendance que les équipes doivent connaître.
+
+| colonne | ce qu'elle porte | rempli |
+|---|---|---|
+| `domaine` | le domaine produit, déduit du préfixe du chemin | **110/110** |
+| `service_tiers` | le service tiers **nommé** (« Google Drive », « Anthropic (Claude) », « Mathpix (point d'accès UE) »…) | 60/110 |
+| `service_heberge` | **nos** services (Gotenberg, torah.api, Qdrant, Redis, chat.api) | 35/110 |
+| `appele_par` | « interne » si un autre workflow l'appelle | **1/110** |
+
+### `service_tiers` — nommé, et jamais deviné
+
+Table fermée construite sur les hôtes **réellement mesurés**. Un hôte qu'aucune règle ne
+nomme ressort préfixé **`?`** : mieux vaut un nom d'hôte brut signalé qu'un nom de service
+inventé. Aujourd'hui : **aucun `?` restant**.
+
+Trois pièges corrigés en vérifiant les lignes nommées par Franck :
+
+- **`generativelanguage.googleapis.com` contient `language.googleapis.com`.** Sans
+  lookbehind, `gemini-image` ressortait « Google Cloud Natural Language » — un service
+  qu'il n'appelle pas.
+- **`www.googleapis.com` est la porte commune de Google**, jamais un service. C'est le
+  **chemin** qui décide (`/upload/drive`, `/youtube/v3`, `/customsearch/v1`), et il est
+  examiné avant l'hôte. On ne signale la porte commune que si aucun service Google n'a pu
+  être nommé — là, c'est une vraie zone d'ombre.
+- **`google-searcher` n'appelle pas Google**, il appelle **SerpAPI**, qui interroge Google
+  pour nous. C'est SerpAPI qui reçoit la requête, donc c'est lui qui compte pour la
+  confidentialité. Nommé « SerpAPI (relais de recherche Google) ».
+
+### `service_heberge` — interne ne veut pas dire sans conséquence
+
+`chat.api` (17 outils), un autre workflow n8n (8), Redis (4), Qdrant (4), torah.api (3),
+**Gotenberg (1 — `torah-pdf`, le seul outil qui génère un PDF avec nos propres moyens)**.
+
+### `appele_par` — un seul outil est réellement interne
+
+Mesuré sur les 110 : **`document-job-status` seul** est appelé par un autre workflow
+(`Document Translate Worker`). Les 109 autres sont des **points d'entrée** — y compris
+`document-translate-worker`, dont le nom dit « worker » alors qu'aucun manager ne l'appelle
+et qu'il répond lui-même `202` à l'appelant.
+
+⚠️ **Conséquence à ne pas manquer** : si `document-job-status` est retiré du catalogue au
+motif qu'il est « interne », **plus personne ne récupère le résultat d'un job asynchrone**.
+Le relais MCP est générique et n'implémente aucun protocole de polling. Soit l'agent peut
+l'appeler, soit MCP écrit ce code. C'est une décision, pas une déduction.
+
+### `domaine` — « générique » plutôt que vide
+
+11 outils sur 110 sont déclarés **« générique (aucun domaine produit) »**. Vide se lirait
+« on a oublié » ; la bonne information est « il ne dépend d'aucun domaine ». La distinction
+change l'arbitrage : un outil générique est exposable partout, un outil de domaine ne vaut
+que là où le domaine existe.
+
+⚠️ **`entity-*` n'est PAS propre aux recettes**, contrairement à ce que le nom suggère.
+Mesuré dans le code : `validEntityTypes = ['recipe', 'document', 'course', 'quiz',
+'flashcard']`, et pour `entity-social-actions` `['recipes', 'translations', 'trainings',
+'articles', 'posts']`. Les marquer « recettes » ferait refuser des outils qui servent aussi
+les cours et les quiz. Ils sont donc **transverses**.
+
+`games-*` en revanche est bien **échecs / Lichess** (confirmé : `lichess`, `pgn`, `fen`).

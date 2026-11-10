@@ -55,7 +55,8 @@ SPECIFIQUES = {
     "asynchrone": ["suivi", "annulable", "duree_de_vie_du_resultat", "idempotent"],
     "vocal": ["enonciation", "differer_vers_historique"],
 }
-COLONNES = (["outil", "workflow", "methode", "famille"] + SOCLE
+COLONNES = (["outil", "workflow", "methode", "famille", "domaine",
+            "service_tiers", "service_heberge", "appele_par"] + SOCLE
             + [c for f in ("extraction", "recherche", "media", "connecteur", "llm",
                            "asynchrone", "vocal") for c in SPECIFIQUES[f]]
             + ["executions_41j", "champs_renseignes"])
@@ -695,8 +696,183 @@ def champs_async(w):
     }
 
 
+# ═══ NOMMER LES SERVICES, ET SÉPARER TIERS / HÉBERGÉ ═════════════════════════
+# ⚠️ POURQUOI DEUX COLONNES ET PAS UNE, demandé par Franck le 2026-11-10 :
+# « un service tiers par exemple ici Google Drive ou un service serveur que nous
+# hébergeons, par exemple si on génère un pdf avec nos outils ».
+# Un hôte n'est pas une réponse : `www.googleapis.com` ne dit pas s'il s'agit de Drive,
+# de Gmail ou de Maps. Et un appel à NOTRE Gotenberg n'est pas une sortie de périmètre,
+# mais c'est une dépendance que les équipes doivent connaître — la confondre avec un
+# tiers ferait refuser un outil sans raison, l'omettre cacherait une panne possible.
+#
+# Les deux tables sont des listes FERMÉES, construites depuis les hôtes RÉELLEMENT
+# mesurés dans les 110 outils. Un hôte inconnu ressort tel quel, préfixé « ? » : il
+# vaut mieux un nom d'hôte brut signalé qu'un nom de service inventé.
+# ⚠️ `www.googleapis.com` ne nomme AUCUN service : c'est la porte commune de Google.
+# Le CHEMIN décide, et il doit être examiné AVANT l'hôte — sinon 4 outils ressortaient
+# « ? www.googleapis.com », ce qui ne renseigne personne.
+SERVICE_TIERS = [
+    (r"/upload/drive|/drive/v3", "Google Drive"),
+    (r"/youtube/v3", "YouTube (API Data)"),
+    (r"/customsearch/v1", "Google Search (Custom Search)"),
+    (r"/gmail/v1", "Gmail"),
+    (r"/calendar/v3", "Google Agenda"),
+    (r"/classroom/v1", "Google Classroom"),
+    (r"/language/v1|/v1/documents:analyze", "Google Cloud Natural Language"),
+    (r"upload/drive|drive\.google\.com|/drive/v3|driveToolDynamic|googleapis\.com \(Drive\)", "Google Drive"),
+    (r"gmailToolDynamic|googleapis\.com \(Gmail\)|gmail/v1", "Gmail"),
+    (r"calendarToolDynamic|googleapis\.com \(Calendar\)|calendar/v3", "Google Agenda"),
+    (r"classroomToolDynamic|googleapis\.com \(Classroom\)|classroom/v1", "Google Classroom"),
+    (r"people\.googleapis", "Google Contacts"),
+    (r"customsearch|google-?searcher|cse\.google", "Google Search (Custom Search)"),
+    (r"maps\.googleapis", "Google Maps"),
+    (r"airquality\.googleapis", "Google Air Quality"),
+    (r"pollen\.googleapis", "Google Pollen"),
+    (r"vision\.googleapis", "Google Cloud Vision"),
+    # ⚠️ Lookbehind OBLIGATOIRE : `generativelanguage.googleapis.com` (Gemini) contient
+    # `language.googleapis.com`. Sans lui, `gemini-image` ressortait « Google Cloud
+    # Natural Language » — un service qu'il n'appelle pas.
+    (r"(?<!generative)language\.googleapis", "Google Cloud Natural Language"),
+    (r"generativelanguage\.googleapis|geminiImage", "Google Gemini"),
+    (r"aiplatform\.googleapis", "Google Vertex AI (Veo)"),
+    # `/youtube/v3` est déjà nommé par la règle de chemin ci-dessus. Ici on ne garde
+    # que la page PUBLIQUE, qui est un accès différent (et sans clé d'API).
+    # La page publique est un accès DIFFÉRENT de l'API Data : pas de clé, pas de quota,
+    # et des conditions d'utilisation distinctes. Les deux peuvent coexister sur un outil.
+    (r"www\.youtube\.com", "YouTube (page publique)"),
+    (r"api\.anthropic\.com", "Anthropic (Claude)"),
+    (r"api\.openai\.com", "OpenAI"),
+    (r"api\.mistral\.ai", "Mistral"),
+    (r"api\.deepseek", "DeepSeek"),
+    (r"eu\.api\.mathpix\.com", "Mathpix (point d'accès UE)"),
+    (r"(?<!eu\.)api\.mathpix\.com", "Mathpix (HORS UE)"),
+    (r"quickchart\.io", "QuickChart"),
+    (r"api\.assemblyai\.com", "AssemblyAI"),
+    (r"elevenlabs", "ElevenLabs"),
+    (r"api\.linkedin\.com|linkedIn", "LinkedIn"),
+    (r"lichess\.org", "Lichess"),
+    (r"discord\.com|discordapp", "Discord"),
+    (r"learn\.microsoft\.com", "Microsoft Learn"),
+    # Les données vont à SerpAPI, qui interroge Google pour nous. Nommer les deux :
+    # le destinataire réel est SerpAPI, et c'est lui qui compte pour la confidentialité.
+    (r"serpapi\.com", "SerpAPI (relais de recherche Google)"),
+    (r"semanticscholar\.org", "Semantic Scholar"),
+    (r"gnews\.io", "GNews"),
+    (r"backblazeb2\.com", "Backblaze B2 (stockage)"),
+    (r"serveur IMAP", "serveur IMAP du client (hôte fourni à l'appel)"),
+]
+
+# NOS services. L'hôte est interne, donc `hotes_externes()` les écarte : on les cherche
+# donc dans le texte brut du workflow.
+SERVICE_HEBERGE = [
+    (r"webs\.local:3100|gotenberg", "Gotenberg — génération PDF/EPUB (webs.local:3100)"),
+    (r"host2\.local:3031|TORAH_API_URL", "torah.api — corpus (host2.local:3031)"),
+    (r"host3\.local:20001|QDRANT|qdrant", "Qdrant — base vectorielle (host3.local:20001)"),
+    (r"host3\.local:638|REDIS_HOST|n8n-nodes-base\.redis", "Redis (host3.local:6381)"),
+    (r"databases\.local|DB_POSTGRESDB", "PostgreSQL (databases.local)"),
+    (r"BACKEND_API_URL|backend_api_url", "chat.api — backend (URL fournie dans le corps)"),
+    (r"llm\.local:5678/webhook|N8N_WEBHOOK|/webhook/", "n8n — autre workflow du parc (llm.local:5678)"),
+]
+
+# Domaine produit. Déduit du PRÉFIXE du chemin, qui est notre convention de nommage.
+# ⚠️ `entity-*` n'est PAS propre aux recettes, contrairement à ce qu'on pourrait croire :
+# mesuré, `validEntityTypes = ['recipe','document','course','quiz','flashcard']` et, pour
+# `entity-social-actions`, ['recipes','translations','trainings','articles','posts'].
+# Le marquer « recettes » ferait refuser un outil qui sert aussi les cours et les quiz.
+DOMAINE = [
+    (r"^recipes-", "recettes"),
+    (r"^games-|^lichess-", "échecs (Lichess)"),
+    (r"^torah-|^books-|^scriptorium-", "Torah / corpus"),
+    (r"^learning-|^quiz-|^syllabus-|^progress-|^job-status/", "apprentissage"),
+    (r"^discord/|^member-|^mention$|^guild|^private-channel", "Discord / communauté"),
+    (r"^documents?/|^document-|^docx-|^office-|^pdf-|^mathpix$|^table-|^html-|^csv-|^google-drive-ocr$|^document-structure-extract$", "documents"),
+    (r"^entity-", "transverse (entités : recipe, document, course, quiz, flashcard)"),
+    (r"^orders-|^products-|^product-|^profile-|^credits-", "commerce / compte"),
+    # ⚠️ `^mcp-g` attrapait `mcp-google-maps`, qui n'est PAS un compte connecté :
+    # c'est une API publique à clé. L'ordre des règles compte, celle-ci passe avant.
+    (r"^mcp-google-maps$", "données géographiques (API publique)"),
+    (r"^mcp-gmail$|^mcp-calendar$|^mcp-contacts$|^mcp-drive$|^mcp-classroom$|^email-imap$",
+     "comptes connectés (Google, IMAP)"),
+    (r"^llm-|^claude-|^anthropic-|^text-generator$|^summarizer$|^code-generator$", "LLM générique"),
+    (r"^web-search$|^news-searcher$|^academic-searcher$|^google-searcher$|^microsoft-learn$",
+     "recherche d'information"),
+    (r"^image-generator$|^gemini-image$|^veo-video$|^chart-generator$|^text-to-speech$",
+     "génération de média"),
+    (r"^audio-transcription$|^speaker-identifier$|^language-detector$|^script-detector$",
+     "traitement audio / langue"),
+    (r"^knowledge-graph$|^data-lookup-enrich$|^json-transformer$|^csv-processor$",
+     "traitement de données"),
+    (r"^analyze-|^content-analyzer$|^text-classifier$|^category-detect$|^llm-intention$",
+     "analyse de contenu"),
+    (r"^youtube-", "vidéo (YouTube)"),
+    (r"^linkedin$", "réseaux sociaux"),
+    (r"^mcp-test-echo$", "diagnostic (outil de test)"),
+]
+
+
+def nommer(texte, table, defaut_prefixe="? "):
+    """Les services reconnus dans `texte`, par leur NOM. Inconnu → signalé, pas inventé."""
+    vus = []
+    for motif, nom in table:
+        if re.search(motif, texte, re.I) and nom not in vus:
+            vus.append(nom)
+    return vus
+
+
+def services_tiers(w):
+    """Les tiers NOMMÉS. Tout hôte non reconnu ressort brut, préfixé « ? »."""
+    hotes = hotes_externes(w)
+    if not hotes:
+        return ""
+    base = " ".join(hotes) + " " + " ".join(str(n.get("type", "")) for n in noeuds(w)) \
+        + " " + " ".join(u for _, u in urls(w))
+    noms = nommer(base, SERVICE_TIERS)
+    # Un hôte mesuré qu'aucune règle ne nomme doit rester VISIBLE : le taire laisserait
+    # croire que l'outil ne sort pas du périmètre.
+    # ⚠️ `www.googleapis.com` et `googleapis.com` sont la PORTE COMMUNE de Google : les
+    # afficher à côté de « Google Drive » n'ajoute rien et fait croire à un service de
+    # plus. On ne les signale que si AUCUN service Google n'a pu être nommé — là, c'est
+    # une vraie zone d'ombre qu'il faut voir.
+    PORTES_COMMUNES = re.compile(r"^(www\.)?googleapis\.com$", re.I)
+    un_google_nomme = any("Google" in n or n.startswith("YouTube") or n == "Gmail" for n in noms)
+    orphelins = []
+    for h in hotes:
+        hote_seul = h.split(" ")[0]
+        if any(re.search(motif, hote_seul, re.I) or re.search(motif, h, re.I)
+               for motif, _ in SERVICE_TIERS):
+            continue
+        if PORTES_COMMUNES.match(hote_seul) and un_google_nomme:
+            continue
+        orphelins.append(h)
+    return " ; ".join(noms + [f"? {h}" for h in orphelins])
+
+
+def services_heberges(w):
+    """NOS services appelés. Interne ≠ sans conséquence : c'est une dépendance."""
+    t = tout_le_texte(w)
+    noms = nommer(t, SERVICE_HEBERGE)
+    # « autre workflow du parc » n'est signalé que si aucun service plus précis ne l'est :
+    # presque tous les workflows citent un /webhook/ dans un commentaire.
+    precis = [n for n in noms if not n.startswith("n8n —")]
+    return " ; ".join(precis if precis else noms)
+
+
+def domaine(outil, w):
+    """Le domaine produit, déduit du préfixe du chemin — notre convention de nommage.
+
+    ⚠️ Un outil sans préfixe reconnu est dit « générique », pas laissé vide : vide se
+    lit « on a oublié », alors que l'information est « il ne dépend d'aucun domaine ».
+    La distinction change l'arbitrage : un outil générique est exposable partout, un
+    outil de domaine ne vaut que là où le domaine existe.
+    """
+    for motif, nom in DOMAINE:
+        if re.search(motif, outil):
+            return nom
+    return "générique (aucun domaine produit)"
+
+
 # ═══ ASSEMBLAGE ═══════════════════════════════════════════════════════════════
-def fiche(outil, w, cum):
+def fiche(outil, w, cum, appelants):
     wh = next((n for n in w["nodes"] if n.get("type") == "n8n-nodes-base.webhook"
                and (n.get("parameters") or {}).get("path") == outil), None)
     # ⚠️ `httpMethod` absent = AMBIGU, pas « GET ». 23 webhooks actifs ne le posent pas,
@@ -716,6 +892,10 @@ def fiche(outil, w, cum):
         "workflow": w["name"],
         "methode": methode or "(non posé — ambigu)",
         "famille": "|".join(fams),
+        "domaine": domaine(outil, w),
+        "service_tiers": services_tiers(w),
+        "service_heberge": services_heberges(w),
+        "appele_par": appelants.get(outil, ""),
         "description": description(w),
         "execution": exec_mode,
         # ⚠️ VIDE À DESSEIN : 231 arbitrations appartiennent à Franck (azy.daily#642).
@@ -764,13 +944,28 @@ def main():
                 if p:
                     par_chemin.setdefault(str(p), w)
 
+    # ⚠️ QUI APPELLE QUI : un outil appelé par un AUTRE workflow est de la plomberie,
+    # pas une capacité qu'un agent choisit. Mesuré sur les 110 : UN SEUL l'est,
+    # `document-job-status` (appelé par `Document Translate Worker`). Les 109 autres sont
+    # des points d'entrée — y compris ceux dont le NOM dit « worker ».
+    textes = {w["name"]: tout_le_texte(w) for w in tous
+              if w.get("active") and not w.get("isArchived")}
+    appelants = {}
+    for o in outils:
+        w = par_chemin.get(o)
+        if w is None:
+            continue
+        a = [nom for nom, t in textes.items()
+             if nom != w["name"] and re.search(r"/webhook/" + re.escape(o) + r"\b", t)]
+        appelants[o] = ("interne — appelé par " + ", ".join(a)) if a else ""
+
     lignes, absents = [], []
     for o in outils:
         w = par_chemin.get(o)
         if w is None:
             absents.append(o)
             continue
-        lignes.append(fiche(o, w, cum))
+        lignes.append(fiche(o, w, cum, appelants))
 
     SORTIE.mkdir(parents=True, exist_ok=True)
     cible = SORTIE / "fiche-outils-production.csv"
