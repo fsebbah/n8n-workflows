@@ -98,22 +98,57 @@ posture de sécurité. Notre lecture tolérante `oauth_token || access_token` da
 ses appelants directs ; aucune convergence n'est prévue, et les quatre autres serveurs ne
 seront pas modifiés pour cela.
 
-### ⚠️ La forme du registre : NE PAS la changer, et voici pourquoi
+### ⚠️ La forme du registre : on la garde — et mon premier argument était faux
 
-MCP a signalé que leur `_build_from_schema` attend `parameters.required` et
-`parameters.optional` comme des **dicts clés-par-nom**, et prévenu qu'un `required` en
-LISTE lèverait une `AttributeError`. Le registre publie, lui, du JSON-Schema :
-`parameters: {type, required: [...], properties: {...}}` — mesuré sur les **237** outils,
-`required` est une liste dans 237 cas sur 237, et la clé `optional` n'existe nulle part.
+Le registre publie du JSON-Schema : `parameters: {type, required: [...], properties: {...}}`
+— mesuré sur les **237** outils, `required` est une liste dans 237 cas sur 237, et la clé
+`optional` n'existe nulle part. C'est `Build Registry` qui l'impose, en recopiant
+`inputSchema.required` et `inputSchema.properties` de la sticky.
 
-**La mesure contredit l'avertissement.** `llm-call-messages` publie exactement cette forme
-— `required` en liste de 4 noms, champs sous `properties` — et l'appel MCP du 2026-11-09 a
-**réussi**, avec 8 des 13 champs déclarés arrivés, dont les 4 requis. Reformer le registre
-en dicts `required`/`optional` aurait donc cassé les **41** schémas déployés, dont le seul
-dont on puisse prouver qu'il fonctionne.
+MCP a signalé que leur `_build_from_schema` attend des **dicts clés-par-nom**, puis l'a
+**reproduit sur le payload réel** : `AttributeError: 'list' object has no attribute
+'items'`. Le chemin de relais générique du registre (DataResolverNode → N8nToolExecutor →
+param_builder) lève donc AVANT tout appel webhook — ce qui explique exactement le
+zéro-exécution des outils Google : l'appel ne quitte jamais MCP.
 
-Rien n'est changé côté registre. Si MCP durcit son filtre sur la forme attendue, c'est ce
-chemin-là qui casse : la question leur est posée.
+⚠️ **J'avais justifié le refus de convertir par un argument qui ne tient pas**, et il faut
+le dire ici puisque ce document sert de référence. J'écrivais : « convertir casserait les 41
+schémas déployés, dont `llm-call-messages`, le seul dont on puisse prouver qu'il
+fonctionne ». Faux sur deux points, établis depuis :
+
+1. `llm-call-messages` ne passe PAS par le registre. MCP a vérifié que son chemin,
+   `DynamicToolFactory`, consomme un `config.endpoint` + `config.schema` câblé **par
+   expert**, à la main. Convertir le registre ne l'aurait donc pas touché.
+2. Mon « preuve » était déjà faible. Sur les 13 champs déclarés au registre, **8 sont
+   arrivés et 5 non** (`reasoning_effort`, `service_tier`, `system`, `temperature`,
+   `web_search`), et un champ non déclaré est arrivé (`reasoning`). Un recouvrement de 8
+   sur 13 s'explique aussi bien par un schéma câblé ailleurs que par le registre : il ne
+   prouvait pas que le registre avait été lu.
+
+**La bonne raison de garder notre forme est autre, et elle tient :** JSON-Schema est la
+forme standard et partagée — celle des stickies, du catalogue, de nos suites de tests et de
+tout consommateur futur du registre. Le dict-form `required`/`optional` est privé à MCP, et
+privé à **une seule** de leurs **trois** conventions internes (ils en ont relevé trois :
+`param_builder`/`tool_factory` en dict-form, le registre en JSON-Schema, et
+`dynamic_tool_factory` avec un booléen `field.required` par champ). Faire porter au registre
+le dialecte d'un consommateur, alors que ce consommateur n'est pas d'accord avec lui-même,
+reviendrait à figer l'une de ses trois conventions dans notre contrat.
+
+Mesure qui tranche, et elle est de notre côté : sur les 237 outils publiés, interrogés un
+par un (requête filtrée, donc non plafonnée par la pagination), **zéro exécution ne porte
+la signature du relais générique** (`correlation_id` au corps, sans `x-tenant-id`) dans la
+fenêtre du 2026-11-08T19:58Z au 2026-11-10T08:38Z. La seule exécution qui ne soit pas une
+de nos sondes porte `x-tenant-id` : le chemin expert. Rien ne consomme donc notre forme
+aujourd'hui par le relais — et rien ne casse si MCP l'y apprend.
+
+**Séquencement convenu**, pour n'avoir qu'un changement testable à la fois :
+1. MCP enseigne notre forme à `_build_from_schema`, en gardant la rétro-compat dict-form.
+   Testable seul sur le payload réel, sans attendre notre réimport.
+2. Nous recâblons ensuite le nœud sur `plugin_context.api_keys.<fournisseur>` et retirons
+   les quatre `*_api_key` des contrats YouTube — intestable avant leur correctif, puisque
+   cette injection est en aval du filtre qui lève.
+3. Banc E2E conjoint, après notre réimport.
+Rien n'est codé de part et d'autre avant l'accord de Franck.
 
 ### Question ouverte, du même type que celle du jeton
 
