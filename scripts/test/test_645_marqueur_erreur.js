@@ -41,6 +41,14 @@ function executer(js, entree) {
 const CAS = [
   ['MCP_-_Gmail_Server_(All-in-One).json', 22],
   ['MCP_-_Google_Calendar_Server.json', 6],
+  // Classroom a rejoint le lot le 2026-11-10. Son CÂBLAGE était déjà sain (33 paires
+  // sur 33) ; ce qui lui manquait, c'était exactement ce marqueur :
+  //  • `options.fallbackOutput` ABSENT du Switch, alors que la 34ᵉ sortie était DÉJÀ
+  //    câblée vers un nœud d'erreur — écrit, câblé, et inatteignable ;
+  //  • `onError` absent des 33 nœuds, donc un refus de Google tuait le workflow ;
+  //  • ⚠️ `Respond Success` POSAIT `error: null` sur succès — soit la forme même que
+  //    MCP a réfutée en mesurant chez lui, et qui classe tout SUCCÈS en ERREUR.
+  ['MCP_-_Google_Classroom_Server.json', 33],
 ];
 
 for (const [fichier, nbRegles] of CAS) {
@@ -246,6 +254,37 @@ for (const [fichier, nbRegles] of CAS) {
                            .map(n => n.parameters.jsCode).join('\n')
                            .split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
   ok('aucun $env introduit dans le code ajouté', !toutLeJs.includes('$env'));
+}
+
+// ── 9 · UNE SEULE RÉDACTION, TROIS COPIES ─────────────────────────────────────
+// L'enveloppe de réponse est ce que MCP teste. Si les trois serveurs portaient trois
+// rédactions distinctes, le premier correctif en ferait divergier deux, et c'est la
+// réponse — pas le code — qui mentirait. Le code de Classroom a donc été COPIÉ depuis
+// l'Agenda, et ce contrôle interdit qu'il s'en écarte. Seul le nom du Switch cité en
+// trace diffère d'un serveur à l'autre : on le neutralise avant de comparer.
+console.log('\n=== une seule rédaction pour les trois serveurs ===');
+{
+  const nomSwitch = (wf) => (wf.nodes.find(n => n.type === 'n8n-nodes-base.switch') || {}).name;
+  const neutraliser = (js, nom) => js.split(nom).join('<SWITCH>');
+  const refWf = charger('MCP_-_Google_Calendar_Server.json');
+  for (const nomNoeud of ['Qualifier la réponse', 'Route inconnue']) {
+    const attendu = neutraliser(code(refWf, nomNoeud), nomSwitch(refWf));
+    for (const [fichier] of CAS) {
+      const wf = charger(fichier);
+      ok(`${fichier} → \`${nomNoeud}\` identique à la référence`,
+         neutraliser(code(wf, nomNoeud), nomSwitch(wf)) === attendu,
+         'deux rédactions divergeraient au premier correctif');
+    }
+  }
+  // Et le répondeur, dont dépend le code HTTP rendu.
+  const repRef = JSON.stringify(refWf.nodes.find(
+    n => n.type === 'n8n-nodes-base.respondToWebhook').parameters);
+  for (const [fichier] of CAS) {
+    const wf = charger(fichier);
+    const rep = wf.nodes.find(n => n.type === 'n8n-nodes-base.respondToWebhook');
+    ok(`${fichier} → répondeur identique à la référence`,
+       JSON.stringify(rep.parameters) === repRef, JSON.stringify(rep.parameters));
+  }
 }
 
 console.log(`\n${reussis} contrôles réussis, ${echoues} échoués`);

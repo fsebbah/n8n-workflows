@@ -186,10 +186,38 @@ export class ClassroomToolDynamic implements INodeType {
         name: 'courseId',
         type: 'string',
         required: true,
+        // ⚠️ CORRIGÉ LE 2026-11-10 (azy.daily#645) — 11 ROUTES SUR 33 ÉTAIENT CASSÉES.
+        //
+        // Cette déclaration portait :
+        //     hide: { resource: ['course'], operation: ['create', 'getAll'] }
+        // visiblement pour signifier « cache `courseId` pour `course/create` et
+        // `course/getAll` », les deux seules opérations qui n'en ont pas besoin.
+        //
+        // Mais n8n combine `displayOptions` de façon ASYMÉTRIQUE : un paramètre
+        // s'affiche si TOUTES les conditions de `show` sont vraies et si AUCUNE de
+        // `hide` ne l'est. `show` est un ET, `hide` est un OU. Lue en OU, la clause
+        // cachait `courseId` pour TOUTE opération nommée `create` ou `getAll`, quelle
+        // que soit la ressource. La seconde déclaration ne le réaffichait que pour
+        // quatre opérations de `course`. Les 11 paires restantes tombaient dans le
+        // trou, et `getNodeParameter('courseId')` levait « Could not get parameter ».
+        //
+        // Routes concernées, mesurées par `scripts/audit/sonde_645_classroom.py` :
+        //   courseWork/create · courseWork/getAll · studentSubmission/getAll
+        //   student/create · student/getAll · teacher/create · teacher/getAll
+        //   announcement/create · announcement/getAll · topic/create · topic/getAll
+        //
+        // ⚠️ L'ANALYSE STATIQUE NE POUVAIT PAS LE VOIR, et c'est la leçon de ce lot.
+        // La matrice vérifie que le nœud LIT les paramètres que le workflow POSE —
+        // ce qui était vrai, d'où 33 paires « saines ». Elle ne peut pas savoir que
+        // n8n REFUSERA de rendre le paramètre. Seul l'essai sur l'instance l'a dit.
+        //
+        // La formulation est désormais positive : `courseId` est requis par TOUTES
+        // les opérations de ces six ressources, sans exception, donc aucune condition
+        // sur `operation`. `course` est traité par la déclaration suivante.
         displayOptions: {
-          hide: {
-            resource: ['course'],
-            operation: ['create', 'getAll'],
+          show: {
+            resource: ['announcement', 'courseWork', 'student', 'studentSubmission',
+                       'teacher', 'topic'],
           },
         },
         default: '',
