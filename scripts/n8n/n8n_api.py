@@ -1266,7 +1266,9 @@ def show_help():
     print("Usage: python3 n8n_api.py [--host <host>] [--api-key <key>] <action> [params]")
     print("")
     print("Global options:")
-    print("  --host <host>           Override n8n host (e.g., host2.local, http://host2.local:5678)")
+    # host2.local retiré du 2026-11-10 : son instance n8n n'existe plus (port 5678
+    # fermé, décision du 2026-07-09). La proposer en exemple menait vers un hôte mort.
+    print("  --host <host>           Override n8n host (e.g., llm.local, http://llm.local:5678)")
     print("                          Default: from .env.local or pi6.local:5678")
     print("  --api-key <key>         Override API key (required when using different host)")
     print("                          Each n8n instance has its own API key")
