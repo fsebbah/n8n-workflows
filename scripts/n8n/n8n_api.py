@@ -450,23 +450,52 @@ def update_workflow(workflow_id, json_file, activate_after=True):
         return None
 
 def find_workflow_by_name(name):
-    """Find workflow ID by exact name.
+    """Find workflow ID by exact name, preferring the ACTIVE copy.
 
     Paginates through ALL workflows: the API returns max 100 per page.
     A single GET only sees the first page — with 300+ workflows in the
     shared DB, that silently missed existing workflows and batch-reimport
     created duplicates (webhook 409 conflicts).
+
+    ⚠️ POURQUOI « LE PREMIER HOMONYME » ÉTAIT DANGEREUX (azy.daily#645, 2026-11-09)
+    `MCP - Gmail Server (All-in-One)` existe en 10 exemplaires, et le premier rendu
+    par l'API — `8cGBUYcClPGznpXk` — est INACTIF ; celui qui sert est
+    `Jz4ji4p0QStwstN0`. Un essai à blanc l'a montré : le réimport annonçait
+    « Would UPDATE 8cGBUYcClPGznpXk » PUIS « Would activate workflow ». Il aurait
+    donc écrit dans un exemplaire mort et l'aurait activé, mettant DEUX workflows
+    actifs sur le chemin `mcp-gmail`. La correction partait dans le vide, et le
+    chemin en service risquait le conflit.
+
+    On rend donc l'exemplaire ACTIF quand il est unique, et on refuse de deviner
+    sinon — un `None` fait échouer proprement le réimport plutôt que d'écrire au
+    hasard. Mesuré sur les 269 fichiers du dépôt : seuls 2 noms portent des
+    homonymes (`MCP - Gmail Server (All-in-One)`, `MCP - Mathpix`) et tous deux
+    ont exactement un actif, donc ce choix ne casse aucun réimport existant.
     """
-    # ⚠️ Rend le PREMIER homonyme, dans l'ordre de l'API — comportement
-    # volontaire : batch-reimport met à jour cet exemplaire-là, et un doublon
-    # obsolète qui survit a déjà fait croire à un réimport raté (2026-07-28).
-    # Le générateur préserve cet ordre et s'arrête au premier trouvé.
     try:
-        for w in iter_all_workflows(limit=100):
-            if w['name'] == name:
-                return w
+        homonymes = [w for w in iter_all_workflows(limit=250) if w['name'] == name]
     except RuntimeError:
         return None
+
+    if not homonymes:
+        return None
+    if len(homonymes) == 1:
+        return homonymes[0]
+
+    actifs = [w for w in homonymes if w.get('active')]
+    if len(actifs) == 1:
+        ignores = [w['id'] for w in homonymes if w['id'] != actifs[0]['id']]
+        print(f"   ⚠️  {len(homonymes)} exemplaires portent le nom {name!r}.")
+        print(f"      Mise à jour de l'ACTIF : {actifs[0]['id']}")
+        print(f"      Exemplaires inactifs ignorés : {', '.join(ignores)}")
+        return actifs[0]
+
+    quoi = "aucun n'est actif" if not actifs else f"{len(actifs)} sont actifs"
+    print(f"   ❌ {len(homonymes)} exemplaires portent le nom {name!r} et {quoi} :")
+    for w in homonymes:
+        print(f"      {w['id']}  actif={w.get('active')}")
+    print("      Refus de deviner. Viser un exemplaire précis :")
+    print(f"      python3 scripts/n8n/n8n_api.py update <id> workflows/<fichier>.json")
     return None
 
 
@@ -1237,7 +1266,9 @@ def show_help():
     print("Usage: python3 n8n_api.py [--host <host>] [--api-key <key>] <action> [params]")
     print("")
     print("Global options:")
-    print("  --host <host>           Override n8n host (e.g., host2.local, http://host2.local:5678)")
+    # host2.local retiré du 2026-11-10 : son instance n8n n'existe plus (port 5678
+    # fermé, décision du 2026-07-09). La proposer en exemple menait vers un hôte mort.
+    print("  --host <host>           Override n8n host (e.g., llm.local, http://llm.local:5678)")
     print("                          Default: from .env.local or pi6.local:5678")
     print("  --api-key <key>         Override API key (required when using different host)")
     print("                          Each n8n instance has its own API key")

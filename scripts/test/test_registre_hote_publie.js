@@ -90,7 +90,12 @@ verifier('plus aucun hôte décommissionné dans les nœuds vivants',
 
 const cas = [
   ['en-tête Host de l\'appelant (cas réel de MCP)', { host: 'llm.local:5678' }, 'http://llm.local:5678/webhook/outil-temoin'],
-  ['autre hôte appelant (staging)', { host: 'host2.local:5678' }, 'http://host2.local:5678/webhook/outil-temoin'],
+  // ⚠️ Ce cas s'appelait « staging » et visait `host2.local:5678`. L'instance n8n de
+  // host2 n'existe plus (décision du 2026-07-09, confirmée le 2026-11-10 : port 5678
+  // fermé). Le cas garde tout son sens — il vérifie que l'URL publiée suit l'en-tête
+  // `Host` de l'appelant, quel qu'il soit — mais avec un hôte qui n'évoque pas une
+  // instance disparue, sans quoi le test se lit comme une instruction de l'utiliser.
+  ['autre hôte appelant', { host: 'n8n.exemple.invalid:5678' }, 'http://n8n.exemple.invalid:5678/webhook/outil-temoin'],
   ['WEBHOOK_URL explicite : elle prime', { env: { WEBHOOK_URL: 'https://n8n.azy.solutions/' }, host: 'llm.local:5678' },
     'https://n8n.azy.solutions/webhook/outil-temoin'],
   ['aucun en-tête Host (appel interne) → repli llm.local', {}, 'http://llm.local:5678/webhook/outil-temoin'],

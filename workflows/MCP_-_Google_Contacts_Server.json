@@ -3,6 +3,21 @@
   "active": true,
   "nodes": [
     {
+      "parameters": {
+        "content": "## MCP - Google Contacts Server\n\n**Endpoint:** POST /webhook/mcp-contacts\n\n**Description:**\nServeur Google Contacts : lire, créer, modifier, chercher et grouper les fiches de contact du compte Google de l'utilisateur.\n\n**InputSchema:**\n```json\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"operation\"\n  ],\n  \"properties\": {\n    \"email\": {\n      \"type\": \"string\"\n    },\n    \"email_type\": {\n      \"type\": \"string\"\n    },\n    \"family_name\": {\n      \"type\": \"string\"\n    },\n    \"given_name\": {\n      \"type\": \"string\"\n    },\n    \"job_title\": {\n      \"type\": \"string\"\n    },\n    \"notes\": {\n      \"type\": \"string\"\n    },\n    \"organization\": {\n      \"type\": \"string\"\n    },\n    \"phone\": {\n      \"type\": \"string\"\n    },\n    \"phone_type\": {\n      \"type\": \"string\"\n    },\n    \"person_fields\": {\n      \"type\": \"array\"\n    },\n    \"resource_name\": {\n      \"type\": \"string\"\n    },\n    \"page_size\": {\n      \"type\": \"integer\"\n    },\n    \"page_token\": {\n      \"type\": \"string\"\n    },\n    \"query\": {\n      \"type\": \"string\"\n    },\n    \"group_name\": {\n      \"type\": \"string\"\n    },\n    \"group_resource_name\": {\n      \"type\": \"string\"\n    },\n    \"resource_names\": {\n      \"type\": \"array\"\n    },\n    \"operation\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"addMembers\",\n        \"create\",\n        \"delete\",\n        \"get\",\n        \"getAll\",\n        \"removeMembers\",\n        \"search\",\n        \"update\"\n      ],\n      \"description\": \"opération à exécuter\"\n    }\n  }\n}\n```\n\n_Généré le 2026-11-10 par `scripts/audit/generer_schemas_google.py` depuis la matrice\ndu câblage réel (azy.daily#642 / #645). **Ne pas modifier à la main** : régénérer._\n\n_Ne figurent ici que les champs qu'une opération SAINE honore RÉELLEMENT. Un champ\nque le nœud ignore est volontairement absent : le déclarer ferait croire à un\nfiltrage qui n'a pas lieu — la même panne silencieuse, un cran plus loin._\n\n_⚠️ MCP retire tout champ hors schéma. Toute évolution du workflow qui lit un\nnouveau champ du corps doit être suivie d'une régénération, sinon le champ\nn'arrivera jamais._\n\n\n_⚠️ **Le jeton OAuth n'est volontairement PAS déclaré ci-dessus.** MCP l'injecte APRÈS\nson filtrage par schéma (`client.py:104`, valeur venue de Redis), donc il arrive qu'il\nsoit déclaré ou non — mesuré le 2026-11-09 : un champ non déclaré est bien arrivé sur\n`llm-call-messages`. Le déclarer serait inutile, et surtout néfaste : un champ déclaré\nest un champ que le LLM peut POSER, ce qui lui permettrait d'agir sur le compte d'un\ntiers si un contenu hostile le lui soufflait._\n\n_Les nœuds lisent `oauth_token || access_token` dans le CORPS, et c'est inchangé : c'est\nle contrat des appelants directs (chat.api), qui ne passent pas par le filtre de MCP.\nJamais de `$env`._\n\n**Paires appelables** — champs honorés, et si l'opération FILTRE :\n\n| resource | operation | champs honorés | listing |\n|---|---|---|---|\n| `contact` | `create` | `email`, `email_type`, `family_name`, `given_name`, `job_title`, `notes`, `organization`, `phone`, `phone_type` | liste-seule |\n| `contact` | `get` | `person_fields`, `resource_name` | liste-seule |\n| `contact` | `getAll` | `page_size`, `page_token`, `person_fields` | liste-seule |\n| `contact` | `update` | `email`, `email_type`, `family_name`, `given_name`, `job_title`, `notes`, `organization`, `phone`, `phone_type`, `resource_name` | liste-seule |\n| `contact` | `delete` | `resource_name` | liste-seule |\n| `contact` | `search` | `page_size`, `person_fields`, `query` | **cherchable** |\n| `contactGroup` | `create` | `group_name` | liste-seule |\n| `contactGroup` | `get` | `group_resource_name` | liste-seule |\n| `contactGroup` | `getAll` | `page_size` | liste-seule |\n| `contactGroup` | `update` | `group_name`, `group_resource_name` | liste-seule |\n| `contactGroup` | `delete` | `group_resource_name` | liste-seule |\n| `contactGroup` | `addMembers` | `group_resource_name`, `resource_names` | liste-seule |\n| `contactGroup` | `removeMembers` | `group_resource_name`, `resource_names` | liste-seule |\n",
+        "height": 760,
+        "width": 520
+      },
+      "id": "sticky-645-mcp-contacts",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -300
+      ]
+    },
+    {
       "id": "webhook-001",
       "name": "Webhook MCP Contacts",
       "type": "n8n-nodes-base.webhook",
@@ -480,7 +495,7 @@
         0
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contact",
         "operation": "create",
         "givenName": "={{ $json.body.given_name || '' }}",
@@ -504,7 +519,7 @@
         100
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contact",
         "operation": "get",
         "resourceName": "={{ $json.body.resource_name }}",
@@ -521,7 +536,7 @@
         200
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contact",
         "operation": "getAll",
         "pageSize": "={{ $json.body.page_size || 100 }}",
@@ -539,7 +554,7 @@
         300
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contact",
         "operation": "update",
         "resourceName": "={{ $json.body.resource_name }}",
@@ -564,7 +579,7 @@
         400
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contact",
         "operation": "delete",
         "resourceName": "={{ $json.body.resource_name }}"
@@ -580,7 +595,7 @@
         500
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contact",
         "operation": "search",
         "query": "={{ $json.body.query }}",
@@ -598,7 +613,7 @@
         600
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contactGroup",
         "operation": "create",
         "groupName": "={{ $json.body.group_name }}"
@@ -614,7 +629,7 @@
         700
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contactGroup",
         "operation": "get",
         "groupResourceName": "={{ $json.body.group_resource_name }}"
@@ -630,7 +645,7 @@
         800
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contactGroup",
         "operation": "getAll",
         "pageSize": "={{ $json.body.page_size || 100 }}"
@@ -646,7 +661,7 @@
         900
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contactGroup",
         "operation": "update",
         "groupResourceName": "={{ $json.body.group_resource_name }}",
@@ -663,7 +678,7 @@
         1000
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contactGroup",
         "operation": "delete",
         "groupResourceName": "={{ $json.body.group_resource_name }}"
@@ -679,7 +694,7 @@
         1100
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contactGroup",
         "operation": "addMembers",
         "groupResourceName": "={{ $json.body.group_resource_name }}",
@@ -696,7 +711,7 @@
         1200
       ],
       "parameters": {
-        "accessToken": "={{ $json.body.access_token }}",
+        "accessToken": "={{ $json.body.oauth_token || $json.body.access_token }}",
         "resource": "contactGroup",
         "operation": "removeMembers",
         "groupResourceName": "={{ $json.body.group_resource_name }}",

@@ -247,6 +247,16 @@ GitHub — n'attends pas qu'elle le découvre par hasard.
 que n8n ne gère pas — `prod001`, `databases`, `webs`, `host2`, `host3`. Si ton diagnostic
 porte sur l'une d'elles, il concerne quelqu'un d'autre.
 
+⚠️ **`host2.local` n'héberge PLUS d'instance n8n, et il est interdit de s'en servir comme
+telle.** Décision du 2026-07-09, reconfirmée par Franck le 2026-11-10 ; mesuré depuis pi6 :
+`host2.local` résout (192.168.1.171), ses ports 22 et 3031 répondent, son **5678 est
+fermé**. Ne jamais la proposer comme hôte n8n, cible de réimport, source de registre ni
+source de nœuds personnalisés — `docker/sync-custom-nodes.sh` build désormais depuis ce
+dépôt et ne pousse que vers `llm.local`. **n8n tourne sur `llm.local:5678`, et nulle part
+ailleurs.** host2 reste dans la liste ci-dessus parce qu'elle sert toujours `torah.api`
+(`host2.local:3031`, vérifié `healthy`) : c'est à ce titre, et à ce titre seul, qu'un
+diagnostic la concernant regarde une autre équipe.
+
 **Ce qu'un message utile contient** : le fait mesuré et la commande qui le reproduit, pas un
 renvoi vers une issue. C'est ce qui a fait aboutir l'échange du 24/09 sur `prod001.local` —
 l'infra a pu vérifier de son côté en dix minutes parce que le message portait la commande
