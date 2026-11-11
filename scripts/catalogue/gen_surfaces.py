@@ -168,6 +168,44 @@ EN_TETE = """\
 #   agenda — alors cette vue devient aussi un canal d'appel, et la valeur doit passer dans
 #   `surfaces`. Tant que ce n'est pas le cas, les 4 restent des écrans.
 #
+# ─────────────────────────────────────────────────────────────────────────────────────
+# LES 4 LIGNES OÙ LA FICHE ET LA LISTE DU PO NE DISENT PAS LA MÊME CHOSE
+# ─────────────────────────────────────────────────────────────────────────────────────
+# Après la séparation, il reste 4 écarts sur 34. MCP, qui consomme la colonne, propose la
+# résolution ci-dessous. Elle n'est PAS appliquée : les 4 lignes restent `jet`, et la
+# valeur brute du PO est dans `po_2026_11_09` pour que tu compares toi-même.
+#
+#   analyze-message   fiche « chat, voice_realtime »   PO « email, agenda, contacts »
+#     → pas un conflit : les deux axes se complètent. surfaces + email, ecrans déjà posés.
+#   mcp-gmail         fiche « chat »                   PO « email »
+#     → `email` est un canal : surfaces « chat, email ». La voix reste fermée (delete).
+#   mcp-calendar      fiche « chat »                   PO « agenda, voice_realtime »
+#   mcp-contacts      fiche « chat »                   PO « contacts, voice_realtime »
+#     → LA VRAIE QUESTION, et elle est factuelle, pas théorique :
+#
+#       ⚠️ PEUT-ON PARLER À L'AGENT, EN VOCAL, DEPUIS LA VUE AGENDA / CONTACTS ?
+#
+#       OUI  → la vue est l'écran ET la voix est le canal, les deux sont vrais :
+#              `voice_realtime` entre dans `surfaces` pour ces deux outils — en restant
+#              fermée sur leurs opérations irréversibles tant que le scope serveur MCP
+#              n'est pas vivant. Les deux décisions se tiennent sans se contredire.
+#       NON  → pas de voix là, et les 2 écarts tombent.
+#
+#       C'est à cette seule question que les 2 derniers écarts se réduisent.
+#       (MCP et front y sont arrivés séparément, par deux chemins différents.)
+#
+#   ⚠️ ET FRONT Y A DÉJÀ RÉPONDU POUR LE WEB, PAR LA MESURE : AUCUNE de leurs huit vues
+#   — agenda, contacts, courrier, Drive, documents — ne monte de conversation. Zéro. Deux
+#   composants partagés (`ServiceCardLayout`, `ServiceHeader`) portent même l'engagement
+#   écrit de ne pas importer `SharedChatArea`. Donc aujourd'hui, côté web, la réponse est
+#   NON. Le desktop n'a pas été audité là-dessus.
+#
+#   ⚠️ CE QUI VEUT DIRE QUE `ecrans` DÉCRIT UNE INTENTION, PAS UN CHEMIN EXISTANT.
+#   Remplir la colonne garde son sens — elle dit où l'outil DOIT être proposé. Mais la
+#   lire comme « l'outil est proposé depuis l'agenda » serait faux : ce chemin n'existe
+#   pas encore. C'est le même piège que `veo-video`, qui décrit une vidéo que personne
+#   ne sait afficher.
+#
 # ⚠️ `surfaces` EST PRÉ-REMPLI PAR UNE PROPOSITION, PAS PAR UNE DÉCISION.
 #   surfaces_source = jet   → proposé par règle, À CORRIGER. Passer à `valide` une fois relu.
 #   surfaces_source = RENDU → ton arbitrage du 2026-11-10, repris tel quel, jamais reproposé.
