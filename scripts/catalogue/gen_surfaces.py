@@ -68,13 +68,46 @@ def propose(x):
         s.append("voice_realtime")
     if fichier or x["domaine"].startswith("documents"):
         s.append("email")
-    if "calendar" in x["outil"] or "Calendar" in x["workflow"]:
-        s.append("agenda")
+    # ⚠️ `agenda` A QUITTÉ CETTE FONCTION le 2026-11-11, et c'est la correction d'une
+    # erreur à moi. Je l'avais ajouté par règle (« l'outil touche au calendrier »), et la
+    # vérification a montré qu'il n'existe dans AUCUN workflow ni dans le registre : les 3
+    # seules valeurs jamais écrites en production sont chat, voice_realtime, email. MCP l'a
+    # expliqué d'un mot : l'agenda est un ÉCRAN, pas un canal d'appel. Il est maintenant
+    # dans `ecrans`, avec contacts, documents et media.
     return ", ".join(dict.fromkeys(s))
 
 
+# Les écrans ne se devinent pas : ils sont LUS dans la liste du PO, datée et citée.
+# Après l'affaire `agenda`, je ne réinvente pas un second vocabulaire par règle.
+PO = {}
+PO_BRUT = {}   # la valeur TELLE QUELLE, pour que l'écart se voie au lieu de se perdre
+for _l in (RACINE / "docs/catalogue/liste-po-2026-11-09.tsv").read_text(
+        encoding="utf-8").splitlines():
+    if _l.startswith("#") or not _l.strip() or _l.startswith("outil\t"):
+        continue
+    _c = _l.split("\t")
+    if len(_c) >= 2 and _c[1].strip():
+        PO[_c[0]] = [v.strip() for v in _c[1].replace(",", " ").split() if v.strip()]
+    if len(_c) >= 4:
+        PO_BRUT[_c[0]] = f"{_c[1].strip()} · {_c[3].strip()}" if _c[1].strip() else ""
+
+ECRANS = {"agenda", "contacts", "documents", "media"}
+
+
+def ecrans_de(outil):
+    """Les valeurs de la liste PO qui sont des ÉCRANS, pas des canaux.
+
+    La frontière est celle de MCP, arbitrée par Franck le 2026-11-11 : `email` est un
+    CANAL (il est dans le registre, et les deux arbitrages déjà rendus l'utilisent),
+    `agenda`/`contacts`/`documents`/`media` sont des vues. Les marques `(conteste)` et
+    `(doute)` de la liste sont ignorées : ce sont des annotations, pas des valeurs.
+    """
+    return ", ".join(v for v in PO.get(outil, []) if v in ECRANS)
+
+
 COLS = ["outil", "nature", "nature_motif", "workflow", "famille", "domaine", "execution",
-        "entree_fichier", "irreversible", "surfaces", "surfaces_source", "requires",
+        "entree_fichier", "irreversible", "surfaces", "surfaces_source",
+        "ecrans", "ecrans_source", "po_2026_11_09", "requires",
         "execute_par", "publie_aujourdhui", "description", "description_source"]
 
 out = []
@@ -93,6 +126,14 @@ for x in prod:
         # Un webhook interne n'a pas de surface : on ne propose RIEN pour lui.
         "surfaces": "" if interne else (rendu or propose(x)),
         "surfaces_source": "" if interne else ("RENDU" if rendu else "jet"),
+        # Un webhook interne n'a pas plus d'écran que de surface.
+        "ecrans": "" if interne else ecrans_de(x["outil"]),
+        "ecrans_source": "" if interne else ("PO" if ecrans_de(x["outil"]) else "vide"),
+        # ⚠️ LA VALEUR DU PO TELLE QUELLE, canaux ET écrans mélangés comme dans sa liste.
+        # Elle n'est PAS recopiée dans `surfaces` : la liste dit « chat » là où nous
+        # proposons « chat, voice_realtime », et elle porte 58 lignes `a_trancher`. La
+        # mettre côte à côte fait voir l'écart ; la fusionner le ferait disparaître.
+        "po_2026_11_09": PO_BRUT.get(x["outil"], ""),
         "requires": "", "execute_par": "n8n",
         "publie_aujourdhui": x["workflow"] if not desc else desc,
         "description": desc,
@@ -102,9 +143,30 @@ for x in prod:
 EN_TETE = """\
 # Fiche d'arbitrage des surfaces — les 109 outils de production. azy.daily#631 / #642.
 #
-# À TRANCHER : `surfaces` (et `requires` si besoin). `description` si tu veux la corriger.
-#   surfaces : chat | voice_realtime | email | agenda   (liste, séparée par des virgules)
-#   Vide = « personne n'a tranché » et l'outil reste INVISIBLE du filtre MCP. Ne pas laisser vide.
+# À TRANCHER : `surfaces` et `ecrans` (et `requires` si besoin). `description` si besoin.
+#
+# ⚠️ DEUX COLONNES DEPUIS LE 2026-11-11, PARCE QUE CE SONT DEUX QUESTIONS.
+#   surfaces  OÙ LA CONVERSATION APPELLE L'OUTIL — chat | voice_realtime | email
+#             C'est le SEUL axe que le filtre MCP applique. Vide = invisible de l'agent :
+#             ne pas laisser vide chez un `outil client`.
+#   ecrans    DEPUIS QUELLE VUE L'OUTIL EST PROPOSÉ — agenda | contacts | documents | media
+#             Relayé par MCP comme métadonnée d'affichage, jamais filtré. Vide est
+#             LÉGITIME : beaucoup d'outils n'ont pas d'écran dédié.
+#
+#   La frontière est celle de MCP : `email` est un CANAL, pas un écran. Elle est tenue par
+#   deux mesures — `email` est l'une des 3 valeurs réellement présentes dans le registre,
+#   et les deux arbitrages déjà rendus l'utilisent (office-extractor, pdf-ocr en
+#   « chat, email »). Les écrans, eux, sont LUS dans la liste du PO du 2026-11-09
+#   (`liste-po-2026-11-09.tsv`), jamais déduits.
+#
+#   ⚠️ ET `agenda` A CHANGÉ DE COLONNE. Il était une surface dans les versions
+#   précédentes de cette fiche : c'était une erreur, je l'avais introduit par règle. Il
+#   n'existe dans aucun workflow ni dans le registre, parce que ce n'est pas un canal.
+#
+#   ⚠️ LA QUESTION QUI RESTE OUVERTE, et qui est pour toi : si l'agent peut être invoqué
+#   DEPUIS une vue avec un contexte borné — une conversation lancée dans l'agenda, scopée
+#   agenda — alors cette vue devient aussi un canal d'appel, et la valeur doit passer dans
+#   `surfaces`. Tant que ce n'est pas le cas, les 4 restent des écrans.
 #
 # ⚠️ `surfaces` EST PRÉ-REMPLI PAR UNE PROPOSITION, PAS PAR UNE DÉCISION.
 #   surfaces_source = jet   → proposé par règle, À CORRIGER. Passer à `valide` une fois relu.
