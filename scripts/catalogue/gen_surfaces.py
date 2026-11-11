@@ -206,6 +206,14 @@ EN_TETE = """\
 #   pas encore. C'est le même piège que `veo-video`, qui décrit une vidéo que personne
 #   ne sait afficher.
 #
+#   ⚠️ ET `ecrans` N'EST CONSOMMÉ PAR PERSONNE AUJOURD'HUI. MCP mesure que sa projection
+#   (`n8n_registry_routes.py:281-282`) ne porte que `surfaces` et `requires` : la colonne
+#   n'est pas relayée. La remplir ne produira donc AUCUN effet tant que le contrat d'outil
+#   ne l'aura pas ajoutée — et quand il le fera, MCP s'est engagé à la relayer étiquetée
+#   « intention d'affichage », jamais comme chemin d'appel. Son filtre ne lit que
+#   `surfaces` : aucune possibilité d'appel ne peut être dérivée d'`ecrans` chez eux.
+#   À savoir avant de remplir 109 lignes en attendant un effet.
+#
 # ⚠️ `surfaces` EST PRÉ-REMPLI PAR UNE PROPOSITION, PAS PAR UNE DÉCISION.
 #   surfaces_source = jet   → proposé par règle, À CORRIGER. Passer à `valide` une fois relu.
 #   surfaces_source = RENDU → ton arbitrage du 2026-11-10, repris tel quel, jamais reproposé.
