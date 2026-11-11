@@ -53,8 +53,18 @@ def propose(x):
     # Franck avait exclu `office-extractor` — sync, inline, texte. Le motif n'est pas la
     # vitesse : c'est qu'il EXIGE UN FICHIER, et qu'une conversation vocale n'a pas de
     # sélecteur de fichier. L'entrée interdit la surface, pas le temps de réponse.
+    # ⚠️ DEUXIÈME CONDITION, ARBITRÉE PAR FRANCK LE 2026-11-11 : un outil IRRÉVERSIBLE
+    # n'est pas proposé à la voix. Motif mesuré par les deux clients le même jour — desktop
+    # n'a AUCUN crochet de confirmation (zéro `tool_call` dans tout `lib/`), front en a un
+    # (`mcp_clarification_needed`) mais dans 2 écrans sur 3 et seulement si le back l'émet.
+    # Rien ne s'interpose donc entre une phrase dictée et son effet. MCP en a tiré que le
+    # garde-fou ne peut pas être une confirmation d'interface : c'est une application de
+    # scope côté serveur, qui n'existe pas encore. Tant qu'elle n'existe pas, la voix est
+    # retirée par défaut et se rouvre ligne à ligne.
+    irreversible = x["irreversible"].startswith("oui")
     if (x["execution"] == "sync" and x["livraison"] == "inline"
-            and x["type_resultat"] in ("text", "data") and not fichier):
+            and x["type_resultat"] in ("text", "data") and not fichier
+            and not irreversible):
         s.append("voice_realtime")
     if fichier or x["domaine"].startswith("documents"):
         s.append("email")
@@ -107,11 +117,19 @@ EN_TETE = """\
 #   email           l'outil prend ou rend un document.
 #   agenda          l'outil touche au calendrier.
 #
-# ⚠️ 35 des 68 outils proposés en `voice_realtime` portent `irreversible = oui`.
-#   Une action sans retour, dictée à la voix. La colonne `irreversible` est là pour que tu les
-#   voies en arbitrant. C'est le point à relire en premier.
-#   (chiffre corrigé : il était de 41 sur 84 AVANT la colonne `nature` ; les 18 webhooks
-#    internes en ont emporté 16, dont 6 irréversibles — credits-refund, products-persist…)
+# ⚠️ LA VOIX EST RETIRÉE PAR DÉFAUT AUX OUTILS IRRÉVERSIBLES — arbitrage du 2026-11-11.
+#   35 des 68 outils proposés en `voice_realtime` portaient `irreversible = oui` ; ils
+#   passent à `chat` seul. Il reste 33 propositions vocales, toutes réversibles.
+#   Pour les retrouver : `irreversible = oui` ET `surfaces` sans `voice_realtime` — ce
+#   critère rend 39 lignes, pas 35 : 4 outils irréversibles n'avaient de toute façon jamais
+#   été proposés à la voix, pour un autre motif (fichier en entrée ou exécution asynchrone)
+#   — audio-transcription, document-translate-worker, office-extractor, torah-pdf.
+#   C'est un DÉFAUT, pas un verdict : rouvre ligne à ligne ce qui doit l'être.
+#
+#   ⚠️ ET QUATRE D'ENTRE ELLES SONT RETIRÉES À TORT, je le sais en l'écrivant :
+#   `web-search`, `entity-list`, `games-list`, `progress-get` ne font que LIRE. Elles ne
+#   sont marquées irréversibles que par le sur-signalement décrit plus bas. Ce sont les
+#   quatre premières à rouvrir, et elles ne demandent aucun arbitrage de fond.
 #
 # ⚠️ ET « SANS ÉCRAN DE CONFIRMATION » EST MESURÉ, PAS SUPPOSÉ. Relevé par l'équipe desktop
 #   le 2026-11-11 dans son propre dépôt : AUCUNE confirmation avant l'exécution d'un outil,
