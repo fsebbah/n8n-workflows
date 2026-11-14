@@ -197,14 +197,22 @@ Forme de `plugin_context`, **imbriquee**, identique pour la traduction et la rel
 { "plugin_context": { "api_keys": { "google": "AIza...", "anthropic": "sk-ant-..." } } }
 ```
 
-### Ce qui n'accepte NI `provider` NI `model`
+### La vocalisation (nekudot) suit la meme regle, avec un AUTRE defaut
 
-`POST /webhook/torah-vocalization` (nekudot) reste sur **`gpt-4o` en dur** et exige
-`openai_api_key`. Son `Validate Input` lit un ensemble **ferme** de champs
-(`text`, `items`, `openai_api_key`, `context`, `segment_id`, `source_text_id`,
-`commentary_id`, `project_id`) et **ignore** tout le reste : un `provider` envoye
-la n'est pas une erreur, il est inerte. Ne pas en envoyer — un champ inerte se lit
-plus tard comme un champ qui marche.
+`POST /webhook/torah-vocalization` accepte desormais `provider` et `model` lui aussi
+(meme cascade de cle, meme enumeration), mais ses defauts sont **`openai` + `gpt-4o`**,
+et non `anthropic` + `claude-sonnet-4-6`.
+
+⚠️ C'est delibere : l'invite de vocalisation est calibree sur gpt-4o, et la pose des
+voyelles est le point ou un changement de modele se voit immediatement. Un appelant
+qui n'envoie rien obtient exactement ce qu'il obtenait avant, a la nekuda pres.
+
+⚠️ `vocalized_by`, **ecrit en base cote torah.api**, garde la forme `llm:<modele>` :
+sur le chemin par defaut il vaut toujours exactement `llm:gpt-4o`, donc aucune ligne
+existante ne change de format et l'equipe api n'a rien a adapter.
+
+⚠️ **Aucun test ne peut juger la qualite des nekudot.** Apres un changement de
+fournisseur, relire le resultat a l'œil.
 
 ⚠️ La relecture **annote, elle ne remplace jamais** : `translation` reste le texte
 du traducteur, et l'avis vit dans `verification` (`approved`, `confidence`,
