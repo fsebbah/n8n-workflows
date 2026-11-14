@@ -1,0 +1,57 @@
+# Traduction Torah multi-fournisseurs — anthropic | openai | google.
+# azy.daily#642, décision de Franck du 2026-11-14.
+#
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-torah-multi-provider.txt --dry-run
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-torah-multi-provider.txt
+#
+# ⚠️ LES QUATRE, OU AUCUN. Et ici, contrairement au lot d'un seul job (#578),
+#    un réimport partiel ne laisse PAS la panne entière — il en crée une pire,
+#    silencieuse :
+#
+#      Torah_Router seul      → il envoie `provider: google` à un
+#                               Torah_Translate_Simple ancien, qui l'ignore et
+#                               traduit chez Anthropic AVEC un nom de modèle
+#                               Gemini. Anthropic refuse le modèle. L'appelant
+#                               voit une erreur Anthropic sur une demande Gemini.
+#      Torah_Translate_Page   → il relaie le choix à un Router ancien, pour qui
+#                               `provider` n'est qu'une étiquette de provenance.
+#                               La traduction part chez Anthropic, et la colonne
+#                               de provenance dit « google ». Faux en base, et
+#                               rien ne le signale.
+#      Torah_Batch_Dispatcher → sans le garde-fou, un lot Gemini part quand même
+#                               chez Anthropic.
+#      Torah_Translate_Simple → le seul qui tienne debout seul (un appelant sans
+#                               `provider` retombe sur anthropic + api_key).
+#                               Mais le choix ne lui parvient alors jamais.
+#
+# PRÉREQUIS, à vérifier AVANT : `LLM - Call Messages` doit être actif sur llm.
+#    Toute la traduction passe maintenant par lui.
+#    Contrôlé le 2026-11-14 : actif (id V9aXcWyCd4omNDmA), et
+#    `POST /webhook/llm-call-messages` avec un corps vide rend bien 400.
+#
+# Aucun chemin ni verbe de webhook ne change, aucune variable d'environnement
+# nouvelle : pas de 409, pas de redémarrage Docker.
+#
+# ⚠️ Trois nœuds de Torah_Translate_Simple sont RENOMMÉS —
+#    « Claude Structured / Direct / Fallback Direct » deviennent
+#    « Traduire Structuré / Direct / Repli (LLM) », parce qu'un nœud nommé
+#    « Claude » qui appelle Gemini est le genre de nom qui coûte une demi-journée.
+#    batch-reimport fait un UPDATE IN PLACE par nom de WORKFLOW : les noms de
+#    nœuds n'y changent rien, et aucune référence `$('…')` ne les visait.
+#
+# VÉRIFICATION APRÈS RÉIMPORT, sur une vraie demande :
+#   1. un appel SANS `provider` doit se comporter exactement comme avant
+#      (anthropic + api_key) — c'est le contrôle de non-régression ;
+#   2. un appel avec `provider: "google"` + `model` Gemini + la clé dans
+#      `plugin_context.api_keys.google` doit rendre une traduction, et
+#      `meta.provider` du relais doit dire `google` ;
+#   3. à 10 segments ou plus chez google, `Dispatch Batch` ne doit PAS être
+#      exécuté et `lotEcarte` doit valoir `lot_indisponible_pour_google` ;
+#   4. la relecture doit enfin rendre un avis : `verification` non nul au lieu de
+#      `verify_skipped: "relecteur_reponse_vide"` — elle n'en a jamais rendu.
+Torah_Translate_Simple
+Torah_Router
+Torah_Translate_Page
+Torah_Batch_Dispatcher

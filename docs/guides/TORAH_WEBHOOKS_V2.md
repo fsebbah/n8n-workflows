@@ -133,6 +133,65 @@ GET /webhook/torah-get-page-translations?traite=Berakhot&page=2a&include_transla
 
 ---
 
+## 2bis. Choix du fournisseur et du modele (multi-provider)
+
+> Fait foi pour `torah-translate-page`, `torah-router` et `torah-translate`.
+> azy.daily#642, decision de Franck du 2026-11-14.
+
+La traduction accepte **anthropic | openai | google**. Les trois appels de
+`Torah Translate Simple` passaient par `api.anthropic.com` en dur ; ils passent
+desormais par `/webhook/llm-call-messages`, le relais multi-fournisseurs.
+
+| Param | Type | Requis | Description |
+|-------|------|--------|-------------|
+| `provider` | string | Non | `anthropic` (defaut) · `openai` · `google` |
+| `model` | string | Non | Relaye **verbatim** au fournisseur. Defaut `claude-sonnet-4-6` |
+| `api_key` | string | Selon | Cle Anthropic. Sert de cle de traduction quand `provider` vaut `anthropic` |
+| `provider_api_key` | string | Selon | Cle du fournisseur choisi. Prioritaire sur tout le reste |
+| `plugin_context.api_keys.<provider>` | string | Selon | Repli de cle, par fournisseur |
+
+Cascade de resolution de la cle, dans cet ordre :
+`provider_api_key` → `api_key` **si** provider vaut anthropic →
+`plugin_context.api_keys[provider]` → refus `MISSING_PROVIDER_API_KEY`.
+
+### Ce qu'il faut savoir avant d'appeler
+
+- ⚠️ **Gemini se nomme `google`, pas `gemini`.** C'est l'enumeration de
+  `llm-call-messages`. Une autre valeur est refusee en `INVALID_PROVIDER`, et le
+  message le dit.
+- ⚠️ **BYOT strict, aucun repli d'environnement.** Il n'existe aucun `$env` de cle
+  ni de modele LLM dans la chaine Torah (verifie sur les 43 workflows). Un modele
+  par defaut vu dans un `.env.local` est celui de l'appelant, jamais le notre.
+- ⚠️ **Le LOT reste ANTHROPIC.** `torah-translate-batch` soumet aux Message
+  Batches d'Anthropic, fonctionnalite propre a ce fournisseur et source de la
+  remise de 50 % qui justifie le seuil de dix segments. Hors anthropic, le Router
+  **ne bascule plus en lot** et reprend la branche directe, segment par segment —
+  plus lente, jamais fausse. La raison est consignee dans `lotEcarte`, et un appel
+  direct au dispatcher avec un autre fournisseur est refuse explicitement.
+- ⚠️ **`openai_api_key` n'est plus exige** sur `torah-translate-page` : aucun nœud
+  de ce chemin ne le consomme. Il reste accepte.
+- La provenance enregistree en base est desormais celle **reellement servie**
+  (`meta.provider` / `meta.model` de l'enveloppe du relais), et non celle demandee.
+
+### Relecture par un second modele (optionnelle)
+
+Independante du fournisseur de traduction, et ouverte aux memes fournisseurs.
+
+| Param | Type | Defaut | Description |
+|-------|------|--------|-------------|
+| `verify` | bool | `true` | `false` desactive la relecture |
+| `verify_provider` | string | `anthropic` | `google` pour faire relire par Gemini |
+| `verify_model` | string | `claude-sonnet-4-6` | Modele du relecteur |
+| `verify_api_key` | string | — | Repli sur `api_key` si meme fournisseur, puis `plugin_context.api_keys` |
+
+⚠️ La relecture **annote, elle ne remplace jamais** : `translation` reste le texte
+du traducteur, et l'avis vit dans `verification` (`approved`, `confidence`,
+`issues`, `suggestion`). Sans cle pour le fournisseur demande, l'etape est
+**sautee sans erreur** — la raison est dans `verify_skipped`, le seul endroit ou
+cela se voit. **Lire ce champ.**
+
+---
+
 ## 3. POST /webhook/torah-translate-page
 
 Lance un job de traduction de page complete.
@@ -165,6 +224,10 @@ Content-Type: application/json
 | `api_key` | string | Oui | Cle API Anthropic |
 | `openai_api_key` | string | Non | Cle API OpenAI (mode premium) |
 | `force` | bool | Non | Forcer retraduction (default: false) |
+| `provider` · `model` · `provider_api_key` · `plugin_context` · `verify_*` | — | Non | **Voir §2bis** — choix du fournisseur et relecture |
+
+⚠️ `openai_api_key` n'est plus exige depuis azy.daily#642 (aucun nœud de ce chemin
+ne le consomme). Une cle pour le fournisseur choisi l'est. Voir §2bis.
 
 ### Response (succes)
 
@@ -273,6 +336,7 @@ Content-Type: application/json
 | `job_type` | string | Oui | Type de job |
 | `job_id` | string | Oui | ID du job parent |
 | `api_key` | string | Oui | Cle API Anthropic |
+| `provider` · `model` · `provider_api_key` · `plugin_context` · `verify_*` | — | Non | **Voir §2bis** — et le lot n'existe que chez `anthropic` |
 | `target_language` | string | Non | Langue cible |
 | `context` | object | Non | Contexte (traite, page, corpus) |
 
