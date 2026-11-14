@@ -503,17 +503,30 @@ const vpage = (body, headers) => executer(page, 'Validate Input', { body, header
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 12 · CE QUI N'EST PAS FAIT, ET QUI DOIT RESTER VISIBLE
+// 12 · LA VOCALISATION A SUIVI — ET LE TEST QUI LE DISAIT EST TOMBÉ COMME PRÉVU
 // ═════════════════════════════════════════════════════════════════════════════
-// La vocalisation est HORS de ce correctif : gpt-4o en dur, invite calibrée pour
-// lui. Ce contrôle n'est pas un objectif — il DOCUMENTE la limite, et tombera
-// le jour où on la portera, forçant à relire ce fichier.
+// Ce bloc portait un CONSTAT : « la vocalisation reste chez gpt-4o en dur ».
+// Il n'était pas un objectif, il documentait la limite — et il a échoué dès que
+// la limite est tombée, forçant à relire ce fichier. C'est exactement ce qu'on
+// lui demandait, et la raison d'écrire des constats plutôt que de ne rien écrire.
+//
+// La vocalisation est désormais multi-fournisseurs elle aussi. Elle a sa propre
+// suite, parce que son piège lui est propre (les trois fournisseurs ne nomment
+// pas pareil une génération terminée) :
+//     scripts/test/test_torah_vocalisation_multi_provider.js
 {
   const voc = lire('Torah_Vocalization_Worker.json');
-  const n = voc.nodes.find((x) => x.name === 'GPT-4o Vocalize');
-  ok('la vocalisation reste chez gpt-4o en dur (constat, pas un objectif)',
-     !!n && /api\.openai\.com/.test(n.parameters.url) &&
-     /'gpt-4o'/.test(JSON.stringify(n.parameters)));
+  ok('la vocalisation est passée au relais elle aussi',
+     !voc.nodes.some((x) => x.name === 'GPT-4o Vocalize') &&
+     voc.nodes.some((x) => x.name === 'Vocaliser (LLM)'));
+  const n = voc.nodes.find((x) => x.name === 'Vocaliser (LLM)');
+  ok('et elle ne tape plus api.openai.com en dur',
+     !!n && !/api\.openai\.com/.test(n.parameters.url));
+  // ⚠️ Son défaut doit RESTER openai/gpt-4o : l'invite est calibrée pour lui, et
+  // c'est sur la pose des voyelles qu'un changement de modèle se voit le plus vite.
+  const vi = (voc.nodes.find((x) => x.name === 'Validate Input').parameters.jsCode || '');
+  ok('⚠️ le défaut de la vocalisation reste openai + gpt-4o',
+     /body\.provider \|\| 'openai'/.test(vi) && /body\.model \|\| 'gpt-4o'/.test(vi));
   // Et aucun $env de clé ou de modèle LLM ne doit réapparaître dans la chaîne.
   for (const f of ['Torah_Translate_Simple', 'Torah_Router', 'Torah_Translate_Page']) {
     const brut = JSON.stringify(lire(f + '.json').nodes);
