@@ -166,8 +166,15 @@ Cascade de resolution de la cle, dans cet ordre :
   Batches d'Anthropic, fonctionnalite propre a ce fournisseur et source de la
   remise de 50 % qui justifie le seuil de dix segments. Hors anthropic, le Router
   **ne bascule plus en lot** et reprend la branche directe, segment par segment —
-  plus lente, jamais fausse. La raison est consignee dans `lotEcarte`, et un appel
-  direct au dispatcher avec un autre fournisseur est refuse explicitement.
+  plus lente, jamais fausse. La reponse de `torah-router` porte alors
+  `lot_ecarte: "lot_indisponible_pour_<provider>"` (champ **omis** quand rien n'est
+  ecarte), et un appel direct au dispatcher avec un autre fournisseur est refuse
+  explicitement, avec un message qui renvoie vers `torah-router`.
+
+  Condition reelle, a jour :
+  `useBatch = segments.length >= 10 && provider === 'anthropic'`
+  — et non `> 50`, comme l'annoncait a tort un commentaire du Router jusqu'au
+  2026-11-14. C'est de la que venait le « ≤ 50 » cote plugin.
 - ⚠️ **`openai_api_key` n'est plus exige** sur `torah-translate-page` : aucun nœud
   de ce chemin ne le consomme. Il reste accepte.
 - La provenance enregistree en base est desormais celle **reellement servie**
@@ -183,6 +190,21 @@ Independante du fournisseur de traduction, et ouverte aux memes fournisseurs.
 | `verify_provider` | string | `anthropic` | `google` pour faire relire par Gemini |
 | `verify_model` | string | `claude-sonnet-4-6` | Modele du relecteur |
 | `verify_api_key` | string | — | Repli sur `api_key` si meme fournisseur, puis `plugin_context.api_keys` |
+
+Forme de `plugin_context`, **imbriquee**, identique pour la traduction et la relecture :
+
+```json
+{ "plugin_context": { "api_keys": { "google": "AIza...", "anthropic": "sk-ant-..." } } }
+```
+
+### Ce qui n'accepte NI `provider` NI `model`
+
+`POST /webhook/torah-vocalization` (nekudot) reste sur **`gpt-4o` en dur** et exige
+`openai_api_key`. Son `Validate Input` lit un ensemble **ferme** de champs
+(`text`, `items`, `openai_api_key`, `context`, `segment_id`, `source_text_id`,
+`commentary_id`, `project_id`) et **ignore** tout le reste : un `provider` envoye
+la n'est pas une erreur, il est inerte. Ne pas en envoyer — un champ inerte se lit
+plus tard comme un champ qui marche.
 
 ⚠️ La relecture **annote, elle ne remplace jamais** : `translation` reste le texte
 du traducteur, et l'avis vit dans `verification` (`approved`, `confidence`,
