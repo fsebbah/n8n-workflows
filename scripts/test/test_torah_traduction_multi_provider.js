@@ -56,9 +56,17 @@ const executer = (wf, nom, entree, contexte) => {
     { N8N_WEBHOOK_URL: 'http://llm.local:5678' });
   return Array.isArray(r) ? r[0].json : r;
 };
-/** Évalue le corps `={{ JSON.stringify({...}) }}` d'un nœud HTTP avec un $json donné. */
+/**
+ * Évalue le corps `={{ JSON.stringify({...}) }}` d'un nœud avec un $json donné.
+ * `jsonBody` sur un httpRequest, `responseBody` sur un respondToWebhook — deux
+ * noms de champ pour la même expression, et confondre les deux fait planter la
+ * suite entière au chargement plutôt qu'échouer sur un contrôle.
+ */
 const corpsHttp = (wf, nom, j) => {
-  const jb = noeud(wf, nom).parameters.jsonBody.trim();
+  const p = noeud(wf, nom).parameters;
+  const brut = p.jsonBody !== undefined ? p.jsonBody : p.responseBody;
+  if (brut === undefined) throw new Error(`ni jsonBody ni responseBody sur ${nom}`);
+  const jb = brut.trim();
   const inner = jb.slice(3, -2).replace(/\$env\.([A-Z_]+)/g, 'ENV.$1').replace(/\$json/g, 'J');
   return JSON.parse(new Function('J', 'ENV', `return (${inner});`)(j, { N8N_WEBHOOK_URL: 'x' }));
 };
@@ -329,6 +337,32 @@ const segs = (n) => Array.from({ length: n }, (_, i) => ({ text: 'ש'.repeat(20)
   // Aucun recâblage : `Batch?` teste toujours le même champ.
   ok('`Batch?` continue de tester `useBatch`',
      /useBatch/.test(JSON.stringify(noeud(router, 'Batch?').parameters)));
+
+  // ── Le client doit POUVOIR lire la raison ───────────────────────────────────
+  // J'avais annoncé `lotEcarte` à plugin-torah comme lisible ; il ne l'était pas.
+  // `Respond Accepted` ne rendait que cinq champs. Un champ qu'on consigne sans
+  // le rendre n'informe personne.
+  const corps = corpsHttp(router, 'Respond Accepted', g12);
+  egal('la réponse directe porte `lot_ecarte`', corps.lot_ecarte,
+       'lot_indisponible_pour_google');
+  egal('la réponse directe porte le fournisseur', corps.provider, 'google');
+  egal('le contrat historique est intact', corps.mode, 'sync');
+  egal('… et le job_id reste rendu', corps.job_id, g12.jobId);
+  // Omis plutôt que posé à null : un lot anthropic normal ne doit pas porter le champ.
+  ok('`lot_ecarte` est ABSENT quand rien n\'est écarté',
+     !('lot_ecarte' in corpsHttp(router, 'Respond Accepted', a12)));
+
+  // ── Le commentaire du seuil ne doit PLUS mentir ─────────────────────────────
+  // Ce bloc annonçait `> 50` quand le code disait `>= 10` : faux sur la valeur ET
+  // sur l'opérateur, et c'est de là que plugin-torah tirait son « ≤ 50 ».
+  // Deuxième fois que ce commentaire coûte du temps à une autre équipe.
+  const docSeuil = noeud(router, 'Normaliser Réponse').parameters.jsCode;
+  ok('le commentaire du seuil n\'annonce plus « > 50 »',
+     !/segments\.length > 50/.test(docSeuil));
+  ok('le commentaire du seuil porte la condition RÉELLE',
+     />= SEUIL_BATCH_481/.test(docSeuil) && /provider === 'anthropic'/.test(docSeuil));
+  ok('le commentaire documente le troisième cas (≥ 10 hors anthropic)',
+     /lot_ecarte/.test(docSeuil));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
