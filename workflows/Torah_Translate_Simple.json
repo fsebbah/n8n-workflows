@@ -37,7 +37,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse and validate input\n// Phase 2: EN-pivot with structured output generation\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\n\nif (!body.text) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_TEXT', message: 'text is required' }\n    }\n  }];\n}\n\nif (!body.api_key) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_API_KEY', message: 'api_key is required' }\n    }\n  }];\n}\n\nconst sourceLanguage = body.source_language || 'he';\nconst targetLanguage = body.target_language || 'fr';\nconst referenceTranslation = body.reference_translation || null;\nconst hasReferenceTranslation = !!referenceTranslation;\n\n// Phase 2: Determine translation strategy\n// - hasReferenceTranslation=true → use existing EN as pivot (Phase 1)\n// - hasReferenceTranslation=false AND target!='en' → generate EN+target structured\n// - target='en' → direct HE→EN translation\nconst needsStructuredGeneration = !hasReferenceTranslation && targetLanguage !== 'en' && sourceLanguage !== 'en';\nconst isDirectToEnglish = targetLanguage === 'en';\n\n// ── Vérification de traduction (azy.daily#541, décision du 2026-10-18) ──\n// La vérification ANNOTE, elle ne substitue jamais. Un modèle relit la\n// traduction et rend un avis ; le texte livré reste celui du traducteur.\n//\n// ⚠️ Pourquoi aucune substitution automatique : une divergence peut être\n// minuscule en caractères et décisive en sens (le sens d'un mot, une\n// nuance). Aucun seuil calculable ici — longueur, similarité — ne mesure\n// le sens. Trancher reviendrait à confier le texte final à un modèle dont\n// nous ne vérifions rien. On rend donc les deux versions visibles.\n//\n// BYOT : la vérification n'a lieu que si une clé est disponible pour son\n// fournisseur. Si verify_provider vaut le fournisseur de la traduction\n// (anthropic), on réutilise api_key — aucune seconde clé à fournir.\nconst verifyDemandee = body.verify !== false;\nconst verifyProvider = (body.verify_provider || 'anthropic').toLowerCase();\nconst verifyModel = body.verify_model || 'claude-sonnet-4-6';\nconst verifyCle = body.verify_api_key\n  || (verifyProvider === 'anthropic' ? body.api_key : null)\n  || body.plugin_context?.api_keys?.[verifyProvider]\n  || null;\nconst verifyActive = verifyDemandee && !!verifyCle;\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    segmentId: body.segment_id || null,\n    text: body.text,\n    referenceTranslation: referenceTranslation,\n    hasReferenceTranslation: hasReferenceTranslation,\n    needsStructuredGeneration: needsStructuredGeneration,\n    isDirectToEnglish: isDirectToEnglish,\n    sourceLanguage: sourceLanguage,\n    sourceLangName: languageNames[sourceLanguage] || sourceLanguage,\n    targetLanguage: targetLanguage,\n    targetLangName: languageNames[targetLanguage] || targetLanguage,\n    apiKey: body.api_key,\n    model: body.model || 'claude-sonnet-4-6',\n    context: body.context || {},\n    metadata: body.metadata || {},\n    verifyActive: verifyActive,\n    verifyProvider: verifyProvider,\n    verifyModel: verifyModel,\n    verifyCle: verifyCle,\n    verifySautee: verifyDemandee && !verifyCle ? 'aucune_cle_pour_' + verifyProvider : (verifyDemandee ? null : 'desactivee_par_appelant')\n  }\n}];"
+        "jsCode": "// Parse and validate input\n// Phase 2: EN-pivot with structured output generation\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst languageNames = {\n  'fr': 'français',\n  'en': 'English',\n  'es': 'español',\n  'he': 'hébreu',\n  'ar': 'araméen',\n  'de': 'allemand',\n  'it': 'italien'\n};\n\nif (!body.text) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'MISSING_TEXT', message: 'text is required' }\n    }\n  }];\n}\n\n\n// ── Fournisseur de la TRADUCTION (azy.daily#642, décision de Franck du 2026-11-14) ──\n// Jusqu'ici les trois appels tapaient api.anthropic.com en dur : `model` était\n// pilotable, mais seulement dans le catalogue Anthropic. Ils passent désormais par\n// /webhook/llm-call-messages, le relais multi-fournisseurs déjà en service — donc\n// anthropic | openai | google, avec le MÊME corps de requête (`messages[]`).\n//\n// ⚠️ La valeur Gemini est `google`, PAS `gemini` : c'est l'énumération de\n// llm-call-messages, et une valeur hors liste y part en 400. On la vérifie ICI\n// pour rendre une erreur qui nomme le champ fautif, plutôt qu'un 400 du relais\n// que l'appelant ne saurait pas rattacher à `provider`.\nconst FOURNISSEURS = ['anthropic', 'openai', 'google', 'mistral', 'ollama-cloud'];\nconst provider = String(body.provider || 'anthropic').toLowerCase();\n\n// BYOT, même cascade que la vérification — surtout pas une clé d'environnement.\n// `api_key` reste la clé Anthropic historique : un appelant qui n'envoie pas\n// `provider` ne change rien à ce qu'il faisait hier.\nconst providerCle = body.provider_api_key\n  || (provider === 'anthropic' ? body.api_key : null)\n  || body.plugin_context?.api_keys?.[provider]\n  || null;\n\nif (FOURNISSEURS.indexOf(provider) === -1) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'INVALID_PROVIDER',\n        message: 'provider must be one of ' + FOURNISSEURS.join(', ') + ' and Gemini is named google' }\n    }\n  }];\n}\n\n// ⚠️ Ce n'est plus « api_key est requis » mais « une clé pour le fournisseur\n// demandé est requise ». Assouplissement pur — provider absent vaut anthropic,\n// donc api_key seul suffit encore, exactement comme avant.\n// Pas de deux-points dans le message : n8n ne garde que ce qui suit le dernier.\nif (!providerCle) {\n  return [{\n    json: {\n      success: false,\n      error: {\n        code: provider === 'anthropic' ? 'MISSING_API_KEY' : 'MISSING_PROVIDER_API_KEY',\n        message: provider === 'anthropic'\n          ? 'api_key is required'\n          : 'aucune cle pour le fournisseur ' + provider\n            + ' — fournir provider_api_key ou plugin_context.api_keys.' + provider\n      }\n    }\n  }];\n}\n\nconst sourceLanguage = body.source_language || 'he';\nconst targetLanguage = body.target_language || 'fr';\nconst referenceTranslation = body.reference_translation || null;\nconst hasReferenceTranslation = !!referenceTranslation;\n\n// Phase 2: Determine translation strategy\n// - hasReferenceTranslation=true → use existing EN as pivot (Phase 1)\n// - hasReferenceTranslation=false AND target!='en' → generate EN+target structured\n// - target='en' → direct HE→EN translation\nconst needsStructuredGeneration = !hasReferenceTranslation && targetLanguage !== 'en' && sourceLanguage !== 'en';\nconst isDirectToEnglish = targetLanguage === 'en';\n\n// ── Vérification de traduction (azy.daily#541, décision du 2026-10-18) ──\n// La vérification ANNOTE, elle ne substitue jamais. Un modèle relit la\n// traduction et rend un avis ; le texte livré reste celui du traducteur.\n//\n// ⚠️ Pourquoi aucune substitution automatique : une divergence peut être\n// minuscule en caractères et décisive en sens (le sens d'un mot, une\n// nuance). Aucun seuil calculable ici — longueur, similarité — ne mesure\n// le sens. Trancher reviendrait à confier le texte final à un modèle dont\n// nous ne vérifions rien. On rend donc les deux versions visibles.\n//\n// BYOT : la vérification n'a lieu que si une clé est disponible pour son\n// fournisseur. Si verify_provider vaut le fournisseur de la traduction\n// (anthropic), on réutilise api_key — aucune seconde clé à fournir.\nconst verifyDemandee = body.verify !== false;\nconst verifyProvider = (body.verify_provider || 'anthropic').toLowerCase();\nconst verifyModel = body.verify_model || 'claude-sonnet-4-6';\nconst verifyCle = body.verify_api_key\n  || (verifyProvider === 'anthropic' ? body.api_key : null)\n  || body.plugin_context?.api_keys?.[verifyProvider]\n  || null;\nconst verifyActive = verifyDemandee && !!verifyCle;\n\nreturn [{\n  json: {\n    jobId: body.job_id,\n    segmentId: body.segment_id || null,\n    text: body.text,\n    referenceTranslation: referenceTranslation,\n    hasReferenceTranslation: hasReferenceTranslation,\n    needsStructuredGeneration: needsStructuredGeneration,\n    isDirectToEnglish: isDirectToEnglish,\n    sourceLanguage: sourceLanguage,\n    sourceLangName: languageNames[sourceLanguage] || sourceLanguage,\n    targetLanguage: targetLanguage,\n    targetLangName: languageNames[targetLanguage] || targetLanguage,\n    apiKey: body.api_key,\n    provider: provider,\n    providerCle: providerCle,\n    model: body.model || 'claude-sonnet-4-6',\n    context: body.context || {},\n    metadata: body.metadata || {},\n    verifyActive: verifyActive,\n    verifyProvider: verifyProvider,\n    verifyModel: verifyModel,\n    verifyCle: verifyCle,\n    verifySautee: verifyDemandee && !verifyCle ? 'aucune_cle_pour_' + verifyProvider : (verifyDemandee ? null : 'desactivee_par_appelant')\n  }\n}];"
       },
       "id": "parse-input",
       "name": "Parse Input",
@@ -82,38 +82,22 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "x-api-key",
-              "value": "={{ $json.apiKey }}"
-            },
-            {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
-            },
-            {
-              "name": "content-type",
-              "value": "application/json"
-            }
-          ]
-        },
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/llm-call-messages",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: 8192, messages: [{ role: 'user', content: 'You are an expert translator of Talmudic and Kabbalistic texts.\\n\\nTranslate the following Hebrew text to BOTH English AND ' + $json.targetLangName + '.\\n\\nContext: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\n## Hebrew Source\\n' + $json.text + '\\n\\n## Instructions\\n1. First translate to English using standard Talmudic terminology\\n2. Then translate to ' + $json.targetLangName + ' using the English as reference for terminology and proper nouns\\n3. Return ONLY a valid JSON object with exactly this structure:\\n\\n{\"english_pivot\": \"<English translation>\", \"translation\": \"<' + $json.targetLangName + ' translation>\"}\\n\\nIMPORTANT: Return ONLY the JSON object, no other text.' }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ provider: $json.provider, model: $json.model, api_key: $json.providerCle, max_tokens: 8192, messages: [{ role: 'user', content: 'You are an expert translator of Talmudic and Kabbalistic texts.\\n\\nTranslate the following Hebrew text to BOTH English AND ' + $json.targetLangName + '.\\n\\nContext: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\n## Hebrew Source\\n' + $json.text + '\\n\\n## Instructions\\n1. First translate to English using standard Talmudic terminology\\n2. Then translate to ' + $json.targetLangName + ' using the English as reference for terminology and proper nouns\\n3. Return ONLY a valid JSON object with exactly this structure:\\n\\n{\"english_pivot\": \"<English translation>\", \"translation\": \"<' + $json.targetLangName + ' translation>\"}\\n\\nIMPORTANT: Return ONLY the JSON object, no other text.' }] }) }}",
         "options": {
           "response": {
             "response": {
-              "fullResponse": true
+              "fullResponse": true,
+              "neverError": true
             }
           },
           "timeout": 180000
         }
       },
       "id": "claude-structured",
-      "name": "Claude Structured",
+      "name": "Traduire Structuré (LLM)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -124,7 +108,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Phase 2: Extract structured EN+target translation from single LLM call\nconst input = $input.first().json;\nconst prevData = $('Parse Input').first().json;\n\ntry {\n  const body = input.body || input;\n  \n  if (body.error) {\n    // Fallback: if structured call fails, return error for fallback handling\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: { code: 'CLAUDE_ERROR', message: body.error.message || 'Claude API error' },\n        ...prevData\n      }\n    }];\n  }\n  \n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: { code: 'EMPTY_RESPONSE', message: 'Claude returned empty response' },\n        ...prevData\n      }\n    }];\n  }\n  \n  // Parse JSON from response (handle potential markdown code blocks)\n  let parsed;\n  try {\n    let jsonStr = content.trim();\n    // Remove markdown code block if present\n    if (jsonStr.startsWith('```')) {\n      jsonStr = jsonStr.replace(/^```(?:json)?\\n?/, '').replace(/\\n?```$/, '');\n    }\n    parsed = JSON.parse(jsonStr);\n  } catch (parseErr) {\n    // JSON parse failed - fallback to direct translation\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: { code: 'JSON_PARSE_ERROR', message: 'Failed to parse structured response: ' + parseErr.message },\n        ...prevData\n      }\n    }];\n  }\n  \n  // Validate required fields\n  if (!parsed.english_pivot || !parsed.translation) {\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: { code: 'INVALID_STRUCTURE', message: 'Missing english_pivot or translation in response' },\n        ...prevData\n      }\n    }];\n  }\n  \n  // Success: return both translations\n  return [{\n    json: {\n      success: true,\n      translation: parsed.translation,\n      english_pivot: parsed.english_pivot,\n      method: 'structured_generation',\n      generated_english: true,\n      segment_id: prevData.segmentId,\n      target_language: prevData.targetLanguage,\n      tokens: {\n        input_tokens: usage.input_tokens || 0,\n        output_tokens: usage.output_tokens || 0\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      fallbackToDirectTranslation: true,\n      error: { code: 'PARSE_ERROR', message: e.message },\n      ...prevData\n    }\n  }];\n}"
+        "jsCode": "// Phase 2: Extract structured EN+target translation from single LLM call\nconst input = $input.first().json;\nconst prevData = $('Parse Input').first().json;\n\ntry {\n  // ── Enveloppe de llm-call-messages (azy.daily#642) ─────────────────────────\n  // { success, data{ text, model, finish_reason }, meta{ provider, model, usage },\n  //   metadata, _trace }  ·  en échec : { success:false, error{ code, message, http_status } }\n  //\n  // ⚠️ Le texte est en `data.text`. L'ancienne lecture `body.content[0].text`\n  // était celle de la réponse BRUTE d'Anthropic, que le relais ne rend plus —\n  // et elle aurait rendu VIDE en silence, sans erreur, pour tout fournisseur.\n  const env = input.body !== undefined ? input.body : input;\n  const httpCode = input.statusCode || 200;\n  const meta = env.meta || {};\n  const providerUtilise = meta.provider || null;\n  const modelUtilise = meta.model || null;\n\n  if (httpCode >= 400 || env.success === false) {\n    const err = env.error || {};\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: {\n          code: err.code || 'LLM_RELAY_ERROR',\n          message: (err.message || 'erreur du relais LLM')\n                 + ' [http ' + (err.http_status || httpCode) + ']'\n        },\n        ...prevData\n      }\n    }];\n  }\n\n  const content = (env.data && env.data.text) || '';\n  const usage = meta.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: { code: 'EMPTY_RESPONSE', message: 'le fournisseur a rendu une reponse vide' },\n        ...prevData\n      }\n    }];\n  }\n  \n  // Parse JSON from response (handle potential markdown code blocks)\n  let parsed;\n  try {\n    let jsonStr = content.trim();\n    // Remove markdown code block if present\n    if (jsonStr.startsWith('```')) {\n      jsonStr = jsonStr.replace(/^```(?:json)?\\n?/, '').replace(/\\n?```$/, '');\n    }\n    parsed = JSON.parse(jsonStr);\n  } catch (parseErr) {\n    // JSON parse failed - fallback to direct translation\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: { code: 'JSON_PARSE_ERROR', message: 'Failed to parse structured response: ' + parseErr.message },\n        ...prevData\n      }\n    }];\n  }\n  \n  // Validate required fields\n  if (!parsed.english_pivot || !parsed.translation) {\n    return [{\n      json: {\n        success: false,\n        fallbackToDirectTranslation: true,\n        error: { code: 'INVALID_STRUCTURE', message: 'Missing english_pivot or translation in response' },\n        ...prevData\n      }\n    }];\n  }\n  \n  // Success: return both translations\n  return [{\n    json: {\n      success: true,\n      translation: parsed.translation,\n      english_pivot: parsed.english_pivot,\n      method: 'structured_generation',\n      generated_english: true,\n      segment_id: prevData.segmentId,\n      target_language: prevData.targetLanguage,\n      tokens: {\n        input_tokens: usage.prompt_tokens || 0,\n        output_tokens: usage.completion_tokens || 0\n      },\n      // Provenance RÉELLE, telle que le relais la rend — et non le modèle demandé.\n      // C'est elle que le Router enregistre désormais en base.\n      provider_utilise: providerUtilise,\n      model_utilise: modelUtilise\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      fallbackToDirectTranslation: true,\n      error: { code: 'PARSE_ERROR', message: e.message },\n      ...prevData\n    }\n  }];\n}"
       },
       "id": "extract-structured",
       "name": "Extract Structured",
@@ -169,38 +153,22 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "x-api-key",
-              "value": "={{ $json.apiKey }}"
-            },
-            {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
-            },
-            {
-              "name": "content-type",
-              "value": "application/json"
-            }
-          ]
-        },
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/llm-call-messages",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: 8192, messages: [{ role: 'user', content: 'Tu es un expert en textes talmudiques et kabbalistiques.\\n\\nTraduis le texte hébreu suivant directement en ' + $json.targetLangName + '.\\n\\nContexte: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\nTexte hébreu:\\n' + $json.text + '\\n\\nRéponds UNIQUEMENT avec la traduction en ' + $json.targetLangName + '.' }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ provider: $json.provider, model: $json.model, api_key: $json.providerCle, max_tokens: 8192, messages: [{ role: 'user', content: 'Tu es un expert en textes talmudiques et kabbalistiques.\\n\\nTraduis le texte hébreu suivant directement en ' + $json.targetLangName + '.\\n\\nContexte: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\nTexte hébreu:\\n' + $json.text + '\\n\\nRéponds UNIQUEMENT avec la traduction en ' + $json.targetLangName + '.' }] }) }}",
         "options": {
           "response": {
             "response": {
-              "fullResponse": true
+              "fullResponse": true,
+              "neverError": true
             }
           },
           "timeout": 180000
         }
       },
       "id": "claude-fallback",
-      "name": "Claude Fallback Direct",
+      "name": "Traduire Repli (LLM)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -211,7 +179,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Phase 2: Extract fallback direct translation (HE→target without EN pivot)\nconst input = $input.first().json;\nconst prevData = $('Extract Structured').first().json;\n\ntry {\n  const body = input.body || input;\n  \n  if (body.error) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'CLAUDE_ERROR', message: body.error.message || 'Claude API error in fallback' }\n      }\n    }];\n  }\n  \n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'EMPTY_RESPONSE', message: 'Claude returned empty response in fallback' }\n      }\n    }];\n  }\n  \n  // Log the original error that caused fallback\n  const originalError = prevData.error || null;\n  \n  return [{\n    json: {\n      success: true,\n      translation: content,\n      english_pivot: null,\n      method: 'direct_fallback',\n      generated_english: false,\n      fallback_reason: originalError ? originalError.code : 'unknown',\n      tokens: {\n        input_tokens: usage.input_tokens || 0,\n        output_tokens: usage.output_tokens || 0\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'PARSE_ERROR', message: e.message }\n    }\n  }];\n}"
+        "jsCode": "// Phase 2: Extract fallback direct translation (HE→target without EN pivot)\nconst input = $input.first().json;\nconst prevData = $('Extract Structured').first().json;\n\ntry {\n  // ── Enveloppe de llm-call-messages (azy.daily#642) ─────────────────────────\n  // { success, data{ text, model, finish_reason }, meta{ provider, model, usage },\n  //   metadata, _trace }  ·  en échec : { success:false, error{ code, message, http_status } }\n  //\n  // ⚠️ Le texte est en `data.text`. L'ancienne lecture `body.content[0].text`\n  // était celle de la réponse BRUTE d'Anthropic, que le relais ne rend plus —\n  // et elle aurait rendu VIDE en silence, sans erreur, pour tout fournisseur.\n  const env = input.body !== undefined ? input.body : input;\n  const httpCode = input.statusCode || 200;\n  const meta = env.meta || {};\n  const providerUtilise = meta.provider || null;\n  const modelUtilise = meta.model || null;\n\n  if (httpCode >= 400 || env.success === false) {\n    const err = env.error || {};\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: err.code || 'LLM_RELAY_ERROR',\n          message: (err.message || 'erreur du relais LLM')\n                 + ' [http ' + (err.http_status || httpCode) + ']'\n        }\n      }\n    }];\n  }\n\n  const content = (env.data && env.data.text) || '';\n  const usage = meta.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'EMPTY_RESPONSE', message: 'le fournisseur a rendu une reponse vide sur le repli' }\n      }\n    }];\n  }\n  \n  // Log the original error that caused fallback\n  const originalError = prevData.error || null;\n  \n  return [{\n    json: {\n      success: true,\n      translation: content,\n      english_pivot: null,\n      method: 'direct_fallback',\n      generated_english: false,\n      fallback_reason: originalError ? originalError.code : 'unknown',\n      tokens: {\n        input_tokens: usage.prompt_tokens || 0,\n        output_tokens: usage.completion_tokens || 0\n      },\n      // Provenance RÉELLE, telle que le relais la rend — et non le modèle demandé.\n      // C'est elle que le Router enregistre désormais en base.\n      provider_utilise: providerUtilise,\n      model_utilise: modelUtilise\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'PARSE_ERROR', message: e.message }\n    }\n  }];\n}"
       },
       "id": "extract-fallback",
       "name": "Extract Fallback",
@@ -225,38 +193,22 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "x-api-key",
-              "value": "={{ $json.apiKey }}"
-            },
-            {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
-            },
-            {
-              "name": "content-type",
-              "value": "application/json"
-            }
-          ]
-        },
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/llm-call-messages",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: $json.model, max_tokens: 8192, messages: [{ role: 'user', content: $json.hasReferenceTranslation ? ('Translate the following Hebrew Talmudic passage to ' + $json.targetLangName + '.\\nUse the official Sefaria/Koren English translation as a reference for terminology, proper nouns, and disambiguation.\\n\\n## Hebrew Source\\n' + $json.text + '\\n\\n## Reference Translation (English, Sefaria/Koren)\\n' + $json.referenceTranslation + '\\n\\n## Instructions\\n- Maintain the same meaning as the Hebrew source\\n- Use standard ' + $json.targetLangName + ' Talmudic terminology\\n- Preserve proper nouns as transliterated in the English reference\\n- If the Hebrew is ambiguous, use the English as a disambiguation hint, not as ground truth\\n\\nProvide the ' + $json.targetLangName + ' translation:') : ('Tu es un expert en textes talmudiques et kabbalistiques. Le texte source est en ' + $json.sourceLangName + '. Traduis directement en ' + $json.targetLangName + '.\\n\\nContexte: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\nTexte à traduire:\\n' + $json.text + '\\n\\nRéponds UNIQUEMENT avec la traduction.') }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ provider: $json.provider, model: $json.model, api_key: $json.providerCle, max_tokens: 8192, messages: [{ role: 'user', content: $json.hasReferenceTranslation ? ('Translate the following Hebrew Talmudic passage to ' + $json.targetLangName + '.\\nUse the official Sefaria/Koren English translation as a reference for terminology, proper nouns, and disambiguation.\\n\\n## Hebrew Source\\n' + $json.text + '\\n\\n## Reference Translation (English, Sefaria/Koren)\\n' + $json.referenceTranslation + '\\n\\n## Instructions\\n- Maintain the same meaning as the Hebrew source\\n- Use standard ' + $json.targetLangName + ' Talmudic terminology\\n- Preserve proper nouns as transliterated in the English reference\\n- If the Hebrew is ambiguous, use the English as a disambiguation hint, not as ground truth\\n\\nProvide the ' + $json.targetLangName + ' translation:') : ('Tu es un expert en textes talmudiques et kabbalistiques. Le texte source est en ' + $json.sourceLangName + '. Traduis directement en ' + $json.targetLangName + '.\\n\\nContexte: ' + ($json.context.traite || '') + ' ' + ($json.context.page || '') + ($json.context.commentator ? ' - ' + $json.context.commentator : '') + '\\n\\nTexte à traduire:\\n' + $json.text + '\\n\\nRéponds UNIQUEMENT avec la traduction.') }] }) }}",
         "options": {
           "response": {
             "response": {
-              "fullResponse": true
+              "fullResponse": true,
+              "neverError": true
             }
           },
           "timeout": 180000
         }
       },
       "id": "claude-direct",
-      "name": "Claude Direct",
+      "name": "Traduire Direct (LLM)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -267,7 +219,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract direct translation\n// RFC bilingual-translations-en-pivot: track EN pivot usage\nconst input = $input.first().json;\nconst prevData = $('Parse Input').first().json;\n\ntry {\n  const body = input.body || input;\n  \n  if (body.error) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'CLAUDE_ERROR', message: body.error.message || 'Claude API error' }\n      }\n    }];\n  }\n  \n  const content = body.content?.[0]?.text || '';\n  const usage = body.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'EMPTY_RESPONSE', message: 'Claude returned empty response' }\n      }\n    }];\n  }\n  \n  // RFC: indicate if EN pivot was used\n  const usedEnPivot = prevData.hasReferenceTranslation === true;\n  \n  return [{\n    json: {\n      success: true,\n      translation: content,\n      method: usedEnPivot ? 'en_pivot' : 'direct',\n      used_en_reference: usedEnPivot,\n      tokens: {\n        input_tokens: usage.input_tokens || 0,\n        output_tokens: usage.output_tokens || 0\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'PARSE_ERROR', message: e.message }\n    }\n  }];\n}"
+        "jsCode": "// Extract direct translation\n// RFC bilingual-translations-en-pivot: track EN pivot usage\nconst input = $input.first().json;\nconst prevData = $('Parse Input').first().json;\n\ntry {\n  // ── Enveloppe de llm-call-messages (azy.daily#642) ─────────────────────────\n  // { success, data{ text, model, finish_reason }, meta{ provider, model, usage },\n  //   metadata, _trace }  ·  en échec : { success:false, error{ code, message, http_status } }\n  //\n  // ⚠️ Le texte est en `data.text`. L'ancienne lecture `body.content[0].text`\n  // était celle de la réponse BRUTE d'Anthropic, que le relais ne rend plus —\n  // et elle aurait rendu VIDE en silence, sans erreur, pour tout fournisseur.\n  const env = input.body !== undefined ? input.body : input;\n  const httpCode = input.statusCode || 200;\n  const meta = env.meta || {};\n  const providerUtilise = meta.provider || null;\n  const modelUtilise = meta.model || null;\n\n  if (httpCode >= 400 || env.success === false) {\n    const err = env.error || {};\n    return [{\n      json: {\n        success: false,\n        error: {\n          code: err.code || 'LLM_RELAY_ERROR',\n          message: (err.message || 'erreur du relais LLM')\n                 + ' [http ' + (err.http_status || httpCode) + ']'\n        }\n      }\n    }];\n  }\n\n  const content = (env.data && env.data.text) || '';\n  const usage = meta.usage || {};\n  \n  if (!content) {\n    return [{\n      json: {\n        success: false,\n        error: { code: 'EMPTY_RESPONSE', message: 'le fournisseur a rendu une reponse vide' }\n      }\n    }];\n  }\n  \n  // RFC: indicate if EN pivot was used\n  const usedEnPivot = prevData.hasReferenceTranslation === true;\n  \n  return [{\n    json: {\n      success: true,\n      translation: content,\n      method: usedEnPivot ? 'en_pivot' : 'direct',\n      used_en_reference: usedEnPivot,\n      tokens: {\n        input_tokens: usage.prompt_tokens || 0,\n        output_tokens: usage.completion_tokens || 0\n      },\n      // Provenance RÉELLE, telle que le relais la rend — et non le modèle demandé.\n      // C'est elle que le Router enregistre désormais en base.\n      provider_utilise: providerUtilise,\n      model_utilise: modelUtilise\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: { code: 'PARSE_ERROR', message: e.message }\n    }\n  }];\n}"
       },
       "id": "extract-direct",
       "name": "Extract Direct",
@@ -389,7 +341,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ── Appliquer la vérification — ANNOTE, ne substitue jamais ─────────────────\n// Trois états possibles, et aucun ne modifie `translation` :\n//   verification = null   → non demandée, pas de clé, ou relecture indisponible\n//   approved true         → le relecteur est d'accord\n//   approved false        → DÉSACCORD CONSERVÉ : `verification.suggestion` porte\n//                           sa proposition, `issues` les écarts relevés.\n// L'appelant décide. C'est volontairement non résolu ici : un écart de sens\n// peut tenir à un mot, et aucun calcul local ne distingue une correction\n// décisive d'une réécriture abusive.\nconst entree = $input.first().json;\nconst prec = $('Préparer Vérification').first().json;\nconst base = Object.assign({}, prec);\ndelete base._verify;\n\nconst brut = entree.body !== undefined ? entree.body : entree;\nconst code = entree.statusCode || 200;\n\nconst vide = (raison) => [{ json: Object.assign({}, base, {\n  verification: null, verify_skipped: raison }) }];\n\nif (code >= 400) return vide('relecteur_http_' + code);\n\n// Le texte rendu par llm-call-messages, quel que soit le fournisseur.\nconst texte = brut && (brut.content || brut.text || brut.message || '');\nif (!texte || typeof texte !== 'string') return vide('relecteur_reponse_vide');\n\n// Analyse tolérante : aucun fournisseur ne garantit du JSON nu. On retire les\n// balises de code, puis on isole le premier objet. Un échec d'analyse n'est pas\n// une erreur de traduction — on rend la traduction sans avis.\nlet avis = null;\ntry {\n  let s = texte.trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\n  const d = s.indexOf('{'), fin = s.lastIndexOf('}');\n  if (d >= 0 && fin > d) s = s.slice(d, fin + 1);\n  avis = JSON.parse(s);\n} catch (e) {\n  return vide('relecteur_json_illisible');\n}\nif (!avis || typeof avis !== 'object') return vide('relecteur_json_illisible');\n\nconst approuve = avis.approved !== false;\nconst confiance = typeof avis.confidence === 'number' ? avis.confidence : null;\n\nreturn [{ json: Object.assign({}, base, {\n  // `translation` est intacte, et le reste ci-dessous ne fait que l'éclairer.\n  verification: {\n    provider: prec._verify.provider,\n    model: prec._verify.model,\n    approved: approuve,\n    confidence: confiance,\n    issues: Array.isArray(avis.issues) ? avis.issues : [],\n    // La proposition du relecteur n'est conservée QUE s'il désapprouve, et\n    // elle n'est jamais promue en `translation`.\n    suggestion: approuve ? null : (avis.suggestion || null),\n    notes: avis.notes || null,\n    // Vrai dès qu'il y a un désaccord : c'est le signal qu'une relecture\n    // humaine est utile. Personne ne l'arbitre automatiquement.\n    divergence: !approuve\n  },\n  verify_skipped: null\n}) }];\n"
+        "jsCode": "// ── Appliquer la vérification — ANNOTE, ne substitue jamais ─────────────────\n// Trois états possibles, et aucun ne modifie `translation` :\n//   verification = null   → non demandée, pas de clé, ou relecture indisponible\n//   approved true         → le relecteur est d'accord\n//   approved false        → DÉSACCORD CONSERVÉ : `verification.suggestion` porte\n//                           sa proposition, `issues` les écarts relevés.\n// L'appelant décide. C'est volontairement non résolu ici : un écart de sens\n// peut tenir à un mot, et aucun calcul local ne distingue une correction\n// décisive d'une réécriture abusive.\nconst entree = $input.first().json;\nconst prec = $('Préparer Vérification').first().json;\nconst base = Object.assign({}, prec);\ndelete base._verify;\n\nconst brut = entree.body !== undefined ? entree.body : entree;\nconst code = entree.statusCode || 200;\n\nconst vide = (raison) => [{ json: Object.assign({}, base, {\n  verification: null, verify_skipped: raison }) }];\n\nif (code >= 400) return vide('relecteur_http_' + code);\n\n// Le texte rendu par llm-call-messages, quel que soit le fournisseur.\n//\n// ⚠️ CORRECTIF (azy.daily#642) — il est en `data.text`, et nulle part ailleurs.\n// Cette ligne lisait `content || text || message`, TROIS clés qui n'existent pas\n// au premier niveau de l'enveloppe. La vérification retombait donc\n// systématiquement sur `relecteur_reponse_vide` : jamais aucun avis, et aucune\n// erreur pour le signaler — le chemin d'échec rend la traduction telle quelle.\n// Les anciens noms sont conservés en repli au cas où un relais tiers les rende.\nconst texte = brut && (\n  (brut.data && brut.data.text) || brut.content || brut.text || brut.message || ''\n);\nif (!texte || typeof texte !== 'string') return vide('relecteur_reponse_vide');\n\n// Analyse tolérante : aucun fournisseur ne garantit du JSON nu. On retire les\n// balises de code, puis on isole le premier objet. Un échec d'analyse n'est pas\n// une erreur de traduction — on rend la traduction sans avis.\nlet avis = null;\ntry {\n  let s = texte.trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\n  const d = s.indexOf('{'), fin = s.lastIndexOf('}');\n  if (d >= 0 && fin > d) s = s.slice(d, fin + 1);\n  avis = JSON.parse(s);\n} catch (e) {\n  return vide('relecteur_json_illisible');\n}\nif (!avis || typeof avis !== 'object') return vide('relecteur_json_illisible');\n\nconst approuve = avis.approved !== false;\nconst confiance = typeof avis.confidence === 'number' ? avis.confidence : null;\n\nreturn [{ json: Object.assign({}, base, {\n  // `translation` est intacte, et le reste ci-dessous ne fait que l'éclairer.\n  verification: {\n    provider: prec._verify.provider,\n    model: prec._verify.model,\n    approved: approuve,\n    confidence: confiance,\n    issues: Array.isArray(avis.issues) ? avis.issues : [],\n    // La proposition du relecteur n'est conservée QUE s'il désapprouve, et\n    // elle n'est jamais promue en `translation`.\n    suggestion: approuve ? null : (avis.suggestion || null),\n    notes: avis.notes || null,\n    // Vrai dès qu'il y a un désaccord : c'est le signal qu'une relecture\n    // humaine est utile. Personne ne l'arbitre automatiquement.\n    divergence: !approuve\n  },\n  verify_skipped: null\n}) }];\n"
       },
       "id": "verif-appliquer",
       "name": "Appliquer Vérification",
@@ -439,21 +391,21 @@
       "main": [
         [
           {
-            "node": "Claude Structured",
+            "node": "Traduire Structuré (LLM)",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Claude Direct",
+            "node": "Traduire Direct (LLM)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Claude Structured": {
+    "Traduire Structuré (LLM)": {
       "main": [
         [
           {
@@ -479,7 +431,7 @@
       "main": [
         [
           {
-            "node": "Claude Fallback Direct",
+            "node": "Traduire Repli (LLM)",
             "type": "main",
             "index": 0
           }
@@ -493,7 +445,7 @@
         ]
       ]
     },
-    "Claude Fallback Direct": {
+    "Traduire Repli (LLM)": {
       "main": [
         [
           {
@@ -515,7 +467,7 @@
         ]
       ]
     },
-    "Claude Direct": {
+    "Traduire Direct (LLM)": {
       "main": [
         [
           {
