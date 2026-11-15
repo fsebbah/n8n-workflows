@@ -1,0 +1,49 @@
+# Torah Verify — relecture de traductions déjà faites (azy.daily#669, point 1).
+#
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-torah-verify.txt --dry-run
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-torah-verify.txt
+#
+# ⚠️ WORKFLOW NEUF — il n'existe pas encore sur llm. `batch-reimport` le gère :
+#    « No existing workflow found → Would import ». Vérifié en dry-run.
+#    Ne PAS utiliser import_single.sh, qui crée un doublon inactif.
+#
+# NOUVEAU WEBHOOK : POST /webhook/torah-verify
+# PRÉREQUIS : `LLM - Call Messages` actif sur llm (id V9aXcWyCd4omNDmA).
+#
+# ⚠️ POURQUOI PAS UNE RELECTURE DANS LE CALLBACK DU LOT
+#    Le callback est déclenché APRÈS la fin du lot (jusqu'à 24 h chez Anthropic)
+#    par le `Claude - Batch Poller` partagé. La clé du relecteur devrait donc
+#    survivre jusque-là, c'est-à-dire être stockée dans le metadata du lot, qui
+#    traverse le soumetteur, l'API Anthropic et le poller : une clé BYOT AU
+#    REPOS dans une infrastructure partagée. Le dispatcher évite déjà ça —
+#    `Build Requests` envoie `api_key` au soumetteur À CÔTÉ de `metadata`,
+#    jamais dedans. Ce webhook prend la relecture après coup, clé dans le corps.
+#
+# ⚠️ À ARBITRER AVANT OU APRÈS LE RÉIMPORT — CE WEBHOOK ENTRERA DANS LE REGISTRE
+#    Le filtre du registre est PAR CHEMIN (tout sauf `torah-corpus-*`, règle du
+#    06/11), donc `torah-verify` y apparaîtra automatiquement au prochain
+#    export. Or sa documentation déclare `verify_api_key`, et MCP a posé la
+#    règle qu'une clé ne doit JAMAIS figurer dans un schéma publié : le registre
+#    part sans authentification et est vectorisé dans Qdrant, donc un champ
+#    déclaré est un champ que le LLM remplit.
+#    Deux issues possibles, au choix de Franck :
+#      · classer `torah-verify` en « webhook interne » et l'exclure du registre ;
+#      · ou le publier sans déclarer la clé dans le schéma.
+#    Rien n'est cassé en attendant : le registre ne se régénère pas tout seul.
+#
+# ⚠️ CE WORKFLOW NE PERSISTE RIEN. Il rend les verdicts à l'appelant. La mise en
+#    base passe par la colonne `review` (chatbot.api#365, en prod) et le nœud
+#    `Prepare Save` du Router — point 3 de l'issue, séparé.
+#
+# VÉRIFICATION APRÈS RÉIMPORT :
+#   1. corps vide → 400 nommant `segments` ;
+#   2. `verify_provider: "gemini"` → 400 disant que Gemini se nomme `google` ;
+#   3. `verify_provider: "openai"` avec seulement `api_key` anthropic → 400
+#      (la clé d'un fournisseur ne part JAMAIS chez un autre) ;
+#   4. un segment sans traduction → rendu quand même, avec
+#      `verify_skipped: "traduction_absente"` ;
+#   5. trois segments dont un non relisible → les trois sont rendus, dans
+#      l'ordre, et le verdict tombe sur le bon segment.
+Torah_Verify
