@@ -306,6 +306,72 @@ const pi = (body) => executer(simple, 'Parse Input', { body });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// 6 bis · UN VERDICT MUET N'EST PAS UNE APPROBATION  (azy.daily#669, point 7)
+// ═════════════════════════════════════════════════════════════════════════════
+// Défaut trouvé le 2026-11-15 : `const approuve = avis.approved !== false;`
+// traitait un JSON valide SANS clé `approved` comme une approbation. Le relecteur
+// n'avait rien dit et nous enregistrions son accord.
+//
+// ⚠️ Ce défaut est INVISIBLE depuis torah.api. Leur `review.approved` est
+// désormais obligatoire et `StrictBool`, mais leur validation ne voit que la
+// valeur reçue : un `true` fabriqué ici leur arrive impeccable. Le seul endroit
+// où l'information « pas de verdict » existe encore est ce nœud.
+//
+// Ces contrôles sont ROUGES sur l'ancien code — vérifié en le remettant.
+{
+  const prec = { success: true, translation: 'Bonjour',
+                 _verify: { provider: 'anthropic', model: 'claude-sonnet-4-6' } };
+  const rendre = (avis) => executer(simple, 'Appliquer Vérification',
+    { statusCode: 200, body: { success: true, data: { text: JSON.stringify(avis) }, meta: {} } },
+    { 'Préparer Vérification': prec });
+
+  // Les quatre formes qui passaient pour une approbation.
+  for (const [nom, avis] of [
+    ['clé absente',        { confidence: 0.9, notes: 'rien dit' }],
+    ['approved null',      { approved: null, confidence: 0.9 }],
+    ['approved "true"',    { approved: 'true', confidence: 0.9 }],
+    ['approved 1',         { approved: 1, confidence: 0.9 }],
+  ]) {
+    const r = rendre(avis);
+    egal(`⚠️ ${nom} → AUCUN verdict`, r.verification, null);
+    egal(`⚠️ ${nom} → motif explicite`, r.verify_skipped, 'relecteur_avis_sans_verdict');
+    egal(`${nom} → la traduction sort intacte`, r.translation, 'Bonjour');
+  }
+
+  // Et les deux seules formes acceptées le restent, inchangées.
+  const vrai = rendre({ approved: true, confidence: 0.95 });
+  egal('approved true reste un verdict', (vrai.verification || {}).approved, true);
+  egal('approved true → divergence false', (vrai.verification || {}).divergence, false);
+  egal('approved true → aucun saut', vrai.verify_skipped, null);
+
+  const faux = rendre({ approved: false, confidence: 0.4, suggestion: 'Shalom' });
+  egal('approved false reste un verdict', (faux.verification || {}).approved, false);
+  egal('approved false → divergence true', (faux.verification || {}).divergence, true);
+  egal('approved false → suggestion conservée', (faux.verification || {}).suggestion, 'Shalom');
+
+  // `approved` ne doit JAMAIS sortir autrement que booléen strict.
+  for (const r of [vrai, faux]) {
+    ok('`approved` est un booléen strict',
+       typeof (r.verification || {}).approved === 'boolean');
+  }
+
+  // Le code ne doit plus porter la forme optimiste.
+  //
+  // ⚠️ PIÈGE RENCONTRÉ EN ÉCRIVANT CE TEST : chercher la sous-chaîne
+  // `avis.approved !== false` échoue, parce que le GARDE-FOU STRICT la contient
+  // dans sa seconde moitié (`… !== true && avis.approved !== false`). Une
+  // assertion négative sur une sous-chaîne ne distingue pas le défaut de son
+  // correctif. On vise donc l'AFFECTATION, qui est le défaut réel.
+  const codeVerdict = codeNu(simple, 'Appliquer Vérification');
+  ok('⚠️ l\'affectation optimiste a disparu',
+     !/const\s+approuve\s*=\s*avis\.approved\s*!==\s*false/.test(codeVerdict));
+  ok('le garde-fou strict est présent',
+     /avis\.approved\s*!==\s*true\s*&&\s*avis\.approved\s*!==\s*false/.test(codeVerdict));
+  ok('et il rend un motif nommé',
+     /relecteur_avis_sans_verdict/.test(codeVerdict));
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // 7 · LE LOT RESTE ANTHROPIC — ET LE DIT
 // ═════════════════════════════════════════════════════════════════════════════
 // Les Message Batches sont propres à Anthropic, et c'est d'eux que vient la
