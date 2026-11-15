@@ -1,0 +1,220 @@
+{
+  "name": "Torah Verify",
+  "nodes": [
+    {
+      "id": "doc",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        64,
+        64
+      ],
+      "parameters": {
+        "content": "## Torah Verify — relire des traductions DEJA faites\n\n**POST** `/webhook/torah-verify` (azy.daily#669, point 1)\n\n### Pourquoi ce webhook, et pas une relecture dans le callback du lot\n\nLe chemin lot ne relisait RIEN : `Torah_Batch_Dispatcher` et\n`Torah_Batch_Callback` portaient zero occurrence de `verify`. Et le lot part des\n**10 segments**, donc les vraies pages de Talmud n'etaient jamais relues.\n\n⚠️ Relire DANS le callback etait impossible proprement : il est declenche APRES\nla fin du lot (jusqu'a 24 h chez Anthropic), par le `Claude - Batch Poller`\npartage. La cle du relecteur devrait donc survivre jusque-la, c'est-a-dire etre\nstockee dans le metadata du lot — une **cle BYOT au repos** dans une\ninfrastructure partagee. Le dispatcher evite deja ca : `Build Requests` envoie\n`api_key` au soumetteur A COTE de `metadata`, jamais dedans.\n\n### Entree\n\n```json\n{\n  \"segments\": [{\n    \"segment_id\": \"uuid\",            // ou \"commentary_id\"\n    \"source_text\": \"...\",            // ou \"text\"\n    \"translation\": \"...\",            // ou \"translated_text\"\n    \"english_pivot\": \"... | null\",\n    \"source_language\": \"he\",\n    \"target_language\": \"fr\"\n  }],\n  \"verify_provider\": \"anthropic | openai | google | mistral | ollama-cloud\",\n  \"verify_model\": \"claude-sonnet-4-6\",\n  \"verify_api_key\": \"requise SAUF si verify_provider vaut anthropic (api_key reutilisee)\",\n  \"plugin_context\": { \"api_keys\": { \"google\": \"...\" } },\n  \"job_id\": \"...\", \"correlation_id\": \"...\"\n}\n```\n\n⚠️ Gemini se nomme **`google`**, jamais `gemini`.\n⚠️ La cle d'un fournisseur n'est **jamais** envoyee a un autre.\n\n### Sortie\n\n```json\n{\n  \"success\": true,\n  \"reviewer\": \"anthropic/claude-sonnet-4-6\",\n  \"total\": 14, \"relus\": 13, \"non_relus\": 1,\n  \"approuves\": 9, \"refuses\": 4, \"avec_reserves\": 3,\n  \"issues_ecartees\": 0,\n  \"sauts\": { \"traduction_absente\": 1 },\n  \"verdicts\": [{\n    \"segment_id\": \"...\", \"commentary_id\": null,\n    \"verification\": {\n      \"reviewer\": { \"provider\": \"...\", \"model\": \"...\" },\n      \"reviewed_at\": \"2026-11-15T12:00:00.000Z\",\n      \"approved\": false, \"confidence\": 0.82,\n      \"issues\": [{ \"severite\": \"sens|style|forme\", \"extrait\": \"...\", \"explication\": \"...\" }],\n      \"issues_ecartees\": 0,\n      \"suggestion\": \"...\", \"notes\": \"...\"\n    },\n    \"verify_skipped\": null\n  }]\n}\n```\n\n⚠️ **`verification` est STRICTEMENT la forme `review` de torah.api**\n(chatbot.api#365) : il **refuse les champs inconnus** (422), et sur\n`/save-batch` un seul item invalide fait tomber **le lot entier**. N'ajouter\naucun champ ici. Pas de `divergence` : l'API la calcule elle-meme.\n\n⚠️ **CE WORKFLOW NE PERSISTE RIEN.** Il rend les verdicts. La mise en base\npasse par `review` et le nœud `Prepare Save` du Router (point 3 de l'issue).\n\n⚠️ **TOUS les segments envoyes sont rendus**, meme non relisibles, avec leur\nmotif dans `verify_skipped` : `traduction_absente`, `source_absente`,\n`relecteur_http_<code>`, `relecteur_json_illisible`, `relecteur_reponse_vide`,\n`relecteur_avis_sans_verdict`. L'appelant doit pouvoir retrouver chacun des\nsiens, sinon il ne sait pas lequel manque.\n\n**Category:** torah\n",
+        "height": 1180,
+        "width": 480,
+        "color": 5
+      }
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        608,
+        320
+      ],
+      "webhookId": "torah-verify",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-verify",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        320
+      ],
+      "parameters": {
+        "jsCode": "// ============================================================================\n// TORAH VERIFY — relire des traductions DÉJÀ FAITES (azy.daily#669, point 1)\n// ============================================================================\n//\n// POURQUOI CE WEBHOOK EXISTE, ET PAS UNE RELECTURE DANS LE CALLBACK DU LOT\n//\n// Le chemin lot ne relisait rien : `Torah_Batch_Dispatcher` et\n// `Torah_Batch_Callback` portaient ZÉRO occurrence de `verify`. Et le lot part\n// dès 10 segments, donc les vraies pages de Talmud n'étaient jamais relues.\n//\n// ⚠️ La relire DANS le callback était impossible proprement. Le callback est\n// déclenché APRÈS la fin du lot — jusqu'à 24 h chez Anthropic — par le\n// `Claude - Batch Poller` partagé. La clé du relecteur devrait donc SURVIVRE\n// jusque-là, c'est-à-dire être stockée dans le metadata du lot, qui traverse le\n// soumetteur, l'API Anthropic et le poller. Ce serait une clé BYOT AU REPOS\n// dans une infrastructure partagée.\n//\n// Or le dispatcher évite précisément ça : `Build Requests` envoie `api_key` au\n// soumetteur comme credential d'appel, À CÔTÉ de `metadata`, jamais dedans.\n// Parker une clé de relecture dans le metadata serait une régression.\n//\n// D'où ce webhook : la relecture se demande APRÈS COUP, avec la clé dans le\n// corps de la requête, comme partout ailleurs en BYOT. Trois conséquences\n// heureuses :\n//   · il sert les DEUX chemins, lot comme synchrone ;\n//   · il permet de relire à nouveau chez un AUTRE fournisseur sans retraduire ;\n//   · aucune clé ne survit à la requête.\n//\n// L'appelant sait quand appeler : le callback publie déjà\n// `translation_complete` sur `llm:results:stream`, avec `job_id` et\n// `correlation_id`.\n//\n// ⚠️ CE NŒUD NE PERSISTE RIEN. Il rend les verdicts à l'appelant. La mise en\n// base passe par la colonne `review` (chatbot.api#365) et le nœud\n// `Prepare Save` du Router — point 3 de l'issue, séparé.\n// ============================================================================\nconst body = $input.first().json.body || $input.first().json;\n\nconst erreurs = [];\nconst segments = Array.isArray(body.segments) ? body.segments : [];\nif (segments.length === 0) erreurs.push('Le champ \"segments\" est requis (tableau non vide)');\n\nconst PROVIDERS = ['anthropic', 'openai', 'google', 'mistral', 'ollama-cloud'];\nconst provider = String(body.verify_provider || 'anthropic').toLowerCase();\nif (PROVIDERS.indexOf(provider) === -1) {\n  erreurs.push('Le champ \"verify_provider\" doit valoir ' + PROVIDERS.join(', ')\n    + (provider === 'gemini' ? ' et Gemini se nomme google' : ''));\n}\n\n// Même cascade que Torah Translate Simple, au nom de champ près : la clé\n// dédiée, puis `api_key` SI et SEULEMENT SI le fournisseur est anthropic (ne\n// jamais envoyer la clé d'un fournisseur à un autre), puis le trousseau.\nconst cle = body.verify_api_key\n  || (provider === 'anthropic' ? body.api_key : null)\n  || (body.plugin_context && body.plugin_context.api_keys\n      && body.plugin_context.api_keys[provider])\n  || null;\nif (!cle && erreurs.length === 0) {\n  erreurs.push('Aucune cle pour le fournisseur ' + provider\n    + ' — fournir \"verify_api_key\" ou \"plugin_context.api_keys.' + provider + '\"');\n}\n\nif (erreurs.length > 0) {\n  return [{ json: { valide: false, erreur: {\n    code: 400, message: erreurs.join(', '), status: 'BAD_REQUEST' } } }];\n}\n\nconst modele = body.verify_model || 'claude-sonnet-4-6';\nconst instruction = [\n  'Tu relis une traduction de texte talmudique. Tu ne la remplaces pas.',\n  '',\n  'Signale en priorite les ecarts de SENS, meme minuscules en nombre de mots',\n  \"(sens d'un terme, nuance, registre, negation, portee d'une proposition).\",\n  'Un ecart court peut etre le plus grave. Ne te limite pas aux fautes visibles.',\n  '',\n  'Reponds UNIQUEMENT par un objet JSON, sans texte autour et sans balises de code :',\n  '{ \"approved\": true|false, \"confidence\": 0.0-1.0,',\n  '  \"issues\": [{ \"severite\": \"sens\"|\"style\"|\"forme\", \"extrait\": \"...\", \"explication\": \"...\" }],',\n  '  \"suggestion\": \"ta propre traduction si tu en proposes une, meme si tu approuves\",',\n  '  \"notes\": \"...\" }'\n].join('\\n');\n\nconst langues = { he: 'hebreu', ar: 'arameen', en: 'anglais', fr: 'francais' };\nconst nomLangue = (c) => langues[String(c || '').toLowerCase()] || String(c || 'inconnue');\n\n// ⚠️ Un segment sans traduction ne se relit pas : on le rend avec son motif\n// plutôt que de l'écarter en silence. L'appelant doit retrouver TOUS ses\n// segments dans la réponse, sinon il ne sait pas lequel manque.\nconst prepares = segments.map((seg, rang) => {\n  const texte = seg.translation || seg.translated_text || '';\n  const source = seg.source_text || seg.text || '';\n  const commun = {\n    valide: true,\n    rang: rang,\n    segment_id: seg.segment_id || null,\n    commentary_id: seg.commentary_id || null,\n    verify_provider: provider,\n    verify_model: modele\n  };\n  if (!texte || !source) {\n    return { json: Object.assign({}, commun, {\n      relisible: false,\n      verify_skipped: !texte ? 'traduction_absente' : 'source_absente'\n    }) };\n  }\n  const corps = [\n    'Original (' + nomLangue(seg.source_language || body.source_language || 'he') + ') :',\n    source,\n    '',\n    seg.english_pivot ? 'Pivot anglais :\\n' + seg.english_pivot + '\\n' : '',\n    'Traduction a relire (' + nomLangue(seg.target_language || body.target_language || 'fr') + ') :',\n    texte\n  ].filter(Boolean).join('\\n');\n  return { json: Object.assign({}, commun, {\n    relisible: true,\n    verify_skipped: null,\n    _verify: {\n      provider: provider,\n      model: modele,\n      api_key: cle,\n      max_tokens: 2000,\n      temperature: 0,\n      system: instruction,\n      messages: [{ role: 'user', content: corps }]\n    },\n    _demande_a: new Date().toISOString()\n  }) };\n});\n\nreturn prepares;"
+      }
+    },
+    {
+      "id": "valide",
+      "name": "Entrée valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        320
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "est-valide",
+              "leftValue": "={{ $json.valide }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "verifier",
+      "name": "Vérifier (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        240
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/llm-call-messages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.relisible ? JSON.stringify($json._verify) : '{\"_saute\":true}' }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "verdict",
+      "name": "Appliquer Verdict",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        240
+      ],
+      "parameters": {
+        "jsCode": "// ============================================================================\n// APPLIQUER VERDICT — mêmes règles que Torah Translate Simple\n// ============================================================================\n// ⚠️ Recollage PAR INDEX. Le nœud HTTP remplace le json de l'item par la\n// réponse, donc le `rang` posé en amont est perdu. n8n préserve l'ordre des\n// items, et `Vérifier (LLM)` tourne en `neverError` : aucun item ne disparaît.\n//\n// ⚠️ POURQUOI LES SEGMENTS NON RELISIBLES PASSENT QUAND MÊME PAR LE RELAIS\n// Un nœud HTTP ne se saute pas item par item. Deux options existaient :\n//   · brancher un IF avant, et faire converger deux branches ici — mais\n//     l'ordre des items n'est PAS garanti à travers une convergence, et le\n//     recollage par index casserait, en silence, sur le mauvais segment ;\n//   · appeler le relais pour tout le monde, avec un corps bidon pour les non\n//     relisibles — il répond 400 localement, SANS appel LLM donc sans coût, et\n//     ce nœud l'ignore puisqu'il sort avant de lire la réponse (`!d.relisible`).\n// La seconde est retenue : un 400 local gratuit vaut mieux qu'un verdict\n// attribué au mauvais segment.\n// Même technique que `Torah Batch Callback`, qui recolle `/save-batch` par\n// index.\nconst demandes = $('Validate Input').all().map(i => i.json);\nconst reponses = $input.all().map(i => i.json);\n\nconst SEVERITES = ['sens', 'style', 'forme'];\n\nconst sortie = demandes.map((d, i) => {\n  const base = {\n    segment_id: d.segment_id,\n    commentary_id: d.commentary_id,\n    verification: null,\n    verify_skipped: d.verify_skipped || null\n  };\n  if (!d.relisible) return base;\n\n  const rep = reponses[i] || {};\n  const code = rep.statusCode || 200;\n  const brut = rep.body !== undefined ? rep.body : rep;\n  if (code >= 400) {\n    return Object.assign(base, { verify_skipped: 'relecteur_http_' + code });\n  }\n\n  // Le texte rendu par llm-call-messages est en `data.text`, et nulle part\n  // ailleurs au premier niveau de l'enveloppe (azy.daily#642 — l'ancien code\n  // lisait `content || text || message`, trois clés inexistantes, et ne rendait\n  // JAMAIS d'avis).\n  const texte = brut && ((brut.data && brut.data.text) || brut.content\n    || brut.text || brut.message || '');\n  if (!texte || typeof texte !== 'string') {\n    return Object.assign(base, { verify_skipped: 'relecteur_reponse_vide' });\n  }\n\n  let avis = null;\n  try {\n    let s = texte.trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\n    const d0 = s.indexOf('{'), fin = s.lastIndexOf('}');\n    if (d0 >= 0 && fin > d0) s = s.slice(d0, fin + 1);\n    avis = JSON.parse(s);\n  } catch (e) {\n    return Object.assign(base, { verify_skipped: 'relecteur_json_illisible' });\n  }\n  if (!avis || typeof avis !== 'object') {\n    return Object.assign(base, { verify_skipped: 'relecteur_json_illisible' });\n  }\n\n  // ⚠️ `approved` DOIT être strictement booléen. `avis.approved !== false`\n  // comptait un verdict MUET comme une approbation, et aucun contrôle côté api\n  // ne peut le rattraper : un `true` fabriqué ici lui arrive impeccable.\n  if (avis.approved !== true && avis.approved !== false) {\n    return Object.assign(base, { verify_skipped: 'relecteur_avis_sans_verdict' });\n  }\n\n  const c = avis.confidence;\n  const confiance = (typeof c === 'number' && isFinite(c) && c >= 0 && c <= 1) ? c : null;\n\n  // Normalisation avant de rendre quoi que ce soit : un 422 d'api ferait perdre\n  // la traduction entière, et sur /save-batch LE LOT ENTIER.\n  const problemes = [];\n  let ecartees = 0;\n  for (const pb of (Array.isArray(avis.issues) ? avis.issues : [])) {\n    if (!pb || typeof pb !== 'object'\n        || typeof pb.extrait !== 'string' || typeof pb.explication !== 'string') {\n      ecartees++;\n      continue;\n    }\n    const sev = String(pb.severite || '').toLowerCase();\n    problemes.push({\n      severite: SEVERITES.indexOf(sev) >= 0 ? sev : 'forme',\n      extrait: pb.extrait,\n      explication: pb.explication\n    });\n  }\n\n  return Object.assign(base, {\n    verify_skipped: null,\n    // Forme STRICTEMENT identique à `review` (chatbot.api#365) : l'API refuse\n    // les champs inconnus, donc rien de plus ici. Pas de `divergence` : elle\n    // le calcule elle-même.\n    verification: {\n      reviewer: { provider: d.verify_provider, model: d.verify_model },\n      reviewed_at: d._demande_a,\n      approved: avis.approved,\n      confidence: confiance,\n      issues: problemes,\n      issues_ecartees: ecartees,\n      suggestion: avis.suggestion || null,\n      notes: avis.notes || null\n    }\n  });\n});\n\nreturn sortie.map(json => ({ json }));"
+      }
+    },
+    {
+      "id": "agreger",
+      "name": "Agréger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        240
+      ],
+      "parameters": {
+        "jsCode": "// Bilan + verdicts complets. Contrairement au bilan du job (point 8), ICI le\n// texte intégral est rendu : c'est une réponse synchrone à un appelant qui l'a\n// demandée, pas une charge de job qui transiterait par Redis.\nconst items = $input.all().map(i => i.json);\nconst pd = $('Validate Input').first().json;\nconst body = $('Webhook Trigger').first().json.body || {};\n\nconst relus = items.filter(i => i.verification);\nconst sauts = items.reduce((acc, i) => {\n  if (i.verify_skipped) acc[i.verify_skipped] = (acc[i.verify_skipped] || 0) + 1;\n  return acc;\n}, {});\n\nconst reserves = relus.filter(i => i.verification.approved === true\n  && ((i.verification.issues || []).length > 0 || i.verification.suggestion != null));\n\nreturn [{ json: {\n  success: true,\n  job_id: body.job_id || null,\n  correlation_id: body.correlation_id || null,\n  reviewer: pd.verify_provider + '/' + pd.verify_model,\n  total: items.length,\n  relus: relus.length,\n  non_relus: items.length - relus.length,\n  approuves: relus.filter(i => i.verification.approved === true).length,\n  refuses: relus.filter(i => i.verification.approved === false).length,\n  // « Approuvé avec réserves » : calculé, jamais stocké comme `!approved`.\n  avec_reserves: reserves.length,\n  issues_ecartees: relus.reduce((s, i) => s + (i.verification.issues_ecartees || 0), 0),\n  sauts: sauts,\n  verdicts: items\n} }];"
+      }
+    },
+    {
+      "id": "erreur",
+      "name": "Erreur",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        440
+      ],
+      "parameters": {
+        "jsCode": "const e = $input.first().json.erreur || {\n  code: 400, message: 'requete invalide', status: 'BAD_REQUEST' };\nreturn [{ json: { success: false, error: e } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Entrée valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entrée valide ?": {
+      "main": [
+        [
+          {
+            "node": "Vérifier (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Erreur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vérifier (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Appliquer Verdict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appliquer Verdict": {
+      "main": [
+        [
+          {
+            "node": "Agréger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": true,
+  "tags": []
+}
