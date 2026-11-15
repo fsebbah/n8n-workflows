@@ -80,8 +80,13 @@ NOEUDS_VERDICT = ["Appliquer Vérification", "Sortie sans vérification"]
 # ── Listes blanches : AUCUN autre champ ne sort d'ici ────────────────────────
 CHAMPS_IDENTITE = ("segment_id", "commentary_id", "job_id", "request_id",
                    "target_language", "targetLanguage")
+# `divergence` y figure, et y reste : voir la consigne dans extraire_un().
+# `reviewer` est imbriqué depuis le 2026-11-15 (contrat azy.daily#669) ; les
+# formes à plat `provider`/`model` sont gardées en repli pour les verdicts
+# extraits avant ce changement.
 CHAMPS_VERDICT = ("approved", "confidence", "divergence", "notes", "suggestion",
-                  "provider", "model")
+                  "provider", "model", "reviewer", "reviewed_at",
+                  "issues_ecartees")
 CHAMPS_ISSUE = ("severite", "extrait", "explication")
 
 # Empreintes de clés connues. Une seule suffit à faire échouer tout le lot.
@@ -149,6 +154,44 @@ def extraire_un(item, meta):
 
     if isinstance(verif, dict):
         verdict = {c: verif.get(c) for c in CHAMPS_VERDICT if verif.get(c) is not None}
+
+        # ⚠️ CONSIGNE DE FRANCK (2026-11-15) : la clef `divergence` est CONSERVÉE
+        # dans ce JSONL, et personne ne revient là-dessus.
+        #
+        # Elle est TOUJOURS présente, même quand le nœud ne l'émet plus. Deux
+        # choses à ne pas confondre, et c'est la source de la confusion qu'il a
+        # fallu lever :
+        #
+        #   • CE FICHIER (réserve locale)      → `divergence` CONSERVÉE
+        #   • la charge envoyée à torah.api    → `divergence` ABSENTE
+        #
+        # La seconde n'est pas un choix : chatbot.api#365 refuse les champs
+        # inconnus dans `review` (422), et sur `/save-batch` un seul item
+        # invalide fait tomber LE LOT ENTIER — des dizaines de traductions.
+        #
+        # Valeur : celle émise par le nœud si elle existe, sinon RECALCULÉE ici
+        # sur le CONTENU, jamais comme `!approved`. La forme `!approved` rendrait
+        # impossible l'état que Franck cherche justement à obtenir — « approved
+        # = true, divergence = true, confiance > 0,8 et des précisions » — car
+        # elle est la négation stricte de `approved`.
+        #
+        # ⚠️ CETTE VALEUR N'EST PAS LA RÉFÉRENCE. Depuis chatbot.api#365
+        # (commit ca9738a), c'est l'API qui calcule `divergence` côté serveur,
+        # depuis le verdict brut, avec la MÊME formule, et qui la stocke dans
+        # `review`. Personne ne l'envoie : il n'y a donc pas de seconde source
+        # de vérité, mais il y a bien DEUX IMPLÉMENTATIONS de la même règle.
+        # En cas de désaccord, celle de l'API prime — au rejeu, elle recalcule
+        # de toute façon depuis les champs bruts que nous lui transmettons
+        # (`approved`, `issues`, `suggestion`). La valeur ci-dessous est
+        # informative : elle sert à relire ce fichier, pas à alimenter la base.
+        # Si la formule change côté API, c'est ICI qu'il faut la suivre.
+        if "divergence" not in verdict:
+            approuve = verif.get("approved")
+            verdict["divergence"] = bool(
+                approuve is False
+                or verdict.get("issues")
+                or verdict.get("suggestion")
+            )
         problemes = []
         for pb in (verif.get("issues") or []):
             if isinstance(pb, dict):
