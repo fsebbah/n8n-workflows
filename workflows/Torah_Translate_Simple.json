@@ -362,6 +362,52 @@
         2868,
         400
       ]
+    },
+    {
+      "id": "entree-valide",
+      "name": "Entrée valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1008,
+        304
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "sans-erreur",
+              "leftValue": "={{ $json.error === undefined || $json.error === null }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "erreur-validation",
+      "name": "Erreur Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        440
+      ],
+      "parameters": {
+        "jsCode": "// ============================================================================\n// ERREUR DE VALIDATION — sortie rendue atteignable (azy.daily#669)\n// ============================================================================\n//\n// `Parse Input` CONSTRUISAIT trois erreurs depuis toujours — `MISSING_TEXT`,\n// `INVALID_PROVIDER`, `MISSING_API_KEY` / `MISSING_PROVIDER_API_KEY` — et\n// AUCUNE ne pouvait sortir : sa seule connexion allait droit sur\n// `Needs Structured?`. Du code de validation écrit, correct, et inatteignable.\n//\n// Symptôme mesuré le 2026-11-15 sur /webhook/torah-translate :\n//     {\"text\":\"שלום\"}  sans clé  →  {\"error\":{\"code\":\"EMPTY_RESPONSE\",\n//                                   \"message\":\"le fournisseur a rendu une reponse vide\"}}\n// L'appelant soupçonnait donc le fournisseur, le réseau ou un quota, alors que\n// la cause était qu'il n'avait pas envoyé de clé — et la chaîne brûlait un\n// appel au relais avant de constater l'évidence.\n//\n// ⚠️ LE CODE HTTP RESTE 200. Ce workflow est en `responseMode: lastNode`, qui\n// ne permet pas de choisir un statut. `Torah Translate Page`, lui, est en\n// `responseNode` avec des nœuds `respondToWebhook` portant `responseCode: 400`.\n// Basculer celui-ci demanderait un nœud de réponse sur CHAQUE chemin terminal,\n// et un chemin oublié ne rendrait pas un mauvais code : il ferait EXPIRER\n// l'appelant. Hors de ce correctif, délibérément.\n//\n// L'appelant discrimine donc sur `success: false` et sur la PRÉSENCE de la clé\n// `error` — c'est déjà la convention de la flotte, et c'est ce que fait MCP.\n//\n// On ne réécrit pas l'enveloppe de `Parse Input` : ses codes sont le contrat\n// documenté de ce webhook. On la rend seulement visible, et on dit par où elle\n// est passée pour que personne ne la confonde avec une erreur de traduction.\nconst entree = $input.first().json;\nreturn [{ json: {\n  success: false,\n  error: entree.error,\n  // D'où vient le refus : validation d'entrée, et non échec de traduction ni\n  // relecteur en panne. Les trois se ressemblaient dans la réponse.\n  etape: 'validation_entree'\n} }];"
+      }
     }
   ],
   "connections": {
@@ -380,7 +426,7 @@
       "main": [
         [
           {
-            "node": "Needs Structured?",
+            "node": "Entrée valide ?",
             "type": "main",
             "index": 0
           }
@@ -556,6 +602,24 @@
         [
           {
             "node": "Appliquer Vérification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entrée valide ?": {
+      "main": [
+        [
+          {
+            "node": "Needs Structured?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Erreur Validation",
             "type": "main",
             "index": 0
           }
