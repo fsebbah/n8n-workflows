@@ -1,0 +1,51 @@
+# Validation d'entrée de /webhook/torah-translate — sortie rendue atteignable.
+#
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-torah-translate-validation.txt --dry-run
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-torah-translate-validation.txt
+#
+# UN SEUL workflow. DEUX nœuds AJOUTÉS (`Entrée valide ?`, `Erreur Validation`)
+# et UNE connexion recâblée (`Parse Input` → `Entrée valide ?` au lieu de
+# `Needs Structured?`). Aucun chemin ni verbe de webhook ne change, aucune
+# variable d'environnement nouvelle : pas de 409, pas de redémarrage Docker.
+#
+# LE DÉFAUT CORRIGÉ, mesuré en service le 2026-11-15 :
+#     POST /webhook/torah-translate  {"text":"שלום"}   (aucune clé)
+#     → {"error":{"code":"EMPTY_RESPONSE",
+#                 "message":"le fournisseur a rendu une reponse vide"}}
+#
+#   `Parse Input` CONSTRUISAIT pourtant trois erreurs depuis toujours
+#   (MISSING_TEXT, INVALID_PROVIDER, MISSING_API_KEY / MISSING_PROVIDER_API_KEY)
+#   et AUCUNE ne pouvait sortir : sa seule connexion allait droit sur
+#   `Needs Structured?`. Du code de validation écrit, correct, inatteignable.
+#
+#   L'appelant soupçonnait donc le fournisseur, le réseau ou un quota — et la
+#   chaîne brûlait un appel au relais avant de constater qu'il manquait une clé.
+#
+# ⚠️ LE CODE HTTP RESTE 200, délibérément.
+#    Ce workflow est en `responseMode: lastNode`, qui ne permet pas de choisir
+#    un statut. `Torah Translate Page` est en `responseNode` avec des nœuds
+#    `respondToWebhook` portant `responseCode: 400` — basculer celui-ci
+#    demanderait un nœud de réponse sur CHAQUE chemin terminal, et un chemin
+#    oublié ne rendrait pas un mauvais code : il ferait EXPIRER l'appelant.
+#    L'appelant discrimine donc sur `success: false` et sur la PRÉSENCE de la
+#    clé `error` — convention déjà en place dans la flotte.
+#
+# ⚠️ CE QUI CHANGE POUR LES APPELANTS : une entrée invalide reçoit désormais
+#    son vrai motif au lieu de `EMPTY_RESPONSE`. Le corps porte en plus
+#    `etape: "validation_entree"`, pour distinguer un refus d'entrée d'un échec
+#    de traduction ou d'un relecteur en panne — les trois se ressemblaient.
+#
+# ⚠️ LE RISQUE DE CE CORRECTIF, et ce que les tests gardent : si `error`
+#    apparaissait sur un item VALIDE, toute traduction tomberait dans la
+#    branche d'erreur. Huit contrôles vérifient qu'une entrée valide ne porte
+#    aucune `error` et conserve les champs dont la suite dépend.
+#
+# VÉRIFICATION APRÈS RÉIMPORT :
+#   1. {"text":"שלום"} sans clé → MISSING_API_KEY (et non EMPTY_RESPONSE) ;
+#   2. {} → MISSING_TEXT ;
+#   3. provider "gemini" → INVALID_PROVIDER, message nommant `google` ;
+#   4. ⚠️ une traduction NORMALE avec clé valide doit toujours aboutir — c'est
+#      le contrôle de non-régression qui compte le plus ici.
+Torah_Translate_Simple
