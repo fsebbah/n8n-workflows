@@ -1,0 +1,52 @@
+# Relecteur indépendant du traducteur — azy.daily#669, point 5.
+#
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-torah-relecteur-independant.txt --dry-run
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-torah-relecteur-independant.txt
+#
+# UN SEUL workflow, deux nœuds Code (`Parse Input`, `Préparer Vérification`) et
+# la note collée. Aucun chemin ni verbe de webhook ne change, aucune variable
+# d'environnement nouvelle : pas de 409, pas de redémarrage Docker.
+#
+# ⚠️ IL PORTE AUSSI UN CORRECTIF DE FUITE DE CLÉ — c'est la raison de le passer
+#    sans attendre. Le repli était :
+#        verifyProvider === 'anthropic' ? body.api_key : null
+#    Il supposait que `api_key` EST une clé Anthropic, ce qui était vrai tant
+#    que la traduction ne passait que par Anthropic. Depuis #579 elle est
+#    multi-fournisseurs : une traduction Gemini envoie une clé `AIza…`, et ce
+#    repli l'aurait transmise à api.anthropic.com. La clé de traduction n'est
+#    désormais réutilisée QUE si le relecteur est le même fournisseur que le
+#    traducteur.
+#
+# ⚠️ CE QUI NE CHANGE PAS — contrôle de non-régression le plus important :
+#    un appelant qui n'envoie QUE `api_key` (cas de tous les appelants
+#    actuels) continue d'être relu, par anthropic/claude-sonnet-4-6, exactement
+#    comme avant. Le défaut n'a PAS été déplacé : `verifyActive = verify &&
+#    !!verifyCle`, donc viser un fournisseur dont l'appelant n'a pas la clé
+#    aurait DÉSACTIVÉ la relecture en silence.
+#
+# CE QUI EST NOUVEAU, et additif :
+#   · `verify_models: { "google": "gemini-2.5-pro", … }` dans le corps —
+#     optionnel. Sans clé ET modèle pour un autre fournisseur, rien ne change.
+#   · la réponse porte `verify_independant` et `verify_independance_motif`,
+#     À CÔTÉ de `verification` et jamais dedans (torah.api refuse les champs
+#     inconnus dans `review` : 422, et sur /save-batch tout le lot tombe).
+#
+# ⚠️ AUCUN NOM DE MODÈLE TIERS N'EST ÉCRIT EN DUR, et un contrôle automatique
+#    le garde. `llm-call-messages` exige `model` sans défaut par fournisseur ;
+#    un modèle faux est pire qu'un modèle absent (azy.daily#201, et le
+#    `claude-sonnet-4` mort de n8n-workflows#462).
+#
+# VÉRIFICATION APRÈS RÉIMPORT :
+#   1. un appel avec seulement `api_key` → relecture ACTIVE, relecteur
+#      anthropic/claude-sonnet-4-6, et `verify_independant: false` ;
+#   2. le même appel plus `plugin_context.api_keys.google` SANS
+#      `verify_models.google` → inchangé, motif
+#      `aucun_modele_pour_un_autre_fournisseur` ;
+#   3. en ajoutant `verify_models: {"google":"gemini-2.5-pro"}` → relecteur
+#      google, `verify_independant: true` ;
+#   4. ⚠️ une traduction `provider: "google"` sans clé anthropic → la relecture
+#      est SAUTÉE (`aucune_cle_pour_anthropic`), et la clé Google n'est PAS
+#      envoyée à Anthropic. C'est le contrôle de la fuite.
+Torah_Translate_Simple
