@@ -1,0 +1,46 @@
+# Relais du verdict de relecture jusqu'à l'appelant — azy.daily#669, point 8.
+#
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-torah-relais-verdict.txt --dry-run
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-torah-relais-verdict.txt
+#
+# UN SEUL workflow. Quatre nœuds Code touchés : Prepare Save, Calc Progress,
+# Conclure Job, Préparer Fin Sync. Aucun chemin ni verbe de webhook ne change,
+# aucune variable d'environnement nouvelle : pas de 409, pas de redémarrage.
+#
+# ⚠️ CE QUI CHANGE POUR LES APPELANTS — ADDITIF, deux canaux :
+#
+#   1. le JOB (/api/v2/jobs/<id>) porte un bloc `relecture` :
+#        { relus, non_relus, approuves, refuses, avec_reserves,
+#          issues_ecartees, sauts: {motif: n}, avis: [20 au plus] }
+#   2. l'ÉVÉNEMENT REDIS de fin (`llm:results:stream`) porte les compteurs
+#      `relus`, `approuves`, `refuses`, `avec_reserves`, `sauts` — en CHAÎNES.
+#
+# Rien n'est retiré, rien ne change de forme. Un appelant qui ignore les clés
+# inconnues n'est pas affecté.
+#
+# ⚠️ CE QUI NE CHANGE PAS, ET POURQUOI :
+#    `Respond Accepted` ne porte AUCUN verdict, et n'en portera jamais. Il est
+#    branché sur `Batch?`, EN AMONT de tout le pipeline — il répond avant la
+#    première traduction. C'est un accusé de réception, pas un résultat. Ce
+#    n'est pas un oubli : c'est la structure du workflow.
+#
+# ⚠️ AUCUN TEXTE INTÉGRAL ne remonte : ni `suggestion` ni `notes`. Mesuré
+#    2 192 caractères de suggestion sur le seul verdict existant ; un job de
+#    50 segments porterait une centaine de kilo-octets. Le texte complet va en
+#    base (colonne `review`, chatbot.api#365, en prod) et dans le JSONL de
+#    réserve `scripts/n8n/logs/verdicts-relecture.jsonl`.
+#
+# ⚠️ AUCUN `divergence` n'est émis. L'API le calcule côté serveur et refuse
+#    les champs inconnus (422 extra_forbidden) — et sur /save-batch un seul
+#    item invalide fait tomber LE LOT ENTIER.
+#
+# VÉRIFICATION APRÈS RÉIMPORT :
+#   1. une page < 10 segments avec relecture active → le job porte `relecture`
+#      avec `relus` égal au nombre de segments traduits ;
+#   2. sans clé de relecture → `relecture.sauts` porte
+#      `aucune_cle_pour_<fournisseur>`, et `relus` vaut 0 ;
+#   3. `Respond Accepted` rend toujours les mêmes 6 champs qu'avant ;
+#   4. un segment avec pivot anglais → le verdict n'est compté QU'UNE fois.
+Torah_Router
