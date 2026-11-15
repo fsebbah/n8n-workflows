@@ -288,7 +288,17 @@ const pi = (body) => executer(simple, 'Parse Input', { body });
   egal('le désaccord du relecteur est conservé', v.approved, false);
   egal('la suggestion n\'est gardée QUE sur désaccord', v.suggestion, 'Shalom');
   egal('⚠️ la traduction livrée n\'est JAMAIS remplacée', r.translation, 'Bonjour');
-  egal('le fournisseur du relecteur est tracé', v.provider, 'google');
+  egal('le relecteur est tracé, IMBRIQUÉ', (v.reviewer || {}).provider, 'google');
+  ok('`reviewed_at` est présent et horodaté',
+     typeof v.reviewed_at === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v.reviewed_at),
+     `obtenu ${JSON.stringify(v.reviewed_at)}`);
+  // ⚠️ `verification` doit être STRICTEMENT la forme `review` de torah.api :
+  // il refuse les champs inconnus (422), et sur /save-batch un seul item
+  // invalide fait tomber LE LOT ENTIER. `Prepare Save` le passera tel quel,
+  // donc tout champ de confort en plus casserait la sauvegarde.
+  egal('⚠️ `divergence` ne part PAS dans le verdict', v.divergence, undefined);
+  egal('ni `provider` à plat', v.provider, undefined);
+  egal('ni `model` à plat', v.model, undefined);
 
   // Et un relecteur approbateur ne doit pas laisser de suggestion.
   const okAvis = executer(simple, 'Appliquer Vérification',
@@ -303,6 +313,139 @@ const pi = (body) => executer(simple, 'Parse Input', { body });
     { 'Préparer Vérification': prec });
   egal('un avis illisible ne casse pas la traduction', illisible.translation, 'Bonjour');
   egal('et il se signale', illisible.verify_skipped, 'relecteur_json_illisible');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 6 bis · UN VERDICT MUET N'EST PAS UNE APPROBATION  (azy.daily#669, point 7)
+// ═════════════════════════════════════════════════════════════════════════════
+// Défaut trouvé le 2026-11-15 : `const approuve = avis.approved !== false;`
+// traitait un JSON valide SANS clé `approved` comme une approbation. Le relecteur
+// n'avait rien dit et nous enregistrions son accord.
+//
+// ⚠️ Ce défaut est INVISIBLE depuis torah.api. Leur `review.approved` est
+// désormais obligatoire et `StrictBool`, mais leur validation ne voit que la
+// valeur reçue : un `true` fabriqué ici leur arrive impeccable. Le seul endroit
+// où l'information « pas de verdict » existe encore est ce nœud.
+//
+// Ces contrôles sont ROUGES sur l'ancien code — vérifié en le remettant.
+{
+  const prec = { success: true, translation: 'Bonjour',
+                 _verify: { provider: 'anthropic', model: 'claude-sonnet-4-6' } };
+  const rendre = (avis) => executer(simple, 'Appliquer Vérification',
+    { statusCode: 200, body: { success: true, data: { text: JSON.stringify(avis) }, meta: {} } },
+    { 'Préparer Vérification': prec });
+
+  // Les quatre formes qui passaient pour une approbation.
+  for (const [nom, avis] of [
+    ['clé absente',        { confidence: 0.9, notes: 'rien dit' }],
+    ['approved null',      { approved: null, confidence: 0.9 }],
+    ['approved "true"',    { approved: 'true', confidence: 0.9 }],
+    ['approved 1',         { approved: 1, confidence: 0.9 }],
+  ]) {
+    const r = rendre(avis);
+    egal(`⚠️ ${nom} → AUCUN verdict`, r.verification, null);
+    egal(`⚠️ ${nom} → motif explicite`, r.verify_skipped, 'relecteur_avis_sans_verdict');
+    egal(`${nom} → la traduction sort intacte`, r.translation, 'Bonjour');
+  }
+
+  // Et les deux seules formes acceptées le restent, inchangées.
+  const vrai = rendre({ approved: true, confidence: 0.95 });
+  egal('approved true reste un verdict', (vrai.verification || {}).approved, true);
+  egal('approved true → aucun saut', vrai.verify_skipped, null);
+
+  const faux = rendre({ approved: false, confidence: 0.4, suggestion: 'Shalom' });
+  egal('approved false reste un verdict', (faux.verification || {}).approved, false);
+  egal('approved false → suggestion conservée', (faux.verification || {}).suggestion, 'Shalom');
+
+  // `approved` ne doit JAMAIS sortir autrement que booléen strict.
+  for (const r of [vrai, faux]) {
+    ok('`approved` est un booléen strict',
+       typeof (r.verification || {}).approved === 'boolean');
+  }
+
+  // Le code ne doit plus porter la forme optimiste.
+  //
+  // ⚠️ PIÈGE RENCONTRÉ EN ÉCRIVANT CE TEST : chercher la sous-chaîne
+  // `avis.approved !== false` échoue, parce que le GARDE-FOU STRICT la contient
+  // dans sa seconde moitié (`… !== true && avis.approved !== false`). Une
+  // assertion négative sur une sous-chaîne ne distingue pas le défaut de son
+  // correctif. On vise donc l'AFFECTATION, qui est le défaut réel.
+  const codeVerdict = codeNu(simple, 'Appliquer Vérification');
+  ok('⚠️ l\'affectation optimiste a disparu',
+     !/const\s+approuve\s*=\s*avis\.approved\s*!==\s*false/.test(codeVerdict));
+  ok('le garde-fou strict est présent',
+     /avis\.approved\s*!==\s*true\s*&&\s*avis\.approved\s*!==\s*false/.test(codeVerdict));
+  ok('et il rend un motif nommé',
+     /relecteur_avis_sans_verdict/.test(codeVerdict));
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 6 ter · APPROUVÉ AVEC RÉSERVES, ET NORMALISATION AVANT ENVOI
+// ═════════════════════════════════════════════════════════════════════════════
+// Franck, le 2026-11-15 : « approved = true, divergence = true, note > 0.8 et
+// du texte donné quelques précisions. C'est le but recherché. »
+//
+// Cet état était IMPOSSIBLE avant : `suggestion: approuve ? null : …` jetait la
+// proposition du relecteur dès qu'il approuvait, et `divergence: !approuve` le
+// rendait arithmétiquement inatteignable. « C'est acceptable, mais voici mieux »
+// est l'avis le plus utile qu'un relecteur puisse rendre, et nous le perdions.
+//
+// `divergence` n'est plus émis : torah.api le calcule côté serveur depuis le
+// verdict brut (chatbot.api#365), et notre JSONL de réserve le calcule aussi.
+{
+  const prec = { success: true, translation: 'Bonjour',
+                 _verify: { provider: 'anthropic', model: 'claude-sonnet-4-6' } };
+  const rendre = (avis) => executer(simple, 'Appliquer Vérification',
+    { statusCode: 200, body: { success: true, data: { text: JSON.stringify(avis) }, meta: {} } },
+    { 'Préparer Vérification': prec });
+
+  // ── Le cas visé : approuvé, confiance haute, précisions apportées ──
+  const reserves = rendre({ approved: true, confidence: 0.82,
+    issues: [{ severite: 'sens', extrait: 'עוֹנִין', explication: 'nuance du verbe' }],
+    suggestion: 'quelques précisions', notes: 'acceptable mais perfectible' });
+  const r = reserves.verification || {};
+  egal('⭐ approuvé', r.approved, true);
+  egal('⭐ confiance conservée', r.confidence, 0.82);
+  egal('⭐ LA SUGGESTION EST GARDÉE sur une approbation', r.suggestion, 'quelques précisions');
+  egal('⭐ les réserves sont gardées', (r.issues || []).length, 1);
+  egal('⭐ la traduction reste intacte', reserves.translation, 'Bonjour');
+  // L'état se déduit du contenu, exactement comme api et le JSONL le calculent.
+  ok('⭐ « approuvé avec réserves » est déductible',
+     r.approved === true && ((r.issues || []).length > 0 || r.suggestion !== null));
+
+  // ── Normalisation : un 422 d'api ferait perdre LA TRADUCTION, pas le verdict ──
+  const sale = rendre({ approved: true, confidence: 95,
+    issues: [
+      { severite: 'grammar', extrait: 'a', explication: 'b' },   // hors jeu → forme
+      { severite: 'SENS', extrait: 'c', explication: 'd' },      // casse → sens
+      { severite: 'sens', extrait: 42, explication: 'e' },       // extrait non chaîne → écartée
+      { severite: 'style' },                                      // sans extrait → écartée
+      'une chaîne nue'                                            // pas un objet → écartée
+    ] });
+  const sv = sale.verification || {};
+  egal('`confidence: 95` (pourcents) → null, sinon 422 d\'api', sv.confidence, null);
+  egal('3 issues mal formées écartées', sv.issues_ecartees, 3);
+  egal('2 issues conservées', (sv.issues || []).length, 2);
+  egal('sévérité hors jeu → `forme` (déclassée, pas jetée)', (sv.issues || [])[0].severite, 'forme');
+  egal('sévérité en capitales → normalisée', (sv.issues || [])[1].severite, 'sens');
+  for (const pb of (sv.issues || [])) {
+    ok('toute sévérité émise est dans le jeu accepté par api',
+       ['sens', 'style', 'forme'].indexOf(pb.severite) >= 0, `obtenu ${pb.severite}`);
+  }
+
+  // Les bornes de `confidence`, aux deux extrémités.
+  egal('confiance 0 est valide', (rendre({ approved: true, confidence: 0 }).verification || {}).confidence, 0);
+  egal('confiance 1 est valide', (rendre({ approved: true, confidence: 1 }).verification || {}).confidence, 1);
+  egal('confiance négative → null', (rendre({ approved: true, confidence: -0.1 }).verification || {}).confidence, null);
+  egal('confiance non numérique → null', (rendre({ approved: true, confidence: 'haute' }).verification || {}).confidence, null);
+
+  // L'invite ne doit plus demander au relecteur de taire sa suggestion.
+  const invite = codeNu(simple, 'Préparer Vérification');
+  ok('⚠️ l\'invite ne demande plus « null si tu approuves »',
+     !/null si tu approuves/.test(invite));
+  ok('et elle exige `approved`', /OBLIGATOIRE/.test(invite));
+  ok('l\'horodatage de l\'appel est posé AVANT l\'appel',
+     /_verify_demande_a/.test(invite));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
