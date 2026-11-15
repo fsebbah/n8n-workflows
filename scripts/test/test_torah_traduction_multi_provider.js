@@ -288,7 +288,17 @@ const pi = (body) => executer(simple, 'Parse Input', { body });
   egal('le désaccord du relecteur est conservé', v.approved, false);
   egal('la suggestion n\'est gardée QUE sur désaccord', v.suggestion, 'Shalom');
   egal('⚠️ la traduction livrée n\'est JAMAIS remplacée', r.translation, 'Bonjour');
-  egal('le fournisseur du relecteur est tracé', v.provider, 'google');
+  egal('le relecteur est tracé, IMBRIQUÉ', (v.reviewer || {}).provider, 'google');
+  ok('`reviewed_at` est présent et horodaté',
+     typeof v.reviewed_at === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v.reviewed_at),
+     `obtenu ${JSON.stringify(v.reviewed_at)}`);
+  // ⚠️ `verification` doit être STRICTEMENT la forme `review` de torah.api :
+  // il refuse les champs inconnus (422), et sur /save-batch un seul item
+  // invalide fait tomber LE LOT ENTIER. `Prepare Save` le passera tel quel,
+  // donc tout champ de confort en plus casserait la sauvegarde.
+  egal('⚠️ `divergence` ne part PAS dans le verdict', v.divergence, undefined);
+  egal('ni `provider` à plat', v.provider, undefined);
+  egal('ni `model` à plat', v.model, undefined);
 
   // Et un relecteur approbateur ne doit pas laisser de suggestion.
   const okAvis = executer(simple, 'Appliquer Vérification',
@@ -341,12 +351,10 @@ const pi = (body) => executer(simple, 'Parse Input', { body });
   // Et les deux seules formes acceptées le restent, inchangées.
   const vrai = rendre({ approved: true, confidence: 0.95 });
   egal('approved true reste un verdict', (vrai.verification || {}).approved, true);
-  egal('approved true → divergence false', (vrai.verification || {}).divergence, false);
   egal('approved true → aucun saut', vrai.verify_skipped, null);
 
   const faux = rendre({ approved: false, confidence: 0.4, suggestion: 'Shalom' });
   egal('approved false reste un verdict', (faux.verification || {}).approved, false);
-  egal('approved false → divergence true', (faux.verification || {}).divergence, true);
   egal('approved false → suggestion conservée', (faux.verification || {}).suggestion, 'Shalom');
 
   // `approved` ne doit JAMAIS sortir autrement que booléen strict.
@@ -369,6 +377,75 @@ const pi = (body) => executer(simple, 'Parse Input', { body });
      /avis\.approved\s*!==\s*true\s*&&\s*avis\.approved\s*!==\s*false/.test(codeVerdict));
   ok('et il rend un motif nommé',
      /relecteur_avis_sans_verdict/.test(codeVerdict));
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 6 ter · APPROUVÉ AVEC RÉSERVES, ET NORMALISATION AVANT ENVOI
+// ═════════════════════════════════════════════════════════════════════════════
+// Franck, le 2026-11-15 : « approved = true, divergence = true, note > 0.8 et
+// du texte donné quelques précisions. C'est le but recherché. »
+//
+// Cet état était IMPOSSIBLE avant : `suggestion: approuve ? null : …` jetait la
+// proposition du relecteur dès qu'il approuvait, et `divergence: !approuve` le
+// rendait arithmétiquement inatteignable. « C'est acceptable, mais voici mieux »
+// est l'avis le plus utile qu'un relecteur puisse rendre, et nous le perdions.
+//
+// `divergence` n'est plus émis : torah.api le calcule côté serveur depuis le
+// verdict brut (chatbot.api#365), et notre JSONL de réserve le calcule aussi.
+{
+  const prec = { success: true, translation: 'Bonjour',
+                 _verify: { provider: 'anthropic', model: 'claude-sonnet-4-6' } };
+  const rendre = (avis) => executer(simple, 'Appliquer Vérification',
+    { statusCode: 200, body: { success: true, data: { text: JSON.stringify(avis) }, meta: {} } },
+    { 'Préparer Vérification': prec });
+
+  // ── Le cas visé : approuvé, confiance haute, précisions apportées ──
+  const reserves = rendre({ approved: true, confidence: 0.82,
+    issues: [{ severite: 'sens', extrait: 'עוֹנִין', explication: 'nuance du verbe' }],
+    suggestion: 'quelques précisions', notes: 'acceptable mais perfectible' });
+  const r = reserves.verification || {};
+  egal('⭐ approuvé', r.approved, true);
+  egal('⭐ confiance conservée', r.confidence, 0.82);
+  egal('⭐ LA SUGGESTION EST GARDÉE sur une approbation', r.suggestion, 'quelques précisions');
+  egal('⭐ les réserves sont gardées', (r.issues || []).length, 1);
+  egal('⭐ la traduction reste intacte', reserves.translation, 'Bonjour');
+  // L'état se déduit du contenu, exactement comme api et le JSONL le calculent.
+  ok('⭐ « approuvé avec réserves » est déductible',
+     r.approved === true && ((r.issues || []).length > 0 || r.suggestion !== null));
+
+  // ── Normalisation : un 422 d'api ferait perdre LA TRADUCTION, pas le verdict ──
+  const sale = rendre({ approved: true, confidence: 95,
+    issues: [
+      { severite: 'grammar', extrait: 'a', explication: 'b' },   // hors jeu → forme
+      { severite: 'SENS', extrait: 'c', explication: 'd' },      // casse → sens
+      { severite: 'sens', extrait: 42, explication: 'e' },       // extrait non chaîne → écartée
+      { severite: 'style' },                                      // sans extrait → écartée
+      'une chaîne nue'                                            // pas un objet → écartée
+    ] });
+  const sv = sale.verification || {};
+  egal('`confidence: 95` (pourcents) → null, sinon 422 d\'api', sv.confidence, null);
+  egal('3 issues mal formées écartées', sv.issues_ecartees, 3);
+  egal('2 issues conservées', (sv.issues || []).length, 2);
+  egal('sévérité hors jeu → `forme` (déclassée, pas jetée)', (sv.issues || [])[0].severite, 'forme');
+  egal('sévérité en capitales → normalisée', (sv.issues || [])[1].severite, 'sens');
+  for (const pb of (sv.issues || [])) {
+    ok('toute sévérité émise est dans le jeu accepté par api',
+       ['sens', 'style', 'forme'].indexOf(pb.severite) >= 0, `obtenu ${pb.severite}`);
+  }
+
+  // Les bornes de `confidence`, aux deux extrémités.
+  egal('confiance 0 est valide', (rendre({ approved: true, confidence: 0 }).verification || {}).confidence, 0);
+  egal('confiance 1 est valide', (rendre({ approved: true, confidence: 1 }).verification || {}).confidence, 1);
+  egal('confiance négative → null', (rendre({ approved: true, confidence: -0.1 }).verification || {}).confidence, null);
+  egal('confiance non numérique → null', (rendre({ approved: true, confidence: 'haute' }).verification || {}).confidence, null);
+
+  // L'invite ne doit plus demander au relecteur de taire sa suggestion.
+  const invite = codeNu(simple, 'Préparer Vérification');
+  ok('⚠️ l\'invite ne demande plus « null si tu approuves »',
+     !/null si tu approuves/.test(invite));
+  ok('et elle exige `approved`', /OBLIGATOIRE/.test(invite));
+  ok('l\'horodatage de l\'appel est posé AVANT l\'appel',
+     /_verify_demande_a/.test(invite));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
