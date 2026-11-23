@@ -9,7 +9,7 @@
 #
 # Examples:
 #   ./test-stripe-webhooks.sh                           # Test all on localhost
-#   ./test-stripe-webhooks.sh --base-url http://pi6.local:5678
+#   ./test-stripe-webhooks.sh --base-url http://llm.local:5678
 #   ./test-stripe-webhooks.sh --project torah           # Only Torah workflows
 # =============================================================================
 

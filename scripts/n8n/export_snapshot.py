@@ -42,7 +42,7 @@ def load_env():
 
 config = load_env()
 
-N8N_API_URL = config.get('N8N_API_URL', 'http://pi6.local:5678/api/v1')
+N8N_API_URL = config.get('N8N_API_URL', 'http://llm.local:5678/api/v1')
 N8N_API_KEY = config.get('N8N_API_KEY', '')
 
 if not N8N_API_KEY or N8N_API_KEY == 'your-n8n-api-key-here':

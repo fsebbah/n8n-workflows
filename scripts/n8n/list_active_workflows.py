@@ -54,7 +54,17 @@ def load_env() -> dict:
 
 # Configuration - load from .env.local with fallback to environment
 _config = load_env()
-N8N_API_URL = os.environ.get("N8N_API_URL") or _config.get("N8N_API_URL", "http://pi6.local:5678/api/v1")
+# ⚠️ pi6.local est décommissionnée : elle RÉSOUT encore mais ses ports sont fermés, donc un repli dessus donne un refus de connexion qui se lit comme une panne du service en face. n8n tourne sur llm.local:5678, et nulle part ailleurs.
+N8N_API_URL = os.environ.get("N8N_API_URL") or _config.get("N8N_API_URL", "http://llm.local:5678/api/v1")
+
+# L'hôte des URLs de webhook n'est JAMAIS codé en dur : c'est le défaut corrigé en
+# PR #518, où le registre publiait pi6.local sur 217 outils. On prend la variable
+# dédiée si elle existe, sinon on la dérive de l'URL d'API.
+N8N_WEBHOOK_BASE_URL = (
+    os.environ.get("N8N_WEBHOOK_BASE_URL")
+    or _config.get("N8N_WEBHOOK_BASE_URL")
+    or N8N_API_URL.rsplit("/api/v1", 1)[0].rstrip("/") + "/webhook"
+).rstrip("/")
 N8N_API_KEY = os.environ.get("N8N_API_KEY") or _config.get("N8N_API_KEY", "")
 
 if not N8N_API_KEY:
@@ -133,7 +143,7 @@ def extract_webhook_endpoints(workflow: dict) -> List[dict]:
                     "type": "webhook",
                     "path": path,
                     "method": method,
-                    "url": f"http://pi6.local:5678/webhook/{path}",
+                    "url": f"{N8N_WEBHOOK_BASE_URL}/{path}",
                     "node_name": node.get("name", ""),
                 })
 

@@ -19,8 +19,8 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Default values
-N8N_API_URL="${N8N_API_URL:-http://pi6.local:5678/api/v1}"
-N8N_WEBHOOK_BASE_URL="${N8N_WEBHOOK_BASE_URL:-http://pi6.local:5678/webhook}"
+N8N_API_URL="${N8N_API_URL:-http://llm.local:5678/api/v1}"
+N8N_WEBHOOK_BASE_URL="${N8N_WEBHOOK_BASE_URL:-http://llm.local:5678/webhook}"
 
 # Check API key
 if [ -z "$N8N_API_KEY" ] || [ "$N8N_API_KEY" = "your-n8n-api-key-here" ]; then

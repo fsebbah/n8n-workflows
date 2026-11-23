@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv(".env.local")
 
-N8N_WEBHOOK_BASE_URL = os.getenv("N8N_WEBHOOK_BASE_URL", "http://pi6.local:5678/webhook-test")
+N8N_WEBHOOK_BASE_URL = os.getenv("N8N_WEBHOOK_BASE_URL", "http://llm.local:5678/webhook-test")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 
 

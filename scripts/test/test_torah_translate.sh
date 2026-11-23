@@ -6,7 +6,7 @@ ANTHROPIC_KEY="${1:-}"
 OPENAI_KEY="${2:-}"
 TEXT="${3:-בר ממטללא - אם ירצה דמצטער הוא}"
 TARGET_LANG="${4:-fr}"
-WEBHOOK_URL="http://pi6.local:5678/webhook/torah-discord-translate"
+WEBHOOK_URL="${N8N_WEBHOOK_BASE_URL:-http://llm.local:5678/webhook}/torah-discord-translate"
 
 if [ -z "$ANTHROPIC_KEY" ] || [ -z "$OPENAI_KEY" ]; then
     echo "Usage: $0 <anthropic_api_key> <openai_api_key> [text] [target_language]"
