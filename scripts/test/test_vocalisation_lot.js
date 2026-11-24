@@ -310,21 +310,35 @@ const executer = (wf, nom, entree, contexte, env) => {
 // stoppe pas la chaîne et n'émet AUCUN statusCode (azy.daily#442). D'où
 // `fullResponse` sur le nœud, et une absence de code traitée comme un ÉCHEC.
 {
-  const save = noeud(CALLBACK, 'Sauvegarder Vocalisation');
-  egal('la sauvegarde vise /api/vocalization/save',
-       g(save).parameters.url, '={{ $env.TORAH_API_URL }}/api/vocalization/save');
+  // ⚠️ Le nœud de sauvegarde est passé AU LOT (chatbot.api#369) : UN appel
+  // /api/vocalization/save-batch pour N items, au lieu d'un appel par item. Le détail
+  // du découpage et du recollage par index est verrouillé par
+  // scripts/test/test_vocalisation_grouper_sauvegardes.js — ici on ne garde que le
+  // contrat du nœud HTTP et le compte final, pour ne pas dupliquer.
+  const save = noeud(CALLBACK, 'Sauvegarder Vocalisations (lot)');
+  egal('la sauvegarde vise /api/vocalization/save-batch',
+       g(save).parameters.url, '={{ $env.TORAH_API_URL }}/api/vocalization/save-batch');
+  egal('le corps est un lot d\'items',
+       g(save).parameters.jsonBody, '={{ JSON.stringify({ items: $json.items }) }}');
+  // ⚠️ Le timeout d'un nœud HTTP n8n couvre l'ENSEMBLE des items, pas chaque appel :
+  // 15 s suffisaient pour un item, pas pour 500.
+  egal('timeout dimensionné pour un lot', g(save).parameters.options.timeout, 180000);
   egal('⚠️ fullResponse est actif, sinon statusCode est undefined',
        g(save).parameters.options.response.response.fullResponse, true);
   egal('et une écriture refusée n\'arrête pas le lot', g(save).onError, 'continueRegularOutput');
 
-  const prevus = [
+  // ⚠️ `Agréger` ne lit PLUS les réponses HTTP par position. Avec un appel par item,
+  // reponses[i] correspondait à prevus[i]. Avec /save-batch il y a UNE réponse pour N
+  // items : l'appariement se fait en amont, par index d'entrée, et `Agréger` ne lit
+  // plus qu'un verdict déjà posé sur chaque item.
+  const recolles = [
     { custom_id: '1', job_id: 'job-7', project_id: 'p', traite: 'T', page: '2a',
-      _saveData: { commentary_id: 1 } },
-    { custom_id: '2', job_id: 'job-7', _saveData: { commentary_id: 2 } },
-    { custom_id: '3', job_id: 'job-7', _saveData: null,
+      ok: true, save_ok: true, save_error: null },
+    { custom_id: '2', job_id: 'job-7', ok: true, save_ok: false, save_error: 'contrainte base' },
+    { custom_id: '3', job_id: 'job-7', ok: false, save_ok: null, save_error: null,
       error: { code: 'GENERATION_TRONQUEE', message: 'tronque' } }];
-  const agr = executer(CALLBACK, 'Agréger',
-    [{ statusCode: 200 }, { statusCode: 500 }], { 'Éclater Résultats': prevus })[0].json;
+  const agr = executer(CALLBACK, 'Agréger', recolles,
+    { 'Éclater Résultats': recolles })[0].json;
   egal('un enregistré sur trois', agr.resume, { total: 3, enregistres: 1, echecs: 2 });
   egal('le succès est partiel mais réel', agr.success, true);
   ok('l\'écriture refusée est nommée',
@@ -332,11 +346,14 @@ const executer = (wf, nom, entree, contexte, env) => {
   ok('la troncature aussi',
      agr.echecs.some((e) => g(e.error).code === 'GENERATION_TRONQUEE'), JSON.stringify(agr.echecs));
 
-  // ⚠️ Sans statusCode du tout (le défaut d'azy.daily#442), on compte un ÉCHEC et
-  // non un succès : un compteur faussement vert est pire qu'un compteur rouge.
-  const sansCode = executer(CALLBACK, 'Agréger', [{ body: {} }, { body: {} }],
-    { 'Éclater Résultats': prevus.slice(0, 2) })[0].json;
-  egal('⚠️ statusCode absent → échec, jamais succès', sansCode.resume.enregistres, 0);
+  // ⚠️ Un verdict ABSENT compte pour un ÉCHEC et non pour un succès : une ligne dont
+  // personne n'a confirmé l'écriture n'est pas écrite. Même doctrine qu'azy.daily#442,
+  // où un statusCode manquant passait pour un succès.
+  const sansVerdict = executer(CALLBACK, 'Agréger',
+    [{ custom_id: '1', job_id: 'job-7', ok: true },
+     { custom_id: '2', job_id: 'job-7', ok: true }],
+    { 'Éclater Résultats': [] })[0].json;
+  egal('⚠️ save_ok absent → échec, jamais succès', sansVerdict.resume.enregistres, 0);
 
   // ⚠️ SENTINELLE : si rien n'est enregistrable, la chaîne doit CONTINUER. Un nœud
   // HTTP sans item ne s'exécute pas, et le job resterait « processing » à jamais.
