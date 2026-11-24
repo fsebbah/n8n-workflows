@@ -224,16 +224,32 @@ console.log('\n7. aucune traduction n’a abouti — le job doit conclure quand 
   controle('job_id présent pour conclure', a.job_id, 'job-test');
 }
 
-console.log('\n8. provenance absente — les champs optionnels sont omis, jamais inventés');
+console.log('\n8. provenance absente — provider est posé, le reste est omis, rien n\'est inventé');
 {
+  // ⚠️ L'attente a CHANGÉ avec chatbot.api#368 : `provider` est devenu obligatoire
+  // sur /api/translations/save-batch, et un item sans lui fait répondre 422 — donc
+  // tout le lot, traductions déjà payées comprises. Il est désormais TOUJOURS posé,
+  // avec le repli 'anthropic', qui ne devine rien : le lot n'existe que chez
+  // Anthropic, le dispatcher refusant explicitement tout autre fournisseur.
+  //
+  // Le principe d'origine — ne jamais inventer une provenance (#443) — tient pour
+  // `model` et `target_language`, qui restent omis quand ils manquent. Un modèle
+  // inventé écrirait une fausse provenance en base ; un provider déduit d'une
+  // contrainte du dispatcher, non.
+  //
+  // Verrouillé en détail par scripts/test/test_368_provider_obligatoire.js.
   const cb = fabriquer(2, 0);
   delete cb.metadata.target_language;
   delete cb.metadata.provider;
   delete cb.metadata.model;
   const s = chaine(cb, toutOk);
-  controle('item réduit à l’essentiel',
-    Object.keys(s['Grouper Sauvegardes'][0].json.items[0]).sort(),
-    ['segment_id', 'translated_text']);
+  const item = s['Grouper Sauvegardes'][0].json.items[0];
+  controle('item réduit à l’essentiel + provider',
+    Object.keys(item).sort(),
+    ['provider', 'segment_id', 'translated_text']);
+  controle('provider replié sur anthropic', item.provider, 'anthropic');
+  controle('model toujours pas inventé', 'model' in item, false);
+  controle('target_language toujours pas inventé', 'target_language' in item, false);
 }
 
 // ---------------------------------------------------------------- en ligne
