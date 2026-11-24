@@ -1,0 +1,71 @@
+# chatbot.api#368 — `provider` devient obligatoire sur /api/translations/save-batch.
+#
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-368-provider-obligatoire.txt --dry-run
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-368-provider-obligatoire.txt
+#
+# Les DEUX workflows existent déjà et sont ACTIFS en base (vérifié : ids
+# `hjFgQkJizb1CmsXt` et celui du dispatcher) : `batch-reimport` fait donc un
+# UPDATE EN PLACE par nom, aucun `import` préalable n'est nécessaire.
+#
+# Aucun chemin ni verbe de webhook ne change, aucun nœud ajouté ou renommé, aucune
+# variable d'environnement nouvelle : pas de 409, pas de redémarrage Docker.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# CE QUI CHANGE, ET POURQUOI
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# `provider` et `model` sont désormais EXIGÉS par /api/translations/save-batch.
+# Le lot part en UNE requête : un seul item sans provenance fait répondre 422, et
+# c'est TOUT le lot qui est refusé — traductions déjà payées comprises.
+#
+#   1. `Torah Batch Callback` → `Grouper Sauvegardes` posait `provider`
+#      CONDITIONNELLEMENT (« omis plutôt qu'inventé »), ce qui était juste tant que
+#      l'API le traitait en optionnel. Il est désormais TOUJOURS posé, avec le repli
+#      `'anthropic'`. Ce repli ne devine rien : le lot n'existe que chez Anthropic,
+#      le dispatcher refusant explicitement tout autre fournisseur.
+#   2. `Torah Batch Dispatcher` → `Build Requests` dérivait `provider` du NOM du
+#      modèle quand l'appelant se tait (`/^claude/i`), et retombait sur `null`. Un
+#      nom préfixé ou aliasé (`anthropic/claude-sonnet-4-6`, `sonnet-4-6`) n'y
+#      correspond pas. Le dernier recours est maintenant `'anthropic'`.
+#
+# ⚠️ `model` reste CONDITIONNEL, et c'est délibéré. Il est exigé par le dispatcher
+#    depuis la création du fichier (vérifié en historique git), donc jamais nul.
+#    Lui donner un repli écrirait une provenance INVENTÉE en base — exactement ce
+#    que #443 cherchait à empêcher. S'il manquait vraiment, le 422 est la bonne
+#    réponse : une ligne sans provenance vaut moins qu'une erreur visible.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# ⚠️ L'ORDRE N'EST PAS INDIFFÉRENT : LE CALLBACK D'ABORD
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Un lot Anthropic reste en vol jusqu'à 24 h, et sa metadata est FIGÉE au moment de
+# la soumission : le correctif du dispatcher ne l'atteint plus. Un lot soumis avant
+# ce réimport peut donc revenir avec `provider: null`.
+#
+#   · callback réimporté d'abord → il replie sur 'anthropic' et sauve le lot, quelle
+#     que soit l'ancienneté de la metadata ;
+#   · dispatcher réimporté d'abord → les lots NEUFS sont bons, mais un lot en vol qui
+#     revient sur l'ancien callback repart en 422, et le lot entier est perdu.
+#
+# C'est pour cela que le correctif est posé aux DEUX endroits et non au seul
+# dispatcher : l'un couvre l'avenir, l'autre le passé encore en vol.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# VÉRIFICATION APRÈS RÉIMPORT
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# 1. `node scripts/test/test_368_provider_obligatoire.js` → tout vert (hors ligne,
+#    il rejoue le JavaScript extrait du JSON, donc à faire AVANT aussi) ;
+# 2. au retour d'un vrai lot, dans l'exécution du callback, le nœud `Save Batch` doit
+#    rendre `statusCode: 200` et un corps `{ total, saved, per_item_results }`. Un
+#    422 avec un message nommant `provider` signifierait que le réimport n'a pas pris ;
+# 3. ⚠️ lire les items de `Grouper Sauvegardes` dans l'exécution : chacun doit porter
+#    `provider`. C'est le seul contrôle qui distingue « corrigé » de « jamais exercé » —
+#    le chemin par défaut passe déjà `provider: 'anthropic'`, donc un lot normal serait
+#    vert même SANS le correctif.
+#
+# La ligne ci-dessous est la liste lue par batch-reimport. L'ORDRE COMPTE.
+Torah_Batch_Callback
+Torah_Batch_Dispatcher
