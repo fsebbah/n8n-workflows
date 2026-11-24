@@ -18,7 +18,7 @@ elif [ -f ".env.local" ]; then
 fi
 
 OUTPUT_DIR="${1:-workflows}"
-API_URL="${N8N_API_URL:-http://pi6.local:5678/api/v1}"
+API_URL="${N8N_API_URL:-http://llm.local:5678/api/v1}"
 API_KEY="${N8N_API_KEY}"
 
 if [ -z "$API_KEY" ]; then

@@ -33,8 +33,9 @@ def load_env():
 
 config = load_env()
 
-N8N_API_URL = config.get('N8N_API_URL', 'http://pi6.local:5678/api/v1')
-N8N_WEBHOOK_BASE_URL = config.get('N8N_WEBHOOK_BASE_URL', 'http://pi6.local:5678/webhook')
+# ⚠️ pi6.local est décommissionnée : elle RÉSOUT encore mais ses ports sont fermés, donc un repli dessus donne un refus de connexion qui se lit comme une panne du service en face. n8n tourne sur llm.local:5678, et nulle part ailleurs.
+N8N_API_URL = config.get('N8N_API_URL', 'http://llm.local:5678/api/v1')
+N8N_WEBHOOK_BASE_URL = config.get('N8N_WEBHOOK_BASE_URL', 'http://llm.local:5678/webhook')
 N8N_API_KEY = config.get('N8N_API_KEY', '')
 
 def apply_host_override():
@@ -1336,7 +1337,7 @@ def show_help():
     # host2.local retiré du 2026-11-10 : son instance n8n n'existe plus (port 5678
     # fermé, décision du 2026-07-09). La proposer en exemple menait vers un hôte mort.
     print("  --host <host>           Override n8n host (e.g., llm.local, http://llm.local:5678)")
-    print("                          Default: from .env.local or pi6.local:5678")
+    print("                          Default: from .env.local or llm.local:5678")
     print("  --api-key <key>         Override API key (required when using different host)")
     print("                          Each n8n instance has its own API key")
     print("")

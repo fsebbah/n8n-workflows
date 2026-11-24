@@ -24,7 +24,7 @@ env_path = Path(__file__).parent.parent / ".env.local"
 load_dotenv(env_path)
 
 # Configuration
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://pi6.local:5678")
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://llm.local:5678")
 ANALYZE_ENDPOINT = f"{N8N_WEBHOOK_URL}/webhook/analyze-feedback"
 
 # Test cases
@@ -228,7 +228,7 @@ def main():
         "-u",
         type=str,
         default=None,
-        help="n8n webhook base URL (default: http://pi6.local:5678)",
+        help="n8n webhook base URL (default: http://llm.local:5678)",
     )
 
     args = parser.parse_args()

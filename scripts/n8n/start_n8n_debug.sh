@@ -9,10 +9,10 @@ export N8N_RUNNERS_ENABLED=true
 export N8N_PUBLIC_API_DISABLED=false
 export N8N_DIAGNOSTICS_ENABLED=false
 export N8N_SECURE_COOKIE=false
-export WEBHOOK_URL=http://pi6.local:5678/
+export WEBHOOK_URL=http://llm.local:5678/
 
 echo "=== Démarrage n8n en mode DEBUG ==="
-echo "URL: http://pi6.local:5678"
+echo "URL: http://llm.local:5678"
 echo "Log level: debug"
 echo "Ctrl+C pour arrêter"
 echo "=================================="

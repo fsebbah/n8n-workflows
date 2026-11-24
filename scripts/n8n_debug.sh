@@ -17,7 +17,7 @@ export N8N_RUNNERS_ENABLED=true
 export N8N_PUBLIC_API_DISABLED=false
 export N8N_DIAGNOSTICS_ENABLED=false
 export N8N_SECURE_COOKIE=false
-export WEBHOOK_URL=http://pi6.local:5678/
+export WEBHOOK_URL=http://llm.local:5678/
 export N8N_CUSTOM_EXTENSIONS=/home/fsebb/n8n-workflows/custom-nodes/n8n-nodes-gmail-dynamic
 # Pour plusieurs nodes: séparer par virgule ou pointer vers le dossier parent
 
@@ -30,7 +30,7 @@ start_n8n() {
     fi
 
     echo "=== Démarrage n8n en mode DEBUG ==="
-    echo "URL: http://pi6.local:5678"
+    echo "URL: http://llm.local:5678"
     echo "Log level: debug"
     echo "Logs: $LOG_FILE"
     echo "Ctrl+C pour arrêter"
@@ -76,7 +76,7 @@ stop_n8n() {
 status_n8n() {
     if pgrep -f "n8n start" > /dev/null; then
         echo "n8n est en cours d'exécution"
-        echo "URL: http://pi6.local:5678"
+        echo "URL: http://llm.local:5678"
         pgrep -f "n8n start"
         return 0
     else
