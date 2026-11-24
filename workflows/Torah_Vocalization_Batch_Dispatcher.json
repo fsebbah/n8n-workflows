@@ -1,0 +1,553 @@
+{
+  "name": "Torah Vocalization Batch Dispatcher",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Vocalization Batch Dispatcher\n\n**Endpoint:** POST /webhook/torah-vocalize-batch\n\nVocalisation (nekudot) d'un LOT par l'API Message Batches d'Anthropic, pour les\npages de plus de 10 textes. Décision de Franck du 2026-11-24, après azy.daily#706.\n\n**Pourquoi un lot, et pourquoi ici**\n\nLe chemin synchrone (`Torah Vocalization Worker`) traite les items UN PAR UN dans\nune boucle `Loop Items` : sur la page mesurée, 71 commentaires = 71 appels HTTP\nsuccessifs, ~1 040 s d'exécution. Le lot les soumet en UNE requête, sans timeout,\nà 50 % du prix.\n\n**⚠️ ANTHROPIC SEULEMENT, et ce n'est pas un choix de confort.**\nLes Message Batches sont une API propre à Anthropic : `POST /v1/messages/batches`\naccepte le lot en JSON pur. Chez OpenAI, le Batch API exige d'abord de TÉLÉVERSER\nun fichier JSONL par l'API Files (`purpose=batch`), puis de passer son\n`input_file_id` — donc un envoi multipart, impossible depuis un Code node n8n\n(les Buffer y sont altérés, mesuré). Même règle que le lot de traduction, qui\nbascule sur `>= 10 && provider === 'anthropic'`.\n\n**⚠️ CONSÉQUENCE SUR LE RENDU.** Le lot vocalise donc avec un modèle Claude, là où\nle défaut synchrone est `gpt-4o`. `vocalized_by` vaudra `llm:claude-…` pour les\npages passées en lot : la provenance reste traçable, mais DEUX modèles coexistent\ndans le corpus. L'invite est reprise mot pour mot du chemin synchrone pour limiter\nl'écart ; la pose des voyelles reste à relire à l'œil.\n\n**Requête**\n```json\n{\n  \"items\": [{ \"text\": \"...\", \"commentary_id\": 123 }],\n  \"api_key\": \"sk-ant-...\",\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"project_id\": \"...\",\n  \"job_id\": \"...\",\n  \"context\": { \"traite\": \"Pesachim\", \"page\": \"22a\" }\n}\n```\nChaque item porte `commentary_id`, `source_text_id` OU `segment_id` — c'est par lui\nque le callback retrouve quoi sauvegarder.\n\n**Réponse (200)** `{ success, job_id, batch: true, count, batch_id, correlation_id }`\n\n**Suite de la chaîne**\n`Submit` → `/webhook/claude-call-with-skills` (soumet et enregistre le lot en\nattente) → `Claude - Batch Poller` (toutes les 30 s) → rappel sur\n`/webhook/torah-vocalization-callback`, qui sauvegarde et clôt le job.\n\n⚠️ Le lot d'Anthropic a une fenêtre de 24 h. Le job reste `processing` jusqu'au\nrappel : l'appelant doit sonder `/api/v2/jobs/{job_id}`. L'événement Redis\n`vocalization_complete` n'a AUCUN consommateur à ce jour (plugin dispatch-only\ndepuis #514) — ne pas compter sur lui pour être prévenu.",
+        "height": 900,
+        "width": 560
+      },
+      "id": "doc-vocalize-batch",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-vocalize-batch",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        480,
+        304
+      ],
+      "webhookId": "torah-vocalize-batch"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// VALIDATION DU LOT DE VOCALISATION\n// ============================================================\n// Jumeau du `Validate Input` de `Torah Batch Dispatcher`, et volontairement\n// SÉPARÉ de lui : le contrat d'entrée n'est pas le même. La traduction exige\n// `segmentText` et exactement UN de (commentary_id, segment_id) ; la\n// vocalisation lit `text` et s'enregistre aussi par `source_text_id`. Fusionner\n// les deux aurait mis un `if (tache === …)` dans les deux nœuds les plus\n// délicats du chemin payant de la traduction.\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst items = Array.isArray(body.items) ? body.items : [];\nconst apiKey = body.api_key || body.provider_api_key || '';\n// Défaut aligné sur le reste du parc (MODEL_ANTHROPIC).\nconst model = body.model || 'claude-haiku-4-5-20251001';\nconst projectId = body.project_id || '';\nconst context = body.context || {};\n// Reprise de job : la façade a déjà créé le job et l'appelant le sonde. En créer\n// un second ici le laisserait `pending` pour toujours.\nconst jobId = body.job_id || null;\nconst correlationId = body.correlation_id || null;\nconst clientMetadata = body.client_metadata || null;\nconst provider = body.provider || null;\n\n// ⚠️ PLAFOND PAR ITEM. La vocalisation réécrit le texte ENTIER — chaque nekuda est\n// un codepoint distinct — d'où un budget de ~2 jetons par caractère. Au-delà de\n// 8 000 caractères, le budget dépasserait le plafond de 16 000 et la réponse\n// serait TRONQUÉE : des nekudot manquantes en fin de texte, sans erreur. Le chemin\n// synchrone, lui, découpe (`Découper Texte`, tranches de 2 500). On refuse donc\n// franchement plutôt que de livrer du texte amputé.\nconst MAX_CAR_PAR_ITEM = 8000;\nconst SEUIL_LOT = 10;\n\nconst errors = [];\nif (items.length === 0) errors.push('Le champ \"items\" (tableau non vide) est requis');\nif (!apiKey) errors.push('Le champ \"api_key\" (Anthropic) est requis');\nif (!projectId) errors.push('Le champ \"project_id\" est requis');\n\n// ── Garde-fou de fournisseur ────────────────────────────────────────────────\n// Ce workflow soumet à l'API Message Batches d'ANTHROPIC. Chez OpenAI, le lot\n// exige un téléversement de fichier JSONL (multipart), impossible ici. La façade\n// ne bascule déjà que sur `anthropic` : ce contrôle est la ceinture, pas la\n// bretelle — il attrape les appels DIRECTS à /webhook/torah-vocalize-batch.\n// Pas de deux-points dans le message — n8n ne garde que ce qui suit le dernier.\nif (provider && String(provider).toLowerCase() !== 'anthropic') {\n  errors.push('Le lot de vocalisation n\\'est disponible que chez anthropic, pas chez '\n    + String(provider).toLowerCase()\n    + ' — passer par /webhook/torah-vocalization, qui bascule alors sur le chemin synchrone');\n}\n// Un modèle d'un autre fournisseur soumis à Anthropic fait échouer le LOT ENTIER,\n// et l'erreur vient alors d'un workflow que l'appelant n'a jamais appelé.\nif (model && !/^claude/i.test(String(model).trim())) {\n  errors.push('Le champ \"model\" doit etre un modele Claude pour un lot Anthropic, pas '\n    + String(model).trim());\n}\n\nitems.forEach((it, i) => {\n  const texte = it && it.text;\n  if (!texte || String(texte).trim().length === 0) {\n    errors.push('items[' + i + '].text est requis');\n  } else if (String(texte).length > MAX_CAR_PAR_ITEM) {\n    errors.push('items[' + i + '].text fait ' + String(texte).length\n      + ' caracteres, au-dela du plafond de ' + MAX_CAR_PAR_ITEM\n      + ' que le lot sait traiter sans troncature — passer cet item par le chemin synchrone, qui decoupe');\n  }\n  // Au moins UN identifiant, sinon le résultat n'est rattachable à rien et le\n  // callback ne pourrait que le jeter — après l'avoir payé.\n  if (!it || (!it.commentary_id && !it.source_text_id && !it.segment_id)) {\n    errors.push('items[' + i + '] : commentary_id, source_text_id ou segment_id requis');\n  }\n});\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    items: items,\n    api_key: apiKey,\n    model: model,\n    project_id: projectId,\n    context: context,\n    seuil_lot: SEUIL_LOT,\n    job_type: body.job_type || 'torah_vocalization',\n    // Omis plutôt que posés à null, comme dans le dispatcher de traduction : la\n    // sortie reste identique au caractère près pour un appelant qui n'en fournit pas.\n    ...(jobId ? { job_id: jobId } : {}),\n    ...(correlationId ? { correlation_id: correlationId } : {}),\n    ...(correlationId || clientMetadata ? { client_metadata: clientMetadata } : {}),\n    provider: provider\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_type: $json.job_type || 'torah_vocalization', input: { project_id: $json.project_id, model: $json.model, total: $json.items.length, traite: $json.context?.traite, page: $json.context?.page, corpus: $json.context?.corpus, mode: 'batch', commentary_ids: $json.items.map(it => it.commentary_id).filter(Boolean), source_text_ids: $json.items.map(it => it.source_text_id).filter(Boolean), segment_ids: $json.items.map(it => it.segment_id).filter(Boolean) } }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "create-job",
+      "name": "Create Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// CONSTRUCTION DES REQUÊTES DU LOT — vocalisation\n// ============================================================\nconst body = $('Validate Input').first().json;\nconst jobId = $('Résoudre Job').first().json.job_id;\nconst model = body.model;\n\n// ⚠️⚠️ L'INVITE EST REPRISE MOT POUR MOT DE `Vocaliser (LLM)` DU CHEMIN SYNCHRONE.\n// Ce n'est pas de la duplication paresseuse : le lot vocalise avec un modèle\n// Claude là où le défaut synchrone est `gpt-4o`, et la pose des nekudot est\n// exactement l'endroit où un changement de modèle se voit. Garder l'invite\n// identique est le seul moyen de limiter l'écart à ce qui vient du modèle.\n// Toute retouche ici DOIT être reportée là-bas, et inversement.\nconst SYSTEME = 'Tu es un expert en hébreu biblique et rabbinique. Ta tâche est d\\'ajouter les nekudot (voyelles hébraïques/signes de vocalisation) au texte hébreu fourni. Retourne UNIQUEMENT le texte vocalisé, sans explication ni commentaire.';\nconst consigne = (texte) => 'Ajoute les nekudot (voyelles hébraïques) à ce texte:\\n\\n' + texte;\n\n// Budget : même formule que le chemin synchrone — ~2 jetons par caractère, la\n// vocalisation réécrivant tout. AUCUNE marge de raisonnement ici : les modèles\n// Claude ne raisonnent pas par défaut, et `Validate Input` refuse un modèle non\n// Claude. Si un jour un fragment `thinking` arrive, il faudra la provisionner\n// (azy.daily#706).\nconst budget = (texte) => Math.min(16000, Math.max(1024, Math.ceil(String(texte).length * 2)));\n\n// custom_id : l'identifiant de l'item, quel qu'il soit. Le prendre sur\n// commentary_id seul donnerait « null » à tout item qui n'en a pas, et Anthropic\n// refuse alors le LOT ENTIER (« custom_id`s must be unique within a batch »).\nconst refDe = (it) => it.commentary_id || it.source_text_id || it.segment_id;\n\nconst requests = body.items.map((it) => ({\n  custom_id: String(refDe(it)),\n  params: {\n    model: model,\n    max_tokens: budget(it.text),\n    system: SYSTEME,\n    messages: [{ role: 'user', content: consigne(it.text) }]\n  }\n}));\n\n// Carte custom_id -> quoi sauvegarder. Le callback y retrouve la NATURE de l'item :\n// un commentaire s'enregistre par commentary_id, un texte source par\n// source_text_id, un verset par segment_id. Un seul des trois, jamais plusieurs —\n// `/api/vocalization/save` refuse l'ambiguïté.\nconst carte_items = {};\nbody.items.forEach((it) => {\n  const ref = String(refDe(it));\n  carte_items[ref] = it.commentary_id ? { commentary_id: it.commentary_id }\n    : it.source_text_id ? { source_text_id: it.source_text_id }\n    : { segment_id: it.segment_id };\n  // Le texte d'origine voyage avec : le callback doit pouvoir rendre\n  // { original, vocalized } sans relire la base.\n  carte_items[ref].original = it.text;\n});\n\n// L'appairage n'est ajouté que s'il a été demandé, pour que le metadata du lot\n// reste identique au caractère près pour tout appelant qui ne le demande pas.\n// correlation_id est posé AU PREMIER NIVEAU parce que `Claude - Call With Skills`\n// le lit là : sans lui, il en génère un que l'appelant ne peut pas reconnaître.\nconst appairage = body.correlation_id ? { correlation_id: body.correlation_id } : {};\nconst appairageMeta = body.correlation_id\n  ? { correlation_id: body.correlation_id, client_metadata: body.client_metadata || {} }\n  : {};\n\nreturn {\n  ...appairage,\n  api_key: body.api_key,\n  callback_url: $env.N8N_WEBHOOK_URL + '/webhook/torah-vocalization-callback',\n  metadata: {\n    multi: true,\n    tache: 'vocalisation',\n    job_id: jobId,\n    project_id: body.project_id,\n    provider: 'anthropic',\n    model: model,\n    traite: body.context && body.context.traite,\n    page: body.context && body.context.page,\n    carte_items: carte_items,\n    ...appairageMeta\n  },\n  requests\n};"
+      },
+      "id": "build-requests",
+      "name": "Build Requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-validation",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        928,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construire la réponse d'erreur de validation\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: {\n      code: 400,\n      message: input.errors.join(', '),\n      status: 'BAD_REQUEST'\n    }\n  }\n}];"
+      },
+      "id": "build-validation-error",
+      "name": "Build Validation Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Respond Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1376,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-job-fourni",
+              "leftValue": "={{ !!$json.job_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-job-fourni",
+      "name": "Job déjà créé ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1040,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le job_id, qu'il vienne de l'appelant ou de notre propre Create Job.\n//\n// Ce nœud existe parce qu'on ne peut PAS écrire $('Create Job') en aval : sur la\n// branche « job fourni » ce nœud n'a pas tourné, et n8n lève « Referenced node is\n// unexecuted ». Tout ce qui suit lit donc $('Résoudre Job') à la place.\n//\n// Deux formes d'entrée :\n//   branche fournie  → l'item vient de Validate Input et porte déjà job_id\n//   branche créée    → $json porte la réponse de POST /api/v2/jobs\nconst valide = $('Validate Input').first().json;\nconst recu = $input.first().json || {};\nconst fourni = valide.job_id || null;\nconst jobId = fourni || recu.job_id || recu.id || null;\n\n// On renvoie le payload VALIDÉ, pas la réponse de l'API : Build Requests lit\n// déjà $('Validate Input'), et les nœuds suivants ont besoin de project_id.\nreturn [{ json: { ...valide, job_id: jobId, job_cree_ici: !fourni } }];"
+      },
+      "id": "resoudre-job",
+      "name": "Résoudre Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL }}/webhook/claude-call-with-skills",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "submit",
+      "name": "Submit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        208
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $('Résoudre Job').first().json.job_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $('Résoudre Job').first().json.project_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'processing' }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "batch-set-processing",
+      "name": "Set Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le job doit exister AVANT de soumettre : sans lui, le lot part chez Anthropic\n// et devient introuvable — travail lancé, facturé, intraçable.\n// Create Job est en continueErrorOutput ET peut ne pas avoir tourné du tout\n// (reprise d'un job fourni) : c'est Résoudre Job qui porte l'identifiant dans les\n// deux cas. On vérifie quand même, parce qu'un id absent produirait une réponse\n// d'apparence normale : JSON.stringify omet silencieusement les undefined.\nconst jobId = $('Résoudre Job').first().json.job_id || null;\n// $('Submit'), pas $input : depuis l'insertion de Set Processing entre les deux,\n// $json porte la réponse du PATCH de statut — batch_id, redis_channel et\n// correlation_id y sont absents, et le lot redevenait introuvable alors même\n// qu'il tournait. Un nœud inséré déplace la source de tout ce qui le suit.\nconst soumission = $('Submit').first().json || {};\nconst count = $('Build Requests').first().json.requests.length;\n\nif (!jobId) {\n  return [{ json: {\n    success: false,\n    batch: true,\n    count: count,\n    batch_id: soumission.batch_id || null,\n    error: {\n      code: 502,\n      message: 'Lot soumis mais job non créé : le suivi est impossible. Conserver le batch_id.',\n      status: 'JOB_CREATION_FAILED'\n    }\n  } }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    job_id: jobId,\n    batch: true,\n    count: count,\n    // Remontés pour que le lot reste retrouvable même si le suivi par job casse.\n    batch_id: soumission.batch_id || null,\n    redis_channel: soumission.redis_channel || null,\n    correlation_id: soumission.correlation_id || null\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2048,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $('Résoudre Job').first().json.job_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $('Résoudre Job').first().json.project_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'failed', error: { code: 'BATCH_SUBMIT_FAILED', message: 'Soumission du lot impossible — aucune requête envoyée. ' + String($json?.error?.message || $json?.message || '').slice(0, 200) } }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "batch-submit-failed",
+      "name": "Marquer Job Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        428
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le lot n'est pas parti : le job vient d'être marqué failed, et l'appelant\n// doit le savoir tout de suite plutôt que de poller un job qui n'avancera\n// jamais. Sans cette branche, Set Processing s'exécutait quand même et le\n// job affichait « processing » alors que rien n'avait été soumis.\nconst e = $('Submit').first().json || {};\nconst brut = String(e?.error?.message || e?.message || '');\nreturn [{ json: {\n  success: false,\n  job_id: $('Résoudre Job').first().json.job_id || null,\n  batch: true,\n  error: {\n    code: 502,\n    message: 'Soumission du lot impossible — aucune requête envoyée, job marqué failed. ' + brut.slice(0, 200),\n    status: 'BATCH_SUBMIT_FAILED'\n  }\n} }];"
+      },
+      "id": "batch-submit-error-resp",
+      "name": "Erreur Soumission",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        428
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Création du job impossible : on n'a pas soumis le lot, donc rien n'est engagé.\n// Refuser franchement vaut mieux que dépenser sans pouvoir suivre.\nconst e = $input.first().json || {};\nconst brut = String(e?.error?.message || e?.message || '');\nreturn [{ json: {\n  success: false,\n  error: {\n    code: 502,\n    message: 'Création du job impossible — lot NON soumis, aucun coût engagé. ' + brut.slice(0, 200),\n    status: 'JOB_CREATION_FAILED'\n  }\n} }];"
+      },
+      "id": "batch-job-error",
+      "name": "Erreur Création Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        408
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Job déjà créé ?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Job": {
+      "main": [
+        [
+          {
+            "node": "Résoudre Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Erreur Création Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Requests": {
+      "main": [
+        [
+          {
+            "node": "Submit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit": {
+      "main": [
+        [
+          {
+            "node": "Set Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Marquer Job Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erreur Création Job": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Processing": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marquer Job Failed": {
+      "main": [
+        [
+          {
+            "node": "Erreur Soumission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Erreur Soumission": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job déjà créé ?": {
+      "main": [
+        [
+          {
+            "node": "Résoudre Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Résoudre Job": {
+      "main": [
+        [
+          {
+            "node": "Build Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

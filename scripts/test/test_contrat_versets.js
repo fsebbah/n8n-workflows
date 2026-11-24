@@ -70,7 +70,11 @@ function chaine(payload) {
     { 'Parse Input': pd, 'Webhook Trigger': hook })[0].json;
   const val = executer(code(DISPATCHER, 'Validate Input'), { body: lot })[0].json;
   const req = executer(code(DISPATCHER, 'Build Requests'), {},
-    { 'Validate Input': val, 'Create Job': { job_id: 'job-1' } })[0].json;
+    { 'Validate Input': val, 'Create Job': { job_id: 'job-1' },
+      // `Build Requests` lit désormais $('Résoudre Job') : ce nœud a été inséré
+      // pour la reprise de job (sur la branche « job fourni », $('Create Job')
+      // n'a pas tourné et n8n lève « Referenced node is unexecuted »).
+      'Résoudre Job': { job_id: 'job-1' } })[0].json;
   return { pd, lot, val, req };
 }
 

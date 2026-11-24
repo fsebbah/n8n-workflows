@@ -154,8 +154,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1120,
-        120
+        1260,
+        220
       ],
       "onError": "continueRegularOutput"
     },
@@ -246,6 +246,73 @@
         1280,
         432
       ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// DÉCIDER DU CHEMIN — synchrone ou lot\n// ============================================================\n// Décision de Franck du 2026-11-24 : au-delà de 10 textes, la vocalisation passe\n// par un LOT. Le chemin synchrone traite les items un par un (`Loop Items` dans\n// le worker) : sur la page mesurée, 71 commentaires = 71 appels successifs,\n// ~1 040 s. Le lot les soumet en UNE requête, sans timeout, à 50 % du prix.\n//\n// ⚠️⚠️ LE SEUIL ET SA CONDITION SONT ÉCRITS ICI, ET NULLE PART AILLEURS.\n// C'est la leçon de `Torah Router` : son commentaire annonçait « > 50 » quand le\n// code disait « >= 10 », faux sur la valeur ET sur l'opérateur, et c'est de là que\n// l'équipe plugin tirait un « ≤ 50 » erroné. Deux équipes y ont perdu du temps.\n// Toute modification du seuil se fait sur cette ligne, avec ce commentaire.\nconst SEUIL_LOT = 10;   // >= 10 items, comme le lot de TRADUCTION (azy.daily#481)\n\nconst valide = $('Validate Input').first().json;\nconst recu = $input.first().json || {};\nconst jobId = recu.job_id || recu.id || null;\nconst nb = valide.itemCount || 0;\n\n// ⚠️ ANTHROPIC SEULEMENT, et ce n'est pas une préférence. Les Message Batches sont\n// une API propre à Anthropic (`POST /v1/messages/batches`, JSON pur). Chez OpenAI,\n// le Batch API exige d'abord de TÉLÉVERSER un fichier JSONL par l'API Files, donc\n// un envoi multipart — impossible depuis un Code node n8n, où les Buffer sont\n// altérés (mesuré). Même règle que le lot de traduction.\nconst chezAnthropic = String(valide.provider || '').toLowerCase() === 'anthropic';\n\n// ⚠️ `project_id` est OBLIGATOIRE côté dispatcher de lot. S'il manque, le lot\n// serait refusé et le job resterait `pending` pour toujours : on retombe sur le\n// chemin synchrone, qui n'en a pas besoin. Un repli silencieux vaut mieux qu'un\n// job mort, mais le motif est nommé pour qu'il soit lisible dans l'exécution.\nconst aProjet = !!valide.projectId;\n\nconst lotPossible = nb >= SEUIL_LOT && chezAnthropic && aProjet;\nconst motif = lotPossible ? 'lot'\n  : nb < SEUIL_LOT ? 'sous le seuil (' + nb + ' < ' + SEUIL_LOT + ')'\n  : !chezAnthropic ? 'fournisseur ' + String(valide.provider || 'inconnu')\n                   + ' — le lot n\\'existe que chez anthropic'\n  : 'project_id absent — le dispatcher de lot l\\'exige';\n\nreturn [{ json: {\n  job_id: jobId,\n  lot_possible: lotPossible,\n  chemin: lotPossible ? 'batch' : 'sync',\n  motif: motif,\n  total: nb,\n  seuil: SEUIL_LOT\n} }];"
+      },
+      "id": "decider-chemin",
+      "name": "Décider du Chemin",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "check-lot",
+              "leftValue": "={{ $json.lot_possible }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "lot-possible",
+      "name": "Lot possible ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1060,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/torah-vocalize-batch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $json.job_id, project_id: $('Validate Input').first().json.projectId, items: $('Validate Input').first().json.items, context: $('Validate Input').first().json.context, provider: $('Validate Input').first().json.provider, model: $('Validate Input').first().json.model, api_key: $('Validate Input').first().json.providerCle, correlation_id: $('Validate Input').first().json.correlationId }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "lancer-lot",
+      "name": "Lancer le Lot (async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1260,
+        40
+      ],
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -311,7 +378,7 @@
       "main": [
         [
           {
-            "node": "Launch Worker (async)",
+            "node": "Décider du Chemin",
             "type": "main",
             "index": 0
           }
@@ -341,6 +408,46 @@
         [
           {
             "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Décider du Chemin": {
+      "main": [
+        [
+          {
+            "node": "Lot possible ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lot possible ?": {
+      "main": [
+        [
+          {
+            "node": "Lancer le Lot (async)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Launch Worker (async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lancer le Lot (async)": {
+      "main": [
+        [
+          {
+            "node": "Respond Created",
             "type": "main",
             "index": 0
           }

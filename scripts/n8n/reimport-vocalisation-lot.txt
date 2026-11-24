@@ -1,0 +1,102 @@
+# Lot de vocalisation — au-delà de 10 textes (décision de Franck du 2026-11-24).
+#
+# ⚠️⚠️ CE FICHIER NE SE SUFFIT PAS À LUI-MÊME. Deux des quatre workflows sont
+#    NOUVEAUX, et `batch-reimport` REFUSE de créer un workflow absent de
+#    l'instance — c'est son garde-fou anti-doublon, et il a raison : importer
+#    quand le nom ne répond pas créerait un doublon dont les chemins de webhook
+#    entrent en conflit (409) avec le vrai.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# ORDRE OBLIGATOIRE — ET IL N'EST PAS INDIFFÉRENT
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# 1. CRÉER puis ACTIVER les deux nouveaux, dans cet ordre (le dispatcher appelle
+#    le callback par son chemin, pas par son id — mais le callback doit répondre
+#    avant qu'un lot ne se termine, et un lot peut aboutir en quelques minutes) :
+#
+#      python3 scripts/n8n/n8n_api.py import workflows/Torah_Vocalization_Batch_Callback.json
+#      python3 scripts/n8n/n8n_api.py activate <id rendu>
+#      python3 scripts/n8n/n8n_api.py import workflows/Torah_Vocalization_Batch_Dispatcher.json
+#      python3 scripts/n8n/n8n_api.py activate <id rendu>
+#
+#    Chemins neufs, vérifiés uniques dans tout le dépôt
+#    (`scripts/test/test_646_chemins_webhook_uniques.js`, 257 contrôles) :
+#      /webhook/torah-vocalize-batch          (dispatcher)
+#      /webhook/torah-vocalization-callback   (rappel du poller)
+#    Un 409 à l'import signifierait qu'un de ces chemins existe déjà en service :
+#    s'ARRÊTER et chercher qui le porte, ne pas renommer à la volée.
+#
+# 2. RÉIMPORTER les deux existants, le poller D'ABORD et la façade EN DERNIER :
+#
+#      python3 scripts/n8n/n8n_api.py batch-reimport \
+#          scripts/n8n/reimport-vocalisation-lot.txt --dry-run
+#      python3 scripts/n8n/n8n_api.py batch-reimport \
+#          scripts/n8n/reimport-vocalisation-lot.txt
+#
+# ⚠️ POURQUOI LA FAÇADE EN DERNIER. C'est elle qui décide d'envoyer un lot. Si elle
+#    bascule avant que le dispatcher n'existe et ne soit ACTIF, l'appel part sur un
+#    chemin inconnu — et comme `Lancer le Lot (async)` porte `continueRegularOutput`,
+#    la façade répond quand même 200 avec un job_id. Le job resterait `pending` POUR
+#    TOUJOURS, sans erreur visible nulle part : exactement le genre de panne qui se
+#    cherche pendant des heures. Dans l'autre sens, un dispatcher actif que personne
+#    n'appelle encore ne fait rien du tout.
+#
+# ⚠️ POURQUOI LE POLLER D'ABORD. Il remonte désormais `stop_reason` et `usage` en
+#    mode multi (ajout purement ADDITIF : les consommateurs existants, dont le
+#    callback de traduction, ignorent simplement les deux nouveaux champs). Le
+#    callback de vocalisation refuse d'enregistrer un `stop_reason` anormal
+#    (`max_tokens` = texte tronqué). Et il TOLÈRE le champ absent, précisément pour
+#    qu'un poller pas encore réimporté ne fasse pas jeter un lot déjà payé.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# CE QUI CHANGE EN SERVICE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Jusqu'ici, une page de 71 commentaires = 71 appels HTTP successifs dans la boucle
+# du worker, ~1 040 s. Désormais, à partir de 10 items ET chez anthropic ET avec un
+# project_id, la façade soumet UN lot Anthropic : pas de timeout, 50 % du prix.
+#
+# ⚠️ ANTHROPIC SEULEMENT. Les Message Batches sont propres à Anthropic (JSON pur).
+#    Chez OpenAI, le Batch API exige de TÉLÉVERSER un fichier JSONL par l'API Files
+#    (`purpose=batch`) puis de passer son `input_file_id` — donc du multipart,
+#    impossible depuis un Code node n8n (les Buffer y sont altérés, mesuré). Même
+#    règle que le lot de traduction. Un gros lot openai reste donc sur le chemin
+#    synchrone, et le motif est écrit dans l'exécution de `Décider du Chemin`.
+#
+# ⚠️ CONSÉQUENCE SUR LE RENDU, À ARBITRER À L'ŒIL. Le lot vocalise avec un modèle
+#    Claude là où le défaut synchrone est `gpt-4o`. `vocalized_by` vaudra
+#    `llm:claude-…` sur les pages passées en lot : la forme ne change pas, aucun
+#    consommateur côté api n'a à s'adapter, mais DEUX modèles coexistent dans le
+#    corpus. L'invite est reprise MOT POUR MOT du chemin synchrone — un contrôle de
+#    `scripts/test/test_vocalisation_lot.js` le vérifie en lisant les deux fichiers
+#    — pour que l'écart se limite à ce qui vient du modèle.
+#
+# ⚠️ FENÊTRE DE 24 H. Le job reste `processing` jusqu'au rappel. Le canal qui FAIT
+#    FOI est `GET /api/v2/jobs/{job_id}` : l'événement Redis `vocalization_complete`
+#    n'a AUCUN consommateur (plugin dispatch-only depuis #514), donc un XADD réussi
+#    ne prouve pas qu'on a été lu. C'est pour cela que `Update Job` passe AVANT la
+#    publication dans le callback.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# VÉRIFICATION APRÈS MISE EN SERVICE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# 1. NON-RÉGRESSION D'ABORD : un appel de 5 items, sans provider → doit passer par
+#    le chemin synchrone exactement comme avant, et écrire `vocalized_by: llm:gpt-4o`.
+# 2. un appel de 5 items avec `provider: anthropic` → synchrone aussi (sous le seuil).
+# 3. un appel de 11 items avec `provider: anthropic`, sa clé et un project_id →
+#    réponse immédiate avec un job_id, puis job `processing`. Dans l'exécution de la
+#    façade, `Décider du Chemin` doit rendre `chemin: 'batch'`.
+# 4. un appel de 11 items SANS provider (donc openai) → doit rester SYNCHRONE, et
+#    `motif` doit nommer anthropic. Si un lot part chez Anthropic avec une clé
+#    OpenAI, le lot entier échoue après avoir quitté la maison.
+# 5. au retour du lot : job `completed`, `resume.enregistres` égal au nombre d'items,
+#    et les nekudot RELUES À L'ŒIL — aucun test ne juge la qualité d'une vocalisation.
+# 6. si `resume.echecs` > 0, le détail est dans `echecs[]` avec un code par cause :
+#    GENERATION_TRONQUEE, EMPTY_LLM_RESPONSE, BATCH_ITEM_FAILED, CIBLE_INTROUVABLE,
+#    SAVE_FAILED. Aucun de ces cas n'écrit en base.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# Les deux lignes ci-dessous sont la liste lue par batch-reimport. L'ORDRE COMPTE.
+Claude_-_Batch_Poller
+Torah_Vocalization_(Nekudot)
