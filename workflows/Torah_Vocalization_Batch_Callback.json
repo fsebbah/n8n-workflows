@@ -1,0 +1,493 @@
+{
+  "name": "Torah Vocalization Batch Callback",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Torah Vocalization Batch Callback\n\n**Endpoint:** POST /webhook/torah-vocalization-callback\n\nRappel du lot de vocalisation, appelé par `Claude - Batch Poller` quand le lot\nAnthropic est terminé. Sauvegarde les nekudot, clôt le job, publie l'événement.\n\n**Chaîne complète**\n```\n/webhook/torah-vocalization  (façade, répond en ~0,3 s)\n   └─ >= 10 items et provider anthropic\n        └─ /webhook/torah-vocalize-batch   (dispatcher)\n             └─ /webhook/claude-call-with-skills   (soumet, enregistre en attente)\n                  └─ Claude - Batch Poller  (toutes les 30 s)\n                       └─ ICI  → /api/vocalization/save (un appel par item)\n                               → PATCH /api/v2/jobs/{job_id}\n                               → XADD vocalization_complete\n```\n\n**Ce qui N'EST PAS enregistré, délibérément**\n- item en échec chez Anthropic ;\n- `custom_id` absent de `carte_items` — payé, produit, non rattachable ;\n- texte vide ;\n- `stop_reason` présent ET anormal (`max_tokens`) : un texte tronqué enregistré\n  comme complet, ce sont des nekudot manquantes en fin de texte sans aucune erreur.\n\n⚠️ Un `stop_reason` ABSENT n'est pas une troncature : le poller ne remonte ce champ\nque depuis azy.daily#706. Si `Claude - Batch Poller` n'est pas encore réimporté, le\nchamp vaut `undefined` partout — refuser dans ce cas jetterait un lot entier déjà\npayé à cause d'un ordre de réimport.\n\n⚠️ `vocalized_by` garde la forme `llm:<modele>` du chemin synchrone : aucun\nconsommateur côté api n'a à distinguer une ligne venue du lot. La provenance reste\nlisible dans le nom du modèle (`llm:claude-…` contre `llm:gpt-4o`).\n\n⚠️ L'événement `vocalization_complete` n'a AUCUN consommateur (plugin dispatch-only\ndepuis #514). Le canal qui fait foi est `/api/v2/jobs/{job_id}`, d'où `Update Job`\nAVANT la publication.",
+        "height": 820,
+        "width": 540
+      },
+      "id": "doc-vocal-callback",
+      "name": "Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -180,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "torah-vocalization-callback",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-vocal-callback",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        420,
+        320
+      ],
+      "webhookId": "torah-vocalization-callback"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// VALIDATION DU RAPPEL DE LOT — vocalisation\n// ============================================================\n// Appelé par `Claude - Batch Poller` (`POST Callback`) quand le lot Anthropic est\n// terminé. Le poller retire `api_key` et `callback_url` avant d'envoyer.\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// ⚠️ `metadata` peut arriver en CHAÎNE JSON. C'est le cas défensif déjà rencontré\n// sur le callback de traduction : le lot a traversé Redis, et selon le chemin la\n// metadata en ressort sérialisée. Sans ce parse, `carte_items` est undefined et\n// TOUS les résultats deviennent non rattachables — un lot entier payé puis jeté.\nlet md = body.metadata;\nif (typeof md === 'string') {\n  try { md = JSON.parse(md); } catch (e) { md = {}; }\n}\nmd = md || {};\n\nconst resultats = Array.isArray(body.results) ? body.results : [];\nconst errors = [];\nif (resultats.length === 0) {\n  errors.push('Aucun resultat dans le rappel du lot');\n}\n// Sans la carte, un résultat n'est rattachable à rien : le texte est payé, produit,\n// et impossible à écrire. On refuse bruyamment plutôt que d'écrire au hasard.\nif (!md.carte_items || typeof md.carte_items !== 'object') {\n  errors.push('metadata.carte_items absente — resultats non rattachables');\n}\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors: errors,\n    data: {\n      job_id: md.job_id || body.job_id || null,\n      project_id: md.project_id || null,\n      batch_id: body.batch_id || null,\n      correlation_id: body.correlation_id || md.correlation_id || null,\n      client_metadata: md.client_metadata || null,\n      // ⚠️ Aucune valeur de repli inventée : `anthropic` est ici une CERTITUDE, pas\n      // un défaut — le dispatcher refuse tout modèle non Claude, et les Message\n      // Batches n'existent que chez Anthropic. Le modèle, lui, vient du lot.\n      provider: md.provider || 'anthropic',\n      model: md.model || null,\n      traite: md.traite || null,\n      page: md.page || null,\n      carte_items: md.carte_items || {},\n      results: resultats\n    }\n  }\n}];"
+      },
+      "id": "vc-validate",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        620,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "vc-check-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "vc-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        820,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// ÉCLATER LES RÉSULTATS — un item n8n par vocalisation\n// ============================================================\nconst data = $input.first().json.data;\nconst carte = data.carte_items || {};\nconst resultats = data.results || [];\n\n// ⚠️ LE PIÈGE MULTI-FOURNISSEURS, repris de `Recoller Vocalisation`. Chaque\n// fournisseur nomme différemment une génération terminée, et le lot passe par\n// Anthropic : `end_turn` / `stop_sequence` sont NORMAUX, `max_tokens` est une\n// troncature. Tester `!== 'stop'` (la forme d'OpenAI) déclarerait tronquée\n// CHAQUE réponse du lot, et la vocalisation échouerait systématiquement.\nconst FINS_NORMALES = ['end_turn', 'stop_sequence', 'stop'];\n\n// ⚠️ UN `stop_reason` ABSENT N'EST PAS UNE TRONCATURE. Le poller ne remonte ce\n// champ que depuis azy.daily#706 : si `Claude - Batch Poller` n'est pas encore\n// réimporté, il vaut `undefined` sur tous les items. Refuser dans ce cas\n// jetterait un lot entier déjà payé à cause d'un ordre de réimport. On ne refuse\n// donc QUE sur une valeur PRÉSENTE et anormale.\nconst finAcceptable = (r) => r === undefined || r === null || r === ''\n  || FINS_NORMALES.indexOf(String(r).toLowerCase()) !== -1;\n\n// ⚠️ `vocalized_by` est ÉCRIT EN BASE côté torah.api. On garde EXACTEMENT la forme\n// `llm:<modele>` du chemin synchrone, pour qu'aucun consommateur n'ait à\n// distinguer une ligne venue du lot d'une ligne venue du direct. La provenance\n// reste lisible dans le nom du modèle (`llm:claude-…` contre `llm:gpt-4o`).\nconst signature = 'llm:' + (data.model || 'claude');\n\nconst items = resultats.map((r, rang) => {\n  const ref = String(r && r.custom_id);\n  const cible = carte[ref] || {};\n  const texte = (r && typeof r.text === 'string') ? r.text.trim() : '';\n\n  let souci = null;\n  if (!r || r.ok !== true) {\n    souci = { code: 'BATCH_ITEM_FAILED',\n              message: String((r && r.error && (r.error.message || r.error.code)) || 'echec du lot') };\n  } else if (!carte[ref]) {\n    // Résultat sans cible : payé, produit, non rattachable. À remonter, jamais à écrire.\n    souci = { code: 'CIBLE_INTROUVABLE',\n              message: 'custom_id ' + ref + ' absent de carte_items' };\n  } else if (!texte) {\n    souci = { code: 'EMPTY_LLM_RESPONSE', message: 'le modele a rendu une reponse vide' };\n  } else if (!finAcceptable(r.stop_reason)) {\n    // Un texte tronqué enregistré comme complet, ce sont des nekudot manquantes en\n    // fin de texte, sans aucune erreur. Même doctrine que le chemin synchrone.\n    souci = { code: 'GENERATION_TRONQUEE',\n              message: 'generation interrompue (stop_reason=' + String(r.stop_reason)\n                     + ') texte tronque, non enregistre' };\n  }\n\n  return { json: {\n    rang: rang,\n    custom_id: ref,\n    job_id: data.job_id,\n    project_id: data.project_id,\n    correlation_id: data.correlation_id,\n    client_metadata: data.client_metadata,\n    provider: data.provider,\n    model: data.model,\n    traite: data.traite,\n    page: data.page,\n    ok: !souci,\n    error: souci,\n    original: cible.original || null,\n    vocalized_text: souci ? null : texte,\n    // Forme EXACTE attendue par /api/vocalization/save, reprise de\n    // `Extract GPT Response` du chemin synchrone : les trois identifiants sont\n    // présents, à null quand ils ne s'appliquent pas.\n    _saveData: souci ? null : {\n      segment_id: cible.segment_id || null,\n      source_text_id: cible.source_text_id || null,\n      commentary_id: cible.commentary_id || null,\n      vocalized_text: texte,\n      vocalized_by: signature\n    }\n  }};\n});\n\n// ⚠️ SENTINELLE. Si RIEN n'est enregistrable, il ne faut pas pour autant que la\n// chaîne s'arrête : le job doit être clos et l'appelant prévenu. Un nœud HTTP sans\n// item d'entrée ne s'exécute pas, et la branche entière resterait muette — le job\n// resterait « processing » pour toujours.\nconst aEnvoyer = items.filter((it) => it.json._saveData);\nif (aEnvoyer.length === 0) {\n  return [{ json: { aucun_envoi: true, job_id: data.job_id, project_id: data.project_id,\n                    correlation_id: data.correlation_id, client_metadata: data.client_metadata,\n                    traite: data.traite, page: data.page, total: items.length,\n                    soucis: items.map((it) => it.json.error).filter(Boolean) } }];\n}\nreturn items;"
+      },
+      "id": "vc-eclater",
+      "name": "Éclater Résultats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "vc-check-sauver",
+              "leftValue": "={{ $json.aucun_envoi !== true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "vc-a-sauver",
+      "name": "À Sauvegarder ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1220,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TORAH_API_URL }}/api/vocalization/save",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json._saveData) }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "vc-save",
+      "name": "Sauvegarder Vocalisation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1420,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// AGRÉGER — ce qui est réellement en base, et ce qui ne l'est pas\n// ============================================================\n// Deux entrées possibles : la sortie du nœud de sauvegarde (un item par appel),\n// ou la sentinelle `aucun_envoi` quand il n'y avait rien à écrire.\nconst entrees = $input.all().map((x) => x.json);\nconst sentinelle = entrees.length === 1 && entrees[0] && entrees[0].aucun_envoi === true;\n\n// Les items PRÉVUS, lus à la source : le nœud de sauvegarde ne rend que des\n// réponses HTTP, et on a besoin de savoir à quoi chacune correspond. `Éclater\n// Résultats` n'est pas dans une boucle, donc .all() rend bien ses N items.\nconst prevus = sentinelle ? [] : $('Éclater Résultats').all().map((x) => x.json);\nconst base = sentinelle ? entrees[0] : prevus[0] || {};\n\n// ⚠️ `Sauvegarder Vocalisation` porte `continueRegularOutput` : une erreur HTTP\n// n'arrête pas la chaîne, mais elle n'émet alors AUCUN statusCode — c'est le\n// défaut d'azy.daily#442. D'où `fullResponse: true` sur le nœud, et une lecture\n// qui traite l'absence de code comme un échec plutôt que comme un succès.\nconst reponses = sentinelle ? [] : entrees;\nlet enregistres = 0;\nconst echecs = [];\n\nprevus.forEach((it, i) => {\n  if (!it._saveData) {\n    echecs.push({ custom_id: it.custom_id, error: it.error });\n    return;\n  }\n  const rep = reponses[i];\n  const codeHttp = rep && rep.statusCode;\n  if (codeHttp >= 200 && codeHttp < 300) {\n    enregistres += 1;\n  } else {\n    echecs.push({ custom_id: it.custom_id, error: { code: 'SAVE_FAILED',\n      message: 'ecriture refusee par torah-api (HTTP ' + String(codeHttp || 'inconnu') + ')' } });\n  }\n});\n\nif (sentinelle) {\n  (base.soucis || []).forEach((s) => echecs.push({ custom_id: null, error: s }));\n}\n\nconst total = sentinelle ? (base.total || 0) : prevus.length;\nreturn [{ json: {\n  success: enregistres > 0,\n  job_id: base.job_id || null,\n  project_id: base.project_id || null,\n  correlation_id: base.correlation_id || null,\n  client_metadata: base.client_metadata || null,\n  traite: base.traite || null,\n  page: base.page || null,\n  resume: { total: total, enregistres: enregistres, echecs: echecs.length },\n  echecs: echecs.slice(0, 20)\n} }];"
+      },
+      "id": "vc-agreger",
+      "name": "Agréger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1620,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "vc-check-job",
+              "leftValue": "={{ !!$json.job_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "vc-job",
+      "name": "Job Présent ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1820,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.TORAH_API_URL }}/api/v2/jobs/{{ $json.job_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Project-ID",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: $json.success ? 'completed' : 'failed', output: { mode: 'batch', total: $json.resume.total, enregistres: $json.resume.enregistres, echecs: $json.resume.echecs }, ...($json.success ? {} : { error: { code: 'BATCH_VOCALIZATION_FAILED', message: 'aucune vocalisation enregistree sur ' + $json.resume.total + ' items' } }) }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "vc-update-job",
+      "name": "Update Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2020,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// PRÉPARER L'ÉVÉNEMENT REDIS — fin de vocalisation\n// ============================================================\n// ⚠️ L'APPARIEMENT SE FAIT PAR `job_id` POUR LA VOCALISATION, pas par\n// `correlation_id` (qui sert à l'export). Se tromper de clé publie un événement\n// que personne ne sait rattacher.\n//\n// ⚠️ ET CET ÉVÉNEMENT N'A AUCUN CONSOMMATEUR À CE JOUR : le plugin est\n// dispatch-only depuis #514/PR#275. Un XADD réussi prouve qu'on a PUBLIÉ, pas\n// qu'on a été lu. L'appelant doit sonder /api/v2/jobs/{job_id} — c'est le seul\n// canal qui fasse foi, et c'est pour ça que `Update Job` passe AVANT.\nconst r = $input.first().json;\nconst resume = r.resume || {};\n\n// Pas de repli `|| ''` sur le job_id : il publierait du VIDE, qui ressemble à un\n// événement valide et ne s'apparie à rien.\nconst champs = {\n  event: 'vocalization_complete',\n  job_id: String(r.job_id),\n  mode: 'batch',\n  success: String(!!r.success),\n  total: String(resume.total || 0),\n  enregistres: String(resume.enregistres || 0),\n  echecs: String(resume.echecs || 0),\n  traite: String(r.traite || ''),\n  page: String(r.page || ''),\n  completed_at: new Date().toISOString()\n};\nif (r.correlation_id) { champs.correlation_id = String(r.correlation_id); }\n\nreturn [{ json: { stream: 'llm:results:stream', fields: champs, max_len: 10000 } }];"
+      },
+      "id": "vc-prep-event",
+      "name": "Préparer Événement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.REDIS_XADD_SERVICE_URL }}/xadd",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "vc-publier",
+      "name": "Publier Événement",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        380
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Réponse au poller. Elle n'est lue par personne d'autre : le poller ne fait rien\n// du corps, il journalise seulement le code. On la garde explicite pour les\n// exécutions, qui sont la seule trace consultable après coup — et pour ~2,4 jours\n// seulement, la rétention étant au COMPTE (~10 000) et non à la durée.\nconst r = $input.first().json;\nreturn [{ json: {\n  success: !!r.success,\n  job_id: r.job_id || null,\n  mode: 'batch',\n  resume: r.resume || null,\n  echecs: r.echecs || []\n} }];"
+      },
+      "id": "vc-fmt-ok",
+      "name": "Format Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const v = $input.first().json;\nreturn [{ json: {\n  success: false,\n  error: { code: 400, message: (v.errors || []).join(', '), status: 'BAD_REQUEST' }\n} }];"
+      },
+      "id": "vc-fmt-err",
+      "name": "Format Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "vc-respond-ok",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2440,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "vc-respond-err",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1220,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Éclater Résultats",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Éclater Résultats": {
+      "main": [
+        [
+          {
+            "node": "À Sauvegarder ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "À Sauvegarder ?": {
+      "main": [
+        [
+          {
+            "node": "Sauvegarder Vocalisation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Agréger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sauvegarder Vocalisation": {
+      "main": [
+        [
+          {
+            "node": "Agréger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agréger": {
+      "main": [
+        [
+          {
+            "node": "Job Présent ?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Préparer Événement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Présent ?": {
+      "main": [
+        [
+          {
+            "node": "Update Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Job": {
+      "main": [
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer Événement": {
+      "main": [
+        [
+          {
+            "node": "Publier Événement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
