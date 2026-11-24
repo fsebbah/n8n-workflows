@@ -1,0 +1,77 @@
+# Vocalisation en lot : UN appel /save-batch au lieu de N appels /save
+# (chatbot.api#369, décision de Franck du 2026-11-24).
+#
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-vocalisation-grouper-sauvegardes.txt --dry-run
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-vocalisation-grouper-sauvegardes.txt
+#
+# UN SEUL workflow, qui existe déjà et est ACTIF en base : `batch-reimport` fait un
+# UPDATE EN PLACE par nom, aucun `import` préalable n'est nécessaire.
+#
+# Aucun chemin ni verbe de webhook ne change, aucune variable d'environnement
+# nouvelle : pas de 409, pas de redémarrage Docker. En revanche DEUX NŒUDS SONT
+# AJOUTÉS et un est RENOMMÉ — le dry-run doit donc afficher `Would UPDATE … preserves
+# ID`, et surtout PAS `Would delete`.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# CE QUI CHANGE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+#   avant :  Éclater Résultats → À Sauvegarder ? → Sauvegarder Vocalisation → Agréger
+#                                                  (/api/vocalization/save, 1 appel/item)
+#
+#   après :  Éclater Résultats → Grouper Sauvegardes → À Sauvegarder ?
+#                → Sauvegarder Vocalisations (lot)  → Éclater Sauvegardes → Agréger
+#                                                  (/api/vocalization/save-batch)
+#
+#   · `Grouper Sauvegardes` (NOUVEAU) découpe en tranches de 500 items, plafonnées à
+#     1 000 000 caractères. Le plafond est mesuré, pas deviné : sur trois exécutions de
+#     production (1323592, 1323682, 1323901 — 264 items réels), un item pèse 1 117 o en
+#     médiane et jusqu'à 8 673 o. Un lot de 500 fait ~0,9 Mo au cas courant mais 4,3 Mo
+#     au pire, pour UN POST dont l'échec emporterait les 500.
+#   · `Éclater Sauvegardes` (NOUVEAU) recolle `per_item_results[].index` sur les `rangs`
+#     du lot, et rend un verdict par vocalisation.
+#   · `Agréger` ne lit PLUS les réponses HTTP par position. C'était valable avec un appel
+#     par item ; avec un lot il y a UNE réponse pour N items.
+#   · `Sauvegarder Vocalisation` devient `Sauvegarder Vocalisations (lot)`, timeout porté
+#     de 15 s à 180 s — le timeout d'un nœud HTTP n8n couvre l'ENSEMBLE des items.
+#
+# ⚠️ CORRIGÉ AU PASSAGE. Un item en échec (`_saveData: null`) traversait `À Sauvegarder ?`
+#    — qui ne filtre que la sentinelle — et partait en POST avec le corps littéral `null`,
+#    que torah.api ne peut que refuser. L'appel était inutile et son échec invisible,
+#    `continueRegularOutput` n'émettant aucun statusCode. Ces items ne partent plus.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# VÉRIFICATION
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# 1. AVANT : `node scripts/test/test_vocalisation_grouper_sauvegardes.js` (36 contrôles)
+#    et `node scripts/test/test_vocalisation_lot.js` (110 contrôles) → tout vert. Les deux
+#    rejouent le JavaScript extrait du JSON, donc ils valent aussi après.
+# 2. APRÈS : les 5 nœuds Code du workflow doivent être en base. Lire `wf['nodes']`,
+#    JAMAIS `activeVersion` — l'API GET rend une seconde copie périmée du câblage :
+#
+#      python3 -c "
+#      import importlib.util
+#      spec = importlib.util.spec_from_file_location(
+#          'n8n_api', 'scripts/n8n/n8n_api.py')
+#      api = importlib.util.module_from_spec(spec); spec.loader.exec_module(api)
+#      w = api.find_workflow_by_name('Torah Vocalization Batch Callback')
+#      print([n['name'] for n in w['nodes']])"
+#
+#    « Grouper Sauvegardes » et « Éclater Sauvegardes » doivent y figurer, et
+#    « Sauvegarder Vocalisation » (sans « (lot) ») NE DOIT PLUS y figurer.
+#
+# ⚠️ 3. CE CHEMIN EST INERTE AUJOURD'HUI, et une « 0 exécution » est NORMALE. Le lot de
+#       vocalisation n'existe que chez Anthropic, or le plugin envoie
+#       `LLM_PROVIDER_NEKUDOT=openai` : aucune requête ne remplit la condition. Le
+#       réimport est donc sans risque immédiat, et sans preuve en service non plus. La
+#       première vraie exécution viendra avec la bascule du provider, qui est une
+#       décision séparée.
+#
+# 4. À la première exécution réelle : dans `Grouper Sauvegardes`, lire `lot_index` et la
+#    longueur de `rangs` ; dans `Sauvegarder Vocalisations (lot)`, `statusCode: 200` et un
+#    corps `{total, saved, per_item_results}`. Si `per_item_results` manque, le lot entier
+#    est compté en échec — c'est voulu : un 200 sans détail ne prouve aucune écriture.
+Torah_Vocalization_Batch_Callback

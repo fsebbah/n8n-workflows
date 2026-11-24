@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Torah Vocalization Batch Callback\n\n**Endpoint:** POST /webhook/torah-vocalization-callback\n\nRappel du lot de vocalisation, appelé par `Claude - Batch Poller` quand le lot\nAnthropic est terminé. Sauvegarde les nekudot, clôt le job, publie l'événement.\n\n**Chaîne complète**\n```\n/webhook/torah-vocalization  (façade, répond en ~0,3 s)\n   └─ >= 10 items et provider anthropic\n        └─ /webhook/torah-vocalize-batch   (dispatcher)\n             └─ /webhook/claude-call-with-skills   (soumet, enregistre en attente)\n                  └─ Claude - Batch Poller  (toutes les 30 s)\n                       └─ ICI  → /api/vocalization/save (un appel par item)\n                               → PATCH /api/v2/jobs/{job_id}\n                               → XADD vocalization_complete\n```\n\n**Ce qui N'EST PAS enregistré, délibérément**\n- item en échec chez Anthropic ;\n- `custom_id` absent de `carte_items` — payé, produit, non rattachable ;\n- texte vide ;\n- `stop_reason` présent ET anormal (`max_tokens`) : un texte tronqué enregistré\n  comme complet, ce sont des nekudot manquantes en fin de texte sans aucune erreur.\n\n⚠️ Un `stop_reason` ABSENT n'est pas une troncature : le poller ne remonte ce champ\nque depuis azy.daily#706. Si `Claude - Batch Poller` n'est pas encore réimporté, le\nchamp vaut `undefined` partout — refuser dans ce cas jetterait un lot entier déjà\npayé à cause d'un ordre de réimport.\n\n⚠️ `vocalized_by` garde la forme `llm:<modele>` du chemin synchrone : aucun\nconsommateur côté api n'a à distinguer une ligne venue du lot. La provenance reste\nlisible dans le nom du modèle (`llm:claude-…` contre `llm:gpt-4o`).\n\n⚠️ L'événement `vocalization_complete` n'a AUCUN consommateur (plugin dispatch-only\ndepuis #514). Le canal qui fait foi est `/api/v2/jobs/{job_id}`, d'où `Update Job`\nAVANT la publication.",
+        "content": "## Torah Vocalization Batch Callback\n\n**Endpoint:** POST /webhook/torah-vocalization-callback\n\nRappel du lot de vocalisation, appelé par `Claude - Batch Poller` quand le lot\nAnthropic est terminé. Sauvegarde les nekudot, clôt le job, publie l'événement.\n\n**Chaîne complète**\n```\n/webhook/torah-vocalization  (façade, répond en ~0,3 s)\n   └─ >= 10 items et provider anthropic\n        └─ /webhook/torah-vocalize-batch   (dispatcher)\n             └─ /webhook/claude-call-with-skills   (soumet, enregistre en attente)\n                  └─ Claude - Batch Poller  (toutes les 30 s)\n                       └─ ICI  → /api/vocalization/save-batch  (UN appel pour N items, chatbot.api#369)\n                                 tranches de 500 items plafonnees a ~2 Mo, recollage par index\n                               → PATCH /api/v2/jobs/{job_id}\n                               → XADD vocalization_complete\n```\n\n**Ce qui N'EST PAS enregistré, délibérément**\n- item en échec chez Anthropic ;\n- `custom_id` absent de `carte_items` — payé, produit, non rattachable ;\n- texte vide ;\n- `stop_reason` présent ET anormal (`max_tokens`) : un texte tronqué enregistré\n  comme complet, ce sont des nekudot manquantes en fin de texte sans aucune erreur.\n\n⚠️ Un `stop_reason` ABSENT n'est pas une troncature : le poller ne remonte ce champ\nque depuis azy.daily#706. Si `Claude - Batch Poller` n'est pas encore réimporté, le\nchamp vaut `undefined` partout — refuser dans ce cas jetterait un lot entier déjà\npayé à cause d'un ordre de réimport.\n\n⚠️ `vocalized_by` garde la forme `llm:<modele>` du chemin synchrone : aucun\nconsommateur côté api n'a à distinguer une ligne venue du lot. La provenance reste\nlisible dans le nom du modèle (`llm:claude-…` contre `llm:gpt-4o`).\n\n⚠️ L'événement `vocalization_complete` n'a AUCUN consommateur (plugin dispatch-only\ndepuis #514). Le canal qui fait foi est `/api/v2/jobs/{job_id}`, d'où `Update Job`\nAVANT la publication.",
         "height": 820,
         "width": 540
       },
@@ -88,7 +88,20 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1020,
+        1000,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// GROUPER SAUVEGARDES — un appel pour N vocalisations, et non N appels\n// ============================================================\n// Jusqu'ici chaque vocalisation partait dans son propre POST /api/vocalization/save :\n// sur une page de 71 commentaires, 71 allers-retours.\n// /api/vocalization/save-batch (chatbot.api#369) prend N items et répond\n// `per_item_results[]` COMPLET, dans l'ordre, avec un index d'entrée. Même contrat et\n// même découpage que le lot de TRADUCTION (`Torah_Batch_Callback`).\n\nconst TAILLE_LOT = 500;\n\n// ⚠️ PLAFOND DE TAILLE, EN PLUS du compte d'items. Mesuré sur trois exécutions de\n// production (1323592, 1323682, 1323901 — 264 items réels) : un item pèse 1 117 o en\n// médiane, 1 708 o en moyenne, et jusqu'à 8 673 o. Un lot de 500 fait donc ~0,9 Mo au\n// cas courant, mais 4,3 Mo au pire — pour UN SEUL POST dont l'échec emporterait les 500.\n//\n// Le plafond est compté en CARACTÈRES, parce que c'est ce que `.length` rend. L'hébreu\n// ponctué pèse 2 octets par caractère en UTF-8, donc 1 000 000 caractères valent ~2 Mo :\n// le cas courant (≈300 000 caractères pour 500 items) passe en une seule tranche, et seuls\n// les textes longs sont coupés plus tôt.\nconst CARACTERES_MAX = 1000000;\n\nconst tous = $input.all().map((i) => i.json);\nconst premier = tous[0] || {};\n\n// `Éclater Résultats` émet DÉJÀ une sentinelle quand rien n'est enregistrable. On la\n// relaie telle quelle plutôt que de la reconstruire : `Agréger` lit ainsi exactement la\n// même forme qu'avant ce changement.\nif (tous.length === 1 && premier.aucun_envoi === true) {\n  return [{ json: premier }];\n}\n\nconst aEcrire = tous.filter((it) => it._saveData);\n\n// ⚠️ Un item en ÉCHEC (`_saveData: null`) ne part plus du tout. Avant ce changement il\n// traversait `À Sauvegarder ?` — qui ne filtre que la sentinelle — et partait en POST avec\n// le corps littéral `null`, que torah.api ne peut que refuser. L'appel était inutile, et\n// son échec invisible, `continueRegularOutput` ne rendant aucun statusCode.\nif (aEcrire.length === 0) {\n  return [{ json: {\n    aucun_envoi: true,\n    job_id: premier.job_id || null,\n    project_id: premier.project_id || null,\n    correlation_id: premier.correlation_id || null,\n    client_metadata: premier.client_metadata || null,\n    traite: premier.traite || null,\n    page: premier.page || null,\n    total: tous.length,\n    soucis: tous.map((it) => it.error).filter(Boolean)\n  }}];\n}\n\nconst lots = [];\nlet tranche = [];\nlet taille = 0;\n\nconst fermer = () => {\n  if (tranche.length === 0) return;\n  lots.push({ json: {\n    aucun_envoi: false,\n    lot_index: lots.length,\n    // Recollage : /save-batch répond par INDEX D'ENTRÉE, pas par identifiant. Le `rang`\n    // posé par `Éclater Résultats` est stable, donc le recollage est vérifiable en aval.\n    rangs: tranche.map((it) => it.rang),\n    items: tranche.map((it) => it._saveData)\n  }});\n  tranche = [];\n  taille = 0;\n};\n\naEcrire.forEach((it) => {\n  const poids = JSON.stringify(it._saveData).length;\n  if (tranche.length >= TAILLE_LOT || (tranche.length > 0 && taille + poids > CARACTERES_MAX)) {\n    fermer();\n  }\n  tranche.push(it);\n  taille += poids;\n});\nfermer();\n\nreturn lots;"
+      },
+      "id": "vc-grouper-sauv",
+      "name": "Grouper Sauvegardes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
         220
       ]
     },
@@ -121,19 +134,19 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1220,
+        1260,
         220
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.TORAH_API_URL }}/api/vocalization/save",
+        "url": "={{ $env.TORAH_API_URL }}/api/vocalization/save-batch",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json._saveData) }}",
+        "jsonBody": "={{ JSON.stringify({ items: $json.items }) }}",
         "options": {
-          "timeout": 15000,
+          "timeout": 180000,
           "response": {
             "response": {
               "fullResponse": true
@@ -142,7 +155,7 @@
         }
       },
       "id": "vc-save",
-      "name": "Sauvegarder Vocalisation",
+      "name": "Sauvegarder Vocalisations (lot)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -153,14 +166,27 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================================\n// AGRÉGER — ce qui est réellement en base, et ce qui ne l'est pas\n// ============================================================\n// Deux entrées possibles : la sortie du nœud de sauvegarde (un item par appel),\n// ou la sentinelle `aucun_envoi` quand il n'y avait rien à écrire.\nconst entrees = $input.all().map((x) => x.json);\nconst sentinelle = entrees.length === 1 && entrees[0] && entrees[0].aucun_envoi === true;\n\n// Les items PRÉVUS, lus à la source : le nœud de sauvegarde ne rend que des\n// réponses HTTP, et on a besoin de savoir à quoi chacune correspond. `Éclater\n// Résultats` n'est pas dans une boucle, donc .all() rend bien ses N items.\nconst prevus = sentinelle ? [] : $('Éclater Résultats').all().map((x) => x.json);\nconst base = sentinelle ? entrees[0] : prevus[0] || {};\n\n// ⚠️ `Sauvegarder Vocalisation` porte `continueRegularOutput` : une erreur HTTP\n// n'arrête pas la chaîne, mais elle n'émet alors AUCUN statusCode — c'est le\n// défaut d'azy.daily#442. D'où `fullResponse: true` sur le nœud, et une lecture\n// qui traite l'absence de code comme un échec plutôt que comme un succès.\nconst reponses = sentinelle ? [] : entrees;\nlet enregistres = 0;\nconst echecs = [];\n\nprevus.forEach((it, i) => {\n  if (!it._saveData) {\n    echecs.push({ custom_id: it.custom_id, error: it.error });\n    return;\n  }\n  const rep = reponses[i];\n  const codeHttp = rep && rep.statusCode;\n  if (codeHttp >= 200 && codeHttp < 300) {\n    enregistres += 1;\n  } else {\n    echecs.push({ custom_id: it.custom_id, error: { code: 'SAVE_FAILED',\n      message: 'ecriture refusee par torah-api (HTTP ' + String(codeHttp || 'inconnu') + ')' } });\n  }\n});\n\nif (sentinelle) {\n  (base.soucis || []).forEach((s) => echecs.push({ custom_id: null, error: s }));\n}\n\nconst total = sentinelle ? (base.total || 0) : prevus.length;\nreturn [{ json: {\n  success: enregistres > 0,\n  job_id: base.job_id || null,\n  project_id: base.project_id || null,\n  correlation_id: base.correlation_id || null,\n  client_metadata: base.client_metadata || null,\n  traite: base.traite || null,\n  page: base.page || null,\n  resume: { total: total, enregistres: enregistres, echecs: echecs.length },\n  echecs: echecs.slice(0, 20)\n} }];"
+        "jsCode": "// ============================================================\n// ÉCLATER SAUVEGARDES — recoller le sort de chaque vocalisation\n// ============================================================\n// /api/vocalization/save-batch répond 200 même quand des items échouent, et isole le\n// détail dans `per_item_results[i]` avec l'index d'entrée. On remonte donc ce verdict sur\n// chaque vocalisation, au lieu de conclure du seul code HTTP.\n//\n// La source de vérité reste `$('Éclater Résultats')` : il rend une ligne par résultat reçu\n// d'Anthropic, Y COMPRIS celles jamais soumises à l'écriture (texte vide, tronqué, cible\n// introuvable). L'agrégat en aval compte sur ce total.\n\nconst entrees = $input.all();\n\n// Branche « rien à écrire » : la sentinelle traverse intacte, qu'elle vienne d'`Éclater\n// Résultats` (aucun résultat exploitable) ou de `Grouper Sauvegardes` (tous en échec).\nif (entrees.length === 1 && entrees[0].json && entrees[0].json.aucun_envoi === true) {\n  return [{ json: entrees[0].json }];\n}\n\nconst vocalisations = $('Éclater Résultats').all().map((i) => i.json);\nconst lots = $('Grouper Sauvegardes').all();\n\n// ⚠️ Les rangs RÉELLEMENT soumis à l'écriture. Sans cette liste, un verdict manquant\n// se confondait avec « jamais soumise » — deux causes opposées sous le même libellé :\n// l'une désigne notre câblage, l'autre une réponse incomplète de torah.api. Un\n// diagnostic qui accuse le mauvais maillon coûte plus cher que pas de diagnostic.\nconst soumis = {};\n\n// Verdict par rang, alimenté par la réponse de chaque lot.\nconst verdicts = {};\n\n// ⚠️ Appariement par POSITION, pas par contenu : la réponse HTTP ne rapporte rien du lot\n// qui l'a produite. Le nœud HTTP émet un item de sortie par item d'entrée et dans le même\n// ordre, donc `entrees[i]` correspond à `lots[i]`. C'est le seul endroit du workflow où\n// l'ordre porte du sens.\nfor (let i = 0; i < entrees.length; i++) {\n  const j = entrees[i].json;\n  if (j.aucun_envoi) continue;\n\n  // Avec onError=continueRegularOutput, un appel en échec n'émet PAS {statusCode, body} :\n  // le statut réel est enfoui dans le message (« 500 - {…} »). Sans cette lecture, un lot\n  // entièrement perdu passerait pour sauvegardé — c'est le défaut d'azy.daily#442.\n  let code = j.statusCode;\n  if (code === undefined) {\n    const brut = String((j && j.error && j.error.message) || (j && j.message) || '');\n    const m = brut.match(/(\\d{3})\\s*-\\s*/);\n    code = m ? parseInt(m[1], 10) : ((j && (j.error || j.code)) ? 502 : 200);\n  }\n  const corps = j.body || {};\n  const rangs = ((lots[i] || {}).json || {}).rangs || [];\n  rangs.forEach((r) => { soumis[r] = true; });\n\n  // ⚠️ `per_item_results` absent est traité comme un ÉCHEC, jamais comme un succès muet.\n  // Un 200 sans détail ne prouve aucune écriture.\n  if (code >= 400 || !Array.isArray(corps.per_item_results)) {\n    const motif = code >= 400\n      ? ('save-batch HTTP ' + code)\n      : 'save-batch, reponse sans per_item_results';\n    rangs.forEach((r) => { verdicts[r] = { save_ok: false, save_error: motif }; });\n    continue;\n  }\n\n  corps.per_item_results.forEach((res) => {\n    const rang = rangs[res.index];\n    // Un index hors carte ne doit rien écraser : l'absence vaut échec (voir plus bas).\n    if (rang === undefined) return;\n    verdicts[rang] = res.success\n      ? { save_ok: true, save_error: null }\n      : { save_ok: false,\n          save_error: String((res.error && (res.error.detail || res.error.status_code))\n                             || 'echec sauvegarde') };\n  });\n}\n\nreturn vocalisations.map((v) => {\n  const verdict = verdicts[v.rang];\n  return { json: Object.assign({}, v, {\n    // Une vocalisation en échec n'a JAMAIS été proposée à l'écriture : la compter comme un\n    // échec de sauvegarde ferait perdre sa cause réelle (texte vide, tronqué, sans cible).\n    save_ok: v.ok === true ? (verdict ? verdict.save_ok : false) : null,\n    save_error: v.ok === true\n      ? (verdict ? verdict.save_error\n                 : (soumis[v.rang]\n                    // Soumise, et torah.api n'en a rien dit. Son contrat annonce un\n                    // per_item_results COMPLET et ordonné : un index absent est donc\n                    // un écart au contrat, à remonter chez eux — pas chez nous.\n                    ? 'soumise mais absente de per_item_results'\n                    : 'jamais soumise a la sauvegarde'))\n      : null\n  })};\n});"
+      },
+      "id": "vc-eclater-sauv",
+      "name": "Éclater Sauvegardes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// AGRÉGER — ce qui est réellement en base, et ce qui ne l'est pas\n// ============================================================\n// Entrée : la sortie d'`Éclater Sauvegardes`, soit une ligne par vocalisation portant son\n// verdict d'écriture (`save_ok` / `save_error`), soit la sentinelle « rien à écrire ».\n//\n// ⚠️ Ce nœud ne lit PLUS les réponses HTTP par position. Avant le passage au lot, il\n// appariait `reponses[i]` avec `prevus[i]` — un appel par item, donc un alignement qui\n// tenait. Avec /save-batch il y a UNE réponse pour N items : l'alignement est fait en\n// amont, par index d'entrée, et c'est `Éclater Sauvegardes` qui en porte la charge.\n\nconst entrees = $input.all().map((x) => x.json);\nconst sentinelle = entrees.length === 1 && entrees[0] && entrees[0].aucun_envoi === true;\nconst base = (sentinelle ? entrees[0] : entrees[0]) || {};\n\nlet enregistres = 0;\nconst echecs = [];\n\nif (sentinelle) {\n  (base.soucis || []).forEach((s) => echecs.push({ custom_id: null, error: s }));\n} else {\n  entrees.forEach((v) => {\n    // 1 · jamais soumise : la cause d'origine est la seule intéressante.\n    if (v.ok !== true) {\n      echecs.push({ custom_id: v.custom_id, error: v.error });\n      return;\n    }\n    // 2 · soumise et écrite.\n    if (v.save_ok === true) {\n      enregistres += 1;\n      return;\n    }\n    // 3 · soumise et refusée. `save_ok` à false OU absent compte pour un échec : un\n    //     verdict manquant veut dire que `per_item_results` était incomplet, et on ne\n    //     déclare pas écrite une ligne dont personne n'a confirmé l'écriture.\n    echecs.push({ custom_id: v.custom_id, error: {\n      code: 'SAVE_FAILED',\n      message: 'ecriture refusee par torah-api (' + String(v.save_error || 'cause inconnue') + ')'\n    }});\n  });\n}\n\nconst total = sentinelle ? (base.total || 0) : entrees.length;\nreturn [{ json: {\n  success: enregistres > 0,\n  job_id: base.job_id || null,\n  project_id: base.project_id || null,\n  correlation_id: base.correlation_id || null,\n  client_metadata: base.client_metadata || null,\n  traite: base.traite || null,\n  page: base.page || null,\n  resume: { total: total, enregistres: enregistres, echecs: echecs.length },\n  echecs: echecs.slice(0, 20)\n} }];"
       },
       "id": "vc-agreger",
       "name": "Agréger",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1620,
+        1720,
         220
       ]
     },
@@ -193,7 +219,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1820,
+        1900,
         160
       ]
     },
@@ -226,7 +252,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2020,
+        2080,
         160
       ],
       "onError": "continueRegularOutput"
@@ -240,7 +266,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2020,
+        2080,
         380
       ]
     },
@@ -260,7 +286,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2220,
+        2260,
         380
       ],
       "onError": "continueRegularOutput"
@@ -274,7 +300,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2240,
+        2280,
         160
       ]
     },
@@ -304,7 +330,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        2440,
+        2460,
         160
       ]
     },
@@ -371,7 +397,7 @@
       "main": [
         [
           {
-            "node": "À Sauvegarder ?",
+            "node": "Grouper Sauvegardes",
             "type": "main",
             "index": 0
           }
@@ -382,25 +408,14 @@
       "main": [
         [
           {
-            "node": "Sauvegarder Vocalisation",
+            "node": "Sauvegarder Vocalisations (lot)",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Agréger",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sauvegarder Vocalisation": {
-      "main": [
-        [
-          {
-            "node": "Agréger",
+            "node": "Éclater Sauvegardes",
             "type": "main",
             "index": 0
           }
@@ -479,6 +494,39 @@
         [
           {
             "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Grouper Sauvegardes": {
+      "main": [
+        [
+          {
+            "node": "À Sauvegarder ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sauvegarder Vocalisations (lot)": {
+      "main": [
+        [
+          {
+            "node": "Éclater Sauvegardes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Éclater Sauvegardes": {
+      "main": [
+        [
+          {
+            "node": "Agréger",
             "type": "main",
             "index": 0
           }
