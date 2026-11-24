@@ -1,0 +1,47 @@
+# Vocalisation — le budget avalé par le raisonnement (azy.daily#706).
+#
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-vocalisation-budget-raisonnement.txt --dry-run
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-vocalisation-budget-raisonnement.txt
+#
+# UN SEUL workflow : la façade `Torah_Vocalization_(Nekudot)` n'est PAS touchée.
+# Elle relaie déjà `body` tel quel au worker, donc `reasoning_effort` et
+# `reasoning_config` d'un appelant la traversent sans modification.
+#
+# CE QUI CHANGE
+#   1. `Validate Input` accepte et relaie `reasoning_effort` / `reasoning_config`
+#      (passe-plat, comme `provider`/`model` — le relais sait déjà les placer chez
+#      chaque fournisseur, azy.daily#365) ;
+#   2. et impose `reasoning_effort: 'minimal'` quand le modèle est de la famille
+#      raisonnante d'OpenAI ET que l'appelant n'a rien demandé ;
+#   3. `Vocaliser (LLM)` les transmet, et ajoute 1 024 jetons de marge au budget
+#      quand un raisonnement est en jeu ;
+#   4. `Recoller Vocalisation` teste `finish_reason` AVANT « texte vide », et nomme
+#      la signature du budget avalé. Aucun comportement ne change là : dans les deux
+#      cas la tranche est rejetée et rien n'est sauvegardé. Seul le message change.
+#
+# ⚠️ CE QUI NE DOIT PAS CHANGER, et que `scripts/test/test_vocalisation_raisonnement.js`
+#    garde : le chemin PAR DÉFAUT (aucun `provider`, aucun `model` → openai + gpt-4o)
+#    envoie un corps IDENTIQUE à la veille — ni `reasoning_effort`, ni `reasoning_config`,
+#    `temperature: 0.1` conservée, budget sans marge. C'est délibéré : envoyer
+#    `reasoning_effort` à un modèle non raisonnant fait basculer le relais en mode
+#    raisonnement (il remplace `max_tokens` par `max_completion_tokens` et RETIRE
+#    `temperature`), et OpenAI refuse le paramètre lui-même (400).
+#
+# Aucun chemin ni verbe de webhook ne change, aucun nœud ajouté ou renommé, aucune
+# variable d'environnement nouvelle : pas de 409, pas de redémarrage Docker.
+#
+# VÉRIFICATION APRÈS RÉIMPORT
+#   1. un appel SANS `provider` ni `model` doit vocaliser exactement comme avant et
+#      écrire `vocalized_by: "llm:gpt-4o"` — non-régression ;
+#   2. un appel avec `model: "gpt-5-mini"` doit maintenant rendre du TEXTE. Dans
+#      l'exécution, `meta.usage.reasoning_tokens` doit être strictement inférieur à
+#      `completion_tokens` — l'égalité des deux est la signature de l'échec ;
+#   3. ⚠️ RELIRE LES NEKUDOT À L'ŒIL sur le cas 2. `reasoning_effort: 'minimal'` est un
+#      choix de rendu, et aucun test ne juge la qualité d'une vocalisation. Le défaut
+#      reste gpt-4o précisément pour ça.
+#   4. en cas d'échec, le message porte désormais la cause : « budget de raisonnement
+#      avalé (N jetons sur N passés à raisonner…) ». Si c'est « réponse vide » qui
+#      revient, c'est un AUTRE défaut.
+Torah_Vocalization_Worker

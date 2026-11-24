@@ -139,28 +139,51 @@ console.log('\n2. cas limites du découpage');
 
 console.log('\n3. recollage — le chemin nominal');
 {
-  const rep = n => Array.from({ length: n }, (_, i) => ({
-    statusCode: 200,
-    body: { choices: [{ message: { content: `מְנֻקָּד ${i}` }, finish_reason: 'stop' }],
-            usage: { prompt_tokens: 100, completion_tokens: 120 } },
-  }));
+  // ⚠️ LA FORME A CHANGÉ EN azy.daily#642, ET CES FIXTURES NE L'AVAIENT PAS SUIVI.
+  // Écrites le 2026-08-16, quand `Vocaliser (LLM)` tapait api.openai.com en direct
+  // et que le recollage rendait la forme BRUTE d'OpenAI (`choices[].message.content`).
+  // L'appel passe désormais par /webhook/llm-call-messages, et le nœud rend la forme
+  // de L'ENVELOPPE du relais (`data.text` + `meta.usage`) pour qu'« Extract GPT
+  // Response » reste le seul endroit qui interprète un résultat. Résultat : la
+  // section 3 échouait en silence sur `develop` depuis trois mois, et les sections
+  // suivantes passaient pour la MAUVAISE raison — un `choices` que le nœud ne lit
+  // plus se présente à lui comme une réponse vide, donc « échec attendu » était
+  // obtenu sans jamais exercer le garde-fou visé.
+  const enveloppe = (texte, fin, usage) => ({ statusCode: 200, body: {
+    success: true,
+    data: { text: texte, finish_reason: fin || 'stop' },
+    meta: { provider: 'openai', model: 'gpt-4o', usage: usage || {} } } });
+  const rep = n => Array.from({ length: n }, (_, i) =>
+    enveloppe(`מְנֻקָּד ${i}`, 'stop', { prompt_tokens: 100, completion_tokens: 120 }));
   const r = executer('Recoller Vocalisation', rep(3))[0].json;
   controle('pas d’erreur', r.body.error, undefined);
-  controle('tranches recollées', r.body.choices[0].message.content, 'מְנֻקָּד 0 מְנֻקָּד 1 מְנֻקָּד 2');
-  controle('tokens cumulés', r.body.usage, { prompt_tokens: 300, completion_tokens: 360 });
+  controle('tranches recollées', r.body.data.text, 'מְנֻקָּד 0 מְנֻקָּד 1 מְנֻקָּד 2');
+  controle('tokens cumulés', r.body.meta.usage, { prompt_tokens: 300, completion_tokens: 360 });
   controle('nombre de tranches reporté', r.body._tranches, 3);
 }
 
 console.log('\n4. recollage — les trois garde-fous');
 {
-  const ok = { statusCode: 200, body: { choices: [{ message: { content: 'מְנֻקָּד' }, finish_reason: 'stop' }], usage: {} } };
+  const env = (texte, fin, usage) => ({ statusCode: 200, body: {
+    success: true, data: { text: texte, finish_reason: fin || 'stop' },
+    meta: { provider: 'openai', model: 'gpt-4o', usage: usage || {} } } });
+  const ok = env('מְנֻקָּד');
 
   // (a) troncature par le modèle — le défaut le plus dangereux : aucune erreur émise
-  const tronque = { statusCode: 200, body: { choices: [{ message: { content: 'מְנֻ' }, finish_reason: 'length' }], usage: {} } };
+  const tronque = env('מְנֻ', 'length');
   let r = executer('Recoller Vocalisation', [ok, tronque])[0].json;
   controle('troncature → échec global', !!r.body.error, true);
   controle('message nomme finish_reason', /finish_reason=length/.test(r.body.error.message), true);
-  controle('aucun texte partiel livré', r.body.choices, undefined);
+  controle('aucun texte partiel livré', r.body.data, undefined);
+
+  // (a bis) LE BUDGET AVALÉ PAR LE RAISONNEMENT (azy.daily#706) — même garde-fou,
+  // message distinct. La signature est l'égalité budget = consommé = raisonnement
+  // avec un texte VIDE, mesurée 71/71 sur l'exécution 1313618. Le garde-fou du vide
+  // était testé AVANT celui-ci et masquait la cause ; l'ordre est désormais inversé.
+  r = executer('Recoller Vocalisation',
+    [env('', 'length', { prompt_tokens: 300, completion_tokens: 4580, reasoning_tokens: 4580 })])[0].json;
+  controle('budget avalé → nommé comme tel', /budget de raisonnement avalé/.test(r.body.error.message), true);
+  controle('budget avalé → ne dit plus « réponse vide »', /réponse vide/.test(r.body.error.message), false);
 
   // (b) tranche en échec réseau (forme onError)
   const perdue = { error: { message: '500 - {"error":{"message":"boom"}}', code: 'ERR_BAD_RESPONSE' } };
@@ -168,8 +191,8 @@ console.log('\n4. recollage — les trois garde-fous');
   controle('tranche perdue → échec global', !!r.body.error, true);
   controle('compte des tranches dans le message', /2\/3 tranches/.test(r.body.error.message), true);
 
-  // (c) réponse vide
-  const vide = { statusCode: 200, body: { choices: [{ message: { content: '   ' }, finish_reason: 'stop' }], usage: {} } };
+  // (c) réponse vide — SANS troncature : « réponse vide » garde tout son sens.
+  const vide = env('   ', 'stop');
   r = executer('Recoller Vocalisation', [ok, vide])[0].json;
   controle('réponse vide → échec global', /réponse vide/.test(r.body.error.message), true);
 }
@@ -177,7 +200,8 @@ console.log('\n4. recollage — les trois garde-fous');
 console.log('\n5. l’échec de recollage est bien vu par Extract GPT Response');
 {
   const r = executer('Recoller Vocalisation', [
-    { statusCode: 200, body: { choices: [{ message: { content: 'x' }, finish_reason: 'length' }], usage: {} } },
+    { statusCode: 200, body: { success: true, data: { text: 'x', finish_reason: 'length' },
+                               meta: { provider: 'openai', model: 'gpt-4o', usage: {} } } },
   ])[0].json;
   const prev = { text: 'טקסט', context: {}, startTime: 0 };
   const sortie = executer('Extract GPT Response', r, {
