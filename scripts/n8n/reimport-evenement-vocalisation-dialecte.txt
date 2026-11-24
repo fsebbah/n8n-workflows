@@ -1,0 +1,77 @@
+# `vocalization_complete` : un seul dialecte pour les deux émetteurs.
+#
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-evenement-vocalisation-dialecte.txt --dry-run
+#     python3 scripts/n8n/n8n_api.py batch-reimport \
+#         scripts/n8n/reimport-evenement-vocalisation-dialecte.txt
+#
+# Les deux workflows existent et sont ACTIFS → UPDATE EN PLACE par nom, aucun `import`
+# préalable. Aucun chemin de webhook ne change, aucun nœud ajouté ni renommé : pas de
+# 409, pas de redémarrage Docker.
+#
+# ⚠️ `Torah_Vocalization_Batch_Callback` EST PEUT-ÊTRE DÉJÀ À JOUR EN BASE. Le réimport
+#    de la PR #592 a été lancé depuis un arbre de travail qui portait déjà ce correctif
+#    non commité : `Préparer Événement` en base peut donc déjà contenir `ok_count`. Le
+#    réimport est idempotent, le relancer ne coûte rien — et il reste nécessaire pour le
+#    WORKER, qui n'était pas dans la liste de la #592.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# CE QUI CHANGE, ET POURQUOI C'EST LE MÊME DÉFAUT DES DEUX CÔTÉS
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Deux workflows publient `vocalization_complete`, sur le MÊME stream, sous le MÊME nom :
+#   · `Torah_Vocalization_Worker`         → `Préparer Fin Vocalisation`  (synchrone)
+#   · `Torah_Vocalization_Batch_Callback` → `Préparer Événement`         (lot)
+#
+# Leurs jeux de champs avaient divergé sans que rien ne le signale. Un consommateur ne
+# peut pas les distinguer à l'avance : il route sur `event`, identique dans les deux cas.
+#
+#   1. LOT, additif : `ok_count`, `fail_count`, `error_code` et `error_message` sont
+#      AJOUTÉS, aux valeurs du synchrone. `enregistres` et `echecs` sont CONSERVÉS, donc
+#      aucun lecteur existant ne casse. Sans ça, un écouteur écrit sur les noms du
+#      synchrone — ce que le commentaire du worker lui recommande explicitement — lisait
+#      `undefined` sur TOUT événement de lot : « 0 vocalisé » affiché, ou une exception.
+#
+#   2. SYNCHRONE : `correlation_id` devient CONDITIONNEL. Il était dans le littéral, donc
+#      la clé partait toujours — avec la valeur `undefined` quand l'appelant n'en
+#      fournissait pas. Or un champ de flux Redis doit être une CHAÎNE : un `undefined`
+#      y devient le littéral « undefined », une valeur NON VIDE qui ressemble à un
+#      identifiant et ne s'apparie à rien. C'est le chemin RÉELLEMENT EN SERVICE.
+#
+# ⚠️ Le correctif 2 touche le worker synchrone, celui qui tourne tous les jours (132 items
+#    persistés le 2026-11-24). Le changement ne retire qu'une valeur parasite et n'ajoute
+#    rien : aucun comportement de vocalisation ne change, seule l'émission Redis est plus
+#    propre. Mais c'est un chemin vivant, donc le dry-run est à lire.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# VÉRIFICATION
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# 1. AVANT et APRÈS (hors ligne, rejoue le JS extrait du JSON) :
+#      node scripts/test/test_evenement_vocalisation_dialecte.js   → 24 contrôles
+#      node scripts/test/test_vocalisation_lot.js                  → 110 contrôles
+#      node scripts/test/test_476_events_correlation.js
+#
+# 2. APRÈS, en base — lire `wf['nodes']`, JAMAIS `activeVersion` :
+#
+#      python3 -c "
+#      import importlib.util, json
+#      spec = importlib.util.spec_from_file_location('n8n_api', 'scripts/n8n/n8n_api.py')
+#      api = importlib.util.module_from_spec(spec); spec.loader.exec_module(api)
+#      for wn, nn, m in (('Torah Vocalization Batch Callback','Préparer Événement','ok_count'),
+#                        ('Torah Vocalization Worker','Préparer Fin Vocalisation','if (v.correlation_id)')):
+#          w = api.find_workflow_by_name(wn)
+#          n = [x for x in w['nodes'] if x['name'] == nn][0]
+#          print(wn, '→', m in json.dumps(n['parameters'], ensure_ascii=False))"
+#
+#    Les deux doivent rendre True.
+#
+# ⚠️ 3. LE CHEMIN LOT RESTE INERTE : une « 0 exécution » est normale, le lot n'existant
+#       que chez Anthropic alors que le plugin envoie `LLM_PROVIDER_NEKUDOT=openai`. En
+#       revanche le chemin SYNCHRONE tourne : à sa prochaine exécution, vérifier dans
+#       `Préparer Fin Vocalisation` que `fields` ne porte PAS de clé `correlation_id`
+#       quand l'appelant n'en a pas fourni — et qu'elle y est quand il en fournit une.
+#
+# L'ordre est sans importance ici : les deux changements sont indépendants.
+Torah_Vocalization_Batch_Callback
+Torah_Vocalization_Worker
